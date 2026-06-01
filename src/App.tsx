@@ -9,7 +9,7 @@ import SplashScreen from './components/SplashScreen';
 import ErrorBoundary from './components/ErrorBoundary'; 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
-import { checkAuthStatus, signOutUser, User } from './lib/auth';
+import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, User } from './lib/auth';
 import { Button } from './components/ui/button';
 import HomePage from './pages/HomePage';
 import AuthPage from './pages/AuthPage';
@@ -54,14 +54,19 @@ const AppContent = () => {
         const authStatus = await checkAuthStatus();
         console.log('🔐 Auth status result:', authStatus);
         if (authStatus.isAuthenticated && authStatus.user) {
-          window.location.href = '/app/home';
+          setUser(authStatus.user);
+          setIsLoading(false);
         } else {
-          // Always set loading to false, regardless of auth state
+          // In mock/dev mode, check localStorage for stored user
+          const storedUser = getStoredUser();
+          if (storedUser) {
+            console.log('🔐 Found stored user in mock mode:', storedUser);
+            setUser(storedUser);
+          }
           setIsLoading(false);
         }
       } catch (error) {
         console.error('Error checking authentication:', error);
-        // Don't show error screen, just continue with null user
         setIsLoading(false);
       }
     };
@@ -77,6 +82,7 @@ const AppContent = () => {
     try {
       const result = await signOutUser();
       if (result.success) {
+        clearStoredUser();
         setUser(null);
         window.location.href = '/auth';
       } else {

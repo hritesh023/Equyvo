@@ -158,6 +158,35 @@ export const resendConfirmation = async (email: string) => {
   }
 };
 
+// ── localStorage auth helpers for mock/dev mode ──
+const CURRENT_USER_KEY = 'equyvo_current_user';
+
+export const storeCurrentUser = (user: User): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(user));
+  }
+};
+
+export const getStoredUser = (): User | null => {
+  if (typeof window !== 'undefined') {
+    try {
+      const raw = localStorage.getItem(CURRENT_USER_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+};
+
+export const clearStoredUser = (): void => {
+  if (typeof window !== 'undefined') {
+    localStorage.removeItem(CURRENT_USER_KEY);
+    localStorage.removeItem('userProfile');
+  }
+};
+// ── end helpers ──
+
 // Check if user is authenticated
 export const checkAuthStatus = async (): Promise<AuthState> => {
   try {

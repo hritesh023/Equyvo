@@ -9,6 +9,7 @@ import { ThemeToggle } from './ThemeToggle';
 import SearchSuggest from './SearchSuggest';
 import { showSuccess } from '@/utils/toast';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { getStoredUser } from '@/lib/auth';
 import {
   Dialog,
   DialogContent,
@@ -37,11 +38,12 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [currentPath, setCurrentPath] = useState('/');
 
-  // Handle null user gracefully for development
-  const currentUser = user || { email: 'dev@equyvo.app', user_metadata: { avatar_url: null } };
+  // Handle null user gracefully: check stored user as fallback
+  const effectiveUser = user || getStoredUser() || { email: 'dev@equyvo.app', user_metadata: { avatar_url: null } };
 
   const [profileAvatar, setProfileAvatar] = useState<string | null>(null);
 
+  // Reload avatar when user changes (new sign-in)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedProfile = localStorage.getItem('userProfile');
@@ -49,10 +51,27 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         const parsed = JSON.parse(savedProfile);
         if (parsed.avatar) {
           setProfileAvatar(parsed.avatar);
+        } else {
+          setProfileAvatar(null);
         }
+      } else {
+        setProfileAvatar(null);
       }
+
+      const handleProfileUpdate = (e: Event) => {
+        const detail = (e as CustomEvent).detail;
+        if (detail?.avatar) {
+          setProfileAvatar(detail.avatar);
+        } else if (detail && !detail.avatar) {
+          // Profile cleared — reset avatar
+          setProfileAvatar(null);
+        }
+      };
+
+      window.addEventListener('profileUpdated', handleProfileUpdate);
+      return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
     }
-  }, []);
+  }, [user]);
 
 
   useEffect(() => {
@@ -100,14 +119,14 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             <ThemeToggle />
             
             {/* User Avatar */}
-            {currentUser && (
+            {effectiveUser && (
               <Avatar 
                 className="h-6 w-6 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                 onClick={() => navigateToProfile(navigate)}
                 title="Your Profile"
               >
-                <AvatarImage src={profileAvatar || currentUser.user_metadata?.avatar_url} alt={currentUser.email} />
-                <AvatarFallback className="text-xs">{currentUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+                <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
+                <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
               </Avatar>
             )}
           </div>
@@ -157,15 +176,15 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
               <ThemeToggle />
 
               {/* User Section */}
-              {currentUser ? (
+              {effectiveUser ? (
                 <div className="flex items-center gap-1 sm:gap-2">
                   <Avatar 
                     className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                     onClick={() => navigateToProfile(navigate)}
                     title="Your Profile"
                   >
-                    <AvatarImage src={profileAvatar || currentUser.user_metadata?.avatar_url} alt={currentUser.email} />
-                    <AvatarFallback className="text-xs sm:text-sm md:text-sm">{currentUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+                    <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
+                    <AvatarFallback className="text-xs sm:text-sm md:text-sm">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
                   </Avatar>
                   {user && <Button variant="ghost" size="icon" onClick={onSignOut} title="Sign Out" className="h-6 w-6 sm:h-8 sm:w-8 md:h-10 md:w-10">
                     <LogOut className="h-2 w-2 sm:h-3 sm:w-3 md:h-4 md:w-4" />

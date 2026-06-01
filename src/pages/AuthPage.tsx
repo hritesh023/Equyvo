@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { signUpWithEmail, signInWithEmail, checkAuthStatus, resendConfirmation } from '@/lib/auth';
+import { signUpWithEmail, signInWithEmail, checkAuthStatus, resendConfirmation, storeCurrentUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
 import { Checkbox } from "@/components/ui/checkbox";
 
@@ -77,12 +77,21 @@ const AuthPage = () => {
         if (result.success) {
           if (result.userConfirmed) {
             // User is automatically signed in
+            const signInResult = await signInWithEmail(email, password);
+            if (signInResult.success && signInResult.user) {
+              localStorage.removeItem('userProfile');
+              storeCurrentUser(signInResult.user);
+            }
             window.location.href = '/app/home';
           } else {
             if (bypassEmail) {
               // Try to sign in immediately (for development)
               const signInResult = await signInWithEmail(email, password);
               if (signInResult.success) {
+                if (signInResult.user) {
+                  localStorage.removeItem('userProfile');
+                  storeCurrentUser(signInResult.user);
+                }
                 window.location.href = '/app/home';
               } else {
                 showError(signInResult.error || "Failed to sign in.");
@@ -102,6 +111,10 @@ const AuthPage = () => {
         const result = await signInWithEmail(email, password);
         
         if (result.success) {
+          if (result.user) {
+            localStorage.removeItem('userProfile');
+            storeCurrentUser(result.user);
+          }
           window.location.href = '/app/home';
         } else {
           if (result.error?.includes('not confirmed') || result.error?.includes('confirmed')) {

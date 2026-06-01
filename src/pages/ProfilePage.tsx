@@ -37,6 +37,24 @@ import WatchHistorySection from '@/components/WatchHistorySection';
 // import UniversalMediaViewer from '@/components/UniversalMediaViewer';
 import Moments from '@/components/Moments';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
+import { getStoredUser } from '@/lib/auth';
+
+const createDefaultProfile = (user?: { email?: string; fullName?: string; username?: string; id?: string }) => {
+  const displayName = user?.fullName || (user?.email ? user.email.split('@')[0] : 'John Doe');
+  const handle = user?.username || (user?.email ? `@${user.email.split('@')[0]}` : '@johndoe');
+  const avatarSeed = user?.email?.split('@')[0] || 'john';
+  return {
+    _userEmail: user?.email || '',
+    id: user?.id || 'default-user',
+    name: displayName,
+    username: handle,
+    avatar: `https://picsum.photos/seed/${avatarSeed}/200/200`,
+    bio: 'Welcome to Equyvo!',
+    followers: 0,
+    following: 0,
+    posts: [] as Post[],
+  };
+};
 
 const ProfilePage = () => {
   const { userId, username } = useParams();
@@ -162,8 +180,27 @@ const ProfilePage = () => {
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const savedProfile = localStorage.getItem('userProfile');
-      if (savedProfile) {
-        setUserProfile(JSON.parse(savedProfile));
+      const currentUser = getStoredUser();
+
+      if (savedProfile && currentUser) {
+        const parsed = JSON.parse(savedProfile);
+        // Only load cached profile if it belongs to the current user
+        if (parsed._userEmail === currentUser.email || parsed.id === currentUser.id) {
+          setUserProfile(parsed);
+        } else {
+          // Stale profile from a different user — discard and create fresh default
+          const fresh = createDefaultProfile(currentUser);
+          setUserProfile(fresh);
+          localStorage.setItem('userProfile', JSON.stringify(fresh));
+        }
+      } else if (savedProfile && !currentUser) {
+        // No signed-in user — discard orphaned profile
+        localStorage.removeItem('userProfile');
+      } else if (!savedProfile && currentUser) {
+        // Signed-in user with no saved profile yet — create one
+        const fresh = createDefaultProfile(currentUser);
+        setUserProfile(fresh);
+        localStorage.setItem('userProfile', JSON.stringify(fresh));
       }
 
       // Load saved posts, saved stories, and watch history
@@ -620,7 +657,15 @@ const ProfilePage = () => {
   };
 
   const handleSaveProfile = (updatedProfile: Partial<UserProfile>) => {
-    setUserProfile(prev => ({ ...prev, ...updatedProfile } as typeof prev));
+    const currentUser = getStoredUser();
+    setUserProfile(prev => ({
+      ...prev,
+      ...updatedProfile,
+      _userEmail: currentUser?.email || prev._userEmail,
+    } as unknown as typeof prev));
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('profileUpdated', { detail: { ...updatedProfile, _userEmail: currentUser?.email } }));
+    }
   };
 
   const handleEditPost = (post: Post) => {
