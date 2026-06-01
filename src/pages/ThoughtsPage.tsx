@@ -47,6 +47,7 @@ import FullscreenViewer from '@/components/FullscreenViewer';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 // MediaRenderer component to handle different media types
 const MediaRenderer: React.FC<{ 
@@ -241,15 +242,17 @@ const MediaRenderer: React.FC<{
                   if (videoRef.current) {
                     videoRef.current.pause();
                   }
-                  onFullscreen && onFullscreen({
-                    type: 'video',
-                    videoUrl: media.url,
-                    thumbnail: media.thumbnail,
-                    title: 'Video from Thought',
-                    creator: 'Thought User',
-                    id: `video-${media.url}`,
-                    duration: media.duration
-                  }, videoRef);
+                  if (onFullscreen) {
+                    onFullscreen({
+                      type: 'video',
+                      videoUrl: media.url,
+                      thumbnail: media.thumbnail,
+                      title: 'Video from Thought',
+                      creator: 'Thought User',
+                      id: `video-${media.url}`,
+                      duration: media.duration
+                    }, videoRef);
+                  }
                 }}
               >
                 <Maximize2 className="h-4 w-4" />
@@ -998,13 +1001,13 @@ const ThoughtsPage = memo(() => {
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
-      <div className="sticky top-0 bg-background/95 backdrop-blur-xl border-b border-border/50 z-40">
+      <div className="sticky top-0 bg-background/95 backdrop-blur-xl border-b border-border/50 z-40 mobile-top-safe">
         <div className="max-w-2xl mx-auto p-4">
           <h1 className="text-2xl font-bold">Thoughts</h1>
         </div>
       </div>
 
-      <div className="max-w-2xl mx-auto p-4 space-y-6">
+      <div className="max-w-2xl mx-auto p-4 space-y-6 pb-safe">
         {/* Trending Topics */}
         <Card className="bg-gradient-to-r from-blue-50 to-purple-50 dark:from-blue-950/20 dark:to-purple-950/20 border-blue-200 dark:border-blue-800">
           <CardHeader className="pb-3">
@@ -1108,7 +1111,14 @@ const ThoughtsPage = memo(() => {
                 <div className="p-4">
                   <div className="flex items-start justify-between">
                     <div className="flex items-center gap-3">
-                      <Avatar className="h-12 w-12">
+                      <Avatar 
+                        className="h-12 w-12 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                        onClick={() => {
+                          // Navigate to user profile when avatar is clicked
+                          navigateToProfile(navigate, thought.user?.id, thought.user?.username);
+                        }}
+                        title={`${thought.user?.username}'s Profile`}
+                      >
                         <AvatarImage src={thought.user?.avatar_url} />
                         <AvatarFallback>{typeof thought.user?.username === 'string' ? thought.user.username.substring(0, 2).toUpperCase() : 'U'}</AvatarFallback>
                       </Avatar>
@@ -1196,8 +1206,9 @@ const ThoughtsPage = memo(() => {
                   </div>
 
                   {/* Voting and Actions */}
-                  <div className="flex items-center justify-between mt-4 pt-3 border-t">
-                    <div className="flex items-center gap-2">
+                  <div className="mt-4 pt-3 border-t">
+                    {/* Primary action buttons */}
+                    <div className="flex items-center gap-2 mb-3 flex-wrap">
                       <VotingButtons
                         thoughtId={thought.id}
                         upvotesCount={thought.upvotes_count || 0}
@@ -1216,7 +1227,7 @@ const ThoughtsPage = memo(() => {
                           <Button 
                             variant="ghost" 
                             size="sm" 
-                            className="flex items-center gap-1 text-muted-foreground"
+                            className="flex items-center gap-1 text-muted-foreground flex-shrink-0"
                             onClick={() => setCommentDialogOpen(thought.id)}
                           >
                             <MessageCircle className="h-4 w-4" />
@@ -1249,7 +1260,7 @@ const ThoughtsPage = memo(() => {
                       <Button 
                         variant="ghost" 
                         size="sm" 
-                        className={`flex items-center gap-1 ${reactedThoughts.has(thought.id) ? 'text-green-500 hover:text-green-600' : 'text-muted-foreground hover:text-foreground'}`}
+                        className={`flex items-center gap-1 flex-shrink-0 ${reactedThoughts.has(thought.id) ? 'text-green-500 hover:text-green-600' : 'text-muted-foreground hover:text-foreground'}`}
                         onClick={() => handleReact(thought.id)}
                         title={reactedThoughts.has(thought.id) ? "Remove reaction - this thought will no longer be yours" : "React to make this thought yours"}
                       >
@@ -1268,11 +1279,12 @@ const ThoughtsPage = memo(() => {
                       </Button>
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    {/* Secondary action buttons */}
+                    <div className="flex items-center gap-1 justify-end">
                       <Button 
                         variant="ghost" 
                         size="sm" 
-                        className={`${savedThoughts.has(thought.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
+                        className={`${savedThoughts.has(thought.id) ? 'text-blue-500' : 'text-muted-foreground'} flex-shrink-0`}
                         onClick={() => handleSave(thought.id)}
                       >
                         <Bookmark className={`h-4 w-4 ${savedThoughts.has(thought.id) ? 'fill-current' : ''}`} />
@@ -1281,7 +1293,7 @@ const ThoughtsPage = memo(() => {
                       <Button 
                         variant="ghost" 
                         size="sm" 
-                        className="text-muted-foreground"
+                        className="text-muted-foreground flex-shrink-0"
                         onClick={() => handleShare(thought.id)}
                         disabled={sharing === thought.id}
                       >

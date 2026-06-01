@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useRef, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -10,12 +11,14 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 const MomentsPage = () => {
+  const navigate = useNavigate();
   const isMobile = useIsMobile();
   const [activeVideoIndex, setActiveVideoIndex] = useState(0);
   const [isMuted, setIsMuted] = useState(true); // Start muted for auto-play compatibility
-  const [hasInteracted, setHasInteracted] = useState(false); // Track user interaction
+  const [hasEngaged, setHasEngaged] = useState(false); // Track user engagement
   const [autoUnmuted, setAutoUnmuted] = useState(false); // Track if auto-unmute has been applied
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
   const [momentLikes, setMomentLikes] = useState<{[key: string]: string}>({});
@@ -299,9 +302,9 @@ const MomentsPage = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeVideoIndex, moments.length]);
 
-  // Auto-unmute portrait videos after user interaction
+  // Auto-unmute portrait videos after user engagement
   useEffect(() => {
-    if (hasInteracted && !autoUnmuted) {
+    if (hasEngaged && !autoUnmuted) {
       const currentVideo = videoRefs.current[activeVideoIndex];
       if (currentVideo) {
         // Check if video metadata is loaded
@@ -311,7 +314,7 @@ const MomentsPage = () => {
             currentVideo.muted = false;
             setIsMuted(false);
             setAutoUnmuted(true);
-            console.log('Portrait video auto-unmuted after user interaction');
+            console.log('Portrait video auto-unmuted after user engagement');
           }
         } else {
           // Wait for metadata to load
@@ -328,13 +331,13 @@ const MomentsPage = () => {
         }
       }
     }
-  }, [hasInteracted, activeVideoIndex, autoUnmuted]);
+  }, [hasEngaged, activeVideoIndex, autoUnmuted]);
 
   // Update mute state for all videos (removed - now controlled individually)
 
   const toggleMute = (e: React.MouseEvent) => {
     e.stopPropagation();
-    setHasInteracted(true);
+    setHasEngaged(true);
     setAutoUnmuted(true); // Prevent auto-unmute from triggering again
     const currentVideo = videoRefs.current[activeVideoIndex];
     if (currentVideo) {
@@ -346,7 +349,7 @@ const MomentsPage = () => {
   };
 
   const togglePlay = (index: number) => {
-    setHasInteracted(true);
+    setHasEngaged(true);
     setAutoUnmuted(true); // Prevent auto-unmute from triggering again
     const video = videoRefs.current[index];
     if (video) {
@@ -432,7 +435,7 @@ const MomentsPage = () => {
         scrollbarWidth: 'none',
         msOverflowStyle: 'none'
       }}
-      onClick={() => setHasInteracted(true)}
+      onClick={() => setHasEngaged(true)}
     >
       {moments.map((moment, index) => (
         <div
@@ -484,7 +487,14 @@ const MomentsPage = () => {
             {/* Right Side Actions */}
             <div className="absolute bottom-20 right-2 flex flex-col items-center gap-6 z-20 pointer-events-auto">
               <div className="flex flex-col items-center gap-1">
-                <Avatar className="h-12 w-12 border-2 border-white cursor-pointer hover:scale-110 transition-transform">
+                <Avatar 
+                  className="h-12 w-12 border-2 border-white cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/50 transition-all duration-200"
+                  onClick={() => {
+                    // Navigate to user profile when avatar is clicked
+                    navigateToProfile(navigate, undefined, moment.user);
+                  }}
+                  title={`${moment.user}'s Profile`}
+                >
                   <AvatarImage src={moment.avatar} />
                   <AvatarFallback>{moment.user[0]}</AvatarFallback>
                 </Avatar>

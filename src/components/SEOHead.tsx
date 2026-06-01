@@ -21,8 +21,8 @@ const SEOHead: React.FC<SEOHeadProps> = ({
   imageUrl,
   type = 'website'
 }) => {
-  const defaultTitle = 'Interact - Social Media Platform';
-  const defaultDescription = 'Connect, share, and discover amazing content on Interact';
+  const defaultTitle = 'Equyvo - Social Media Platform';
+  const defaultDescription = 'Connect, share, and discover amazing content on Equyvo';
   
   const pageTitle = title || defaultTitle;
   const pageDescription = description || defaultDescription;

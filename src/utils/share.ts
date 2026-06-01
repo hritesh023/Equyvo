@@ -53,7 +53,7 @@ export const sharePost = async (post: {
     return { success: false, error: 'Share functionality not available on server' };
   }
 
-  const title = `Post by ${post.user} on Interact`;
+  const title = `Post by ${post.user} on Equyvo`;
   const text = post.content;
   const url = `${window.location.origin}/post/${post.id}`;
   
@@ -69,8 +69,8 @@ export const shareProfile = async (user: {
     return { success: false, error: 'Share functionality not available on server' };
   }
 
-  const title = `${user.username} on Interact`;
-  const text = user.bio || `Check out ${user.username}'s profile on Interact!`;
+  const title = `${user.username} on Equyvo`;
+  const text = user.bio || `Check out ${user.username}'s profile on Equyvo!`;
   const url = `${window.location.origin}/profile/${user.id}`;
   
   return shareContent(title, text, url);

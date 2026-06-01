@@ -14,7 +14,7 @@ import {
 import { Trash2, AlertTriangle } from 'lucide-react';
 import { cn } from "@/lib/utils";
 
-interface InteractDeleteButtonProps {
+interface EquyvoDeleteButtonProps {
   onDelete: () => Promise<void> | void;
   disabled?: boolean;
   variant?: 'default' | 'destructive' | 'outline' | 'secondary' | 'ghost' | 'link';
@@ -29,7 +29,7 @@ interface InteractDeleteButtonProps {
   iconOnly?: boolean;
 }
 
-const InteractDeleteButton: React.FC<InteractDeleteButtonProps> = ({
+const EquyvoDeleteButton: React.FC<EquyvoDeleteButtonProps> = ({
   onDelete,
   disabled = false,
   variant = 'ghost',
@@ -122,4 +122,4 @@ const InteractDeleteButton: React.FC<InteractDeleteButtonProps> = ({
   );
 };
 
-export default InteractDeleteButton;
+export default EquyvoDeleteButton;

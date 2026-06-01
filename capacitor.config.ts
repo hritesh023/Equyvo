@@ -1,8 +1,8 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
 const config: CapacitorConfig = {
-  appId: 'com.interact.app',
-  appName: 'Interact',
+  appId: 'com.equyvo.app',
+  appName: 'Equyvo',
   webDir: 'dist',
   server: {
     androidScheme: 'https',
@@ -46,7 +46,7 @@ const config: CapacitorConfig = {
       resize: 'ionic'
     },
     App: {
-      appendUserAgent: 'InteractApp/1.0',
+      appendUserAgent: 'EquyvoApp/1.0',
       allowNavigation: ['*']
     }
   }

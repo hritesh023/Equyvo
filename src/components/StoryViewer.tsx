@@ -370,7 +370,14 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         {/* Header */}
         <div className="story-header">
           <div className="story-user-info">
-            <Avatar className="w-10 h-10 border-2 border-white">
+            <Avatar 
+              className="w-10 h-10 border-2 border-white cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
+              onClick={() => {
+                // Navigate to user profile when avatar is clicked
+                console.log(`Navigate to ${currentStory.user}'s profile`);
+              }}
+              title={`${currentStory.user}'s Profile`}
+            >
               <AvatarImage src={currentStory.avatar} />
               <AvatarFallback>{currentStory.user.substring(0, 2)}</AvatarFallback>
             </Avatar>

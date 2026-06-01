@@ -826,8 +826,8 @@ const CreatePage = () => {
   };
 
   return (
-    <div className="space-y-4 md:space-y-6">
-      <h1 className="text-xl md:text-3xl font-bold">Create New Content</h1>
+    <div className="space-y-4 md:space-y-6 w-full px-4 sm:px-6 lg:px-8 pb-20 md:pb-6 lg:pb-8">
+      <h1 className="text-lg md:text-2xl lg:text-3xl font-bold">Create New Content</h1>
 
       {/* Content Management Toggle */}
       {[
@@ -840,7 +840,7 @@ const CreatePage = () => {
           <Card>
             <CardContent className="p-3 md:p-4">
               <div className="flex flex-col sm:flex-row items-start sm:items-center gap-2 sm:gap-4">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                   <BarChart3 className="h-4 w-4 md:h-5 md:w-5 text-blue-500" />
                   <span className="font-medium text-sm md:text-base">
                     Manage Your Content ({[
@@ -934,7 +934,7 @@ const CreatePage = () => {
                         )}
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                         <Button
                           variant={video.isPrivate ? "default" : "outline"}
                           size="sm"
@@ -1027,7 +1027,7 @@ const CreatePage = () => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                         <Button
                           variant={story.isPrivate ? "default" : "outline"}
                           size="sm"
@@ -1093,7 +1093,7 @@ const CreatePage = () => {
                             className="w-16 h-16 object-cover rounded"
                           />
                         )}
-                        <div className="flex-1">
+                        <div className="w-full sm:flex-1">
                           <h3 className="font-semibold text-sm line-clamp-2">{thought.content}</h3>
                           <p className="text-xs text-muted-foreground mt-1">
                             {thought.hasMedia ? `${thought.mediaType} • ` : ''}Thought
@@ -1110,7 +1110,7 @@ const CreatePage = () => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                         <Button
                           variant={thought.isPrivate ? "default" : "outline"}
                           size="sm"
@@ -1192,7 +1192,7 @@ const CreatePage = () => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                         <Button
                           variant={photo.isPrivate ? "default" : "outline"}
                           size="sm"
@@ -1277,7 +1277,7 @@ const CreatePage = () => {
                         </div>
                       </div>
 
-                      <div className="flex items-center gap-2">
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                         <Button
                           variant={textStory.isPrivate ? "default" : "outline"}
                           size="sm"
@@ -1509,8 +1509,8 @@ const CreatePage = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2">
-                <Button onClick={() => handlePostStory('post')} className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => handlePostStory('post')} className="w-full sm:flex-1">
                   Post Story
                 </Button>
                 <Button
@@ -1519,7 +1519,7 @@ const CreatePage = () => {
                     setShowScheduleModal(true);
                   }}
                   variant="outline"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
@@ -1527,7 +1527,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => handlePostStory('draft')}
                   variant="secondary"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   Save as Draft
                 </Button>
@@ -1596,7 +1596,7 @@ const CreatePage = () => {
                       value={textStoryColor}
                       onChange={(e) => setTextStoryColor(e.target.value)}
                       placeholder="#FFFFFF"
-                      className="flex-1"
+                      className="w-full sm:flex-1"
                     />
                   </div>
                 </div>
@@ -1615,7 +1615,7 @@ const CreatePage = () => {
                       value={textStoryBackground}
                       onChange={(e) => setTextStoryBackground(e.target.value)}
                       placeholder="#000000"
-                      className="flex-1"
+                      className="w-full sm:flex-1"
                     />
                   </div>
                 </div>
@@ -1654,8 +1654,8 @@ const CreatePage = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2">
-                <Button onClick={() => handlePostTextStory('post')} className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => handlePostTextStory('post')} className="w-full sm:flex-1">
                   Post Text Story
                 </Button>
                 <Button
@@ -1664,7 +1664,7 @@ const CreatePage = () => {
                     setShowScheduleModal(true);
                   }}
                   variant="outline"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
@@ -1672,7 +1672,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => handlePostTextStory('draft')}
                   variant="secondary"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   Save as Draft
                 </Button>
@@ -1749,8 +1749,8 @@ const CreatePage = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2">
-                <Button onClick={() => handlePostThought('post')} className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => handlePostThought('post')} className="w-full sm:flex-1">
                   Post Thought
                 </Button>
                 <Button
@@ -1759,7 +1759,7 @@ const CreatePage = () => {
                     setShowScheduleModal(true);
                   }}
                   variant="outline"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
@@ -1767,7 +1767,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => handlePostThought('draft')}
                   variant="secondary"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   Save as Draft
                 </Button>
@@ -1846,8 +1846,8 @@ const CreatePage = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2">
-                <Button onClick={() => handlePostPhotos('post')} className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => handlePostPhotos('post')} className="w-full sm:flex-1">
                   Post Photos
                 </Button>
                 <Button
@@ -1856,7 +1856,7 @@ const CreatePage = () => {
                     setShowScheduleModal(true);
                   }}
                   variant="outline"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
@@ -1864,7 +1864,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => handlePostPhotos('draft')}
                   variant="secondary"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   Save as Draft
                 </Button>
@@ -1942,8 +1942,8 @@ const CreatePage = () => {
               </div>
 
               {/* Action Buttons */}
-              <div className="flex gap-2">
-                <Button onClick={() => handlePostVideos('post')} className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => handlePostVideos('post')} className="w-full sm:flex-1">
                   Post Videos
                 </Button>
                 <Button
@@ -1952,7 +1952,7 @@ const CreatePage = () => {
                     setShowScheduleModal(true);
                   }}
                   variant="outline"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
@@ -1960,7 +1960,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => handlePostVideos('draft')}
                   variant="secondary"
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   Save as Draft
                 </Button>
@@ -1978,7 +1978,7 @@ const CreatePage = () => {
                 Start Live Stream
               </CardTitle>
               <p className="text-sm text-muted-foreground">
-                Go live and interact with your audience in real-time
+                Go live and engage with your audience in real-time
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -2066,7 +2066,7 @@ const CreatePage = () => {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                     <span className={`text-xs px-2 py-1 rounded ${post.status === 'scheduled' ? 'bg-blue-100 text-blue-700' :
                         post.status === 'posted' ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
                       }`}>
@@ -2109,7 +2109,7 @@ const CreatePage = () => {
                       </p>
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -2151,7 +2151,7 @@ const CreatePage = () => {
                   min={new Date(Date.now() + 60000).toISOString().slice(0, 16)} // Minimum 1 minute from now
                 />
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <Button
                   onClick={() => {
                     switch (currentContentType) {
@@ -2172,7 +2172,7 @@ const CreatePage = () => {
                         break;
                     }
                   }}
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                   disabled={!scheduleDateTime}
                 >
                   Confirm Schedule
@@ -2184,7 +2184,7 @@ const CreatePage = () => {
                     setScheduleDateTime('');
                     setCurrentContentType('');
                   }}
-                  className="flex-1"
+                  className="w-full sm:flex-1"
                 >
                   Cancel
                 </Button>

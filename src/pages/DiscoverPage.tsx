@@ -18,6 +18,7 @@ import SearchSuggest from '@/components/SearchSuggest';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import ReportModal from '@/components/ReportModal';
 import { useNavigate } from 'react-router-dom';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 const DiscoverPage = () => {
   const [activeTab, setActiveTab] = useState('grid');
@@ -823,7 +824,14 @@ const DiscoverPage = () => {
               <CardContent className="p-3">
                 <div className="flex gap-3 items-start justify-between">
                   <div className="flex gap-3">
-                    <Avatar className="w-8 h-8">
+                    <Avatar 
+                      className="w-8 h-8 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                      onClick={() => {
+                        // Navigate to user profile when avatar is clicked
+                        navigateToProfile(navigate, item.creatorId, item.creator);
+                      }}
+                      title={`${item.creator}'s Profile`}
+                    >
                       <AvatarImage src={`https://github.com/shadcn.png`} />
                       <AvatarFallback>U</AvatarFallback>
                     </Avatar>
@@ -911,7 +919,14 @@ const DiscoverPage = () => {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Avatar className="w-8 h-8 ring-2 ring-red-500 ring-offset-2">
+                    <Avatar 
+                      className="w-8 h-8 ring-2 ring-red-500 ring-offset-2 cursor-pointer hover:ring-4 hover:ring-red-400 transition-all duration-200"
+                      onClick={() => {
+                        // Navigate to user profile when avatar is clicked
+                        navigateToProfile(navigate, item.creatorId, item.creator);
+                      }}
+                      title={`${item.creator}'s Profile`}
+                    >
                       <AvatarImage src="https://github.com/shadcn.png" />
                       <AvatarFallback>STR</AvatarFallback>
                     </Avatar>
@@ -1003,12 +1018,22 @@ const DiscoverPage = () => {
                 <h3 className="text-lg font-bold leading-tight line-clamp-2 group-hover:text-primary transition-colors mb-1">
                   {item.title}
                 </h3>
-                <div className="flex sm:hidden items-center gap-2 mb-2">
-                  <Avatar className="w-6 h-6">
-                    <AvatarImage src="https://github.com/shadcn.png" />
-                    <AvatarFallback>C</AvatarFallback>
-                  </Avatar>
-                  <span className="text-xs text-muted-foreground">{item.creator} • {item.views} views • {Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
+                <Avatar 
+                  className="w-8 h-8 ring-2 ring-red-500 ring-offset-2 cursor-pointer hover:ring-4 hover:ring-red-400 transition-all duration-200"
+                  onClick={() => {
+                    // Navigate to user profile when avatar is clicked
+                    navigateToProfile(navigate, item.creatorId, item.creator);
+                  }}
+                  title={`${item.creator}'s Profile`}
+                >
+                  <AvatarImage src="https://github.com/shadcn.png" />
+                  <AvatarFallback>STR</AvatarFallback>
+                </Avatar>
+                <div>
+                  <span className="font-semibold text-sm">{item.creator}</span>
+                  <div className="flex items-center gap-2 mt-1">
+                    <Badge variant="outline" className="text-xs">{item.category}</Badge>
+                  </div>
                 </div>
                 <div className="hidden sm:block text-sm text-muted-foreground space-y-1">
                   <div className="flex items-center gap-2">

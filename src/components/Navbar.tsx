@@ -8,6 +8,7 @@ import { useIsMobile } from "@/hooks/use-mobile";
 import { ThemeToggle } from './ThemeToggle';
 import SearchSuggest from './SearchSuggest';
 import { showSuccess } from '@/utils/toast';
+import { navigateToProfile } from '@/utils/profile-navigation';
 import {
   Dialog,
   DialogContent,
@@ -37,7 +38,21 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const [currentPath, setCurrentPath] = useState('/');
 
   // Handle null user gracefully for development
-  const currentUser = user || { email: 'dev@interact.app', user_metadata: { avatar_url: null } };
+  const currentUser = user || { email: 'dev@equyvo.app', user_metadata: { avatar_url: null } };
+
+  const [profileAvatar, setProfileAvatar] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const savedProfile = localStorage.getItem('userProfile');
+      if (savedProfile) {
+        const parsed = JSON.parse(savedProfile);
+        if (parsed.avatar) {
+          setProfileAvatar(parsed.avatar);
+        }
+      }
+    }
+  }, []);
 
 
   useEffect(() => {
@@ -66,8 +81,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             {/* Logo and Search */}
             <div className="flex items-center gap-2 flex-1">
               <Link to="/" className="flex items-center gap-2">
-                <img src="/interact_logo.png" alt="Interact Logo" className="h-6 w-6" />
-                <span className="text-sm font-bold text-foreground">Interact</span>
+                <img src="/app-icon.png" alt="Equyvo Logo" className="h-6 w-6" />
+                <span className="text-sm font-bold text-foreground">Equyvo</span>
               </Link>
             </div>
             
@@ -86,8 +101,12 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             
             {/* User Avatar */}
             {currentUser && (
-              <Avatar className="h-6 w-6">
-                <AvatarImage src={currentUser.user_metadata?.avatar_url} alt={currentUser.email} />
+              <Avatar 
+                className="h-6 w-6 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                onClick={() => navigateToProfile(navigate)}
+                title="Your Profile"
+              >
+                <AvatarImage src={profileAvatar || currentUser.user_metadata?.avatar_url} alt={currentUser.email} />
                 <AvatarFallback className="text-xs">{currentUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
               </Avatar>
             )}
@@ -102,8 +121,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             {/* Logo */}
             <div className="flex items-center gap-1 sm:gap-2">
               <Link to="/" className="flex items-center gap-1 sm:gap-2">
-                <img src="/interact_logo.png" alt="Interact Logo" className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8" />
-                <span className="text-sm sm:text-base md:text-xl font-bold text-foreground hidden sm:block">Interact</span>
+                <img src="/app-icon.png" alt="Equyvo Logo" className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8" />
+                <span className="text-sm sm:text-base md:text-xl font-bold text-foreground hidden sm:block">Equyvo</span>
               </Link>
             </div>
 
@@ -140,8 +159,12 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
               {/* User Section */}
               {currentUser ? (
                 <div className="flex items-center gap-1 sm:gap-2">
-                  <Avatar className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8">
-                    <AvatarImage src={currentUser.user_metadata?.avatar_url} alt={currentUser.email} />
+                  <Avatar 
+                    className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                    onClick={() => navigateToProfile(navigate)}
+                    title="Your Profile"
+                  >
+                    <AvatarImage src={profileAvatar || currentUser.user_metadata?.avatar_url} alt={currentUser.email} />
                     <AvatarFallback className="text-xs sm:text-sm md:text-sm">{currentUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
                   </Avatar>
                   {user && <Button variant="ghost" size="icon" onClick={onSignOut} title="Sign Out" className="h-6 w-6 sm:h-8 sm:w-8 md:h-10 md:w-10">
@@ -163,7 +186,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         <Dialog open={mobileSearchOpen} onOpenChange={setMobileSearchOpen}>
           <DialogContent className="sm:max-w-md bg-background/95 backdrop-blur-lg border-border/50">
             <DialogHeader>
-              <DialogTitle>Search Interact</DialogTitle>
+              <DialogTitle>Search Equyvo</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <SearchSuggest

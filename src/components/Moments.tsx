@@ -682,7 +682,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
                           <p className="text-xs line-clamp-2 mb-2">{moment.content}</p>
                           <div className="flex items-center justify-between">
-                            <div className="flex items-center gap-2 text-xs">
+                            <div className="flex flex-wrap items-center gap-2 text-xs sm:flex-nowrap sm:gap-2">
                               <span className="flex items-center gap-1">
                                 <Eye className="h-3 w-3" /> {moment.views || 0}
                               </span>
@@ -719,7 +719,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     <div className="absolute bottom-0 left-0 right-0 p-3 text-white">
                       <p className="text-xs line-clamp-2 mb-2">{moment.content}</p>
                       <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2 text-xs">
+                        <div className="flex flex-wrap items-center gap-2 text-xs sm:flex-nowrap sm:gap-2">
                           <span className="flex items-center gap-1">
                             <Eye className="h-3 w-3" /> {moment.views || 0}
                           </span>
@@ -976,7 +976,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                 <div className="absolute bottom-0 left-0 right-0 p-4 text-white">
                   <p className="text-sm line-clamp-2 mb-2">{moment.content}</p>
                   <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3 text-xs">
+                    <div className="flex flex-wrap items-center gap-3 text-xs sm:flex-nowrap sm:gap-3">
                       <span className="flex items-center gap-1">
                         <Eye className="h-3 w-3" /> {moment.views || 0}
                       </span>

@@ -30,10 +30,10 @@ const HomePage = () => {
   const posts = [
     {
       id: 'p1',
-      user: 'Interact Official',
+      user: 'Equyvo Official',
       avatar: 'https://github.com/shadcn.png',
       time: '2 hours ago',
-      content: 'Welcome to Interact! We are excited to build this community with you. Share your first thought!',
+      content: 'Welcome to Equyvo! We are excited to build this community with you. Share your first thought!',
       image: null,
       likes: 120,
       comments: 15,

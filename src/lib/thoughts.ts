@@ -1,421 +1,306 @@
-import { supabase } from './supabase';
 import { Thought, Vote, Like, CreateThoughtData, VoteData, LikeData, ThoughtMedia } from '@/types/thoughts';
+import { getAuthenticatedUser } from './auth';
 
-// Thoughts API
-export const getThoughts = async (limit = 20, offset = 0) => {
-  try {
-    const { data: { user } } = await supabase.auth.getUser();
-    
-    const query = supabase
-      .from('thoughts')
-      .select(`
-        *
-      `)
-      .order('created_at', { ascending: false })
-      .range(offset, offset + limit - 1);
-
-    const { data, error } = await query;
-
-    if (error) throw error;
-
-    // Get vote counts for each thought
-    if (data) {
-      const thoughtIds = data.map(thought => thought.id);
-      
-      // Get upvotes and downvotes counts
-      const { data: upvotes } = await supabase
-        .from('votes')
-        .select('thought_id')
-        .eq('vote_type', 'upvote')
-        .in('thought_id', thoughtIds);
-
-      const { data: downvotes } = await supabase
-        .from('votes')
-        .select('thought_id')
-        .eq('vote_type', 'downvote')
-        .in('thought_id', thoughtIds);
-
-      // Count votes per thought
-      const upvoteCounts: { [key: string]: number } = {};
-      const downvoteCounts: { [key: string]: number } = {};
-      
-      if (upvotes) {
-        upvotes.forEach(vote => {
-          upvoteCounts[vote.thought_id] = (upvoteCounts[vote.thought_id] || 0) + 1;
-        });
-      }
-      
-      if (downvotes) {
-        downvotes.forEach(vote => {
-          downvoteCounts[vote.thought_id] = (downvoteCounts[vote.thought_id] || 0) + 1;
-        });
-      }
-
-      // Add vote counts to each thought
-      data.forEach(thought => {
-        thought.upvotes_count = upvoteCounts[thought.id] || 0;
-        thought.downvotes_count = downvoteCounts[thought.id] || 0;
-      });
-    }
-
-    // Get user votes for each thought
-    if (user && data) {
-      const thoughtIds = data.map(thought => thought.id);
-      const { data: votes } = await supabase
-        .from('votes')
-        .select('thought_id, vote_type')
-        .eq('user_id', user.id)
-        .in('thought_id', thoughtIds);
-
-      const { data: likes } = await supabase
-        .from('likes')
-        .select('thought_id')
-        .eq('user_id', user.id)
-        .in('thought_id', thoughtIds);
-
-      if (votes) {
-        // Add user_vote to each thought
-        data.forEach(thought => {
-          const vote = votes.find(v => v.thought_id === thought.id);
-          thought.user_vote = vote?.vote_type || null;
-        });
-      }
-
-      if (likes) {
-        // Add user_has_liked to each thought
-        data.forEach(thought => {
-          const like = likes.find(l => l.thought_id === thought.id);
-          thought.user_has_liked = !!like;
-        });
-      }
-    }
-
-    return { data, error: null };
-  } catch (error) {
-    console.error('Error fetching thoughts:', error);
-    return { data: null, error };
-  }
-};
-
-// Function to validate video duration
-export const validateVideoDuration = (file: File): Promise<boolean> => {
+// Mock video duration validation
+export const validateVideoDuration = (file: File): Promise<{ valid: boolean; error?: string }> => {
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
     
     video.onloadedmetadata = () => {
+      window.URL.revokeObjectURL(video.src);
       const duration = video.duration;
-      URL.revokeObjectURL(video.src);
-      resolve(duration <= 300); // 5 minutes = 300 seconds
+      
+      // Max 60 seconds for stories, 10 minutes for regular videos
+      const maxDuration = 60; // 60 seconds
+      const minDuration = 1; // 1 second
+      
+      if (duration < minDuration) {
+        resolve({ 
+          valid: false, 
+          error: 'Video must be at least 1 second long' 
+        });
+      } else if (duration > maxDuration) {
+        resolve({ 
+          valid: false, 
+          error: `Video must be less than ${maxDuration} seconds long` 
+        });
+      } else {
+        resolve({ valid: true });
+      }
     };
     
     video.onerror = () => {
-      URL.revokeObjectURL(video.src);
-      resolve(false); // If we can't load metadata, reject the video
+      window.URL.revokeObjectURL(video.src);
+      resolve({ 
+        valid: false, 
+        error: 'Invalid video file' 
+      });
     };
     
     video.src = URL.createObjectURL(file);
   });
 };
 
-// Function to validate thought media before creation
-export const validateThoughtMedia = async (media?: ThoughtMedia[]): Promise<{ isValid: boolean; error?: string }> => {
-  if (!media || media.length === 0) {
-    return { isValid: true };
+// Mock data for development
+const mockThoughts: Thought[] = [
+  {
+    id: '1',
+    user_id: 'user1',
+    platform: 'equyvo',
+    content: 'Welcome to Equyvo Thoughts! Share your ideas with the community.',
+    tags: [],
+    comments_count: 0,
+    shares_count: 0,
+    retweets_count: 0,
+    media: null,
+    likes_count: 15,
+    created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    updated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
+    user_vote: null,
+    user_has_liked: false
+  },
+  {
+    id: '2',
+    user_id: 'user2',
+    content: 'Just implemented a new feature using React hooks. The composition API is game-changing!',
+    platform: 'equyvo',
+    tags: ['react', 'hooks', 'development'],
+    comments_count: 0,
+    shares_count: 0,
+    retweets_count: 0,
+    media: null,
+    likes_count: 42,
+    created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+    updated_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+    user_vote: null,
+    user_has_liked: false
   }
+];
 
-  for (const mediaItem of media) {
-    if (mediaItem.type === 'video') {
-      if (mediaItem.duration && mediaItem.duration > 300) {
-        return { 
-          isValid: false, 
-          error: 'Video duration must be less than 5 minutes (300 seconds)' 
-        };
-      }
-      
-      // If duration is not provided in metadata, we can't validate server-side
-      // This should be validated client-side before upload
-    }
+// Thoughts API
+export const getThoughts = async (limit = 20, offset = 0) => {
+  try {
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    const user = await getAuthenticatedUser();
+    const thoughts = mockThoughts.slice(offset, offset + limit);
+    
+    // Get vote counts (mock)
+    const thoughtsWithVotes = thoughts.map(thought => ({
+      ...thought,
+      upvotes_count: Math.floor(Math.random() * 20),
+      downvotes_count: Math.floor(Math.random() * 5),
+      user_vote: user ? Math.random() > 0.5 ? 'upvote' : null : null,
+      user_liked: user ? Math.random() > 0.7 : false
+    }));
+    
+    return thoughtsWithVotes;
+  } catch (error) {
+    console.error('Error fetching thoughts:', error);
+    return [];
   }
-
-  return { isValid: true };
 };
 
 export const createThought = async (thoughtData: CreateThoughtData) => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 500));
+    
+    const user = await getAuthenticatedUser();
     
     if (!user) {
       throw new Error('User not authenticated');
     }
 
-    // Validate media before creating thought
-    const validation = await validateThoughtMedia(thoughtData.media);
-    if (!validation.isValid) {
-      throw new Error(validation.error || 'Invalid media');
+    // Validate media (mock validation)
+    if (thoughtData.media && thoughtData.media.length > 0) {
+      const validTypes = ['image', 'video', 'gif'];
+      const isValidMedia = thoughtData.media.every(media => 
+        validTypes.includes(media.type) && media.url
+      );
+      
+      if (!isValidMedia) {
+        throw new Error('Invalid media format');
+      }
     }
 
-    const { data, error } = await supabase
-      .from('thoughts')
-      .insert({
-        ...thoughtData,
-        user_id: user.id,
-      })
-      .select()
-      .single();
+    const newThought: Thought = {
+      id: Date.now().toString(),
+      user_id: user.id,
+      content: thoughtData.content,
+platform: 'equyvo',
+      tags: thoughtData.tags || [],
+      comments_count: 0,
+      shares_count: 0,
+      retweets_count: 0,
+      media: thoughtData.media || null,
+      likes_count: 0,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      user_vote: null,
+      user_has_liked: false
+    };
 
-    if (error) throw error;
-    return { data, error: null };
+    // Add to mock thoughts
+    mockThoughts.unshift(newThought);
+
+    return newThought;
   } catch (error) {
     console.error('Error creating thought:', error);
-    return { data: null, error };
+    throw error;
   }
 };
 
 export const deleteThought = async (thoughtId: string) => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 300));
+    
+    const user = await getAuthenticatedUser();
     
     if (!user) {
       throw new Error('User not authenticated');
     }
 
-    const { error } = await supabase
-      .from('thoughts')
-      .delete()
-      .eq('id', thoughtId)
-      .eq('user_id', user.id);
+    // Find and remove thought from mock data
+    const index = mockThoughts.findIndex(t => t.id === thoughtId);
+    if (index === -1) {
+      throw new Error('Thought not found');
+    }
 
-    if (error) throw error;
-    return { error: null };
+    // Check if user owns the thought
+    if (mockThoughts[index].user_id !== user.id) {
+      throw new Error('Not authorized to delete this thought');
+    }
+
+    mockThoughts.splice(index, 1);
+    return true;
   } catch (error) {
     console.error('Error deleting thought:', error);
-    return { error };
+    throw error;
   }
 };
 
 // Votes API
 export const voteOnThought = async (voteData: VoteData) => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    const user = await getAuthenticatedUser();
     
     if (!user) {
       throw new Error('User not authenticated');
     }
 
-    // Check if user already voted
-    const { data: existingVote } = await supabase
-      .from('votes')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('thought_id', voteData.thought_id)
-      .single();
-
-    let result;
-    
-    if (existingVote) {
-      // Update existing vote
-      if (existingVote.vote_type === voteData.vote_type) {
-        // Remove vote if same type
-        result = await supabase
-          .from('votes')
-          .delete()
-          .eq('user_id', user.id)
-          .eq('thought_id', voteData.thought_id);
-      } else {
-        // Change vote type
-        result = await supabase
-          .from('votes')
-          .update({ vote_type: voteData.vote_type })
-          .eq('user_id', user.id)
-          .eq('thought_id', voteData.thought_id);
-      }
-    } else {
-      // Create new vote
-      result = await supabase
-        .from('votes')
-        .insert({
-          ...voteData,
-          user_id: user.id,
-        });
+    // Find thought
+    const thought = mockThoughts.find(t => t.id === voteData.thought_id);
+    if (!thought) {
+      throw new Error('Thought not found');
     }
 
-    if (result.error) throw result.error;
+    // Mock vote processing
+    console.log('Vote processed:', voteData);
     
-    // Get updated vote counts
-    const { data: thought } = await supabase
-      .from('thoughts')
-      .select('likes_count')
-      .eq('id', voteData.thought_id)
-      .single();
-
-    // Get upvotes and downvotes count
-    const { data: upvotes } = await supabase
-      .from('votes')
-      .select('id')
-      .eq('thought_id', voteData.thought_id)
-      .eq('vote_type', 'upvote');
-
-    const { data: downvotes } = await supabase
-      .from('votes')
-      .select('id')
-      .eq('thought_id', voteData.thought_id)
-      .eq('vote_type', 'downvote');
-
-    return { 
-      data: {
-        upvotes_count: upvotes?.length || 0,
-        downvotes_count: downvotes?.length || 0,
-        user_vote: existingVote?.vote_type === voteData.vote_type ? null : voteData.vote_type
-      }, 
-      error: null 
+    return {
+      success: true,
+      upvotes_count: Math.floor(Math.random() * 20),
+      downvotes_count: Math.floor(Math.random() * 5),
+      user_vote: voteData.vote_type
     };
   } catch (error) {
     console.error('Error voting on thought:', error);
-    return { data: null, error };
+    throw error;
   }
 };
 
 export const getThoughtVotes = async (thoughtId: string) => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 200));
     
-    // Get vote counts
-    const { data: upvotes } = await supabase
-      .from('votes')
-      .select('id')
-      .eq('thought_id', thoughtId)
-      .eq('vote_type', 'upvote');
-
-    const { data: downvotes } = await supabase
-      .from('votes')
-      .select('id')
-      .eq('thought_id', thoughtId)
-      .eq('vote_type', 'downvote');
-
-    let userVote = null;
-    if (user) {
-      const { data: userVoteData } = await supabase
-        .from('votes')
-        .select('vote_type')
-        .eq('thought_id', thoughtId)
-        .eq('user_id', user.id)
-        .single();
-      
-      userVote = userVoteData?.vote_type || null;
-    }
-
+    const user = await getAuthenticatedUser();
+    
+    // Mock vote data
+    const upvotes_count = Math.floor(Math.random() * 20);
+    const downvotes_count = Math.floor(Math.random() * 5);
+    
     return {
-      data: {
-        upvotes_count: upvotes?.length || 0,
-        downvotes_count: downvotes?.length || 0,
-        user_vote: userVote
-      },
-      error: null
+      upvotes_count,
+      downvotes_count,
+      user_vote: user ? (Math.random() > 0.5 ? 'upvote' : null) : null
     };
   } catch (error) {
     console.error('Error getting thought votes:', error);
-    return { data: null, error };
+    return {
+      upvotes_count: 0,
+      downvotes_count: 0,
+      user_vote: null
+    };
   }
 };
 
 // Likes API
 export const likeThought = async (likeData: LikeData) => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 200));
+    
+    const user = await getAuthenticatedUser();
     
     if (!user) {
       throw new Error('User not authenticated');
     }
 
-    // Check if user already liked
-    const { data: existingLike } = await supabase
-      .from('likes')
-      .select('*')
-      .eq('user_id', user.id)
-      .eq('thought_id', likeData.thought_id)
-      .single();
-
-    let result;
-    let liked = false;
-    
-    if (existingLike) {
-      // Remove like
-      result = await supabase
-        .from('likes')
-        .delete()
-        .eq('user_id', user.id)
-        .eq('thought_id', likeData.thought_id);
-      liked = false;
-    } else {
-      // Create new like
-      result = await supabase
-        .from('likes')
-        .insert({
-          ...likeData,
-          user_id: user.id,
-        });
-      liked = true;
+    // Find thought
+    const thought = mockThoughts.find(t => t.id === likeData.thought_id);
+    if (!thought) {
+      throw new Error('Thought not found');
     }
 
-    if (result.error) throw result.error;
+    // Mock like processing
+    const liked = Math.random() > 0.5;
     
-    // Get updated likes count
-    const { data: likesCount } = await supabase
-      .from('likes')
-      .select('id')
-      .eq('thought_id', likeData.thought_id);
+    if (liked) {
+      thought.likes_count += 1;
+    } else {
+      thought.likes_count = Math.max(0, thought.likes_count - 1);
+    }
 
-    // Update thoughts table with new likes count
-    await supabase
-      .from('thoughts')
-      .update({ likes_count: likesCount?.length || 0 })
-      .eq('id', likeData.thought_id);
-
-    return { 
-      data: {
-        likes_count: likesCount?.length || 0,
-        user_has_liked: liked
-      }, 
-      error: null 
+    return {
+      liked,
+      likes_count: thought.likes_count
     };
   } catch (error) {
     console.error('Error liking thought:', error);
-    return { data: null, error };
+    throw error;
   }
 };
 
 export const getThoughtLikes = async (thoughtId: string) => {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
+    // Simulate API delay
+    await new Promise(resolve => setTimeout(resolve, 200));
     
-    // Get likes count
-    const { data: likes } = await supabase
-      .from('likes')
-      .select('id')
-      .eq('thought_id', thoughtId);
-
-    let userHasLiked = false;
-    if (user) {
-      const { data: userLikeData } = await supabase
-        .from('likes')
-        .select('id')
-        .eq('thought_id', thoughtId)
-        .eq('user_id', user.id)
-        .single();
-      
-      userHasLiked = !!userLikeData;
+    const user = await getAuthenticatedUser();
+    
+    // Find thought
+    const thought = mockThoughts.find(t => t.id === thoughtId);
+    if (!thought) {
+      throw new Error('Thought not found');
     }
 
     return {
-      data: {
-        likes_count: likes?.length || 0,
-        user_has_liked: userHasLiked
-      },
-      error: null
+      likes_count: thought.likes_count,
+      user_has_liked: user ? Math.random() > 0.7 : false
     };
   } catch (error) {
     console.error('Error getting thought likes:', error);
-    return { data: null, error };
+    return {
+      likes_count: 0,
+      user_has_liked: false
+    };
   }
 };

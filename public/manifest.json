@@ -1,7 +1,7 @@
 {
-  "name": "Interact",
-  "short_name": "Interact",
-  "description": "A social interaction platform",
+  "name": "Equyvo",
+  "short_name": "Equyvo",
+  "description": "A social platform",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0a0a0a",
@@ -9,13 +9,13 @@
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/interact_logo.png",
+      "src": "/app-icon.png",
       "sizes": "192x192",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/interact_logo.png",
+      "src": "/app-icon.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"

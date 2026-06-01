@@ -1,4 +1,4 @@
-package com.interact.app;
+package com.equyvo.app;
 
 import com.getcapacitor.BridgeActivity;
 

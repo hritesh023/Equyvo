@@ -1,6 +1,6 @@
 import React from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import InteractDeleteButton from '@/components/InteractDeleteButton';
+import EquyvoDeleteButton from '@/components/InteractDeleteButton';
 import DeleteButton from '@/components/ui/DeleteButton';
 
 const DeleteButtonDemo: React.FC = () => {
@@ -14,7 +14,7 @@ const DeleteButtonDemo: React.FC = () => {
     <div className="p-6 space-y-6 max-w-2xl mx-auto">
       <Card>
         <CardHeader>
-          <CardTitle>Interact Custom Delete Button UI</CardTitle>
+          <CardTitle>Equyvo Custom Delete Button UI</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -51,7 +51,7 @@ const DeleteButtonDemo: React.FC = () => {
             {/* Icon Only */}
             <div className="space-y-2">
               <h3 className="text-sm font-medium text-muted-foreground">Icon Only</h3>
-              <InteractDeleteButton
+              <EquyvoDeleteButton
                 onDelete={handleDelete}
                 variant="ghost"
                 size="icon"
@@ -85,7 +85,7 @@ const DeleteButtonDemo: React.FC = () => {
           <div className="mt-6 p-4 bg-muted/50 rounded-lg">
             <h3 className="text-sm font-medium mb-2">Features:</h3>
             <ul className="text-sm text-muted-foreground space-y-1">
-              <li>• Custom Interact-branded design with red accent colors</li>
+              <li>• Custom Equyvo-branded design with red accent colors</li>
               <li>• Beautiful confirmation dialog with warning icon</li>
               <li>• Loading states with spinner animation</li>
               <li>• Multiple variants and sizes</li>

@@ -11,7 +11,7 @@ export const usePlatformOptimizations = () => {
 
   // Debounce function optimized for platform
   const debounce = useCallback((
-    func: Function,
+    func: (...args: any[]) => void,
     wait: number = optimizations.performance.debounceMs
   ) => {
     let timeout: NodeJS.Timeout;
@@ -27,7 +27,7 @@ export const usePlatformOptimizations = () => {
 
   // Throttle function optimized for platform
   const throttle = useCallback((
-    func: Function,
+    func: (...args: any[]) => void,
     limit: number = optimizations.performance.throttleMs
   ) => {
     let inThrottle: boolean;
@@ -47,11 +47,12 @@ export const usePlatformOptimizations = () => {
   ) => {
     const throttledHandler = throttle(handler);
     
-    useEffect(() => {
+    // Return a function that sets up the effect
+    return () => {
       const target = element || window;
       target.addEventListener('scroll', throttledHandler, { passive: true });
       return () => target.removeEventListener('scroll', throttledHandler);
-    }, [throttledHandler, element]);
+    };
   }, [throttle]);
 
   // Optimized resize handler
@@ -60,10 +61,11 @@ export const usePlatformOptimizations = () => {
   ) => {
     const debouncedHandler = debounce(handler);
     
-    useEffect(() => {
+    // Return a function that sets up the effect
+    return () => {
       window.addEventListener('resize', debouncedHandler, { passive: true });
       return () => window.removeEventListener('resize', debouncedHandler);
-    }, [debouncedHandler]);
+    };
   }, [debounce]);
 
   // Optimized touch handlers
@@ -144,7 +146,7 @@ export const usePlatformOptimizations = () => {
   }, [optimizations.animation, deviceCapabilities.prefersReducedMotion]);
 
   // Performance monitoring
-  const measurePerformance = useCallback((name: string, fn: Function) => {
+  const measurePerformance = useCallback((name: string, fn: () => void) => {
     if (process.env.NODE_ENV !== 'production') {
       const start = performance.now();
       const result = fn();

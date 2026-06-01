@@ -12,7 +12,7 @@ import {
 import { showSuccess, showError } from '@/utils/toast';
 import SaveButton from './SaveButton';
 import LongFormVideos from './LongFormVideos';
-import { supabase } from '@/lib/supabase';
+import { getAuthenticatedUser } from '@/lib/auth';
 
 interface VideoPlayerProps {
   video?: any;
@@ -155,34 +155,28 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Get current user and check if they've liked the video
   useEffect(() => {
     const getCurrentUser = async () => {
-      const { data: { user } } = await supabase.auth.getUser();
-      setCurrentUser(user);
+      const user = await getAuthenticatedUser();
+      setCurrentUser(user as any);
       
       if (user && currentVideo?.id) {
-        checkIfUserLikedVideo(user.id, currentVideo.id);
+        // Mock like check
+        const hasLiked = localStorage.getItem(`liked_${currentVideo.id}`) === 'true';
+        setIsLiked(hasLiked);
+        setLikeCount(prev => hasLiked ? prev + 1 : prev);
       }
     };
     
     getCurrentUser();
   }, [currentVideo?.id]);
 
-  // Check if user has already liked this video
+  // Check if user has already liked this video (mock implementation)
   const checkIfUserLikedVideo = async (userId: string, videoId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('video_likes')
-        .select('*')
-        .eq('user_id', userId)
-        .eq('video_id', videoId)
-        .single();
-      
-      if (data && !error) {
-        setIsLiked(true);
-        setUserLikes(prev => new Set(prev).add(videoId));
-      }
+      // Mock check using localStorage
+      const hasLiked = localStorage.getItem(`liked_${videoId}`) === 'true';
+      setIsLiked(hasLiked);
     } catch (error) {
-      // User hasn't liked the video yet
-      setIsLiked(false);
+      console.error('Error checking like status:', error);
     }
   };
 
@@ -272,47 +266,19 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
     try {
       if (newIsLiked) {
-        // Add like
-        const { error } = await supabase
-          .from('video_likes')
-          .insert({
-            user_id: userId,
-            video_id: videoId,
-            created_at: new Date().toISOString()
-          });
-
-        if (error) {
-          throw error;
-        }
-
-        setIsLiked(true);
-        setLikeCount(prevCount => prevCount + 1);
-        setUserLikes(prev => new Set(prev).add(videoId));
+        // Add like (mock implementation)
+        localStorage.setItem(`liked_${videoId}`, 'true');
+        setLikeCount(prev => prev + 1);
         showSuccess('Video liked!');
       } else {
-        // Remove like
-        const { error } = await supabase
-          .from('video_likes')
-          .delete()
-          .eq('user_id', userId)
-          .eq('video_id', videoId);
-
-        if (error) {
-          throw error;
-        }
-
-        setIsLiked(false);
-        setLikeCount(prevCount => prevCount - 1);
-        setUserLikes(prev => {
-          const newSet = new Set(prev);
-          newSet.delete(videoId);
-          return newSet;
-        });
+        // Remove like (mock implementation)
+        localStorage.setItem(`liked_${videoId}`, 'false');
+        setLikeCount(prev => Math.max(0, prev - 1));
         showSuccess('Like removed');
       }
     } catch (error) {
       console.error('Error updating like:', error);
-      showError('Failed to update like. Please try again.');
+      showError('Failed to update like');
     }
   };
 

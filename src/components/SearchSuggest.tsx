@@ -14,6 +14,7 @@ interface SearchSuggestProps {
   showTrending?: boolean;
   maxSuggestions?: number;
   autoFocus?: boolean;
+  hideKeyboardShortcuts?: boolean;
 }
 
 const SearchSuggest: React.FC<SearchSuggestProps> = ({
@@ -22,7 +23,8 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   className,
   showTrending = true,
   maxSuggestions = 8,
-  autoFocus = false
+  autoFocus = false,
+  hideKeyboardShortcuts = false
 }) => {
   const navigate = useNavigate();
   const [query, setQuery] = useState('');
@@ -42,7 +44,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
       (window as any).gtag('event', 'search', {
         search_term: searchQuery,
         action: action,
-        category: 'search_interaction'
+        category: 'search_engagement'
       });
     }
     
@@ -408,23 +410,25 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                   </div>
                 )}
 
-                {/* Search footer */}
-                <div className="p-3 border-t border-border/30 bg-muted/30">
-                  <div className="flex items-center justify-between text-xs text-muted-foreground">
-                    <div className="flex items-center gap-2">
-                      <Sparkles className="h-3 w-3" />
-                      <span>Powered by AI</span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">↑↓</kbd>
-                      <span>Navigate</span>
-                      <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">Enter</kbd>
-                      <span>Select</span>
-                      <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">Esc</kbd>
-                      <span>Close</span>
+                {/* Search footer - Hidden on mobile */}
+                {!hideKeyboardShortcuts && (
+                  <div className="hidden md:flex p-3 border-t border-border/30 bg-muted/30">
+                    <div className="flex items-center justify-between text-xs text-muted-foreground">
+                      <div className="flex items-center gap-2">
+                        <Sparkles className="h-3 w-3" />
+                        <span>Powered by AI</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">↑↓</kbd>
+                        <span>Navigate</span>
+                        <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">Enter</kbd>
+                        <span>Select</span>
+                        <kbd className="px-1.5 py-0.5 bg-background border border-border rounded text-xs">Esc</kbd>
+                        <span>Close</span>
+                      </div>
                     </div>
                   </div>
-                </div>
+                )}
               </>
             )}
           </div>

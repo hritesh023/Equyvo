@@ -1,7 +1,7 @@
-# Interact App - Production Deployment Guide
+# Equyvo App - Production Deployment Guide
 
 ## Overview
-The Interact social media app is a comprehensive React application with TypeScript, optimized for production deployment.
+The Equyvo social media app is a comprehensive React application with TypeScript, optimized for production deployment.
 
 ## Build & Deployment
 
@@ -45,7 +45,7 @@ VITE_SUPABASE_URL=your_supabase_url
 VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
 
 # App Configuration
-VITE_APP_NAME=Interact
+VITE_APP_NAME=Equyvo
 VITE_APP_VERSION=1.0.0
 ```
 

@@ -175,7 +175,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
             <div className="mt-4 space-y-2">
               <p className="text-sm text-gray-400">Suggestions to follow:</p>
               <div className="flex justify-center gap-2 flex-wrap">
-                {['Interact Official', 'Tech Enthusiast', 'Emma Thompson'].map(account => (
+                {['Equyvo Official', 'Tech Enthusiast', 'Emma Thompson'].map(account => (
                   <Button key={account} variant="outline" size="sm" className="text-xs">
                     Follow {account}
                   </Button>
@@ -190,7 +190,14 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
                     <div className="relative">
-                      <Avatar className="h-10 w-10">
+                      <Avatar 
+                        className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                        onClick={() => {
+                          // Navigate to user profile when avatar is clicked
+                          console.log(`Navigate to ${post.user}'s profile`);
+                        }}
+                        title={`${post.user}'s Profile`}
+                      >
                         <AvatarImage src={post.avatar} />
                         <AvatarFallback>{post.user.substring(0, 2)}</AvatarFallback>
                       </Avatar>
@@ -246,7 +253,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     />
                   )}
                   
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                     {post.type === 'thought' ? (
                       <VotingButtons
                         thoughtId={post.id}

@@ -1,10 +1,10 @@
-# Interact Custom Delete Button
+# Equyvo Custom Delete Button
 
-A beautiful, custom-styled delete button component that provides a consistent user experience across the Interact app.
+A beautiful, custom-styled delete button component that provides a consistent user experience across the Equyvo app.
 
 ## Features
 
-- 🎨 **Custom Interact Design** - Matches the app's design language with red accent colors
+- 🎨 **Custom Equyvo Design** - Matches the app's design language with red accent colors
 - ⚠️ **Confirmation Dialog** - Beautiful alert dialog with warning icon and clear messaging
 - 🔄 **Loading States** - Shows spinner animation during deletion
 - 🌙 **Dark Mode Support** - Fully compatible with dark theme
@@ -75,7 +75,7 @@ The delete button is already integrated into:
 
 ## Styling
 
-The button uses Tailwind CSS classes with custom Interact theming:
+The button uses Tailwind CSS classes with custom Equyvo theming:
 
 - Red accent colors (`text-red-600`, `hover:bg-red-50`)
 - Smooth transitions (`transition-all duration-200`)

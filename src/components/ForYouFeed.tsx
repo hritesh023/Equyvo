@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Repeat, Maximize, Sparkles, Eye, MessageCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import FollowButton from './FollowButton';
 import CommentSection from './CommentSection';
 import FullscreenViewer from './FullscreenViewer';
@@ -16,6 +17,7 @@ import EditProfileContentModal from './EditProfileContentModal';
 import { showSuccess, showError } from '@/utils/toast';
 import { deleteContent, confirmDelete } from '@/utils/delete';
 import { Post } from '@/types';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 interface ExtendedPost extends Post {
   type: 'post' | 'thought' | 'reacted';
@@ -79,6 +81,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
   currentUserId,
   isProfilePage = false
 }) => {
+  const navigate = useNavigate();
   const [recommendedPosts, setRecommendedPosts] = useState<Post[]>([]);
   const [showCommentSection, setShowCommentSection] = useState(false);
   const [currentPostId, setCurrentPostId] = useState<string>('');
@@ -244,7 +247,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
           <div className="text-center py-8">
             <Sparkles className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No personalized content yet</p>
-            <p className="text-gray-400 text-sm mt-1">Start interacting with posts to get better recommendations</p>
+            <p className="text-gray-400 text-sm mt-1">Start engaging with posts to get better recommendations</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -252,7 +255,14 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
               <Card key={post.id} className="p-4 slide-up border-l-4 border-l-yellow-400">
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10">
+                    <Avatar 
+                      className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                      onClick={() => {
+                        // Navigate to user profile when avatar is clicked
+                        navigateToProfile(navigate, post.id, post.user);
+                      }}
+                      title={`${post.user}'s Profile`}
+                    >
                       <AvatarImage src={post.avatar} />
                       <AvatarFallback>{post.user.substring(0, 2)}</AvatarFallback>
                     </Avatar>
@@ -306,7 +316,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     />
                   )}
                   
-                  <div className="flex items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                     {post.type === 'thought' ? (
                       <VotingButtons
                         thoughtId={post.id}

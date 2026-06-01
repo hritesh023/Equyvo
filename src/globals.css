@@ -298,11 +298,11 @@
   }
 
   /* Professional app improvements */
-  .interact-gradient {
+  .equyvo-gradient {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   }
 
-  .interact-text-gradient {
+  .equyvo-text-gradient {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
@@ -482,7 +482,7 @@
     box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.2), 0 0 25px rgba(102, 126, 234, 0.15);
   }
 
-  /* Premium micro-interactions */
+  /* Premium micro-animations */
   .micro-bounce:hover {
     animation: microBounce 0.3s ease;
   }
@@ -555,35 +555,35 @@
     background-size: 200% 100%;
   }
 
-  /* Additional UI improvements for interact app */
-  .interact-button {
+  /* Additional UI improvements for equyvo app */
+  .equyvo-button {
     @apply transition-all duration-200 transform hover:scale-105 active:scale-95;
   }
 
-  .interact-card {
+  .equyvo-card {
     @apply transition-all duration-300 hover:shadow-lg hover:-translate-y-1;
   }
 
-  .interact-input {
+  .equyvo-input {
     @apply transition-all duration-200 focus:ring-2 focus:ring-primary/20;
   }
 
   /* Better spacing and layout */
-  .interact-container {
+  .equyvo-container {
     @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
   }
 
   /* Enhanced mobile-first responsive improvements */
   @media (max-width: 640px) {
-    .interact-mobile-full {
+    .equyvo-mobile-full {
       @apply w-full !important;
     }
     
-    .interact-mobile-stack {
+    .equyvo-mobile-stack {
       @apply flex-col !important;
     }
     
-    .interact-mobile-center {
+    .equyvo-mobile-center {
       @apply text-center !important;
     }
 
@@ -638,35 +638,35 @@
   }
 
   /* Enhanced loading states */
-  .interact-loading {
+  .equyvo-loading {
     @apply animate-pulse bg-muted;
   }
 
   /* Better focus states */
-  .interact-focus-ring:focus {
+  .equyvo-focus-ring:focus {
     @apply ring-2 ring-primary ring-offset-2 ring-offset-background;
   }
 
   /* Improved button variants */
-  .btn-interact-primary {
+  .btn-equyvo-primary {
     @apply bg-primary text-primary-foreground hover:bg-primary/90 transition-colors;
   }
 
-  .btn-interact-secondary {
+  .btn-equyvo-secondary {
     @apply bg-secondary text-secondary-foreground hover:bg-secondary/80 transition-colors;
   }
 
   /* Better text rendering */
-  .interact-text {
+  .equyvo-text {
     @apply leading-relaxed;
   }
 
   /* Improved shadows */
-  .interact-shadow {
+  .equyvo-shadow {
     box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
   }
 
-  .interact-shadow-lg {
+  .equyvo-shadow-lg {
     box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
   }
 
@@ -680,21 +680,61 @@
     padding-bottom: env(safe-area-inset-bottom, 0);
   }
 
+  /* Fix mobile navbar bottom spacing */
+  @media (max-width: 767px) {
+    .fixed.bottom-0 {
+      bottom: 0 !important;
+      margin-bottom: 0 !important;
+      padding-bottom: env(safe-area-inset-bottom, 0) !important;
+    }
+  }
+
   /* Enhanced mobile navigation with safe area and better touch targets */
-  @media (max-width: 768px) {
+  @media (max-width: 767px) {
+    /* Ensure proper mobile viewport handling */
+    html, body {
+      width: 100vw;
+      height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+      top: 0;
+      left: 0;
+      -webkit-text-size-adjust: 100%;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    /* Root container for mobile */
+    #root {
+      width: 100vw;
+      height: 100vh;
+      overflow-x: hidden;
+      position: relative;
+    }
+
+    /* Portrait mobile specific styles */
     .mobile-nav-safe {
-      padding-bottom: calc(env(safe-area-inset-bottom, 0) + 0.5rem);
-      padding-top: 0.5rem;
+      padding-bottom: calc(env(safe-area-inset-bottom, 0) + 0.25rem);
+      padding-top: 0.25rem;
+      height: auto;
+      min-height: 3.5rem;
+      max-height: 4rem;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
     }
 
     /* Mobile top safe area for notch and status bar */
     .mobile-top-safe {
-      padding-top: calc(env(safe-area-inset-top, 0) + 0.5rem);
+      padding-top: calc(env(safe-area-inset-top, 0) + 0.25rem);
+      height: auto;
+      min-height: 2.75rem;
+      max-height: 3.25rem;
     }
 
-    /* Better mobile navigation items */
+    /* Better mobile navigation items for portrait */
     .mobile-nav-item {
-      @apply flex flex-col items-center justify-center p-1 min-h-[44px] min-w-[44px];
+      @apply flex flex-col items-center justify-center p-1 min-h-[40px] min-w-[40px];
       @apply transition-colors hover:text-primary active:scale-95;
       @apply rounded-lg;
     }
@@ -709,36 +749,123 @@
       @apply text-muted-foreground hover:text-foreground hover:bg-accent/20;
     }
 
-    /* Mobile 16:9 fullscreen container */
-    .mobile-fullscreen-16x9 {
-      width: 100vw;
-      height: 56.25vw; /* 16:9 aspect ratio (9/16 = 0.5625) */
-      max-height: 100vh;
-      max-width: 177.78vh; /* 16/9 = 1.7778 */
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: black;
-      z-index: 999999;
-    }
-
-    /* Mobile fullscreen content */
-    .mobile-fullscreen-content {
-      width: 100%;
-      height: 100%;
-      object-fit: contain;
-      position: relative;
-    }
-
-    /* Adjust main content for mobile top bar */
+    /* Adjust main content for portrait mobile - ensure proper viewport fitting */
     .mobile-main-content {
-      padding-top: calc(env(safe-area-inset-top, 0) + 3.5rem);
-      padding-bottom: calc(env(safe-area-inset-bottom, 0) + 4rem);
+      padding-top: calc(env(safe-area-inset-top, 0) + 3rem);
+      padding-bottom: calc(env(safe-area-inset-bottom, 0) + 3rem);
+      min-height: 100vh;
+      max-height: 100vh;
+      box-sizing: border-box;
+      overflow-y: auto;
+      width: 100vw;
+      overflow-x: hidden;
+    }
+
+    /* Prevent zoom on input focus */
+    input, textarea, select {
+      font-size: 16px !important;
+      -webkit-appearance: none;
+      -webkit-border-radius: 0;
+      border-radius: 0;
+    }
+
+    /* Better mobile dialog handling */
+    .dialog-mobile-full {
+      width: 100vw;
+      height: 100vh;
+      max-width: 100vw;
+      max-height: 100vh;
+      margin: 0;
+      border-radius: 0;
+    }
+
+    /* Ensure mobile dialogs don't cause overflow */
+    [role="dialog"] {
+      max-height: 90vh;
+      overflow: hidden;
     }
   }
 
-  /* Enhanced content visibility improvements */
+  /* Tablet and small desktop styles (768px - 1024px) */
+  @media (min-width: 768px) and (max-width: 1024px) {
+    .mobile-nav-safe {
+      padding-bottom: calc(env(safe-area-inset-bottom, 0) + 0.5rem);
+      padding-top: 0.5rem;
+    }
+
+    .mobile-top-safe {
+      padding-top: calc(env(safe-area-inset-top, 0) + 0.5rem);
+    }
+
+    .mobile-nav-item {
+      @apply flex flex-col items-center justify-center p-1 min-h-[44px] min-w-[44px];
+      @apply transition-colors hover:text-primary active:scale-95;
+      @apply rounded-lg;
+    }
+
+    .mobile-nav-active {
+      @apply bg-primary/10 text-primary scale-105;
+    }
+
+    .mobile-nav-inactive {
+      @apply text-muted-foreground hover:text-foreground hover:bg-accent/20;
+    }
+
+    .mobile-main-content {
+      padding-top: calc(env(safe-area-inset-top, 0) + 3.5rem);
+      padding-bottom: calc(env(safe-area-inset-bottom, 0) + 3.5rem);
+    }
+  }
+
+  /* Enhanced safe area support for notched devices */
+  @supports (padding: max(0px)) {
+    .safe-area-padding {
+      padding-left: max(1rem, env(safe-area-inset-left));
+      padding-right: max(1rem, env(safe-area-inset-right));
+      padding-top: max(1rem, env(safe-area-inset-top));
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+
+    .safe-area-padding-horizontal {
+      padding-left: max(1rem, env(safe-area-inset-left));
+      padding-right: max(1rem, env(safe-area-inset-right));
+    }
+
+    .safe-area-padding-vertical {
+      padding-top: max(1rem, env(safe-area-inset-top));
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+    }
+
+    .safe-area-margin {
+      margin-left: max(0px, env(safe-area-inset-left));
+      margin-right: max(0px, env(safe-area-inset-right));
+      margin-top: max(0px, env(safe-area-inset-top));
+      margin-bottom: max(0px, env(safe-area-inset-bottom));
+    }
+
+    .safe-area-margin-horizontal {
+      margin-left: max(0px, env(safe-area-inset-left));
+      margin-right: max(0px, env(safe-area-inset-right));
+    }
+
+    .safe-area-margin-vertical {
+      margin-top: max(0px, env(safe-area-inset-top));
+      margin-bottom: max(0px, env(safe-area-inset-bottom));
+    }
+  }
+
+  /* Notch-aware mobile navigation adjustments */
+  @media (max-width: 1024px) {
+    .notch-aware-nav {
+      padding-left: max(0.5rem, env(safe-area-inset-left));
+      padding-right: max(0.5rem, env(safe-area-inset-right));
+    }
+
+    .notch-aware-content {
+      padding-left: max(1rem, env(safe-area-inset-left));
+      padding-right: max(1rem, env(safe-area-inset-right));
+    }
+  }
   .content-thumbnail {
     @apply relative overflow-hidden;
   }
@@ -906,8 +1033,8 @@
     @apply space-y-2;
   }
 
-  /* Better contrast for interactive elements */
-  .interactive-element {
+  /* Better contrast for actionable elements */
+  .actionable-element {
     @apply hover:bg-gray-100 dark:hover:bg-gray-800 active:bg-gray-200 dark:active:bg-gray-700 transition-colors;
   }
 
@@ -1055,7 +1182,7 @@
     }
   }
 
-  /* Enhanced button interactions */
+  /* Enhanced button feedback */
   .btn-press {
     transition: all 0.15s ease;
   }
@@ -1101,6 +1228,23 @@
     @apply transition-colors hover:text-primary active:scale-95;
   }
 
+  /* Fix mobile navbar full width issue */
+  .mobile-navbar-full-width {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    width: 100vw !important;
+    min-width: 100vw !important;
+    max-width: 100vw !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    z-index: 50 !important;
+    border: none !important;
+  }
+
   /* Enhanced story indicators */
   .story-ring {
     @apply bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 p-0.5 rounded-full;
@@ -1110,7 +1254,7 @@
     @apply bg-gray-300 dark:bg-gray-600;
   }
 
-  /* Enhanced mobile cards with better shadows and interactions */
+  /* Enhanced mobile cards with better shadows and feedback */
   .mobile-card {
     @apply bg-card border border-border rounded-lg overflow-hidden;
     @apply transition-all duration-200 hover:shadow-md hover:-translate-y-0.5;

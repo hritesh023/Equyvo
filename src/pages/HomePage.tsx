@@ -19,11 +19,14 @@ import FollowingFeed from '@/components/FollowingFeed';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
-import { supabase } from '@/lib/supabase';
+import { getAuthenticatedUser } from '@/lib/auth';
 import { FullscreenContent, Post } from '@/types';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 const HomePage = () => {
   const navigate = useNavigate();
+  const isMobile = useIsMobile();
   const [showStoryViewer, setShowStoryViewer] = useState(false);
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
   const [savedStories, setSavedStories] = useState<Set<string>>(new Set());
@@ -40,7 +43,7 @@ const HomePage = () => {
   const [followedCreators, setFollowedCreators] = useState<Set<string>>(new Set());
   const [userHasStories, setUserHasStories] = useState(false);
   const [activeTab, setActiveTab] = useState<'foryou' | 'following'>('foryou');
-  const [followingAccounts, setFollowingAccounts] = useState<string[]>(['Interact Official', 'Emma Thompson', 'Tech Enthusiast']);
+  const [followingAccounts, setFollowingAccounts] = useState<string[]>(['Equyvo Official', 'Emma Thompson', 'Tech Enthusiast']);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   
   // Real posts data from Supabase with bot content fallback
@@ -51,10 +54,10 @@ const HomePage = () => {
   const botPosts: Post[] = [
     {
       id: 'p1',
-      user: 'Interact Official',
+      user: 'Equyvo Official',
       avatar: 'https://github.com/shadcn.png',
       time: '2 hours ago',
-      content: 'Welcome to Interact! We are excited to build this community with you. Share your first thought!',
+      content: 'Welcome to Equyvo! We are excited to build this community with you. Share your first thought!',
       image: null,
       likes: 120,
       reacts: 15,
@@ -111,29 +114,25 @@ const HomePage = () => {
     }
   ];
 
-  // Fetch posts from Supabase, fallback to bot content if no real data
+  // Fetch posts using mock data
   useEffect(() => {
     const loadPosts = async () => {
       try {
         setIsLoadingPosts(true);
-        const { data: { user } } = await supabase?.auth.getUser() || { data: { user: null } };
+        const user = await getAuthenticatedUser();
         const posts = await fetchPosts(user?.id);
         
-        // If no real posts exist, show bot content
-        if (posts.length === 0) {
-          setEnhancedPosts(botPosts);
-        } else {
-          setEnhancedPosts(posts);
-        }
+        // Combine with bot content for better demo experience
+        const combinedPosts = [...posts, ...botPosts];
+        setEnhancedPosts(combinedPosts);
       } catch (error) {
         console.error('Error loading posts:', error);
-        // Fallback to bot content on error
         setEnhancedPosts(botPosts);
       } finally {
         setIsLoadingPosts(false);
       }
     };
-
+    
     loadPosts();
   }, []);
 
@@ -164,64 +163,7 @@ const HomePage = () => {
     };
   }, []);
 
-  // Handle reopening fullscreen from minimized state
-  useEffect(() => {
-    const handleReopenFullscreen = (event: CustomEvent) => {
-      const { content, currentTime, isPaused, isFromMinimized } = event.detail;
-      
-      // Restore the content and state
-      setFullscreenContent(content);
-      setFullscreenType(content.type || 'moment');
-      
-      // Restore video state after a short delay to ensure video element is ready
-      if (isFromMinimized && (currentTime !== undefined || isPaused !== undefined)) {
-        setTimeout(() => {
-          const video = document.querySelector('video') as HTMLVideoElement;
-          if (video) {
-            if (currentTime !== undefined) {
-              video.currentTime = currentTime;
-            }
-            if (isPaused === false) {
-              video.play().catch(e => console.log('Auto-play prevented:', e));
-            }
-          }
-        }, 500);
-      }
-    };
-
-    // Handle split view video selection
-    const handleSplitViewVideoSelected = (event: CustomEvent) => {
-      const { content } = event.detail;
-      
-      // Set the new content immediately
-      setFullscreenContent(content);
-      setFullscreenType(content.type || 'video');
-      
-      // Clear temp content to avoid duplicate processing
-      (window as { tempFullscreenContent?: FullscreenContent }).tempFullscreenContent = null;
-    };
-
-    window.addEventListener('reopenFullscreen', handleReopenFullscreen as EventListener);
-    window.addEventListener('splitViewVideoSelected', handleSplitViewVideoSelected as EventListener);
-    
-    return () => {
-      window.removeEventListener('reopenFullscreen', handleReopenFullscreen as EventListener);
-      window.removeEventListener('splitViewVideoSelected', handleSplitViewVideoSelected as EventListener);
-    };
-  }, []);
-
-  // Check for temp content when fullscreen viewer closes
-  useEffect(() => {
-    const windowWithTemp = window as { tempFullscreenContent?: FullscreenContent };
-    if (!fullscreenContent && windowWithTemp.tempFullscreenContent) {
-      const tempContent = windowWithTemp.tempFullscreenContent!;
-      windowWithTemp.tempFullscreenContent = null;
-      setFullscreenContent(tempContent);
-      setFullscreenType(tempContent.type || 'video');
-    }
-  }, [fullscreenContent]);
-  
-  // Real stories data from Supabase with bot content fallback
+  // Real stories data from mock data
   const [stories, setStories] = useState<any[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(true);
 
@@ -234,32 +176,25 @@ const HomePage = () => {
     { id: '5', user: 'Eve', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=300&h=500&fit=crop', time: '12 hours ago' },
   ];
 
-  // Fetch stories from Supabase, fallback to bot content if no real data
+  // Fetch stories using mock data
   useEffect(() => {
     const loadStories = async () => {
       try {
         setIsLoadingStories(true);
-        const storiesData = await fetchStories();
-        
-        // If no real stories exist, show bot content
-        if (storiesData.length === 0) {
-          setStories(botStories);
-        } else {
-          setStories(storiesData);
-        }
+        const stories = await fetchStories();
+        setStories(stories.length > 0 ? stories : botStories);
       } catch (error) {
         console.error('Error loading stories:', error);
-        // Fallback to bot content on error
         setStories(botStories);
       } finally {
         setIsLoadingStories(false);
       }
     };
-
+    
     loadStories();
   }, []);
 
-  // Real moments data from Supabase with bot content fallback
+  // Real moments data from mock data
   const [moments, setMoments] = useState<any[]>([]);
   const [isLoadingMoments, setIsLoadingMoments] = useState(true);
 
@@ -319,28 +254,21 @@ const HomePage = () => {
     },
   ];
 
-  // Fetch moments from Supabase, fallback to bot content if no real data
+  // Fetch moments using mock data
   useEffect(() => {
     const loadMoments = async () => {
       try {
         setIsLoadingMoments(true);
-        const momentsData = await fetchMoments();
-        
-        // If no real moments exist, show bot content
-        if (momentsData.length === 0) {
-          setMoments(botMoments);
-        } else {
-          setMoments(momentsData);
-        }
+        const moments = await fetchMoments();
+        setMoments(moments.length > 0 ? moments : botMoments);
       } catch (error) {
         console.error('Error loading moments:', error);
-        // Fallback to bot content on error
         setMoments(botMoments);
       } finally {
         setIsLoadingMoments(false);
       }
     };
-
+    
     loadMoments();
   }, []);
 
@@ -426,7 +354,7 @@ const HomePage = () => {
     setFullscreenContent(null);
   };
 
-  // Post interaction handlers
+  // Post action handlers
   const handleLikePost = (postId: string) => {
     setLikedPosts(prev => {
       const newSet = new Set(prev);
@@ -490,7 +418,7 @@ const HomePage = () => {
     if (navigator.share) {
       navigator.share({
         title: 'Check out this post!',
-        text: 'Amazing content on Interact',
+        text: 'Amazing content on Equyvo',
         url: window.location.href
       }).catch(() => {
         navigator.clipboard.writeText(window.location.href);
@@ -577,37 +505,32 @@ const HomePage = () => {
     });
   };
 
-  const handleContentChange = (content: FullscreenContent) => {
-    setFullscreenContent(content);
-    setFullscreenType(content.type || 'video');
-  };
-
   return (
-    <div className="flex gap-6 relative">
+    <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 relative w-full">
       {/* Main Content Feed */}
-      <div className="flex-1 space-y-8 max-w-2xl mx-auto w-full">
+      <div className="flex-1 space-y-4 lg:space-y-8 w-full lg:max-w-2xl lg:mx-0 px-4 sm:px-6 lg:px-0">
 
         {/* Story Panel (Facebook Style but Unique) */}
         <div className="relative">
           <ScrollArea className="w-full whitespace-nowrap rounded-xl">
-            <div className="flex space-x-4 p-1">
+            <div className="flex space-x-3 lg:space-x-4 p-1">
               {/* Add Story Button */}
               <div 
-                className="relative w-32 h-52 flex-shrink-0 cursor-pointer group"
+                className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0 cursor-pointer group"
                 onClick={handleCreateStoryClick}
               >
                 <div className="absolute inset-0 bg-secondary rounded-xl overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
                   <div className="h-2/3 bg-primary/20 flex items-center justify-center">
-                    <Avatar className="w-16 h-16 border-4 border-background">
+                    <Avatar className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-background">
                       <AvatarImage src="https://github.com/shadcn.png" />
-                      <AvatarFallback>ME</AvatarFallback>
+                      <AvatarFallback className="text-xs lg:text-sm">ME</AvatarFallback>
                     </Avatar>
                   </div>
-                  <div className="h-1/3 bg-secondary flex flex-col items-center justify-start pt-6 relative">
-                    <div className="absolute -top-4 w-8 h-8 bg-primary rounded-full flex items-center justify-center border-4 border-secondary text-white shadow-lg">
-                      <Plus className="w-5 h-5" />
+                  <div className="h-1/3 bg-secondary flex flex-col items-center justify-start pt-4 lg:pt-6 relative">
+                    <div className="absolute -top-3 lg:-top-4 w-6 h-6 lg:w-8 lg:h-8 bg-primary rounded-full flex items-center justify-center border-4 border-secondary text-white shadow-lg">
+                      <Plus className="w-3 h-3 lg:w-5 lg:h-5" />
                     </div>
-                    <span className="font-semibold text-sm">Create Story</span>
+                    <span className="font-semibold text-xs lg:text-sm">Create Story</span>
                   </div>
                 </div>
               </div>
@@ -616,33 +539,42 @@ const HomePage = () => {
               {isLoadingStories ? (
                 // Loading skeleton for stories
                 Array.from({ length: 5 }).map((_, index) => (
-                  <div key={`skeleton-${index}`} className="relative w-32 h-52 flex-shrink-0">
+                  <div key={`skeleton-${index}`} className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0">
                     <div className="absolute inset-0 bg-gray-200 rounded-xl animate-pulse" />
                   </div>
                 ))
               ) : stories.length === 0 ? (
                 // Empty state for stories
-                <div className="flex items-center justify-center w-full h-52 text-muted-foreground">
-                  <p>No stories available yet</p>
+                <div className="flex items-center justify-center w-full h-44 lg:h-52 text-muted-foreground">
+                  <p className="text-xs lg:text-sm">No stories available yet</p>
                 </div>
               ) : (
                 // Real stories
                 stories.map((story, index) => (
                   <div 
                     key={story.id} 
-                    className="relative w-32 h-52 flex-shrink-0 cursor-pointer group"
+                    className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0 cursor-pointer group"
                     onClick={() => handleStoryClick(index)}
                   >
-                    <div className="absolute inset-0 rounded-xl overflow-hidden transition-transform duration-300 group-hover:scale-[1.02] shadow-sm hover:shadow-lg">
-                      <img src={story.image} alt={story.user} className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110" />
-                      <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent to-transparent" />
-                      <div className="absolute top-2 left-2 w-10 h-10 rounded-full border-2 border-primary p-0.5 z-10">
-                        <Avatar className="w-full h-full border-2 border-black">
+                    <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-pink-400 rounded-xl overflow-hidden">
+                      <div className="absolute top-2 left-2 w-8 h-8 lg:w-10 lg:h-10 rounded-full border-2 border-primary p-0.5 z-10">
+                        <Avatar 
+                          className="w-full h-full border-2 border-black cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            navigateToProfile(navigate, story.userId, story.user);
+                          }}
+                          title={`${story.user}'s Profile`}
+                        >
                           <AvatarImage src={story.avatar} />
-                          <AvatarFallback>{story.user[0]}</AvatarFallback>
+                          <AvatarFallback>{story.user.substring(0, 2)}</AvatarFallback>
                         </Avatar>
                       </div>
-                      <span className="absolute bottom-3 left-3 text-white font-bold text-sm tracking-wide z-10">{story.user}</span>
+                      <img src={story.image} alt={story.user} className="w-full h-full object-cover" />
+                      <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+                        <p className="text-white text-xs font-medium truncate">{story.user}</p>
+                        <p className="text-white/80 text-xs">{story.time}</p>
+                      </div>
                     </div>
                   </div>
                 ))
@@ -670,21 +602,21 @@ const HomePage = () => {
             onComment={handleComment}
             onLike={handleLikeMoment}
             likedMoments={likedMoments}
-            isHomePage={false}
-            isMomentsPage={true}
+            isHomePage={true}
+            isMomentsPage={false}
           />
         )}
 
         {/* Main Feed with For You and Following Tabs */}
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foryou' | 'following')} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-6">
-            <TabsTrigger value="foryou" className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4" />
-              For You
+          <TabsList className="grid w-full grid-cols-2 mb-4 lg:mb-6 max-w-sm sm:max-w-md mx-auto bg-muted/50 backdrop-blur-sm">
+            <TabsTrigger value="foryou" className="flex items-center justify-center gap-1 lg:gap-2 text-xs sm:text-sm lg:text-sm w-full data-[state=active]:bg-background data-[state=active]:shadow-sm">
+              <Sparkles className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
+              <span className="truncate font-medium">For You</span>
             </TabsTrigger>
-            <TabsTrigger value="following" className="flex items-center gap-2">
-              <Users className="w-4 h-4" />
-              Following
+            <TabsTrigger value="following" className="flex items-center justify-center gap-1 lg:gap-2 text-xs sm:text-sm lg:text-sm w-full data-[state=active]:bg-background data-[state=active]:shadow-sm">
+              <Users className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
+              <span className="truncate font-medium">Following</span>
             </TabsTrigger>
           </TabsList>
           
@@ -782,7 +714,7 @@ const HomePage = () => {
           onClose={handleCloseFullscreen}
           onFollow={handleFollow}
           followedCreators={followedCreators}
-          onContentChange={handleContentChange}
+          onContentChange={(content) => setFullscreenContent(content)}
         />
       )}
 

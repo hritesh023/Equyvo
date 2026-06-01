@@ -140,6 +140,8 @@ export default defineConfig(({ mode }) => ({
   },
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || mode),
+    // Polyfill for Amazon Cognito Identity JS
+    global: 'globalThis',
     // Remove console.log in production
     ...(mode === 'production' && {
       'console.log': 'undefined',

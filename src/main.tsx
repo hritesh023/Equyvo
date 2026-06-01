@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import App from "./App";
 import "./globals.css";
 
-console.log('🚀 Starting Full Interact App...');
+console.log('🚀 Starting Full Equyvo App...');
 
 try {
   const rootElement = document.getElementById("root");
@@ -16,10 +16,10 @@ try {
   console.log('✅ Root element found, creating React root...');
   const root = createRoot(rootElement);
 
-  console.log('✅ Rendering full Interact app with all features...');
+  console.log('✅ Rendering full Equyvo app with all features...');
   root.render(<App />);
 
-  console.log('✅ Full Interact App loaded successfully!');
+  console.log('✅ Full Equyvo App loaded successfully!');
 
 } catch (error) {
   console.error('❌ Failed to start app:', error);

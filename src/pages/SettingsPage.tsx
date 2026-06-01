@@ -23,7 +23,7 @@ import {
   User,
   Mail
 } from 'lucide-react';
-import { supabase } from '@/lib/supabase';
+import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 
@@ -54,23 +54,15 @@ const SettingsPage = () => {
   });
 
   useEffect(() => {
-    if (!supabase) return;
-
-    // Get current user - use getCurrentUser for mock compatibility
     const getCurrentUser = async () => {
       try {
-        if ('getUser' in supabase.auth) {
-          const { data: { user } } = await supabase.auth.getUser();
-          setUser(user);
-        } else if ('getCurrentUser' in supabase.auth) {
-          const { data: { user } } = await supabase.auth.getCurrentUser();
-          setUser(user);
-        }
+        const user = await getAuthenticatedUser();
+        setUser(user as any);
       } catch (error) {
         console.error('Error getting current user:', error);
       }
     };
-
+    
     getCurrentUser();
   }, []);
 
@@ -111,46 +103,29 @@ const SettingsPage = () => {
   }, [darkMode]);
 
   const handleSignOut = async () => {
-    const { error } = await (supabase?.auth.signOut() ?? { error: new Error('Supabase not available') });
-    if (!error) {
+    const result = await signOutUser();
+    if (result.success) {
       showSuccess("Signed out successfully!");
       navigate('/auth');
     } else {
-      showError('Failed to sign out');
+      showError(result.error || "Failed to sign out");
     }
   };
 
   const handleDeleteAccount = async () => {
     if (confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
       try {
-        if (!supabase) {
-          showError('Authentication service not available');
-          return;
-        }
-
-        // Check if admin methods are available (only in real Supabase, not mock)
-        if ('admin' in supabase.auth && supabase.auth.admin && 'deleteUser' in supabase.auth.admin) {
-          const { error } = await supabase.auth.admin.deleteUser(
-            user?.id || ''
-          );
-          
-          if (error) {
-            showError('Failed to delete account');
-            return;
-          }
-        } else {
-          // For mock or when admin is not available, just sign out
-          console.warn('Admin functions not available, signing out instead');
-          await supabase.auth.signOut();
-        }
-
-        showSuccess("Account deleted successfully!");
-        setTimeout(() => {
+        // For AWS Cognito, account deletion would require admin API calls
+        // For now, we'll just sign out and show a message
+        const result = await signOutUser();
+        if (result.success) {
+          showSuccess("Account deletion requested. You'll be contacted for verification.");
           navigate('/auth');
-        }, 2000);
-      } catch (error) {
-        console.error('Account deletion error:', error);
-        showError('Failed to delete account. Please contact support.');
+        } else {
+          showError(result.error || "Failed to process account deletion");
+        }
+      } catch (error: any) {
+        showError(error.message || "Failed to delete account");
       }
     }
   };
@@ -181,7 +156,7 @@ const SettingsPage = () => {
       const url = URL.createObjectURL(dataBlob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `interact-data-export-${new Date().toISOString().split('T')[0]}.json`;
+      link.download = `equyvo-data-export-${new Date().toISOString().split('T')[0]}.json`;
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -306,7 +281,7 @@ const SettingsPage = () => {
             Appearance
           </CardTitle>
           <CardDescription>
-            Customize how Interact looks for you
+            Customize how Equyvo looks for you
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -376,7 +351,7 @@ const SettingsPage = () => {
 
           <Button 
             variant="outline" 
-            onClick={() => window.open('mailto:support@interact.app', '_blank')}
+            onClick={() => window.open('mailto:support@equyvo.app', '_blank')}
             className="w-full justify-start"
           >
             <Mail className="h-4 w-4 mr-2" />

@@ -33,7 +33,7 @@ class AISearchService {
   // Load search history from localStorage
   loadSearchHistory(): SearchHistoryItem[] {
     try {
-      const stored = localStorage.getItem('interact_search_history');
+      const stored = localStorage.getItem('equyvo_search_history');
       if (stored) {
         this.searchHistory = JSON.parse(stored);
       }
@@ -58,7 +58,7 @@ class AISearchService {
     ].slice(0, 50);
 
     try {
-      localStorage.setItem('interact_search_history', JSON.stringify(this.searchHistory));
+      localStorage.setItem('equyvo_search_history', JSON.stringify(this.searchHistory));
     } catch (error) {
       console.error('Failed to save search history:', error);
     }

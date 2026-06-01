@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, Maximize2, Columns, Eye } from 'lucide-react';
+import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, VolumeX, Maximize2, Columns, Eye } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -7,6 +8,7 @@ import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
@@ -60,6 +62,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const mouseActivityRef = useRef<boolean>(false);
   const liveStreamIntervalRef = useRef<NodeJS.Timeout>();
   const detailsPanelTimeoutRef = useRef<NodeJS.Timeout>();
+  const navigate = useNavigate();
+
+  // Detect mobile device and orientation
+  const isMobileDevice = window.innerWidth < 768;
+  const isPortraitOrientation = window.innerHeight > window.innerWidth;
 
   // Enhanced video type detection
   const isVideoType = actualType === 'video' || actualType === 'moment' || actualType === 'live' || actualType === 'story' ||
@@ -67,6 +74,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const isPortraitMoment = actualType === 'moment' || actualContent?.type === 'moment' || actualContent?.forcePortrait;
   const isStory = actualType === 'story' || actualContent?.type === 'story';
   const isLiveStream = actualType === 'live' || actualContent?.isLive === true || actualContent?.live === true;
+  
+  // Force landscape mode for mobile videos (except moments and stories)
+  const shouldForceLandscape = isMobileDevice && isVideoType && !isPortraitMoment && !isStory;
   
   // Enhanced video source detection with fallbacks
   const videoSrc = actualContent?.videoUrl || 
@@ -86,7 +96,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     
   // Determine container style based on content type and device
   const getContainerStyle = () => {
-    const isMobileDevice = window.innerWidth < 768;
     
     if (isSplitView) {
       return {
@@ -183,7 +192,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   
   // Get video container style for portrait moments, stories, and mobile 16:9
   const getVideoContainerStyle = (): React.CSSProperties => {
-    const isMobileDevice = window.innerWidth < 768;
     
     // Mobile moments and stories should always be portrait (9:16)
     if (isMobileDevice && (isPortraitMoment || isStory)) {
@@ -198,16 +206,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       };
     }
     
-    // Mobile videos (non-moments, non-stories) use 16:9 ratio
+    // Mobile videos (non-moments, non-stories) use 16:9 ratio - force landscape
     if (isMobileDevice && isVideoType && !isPortraitMoment && !isStory) {
       return {
         width: '100vw',
-        height: '56.25vw', // 16:9 ratio (9/16 = 0.5625)
+        height: '56.25vw', // 16:9 ratio (9/16 = 0.5625) - forces landscape orientation
         maxHeight: '100vh',
         maxWidth: '177.78vh', // 16/9 = 1.7778
         objectFit: 'contain',
         position: 'relative',
-        backgroundColor: 'black'
+        backgroundColor: 'black',
+        transform: 'rotate(0deg)', // Ensure no rotation
+        transformOrigin: 'center'
       };
     }
     
@@ -268,7 +278,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       if (isSplitView) {
         const target = e.target as HTMLElement;
         
-        // Allow clicks on buttons and interactive elements
+        // Allow clicks on buttons and actionable elements
         if (target.closest('button') || target.closest('input') || target.closest('[role="button"]')) {
           return;
         }
@@ -1004,7 +1014,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             width: isSplitView ? '50%' : '100vw',
             height: isSplitView ? '100%' : '100vh',
             margin: 0,
-            padding: 0
+            padding: 0,
+            backgroundColor: 'black',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            overflow: 'hidden'
           }}
           onMouseMove={handleMouseMove}
           onMouseLeave={handleMouseLeave}
@@ -1017,7 +1032,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           onClick={(e) => {
             const target = e.target as HTMLElement | null;
             
-            // Early return for any interactive elements or top controls
+            // Early return for any actionable elements or top controls
             if (target?.closest('button') || 
                 target?.closest('input') || 
                 target?.closest('[role="button"]') ||
@@ -1044,7 +1059,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           <video
             ref={videoRef}
             src={fallbackVideoSrc}
-            className={`${isPortraitMoment ? 'w-screen h-screen object-contain' : 'absolute inset-0'} w-full h-full`}
+            className={`${isPortraitMoment || isStory ? 'w-screen h-screen object-contain' : 'absolute inset-0'} w-full h-full`}
             style={getVideoContainerStyle()}
             autoPlay
             playsInline
@@ -1059,7 +1074,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               zIndex: 50, 
               paddingBottom: isPortraitMoment
                 ? 'calc(env(safe-area-inset-bottom, 0px) + 120px)'
-                : 'calc(env(safe-area-inset-bottom, 0px) + 140px)',
+                : (isMobileDevice && !isPortraitMoment && !isStory)
+                  ? 'calc(env(safe-area-inset-bottom, 0px) + 80px)' // Less padding for mobile landscape videos
+                  : 'calc(env(safe-area-inset-bottom, 0px) + 140px)',
               display: showControls ? 'block' : 'none'
             }}
           >
@@ -1179,13 +1196,24 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             </h2>
             <div className="flex items-center gap-3 text-white/80 text-sm">
               <div className="flex items-center gap-2">
-                <Avatar className="h-8 w-8">
+                <Avatar 
+                  className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
+                  onClick={() => {
+                    // Navigate to creator's profile when avatar is clicked
+                    navigateToProfile(navigate, actualContent.creatorId, actualContent.creator);
+                  }}
+                  title={`${actualContent.creator}'s Profile`}
+                >
                   <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
                   <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                     {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
-                <span className="font-medium hover:text-white transition-colors cursor-pointer">
+                <span 
+                  className="font-medium hover:text-white transition-colors cursor-pointer"
+                  onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                  title={`${actualContent.creator}'s Profile`}
+                >
                   {actualContent.creator || 'Unknown Creator'}
                 </span>
                 {actualContent.verified && (
@@ -1314,13 +1342,24 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             </h2>
             <div className="flex items-center gap-3 text-white/80 text-sm">
               <div className="flex items-center gap-2">
-                <Avatar className="h-8 w-8">
+                <Avatar 
+                  className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
+                  onClick={() => {
+                    // Navigate to creator's profile when avatar is clicked
+                    navigateToProfile(navigate, actualContent.creatorId, actualContent.creator);
+                  }}
+                  title={`${actualContent.creator}'s Profile`}
+                >
                   <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
                   <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                     {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                   </AvatarFallback>
                 </Avatar>
-                <span className="font-medium hover:text-white transition-colors cursor-pointer">
+                <span 
+                  className="font-medium hover:text-white transition-colors cursor-pointer"
+                  onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                  title={`${actualContent.creator}'s Profile`}
+                >
                   {actualContent.creator || 'Unknown Creator'}
                 </span>
                 {actualContent.verified && (
@@ -1862,13 +1901,23 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           </h2>
           <div className="flex items-center gap-3 text-white/80 text-sm">
             <div className="flex items-center gap-2">
-              <Avatar className="h-8 w-8">
+              <Avatar 
+                className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
+                onClick={() => {
+                  // Navigate to creator's profile when avatar is clicked
+                  navigateToProfile(navigate, actualContent.creatorId, actualContent.creator);
+                }}
+                title={`${actualContent.creator}'s Profile`}
+              >
                 <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
                 <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                   {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
-              <span className="font-medium hover:text-white transition-colors cursor-pointer">
+              <span 
+                className="font-medium hover:text-white transition-colors cursor-pointer"
+                onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+              >
                 {actualContent.creator || 'Unknown Creator'}
               </span>
               {actualContent.verified && (

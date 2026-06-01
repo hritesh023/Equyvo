@@ -1,4 +1,4 @@
-# Interact - Enhanced Social Media Platform
+# Equyvo - Enhanced Social Media Platform
 
 A modern, cross-platform social media application built with React, TypeScript, and Capacitor. Optimized for Android, iOS, Web, and PC platforms with enhanced UI/UX and robust error handling.
 
@@ -57,7 +57,7 @@ A modern, cross-platform social media application built with React, TypeScript, 
 
 ### Visual Design
 - Modern, clean interface with dark/light themes
-- Smooth animations and micro-interactions
+- Smooth animations and micro-animations
 - Consistent design language across platforms
 - Accessibility-first approach
 
@@ -83,8 +83,8 @@ A modern, cross-platform social media application built with React, TypeScript, 
 ### Local Development
 ```bash
 # Clone the repository
-git clone https://github.com/hritesh023/interact.git
-cd interact
+git clone https://github.com/hritesh023/equyvo.git
+cd equyvo
 
 # Install dependencies
 pnpm install
@@ -204,7 +204,7 @@ pnpm build
 ### Android
 - Material Design compliance
 - Hardware acceleration
-- Optimized touch interactions
+- Optimized touch feedback
 - Battery-efficient animations
 
 ### iOS
@@ -225,7 +225,7 @@ pnpm build
 - Bundle size tracking
 - Loading time metrics
 - Error tracking
-- User interaction analytics
+- User engagement analytics
 
 ### Development Tools
 - Hot module replacement
@@ -248,7 +248,7 @@ This project is licensed under the MIT License - see the LICENSE file for detail
 ## 🆘 Support
 
 For issues and questions:
-- Check the [Issues](https://github.com/hritesh023/interact/issues) page
+- Check the [Issues](https://github.com/hritesh023/equyvo/issues) page
 - Review the documentation
 - Contact the development team
 

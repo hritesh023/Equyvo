@@ -1,4 +1,4 @@
-# Cross-Platform Development Guide for Interact App
+# Cross-Platform Development Guide for Equyvo App
 
 ## Current Status
 
@@ -11,7 +11,7 @@
 ### ✅ Android Platform  
 - **Status**: Configured and ready
 - **Build System**: Capacitor + Gradle
-- **Package**: `com.interact.app`
+- **Package**: `com.equyvo.app`
 - **Version**: 1.0
 - **Min SDK**: Configured via Capacitor
 
@@ -31,7 +31,7 @@
 ### Android
 - Capacitor handles native bridge
 - Material Design components via shadcn/ui
-- Touch gestures and mobile interactions
+- Touch gestures and mobile engagement
 - Hardware acceleration enabled
 
 ### iOS (Future)
@@ -77,7 +77,7 @@
 ### Functionality Tests
 - [x] All navigation buttons work
 - [x] Authentication flow complete
-- [x] Post creation and interaction
+- [x] Post creation and engagement
 - [x] Media viewing (images/videos)
 - [x] Search functionality
 - [x] Theme switching

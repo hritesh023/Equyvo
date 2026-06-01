@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useParams, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -38,6 +39,65 @@ import Moments from '@/components/Moments';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
 
 const ProfilePage = () => {
+  const { userId, username } = useParams();
+  const location = useLocation();
+
+  // Bot profiles data
+  const botProfiles = {
+    'p1': {
+      id: 'p1',
+      name: 'Nature Channel',
+      username: '@naturechannel',
+      avatar: 'https://picsum.photos/seed/nature/200/200',
+      bio: 'Bringing you the best nature documentaries and wildlife content from around the world! 🌿🦁🐾',
+      followers: '45.2K',
+      following: '120',
+      posts: [
+        { id: 'moment1', type: 'moment' as const, user: 'Nature Channel', content: 'Beautiful nature documentary 🌿 #nature #wildlife', media: 'https://picsum.photos/seed/nature1/400/700', thumbnail: 'https://picsum.photos/seed/nature1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', likes: 8921, reacts: 0, comments: 456, shares: 0, views: 23456, time: '2h ago' },
+        { id: 'p6', type: 'post' as const, user: 'Nature Channel', content: 'Sunrise at the mountains 🏔️', media: 'https://picsum.photos/seed/sunrise3/400/300', mediaType: 'image' as const, likes: 567, reacts: 23, comments: 89, shares: 34, views: 2340, time: '1 day ago' },
+      ] as Post[],
+    },
+    'bot-channel': {
+      id: 'bot-channel',
+      name: 'Bot Channel',
+      username: '@botchannel',
+      avatar: 'https://picsum.photos/seed/bot/200/200',
+      bio: '🤖 AI Generated Content Stream - Your source for automated entertainment and AI-powered creativity!',
+      followers: '28.7K',
+      following: '5',
+      posts: [
+        { id: 'moment4', type: 'moment' as const, user: 'Bot Channel', content: '🤖 AI Generated Content Stream #bot #ai', media: 'https://picsum.photos/seed/bot1/400/700', thumbnail: 'https://picsum.photos/seed/bot1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', likes: 7234, reacts: 0, comments: 445, shares: 0, views: 28901, time: 'LIVE NOW', isLive: true },
+        { id: 'p7', type: 'thought' as const, user: 'Bot Channel', content: 'AI is transforming how we create and consume content! 🚀', media: null, mediaType: 'text' as const, likes: 1234, reacts: 89, comments: 234, shares: 56, views: 5678, time: '3h ago' },
+      ] as Post[],
+    },
+    'tech-reviews': {
+      id: 'tech-reviews',
+      name: 'Tech Reviews',
+      username: '@techreviews',
+      avatar: 'https://picsum.photos/seed/tech/200/200',
+      bio: 'Latest tech reviews, gadget unboxings, and digital lifestyle content! 📱💻⌚',
+      followers: '67.3K',
+      following: '250',
+      posts: [
+        { id: 'moment2', type: 'moment' as const, user: 'Tech Reviews', content: 'Latest tech review! 📱 #tech #gadgets', media: 'https://picsum.photos/seed/tech1/400/700', thumbnail: 'https://picsum.photos/seed/tech1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', likes: 5643, reacts: 0, comments: 289, shares: 0, views: 12890, time: '4h ago' },
+        { id: 'p8', type: 'post' as const, user: 'Tech Reviews', content: 'New smartphone review is live! Check it out', media: 'https://picsum.photos/seed/phone/400/300', mediaType: 'image' as const, likes: 890, reacts: 45, comments: 123, shares: 67, views: 4567, time: '6h ago' },
+      ] as Post[],
+    },
+    'gaming-stream': {
+      id: 'gaming-stream',
+      name: 'Live Gaming Stream',
+      username: '@gaminglive',
+      avatar: 'https://picsum.photos/seed/gaming/200/200',
+      bio: '🔴 LIVE Gaming Sessions! Join me for epic gameplay, tournaments, and gaming community fun! 🎮🏆',
+      followers: '123K',
+      following: '89',
+      posts: [
+        { id: 'moment3', type: 'moment' as const, user: 'Live Gaming Stream', content: '🔴 LIVE Gaming Session! Join me now! #gaming #live', media: 'https://picsum.photos/seed/gaming1/400/700', thumbnail: 'https://picsum.photos/seed/gaming1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', likes: 15432, reacts: 0, comments: 892, shares: 0, views: 45678, time: 'LIVE NOW', isLive: true },
+        { id: 'p9', type: 'thought' as const, user: 'Live Gaming Stream', content: 'That was an epic match! GG everyone! 🎮', media: null, mediaType: 'text' as const, likes: 2345, reacts: 123, comments: 456, shares: 78, views: 8901, time: '1h ago' },
+      ] as Post[],
+    }
+  };
+
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [postLikes, setPostLikes] = useState<{ [key: string]: number }>({});
   const [reactedPosts, setReactedPosts] = useState<Set<string>>(new Set());
@@ -70,24 +130,32 @@ const ProfilePage = () => {
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
 
   // Load profile from localStorage on mount
-  const [userProfile, setUserProfile] = useState({
-    name: 'John Doe',
-    username: '@johndoe',
-    avatar: 'https://picsum.photos/seed/john/200/200',
-    bio: 'Passionate creator, sharing my journey and thoughts. Love coding, photography, and exploring new ideas! ',
-    followers: '1.5K',
-    following: '300',
-    posts: [
-      { id: 'p1', type: 'thought' as const, user: 'John Doe', content: 'Just launched my new project! Check it out! 💻✨', media: 'https://picsum.photos/seed/project/400/300', mediaType: 'image' as const, likes: 120, reacts: 8, comments: 15, shares: 5, views: 245, time: '2h ago' },
-      { id: 'p2', type: 'post' as const, user: 'John Doe', content: 'Working on something amazing! Can\'t wait to share it with you all soon. 🚀', media: 'https://picsum.photos/seed/work/400/300', mediaType: 'image' as const, likes: 89, reacts: 12, comments: 23, shares: 8, views: 567, time: '5h ago' },
-      { id: 'p3', type: 'thought' as const, user: 'John Doe', content: 'The future of technology is incredibly exciting! What are you most looking forward to? 🤖✨', media: null, mediaType: 'text' as const, likes: 234, reacts: 45, comments: 67, shares: 23, views: 1234, time: '1 day ago' },
-      { id: 'p4', type: 'post' as const, user: 'John Doe', content: 'Beautiful sunset from my morning walk! Nature never disappoints. 🌅', media: 'https://picsum.photos/seed/sunset2/400/300', mediaType: 'image' as const, likes: 156, reacts: 23, comments: 34, shares: 12, views: 890, time: '2 days ago' },
-      { id: 'moment1', type: 'moment' as const, user: 'Nature Channel', content: 'Beautiful nature documentary 🌿 #nature #wildlife', media: 'https://picsum.photos/seed/nature1/400/700', thumbnail: 'https://picsum.photos/seed/nature1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', likes: 8921, reacts: 0, comments: 456, shares: 0, views: 23456, time: '2h ago' },
-      { id: 'moment2', type: 'moment' as const, user: 'Tech Reviews', content: 'Latest tech review! 📱 #tech #gadgets', media: 'https://picsum.photos/seed/tech1/400/700', thumbnail: 'https://picsum.photos/seed/tech1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', likes: 5643, reacts: 0, comments: 289, shares: 0, views: 12890, time: '4h ago' },
-      { id: 'moment3', type: 'moment' as const, user: 'Live Gaming Stream', content: '🔴 LIVE Gaming Session! Join me now! #gaming #live', media: 'https://picsum.photos/seed/gaming1/400/700', thumbnail: 'https://picsum.photos/seed/gaming1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', likes: 15432, reacts: 0, comments: 892, shares: 0, views: 45678, time: 'LIVE NOW', isLive: true },
-      { id: 'moment4', type: 'moment' as const, user: 'Bot Channel', content: '🤖 AI Generated Content Stream #bot #ai', media: 'https://picsum.photos/seed/bot1/400/700', thumbnail: 'https://picsum.photos/seed/bot1/400/700', mediaType: 'video' as const, videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', likes: 7234, reacts: 0, comments: 445, shares: 0, views: 28901, time: 'LIVE NOW', isLive: true },
-      { id: 'p5', type: 'thought' as const, user: 'John Doe', content: 'Beautiful morning coffee! ☕', media: 'https://picsum.photos/seed/coffee/400/300', mediaType: 'image' as const, likes: 45, reacts: 3, comments: 6, shares: 2, views: 89, time: '6h ago' },
-    ] as Post[],
+  const [userProfile, setUserProfile] = useState(() => {
+    // Determine which profile to show based on URL parameters
+    if (userId || username) {
+      const profileKey = userId || username?.replace('@', '');
+      const botProfile = botProfiles[profileKey as keyof typeof botProfiles];
+      if (botProfile) {
+        return botProfile;
+      }
+    }
+    
+    // Default user profile
+    return {
+      name: 'John Doe',
+      username: '@johndoe',
+      avatar: 'https://picsum.photos/seed/john/200/200',
+      bio: 'Passionate creator, sharing my journey and thoughts. Love coding, photography, and exploring new ideas! ',
+      followers: '1.5K',
+      following: '300',
+      posts: [
+        { id: 'p1', type: 'thought' as const, user: 'John Doe', content: 'Just launched my new project! Check it out! 💻✨', media: 'https://picsum.photos/seed/project/400/300', mediaType: 'image' as const, likes: 120, reacts: 8, comments: 15, shares: 5, views: 245, time: '2h ago' },
+        { id: 'p2', type: 'post' as const, user: 'John Doe', content: 'Working on something amazing! Can\'t wait to share it with you all soon. 🚀', media: 'https://picsum.photos/seed/work/400/300', mediaType: 'image' as const, likes: 89, reacts: 12, comments: 23, shares: 8, views: 567, time: '5h ago' },
+        { id: 'p3', type: 'thought' as const, user: 'John Doe', content: 'The future of technology is incredibly exciting! What are you most looking forward to? 🤖✨', media: null, mediaType: 'text' as const, likes: 234, reacts: 45, comments: 67, shares: 23, views: 1234, time: '1 day ago' },
+        { id: 'p4', type: 'post' as const, user: 'John Doe', content: 'Beautiful sunset from my morning walk! Nature never disappoints. 🌅', media: 'https://picsum.photos/seed/sunset2/400/300', mediaType: 'image' as const, likes: 156, reacts: 23, comments: 34, shares: 12, views: 890, time: '2 days ago' },
+        { id: 'p5', type: 'thought' as const, user: 'John Doe', content: 'Beautiful morning coffee! ☕', media: 'https://picsum.photos/seed/coffee/400/300', mediaType: 'image' as const, likes: 45, reacts: 3, comments: 6, shares: 2, views: 89, time: '6h ago' },
+      ] as Post[],
+    };
   });
 
   // Load saved profile from localStorage on client side

@@ -63,7 +63,7 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
       if (navigator.share) {
         await navigator.share({
           title: 'Check out this post!',
-          text: 'Amazing content on Interact',
+          text: 'Amazing content on Equyvo',
           url: shareUrl
         });
       } else {
