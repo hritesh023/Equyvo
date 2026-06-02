@@ -49,6 +49,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   const isMutedRef = useRef(isMuted);
   isMutedRef.current = isMuted;
   const { getVideoProps, getTouchHandlers, debounce, deviceCapabilities } = usePlatformOptimizations();
+  const lastTapRef = useRef<{ [key: string]: number }>({});
+  const tapTimerRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
 
   const stopAllVideos = () => {
     // Stop all videos and reset states
@@ -227,10 +229,15 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     onFullscreen(momentContent);
   };
 
-  const handleMomentDoubleClick = (momentId: string) => {
-    // Double-click to like functionality
-    if (onLike && !likedMoments.has(momentId)) {
-      onLike(momentId);
+  const handleMomentDoubleClick = (momentId: string, e: React.MouseEvent) => {
+    const video = videoRefs.current[momentId];
+    if (!video) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    if (x > rect.width / 2) {
+      video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+    } else {
+      video.currentTime = Math.max(0, video.currentTime - 10);
     }
   };
 
@@ -569,7 +576,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                 key={moment.id} 
                 className="flex-shrink-0 overflow-hidden group cursor-pointer bg-black"
                 onClick={() => handleVideoClick(moment)}
-                onDoubleClick={() => handleMomentDoubleClick(moment.id)}
+                onDoubleClick={(e) => handleMomentDoubleClick(moment.id, e)}
                 style={{ aspectRatio: '9/16', width: '180px', height: '320px' }}
               >
                 <div className="relative w-full h-full bg-black" style={{ aspectRatio: '9/16' }}>
@@ -647,7 +654,25 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                           onLoadedMetadata={() => handleLoadedMetadata(moment.id, videoRefs.current[moment.id])}
                           onClick={(e) => {
                             e.stopPropagation();
-                            handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
+                            const now = Date.now();
+                            const lastTap = lastTapRef.current[moment.id] || 0;
+                            lastTapRef.current[moment.id] = now;
+                            if (now - lastTap < 400) {
+                              if (tapTimerRef.current[moment.id]) clearTimeout(tapTimerRef.current[moment.id]);
+                              const v = videoRefs.current[moment.id];
+                              if (v) {
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                if (e.clientX - rect.left > rect.width / 2) {
+                                  v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
+                                } else {
+                                  v.currentTime = Math.max(0, v.currentTime - 10);
+                                }
+                              }
+                              return;
+                            }
+                            tapTimerRef.current[moment.id] = setTimeout(() => {
+                              handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
+                            }, 400);
                           }}
                           onLoadStart={() => {
                             setIsLoading(prev => ({ ...prev, [moment.id]: true }));
@@ -868,7 +893,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
               height: isMomentsPage ? '320px' : '356px'
             }}
             onClick={() => handleVideoClick(moment)}
-            onDoubleClick={() => handleMomentDoubleClick(moment.id)}
+            onDoubleClick={(e) => handleMomentDoubleClick(moment.id, e)}
           >
             <div className="relative w-full h-full bg-black" style={{ aspectRatio: '9/16' }}>
               {moment.mediaType === 'video' ? (
@@ -927,10 +952,28 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       loop
                       playsInline
                       preload="metadata"
-                      autoPlay={false} // Explicitly disable auto-play
+                      autoPlay={false}
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
+                        const now = Date.now();
+                        const lastTap = lastTapRef.current[moment.id] || 0;
+                        lastTapRef.current[moment.id] = now;
+                        if (now - lastTap < 400) {
+                          if (tapTimerRef.current[moment.id]) clearTimeout(tapTimerRef.current[moment.id]);
+                          const v = videoRefs.current[moment.id];
+                          if (v) {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            if (e.clientX - rect.left > rect.width / 2) {
+                              v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
+                            } else {
+                              v.currentTime = Math.max(0, v.currentTime - 10);
+                            }
+                          }
+                          return;
+                        }
+                        tapTimerRef.current[moment.id] = setTimeout(() => {
+                          handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
+                        }, 400);
                       }}
                       onError={(e) => {
                         handleVideoError(moment.id, e);
@@ -963,7 +1006,25 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     className="absolute inset-0 flex items-center justify-center bg-black/30"
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
+                      const now = Date.now();
+                      const lastTap = lastTapRef.current[moment.id] || 0;
+                      lastTapRef.current[moment.id] = now;
+                      if (now - lastTap < 400) {
+                        if (tapTimerRef.current[moment.id]) clearTimeout(tapTimerRef.current[moment.id]);
+                        const v = videoRefs.current[moment.id];
+                        if (v) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          if (e.clientX - rect.left > rect.width / 2) {
+                            v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
+                          } else {
+                            v.currentTime = Math.max(0, v.currentTime - 10);
+                          }
+                        }
+                        return;
+                      }
+                      tapTimerRef.current[moment.id] = setTimeout(() => {
+                        handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
+                      }, 400);
                     }}
                   >
                     {!playingVideos.has(moment.id) && (

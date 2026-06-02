@@ -45,6 +45,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const [videoError, setVideoError] = useState(false);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const lastTapRef = useRef(0);
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
@@ -491,7 +493,27 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                     playsInline
                     onClick={(e) => {
                       e.stopPropagation();
-                      togglePlayPause();
+                      const now = Date.now();
+                      const timeSinceLastTap = now - lastTapRef.current;
+                      lastTapRef.current = now;
+
+                      if (timeSinceLastTap < 400) {
+                        if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+                        const v = videoRef.current;
+                        if (v) {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          if (e.clientX - rect.left > rect.width / 2) {
+                            v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
+                          } else {
+                            v.currentTime = Math.max(0, v.currentTime - 10);
+                          }
+                        }
+                        return;
+                      }
+
+                      tapTimerRef.current = setTimeout(() => {
+                        togglePlayPause();
+                      }, 400);
                     }}
                     onLoadedData={() => setVideoLoaded(true)}
                     onPlay={() => setShowControls(true)}

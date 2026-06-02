@@ -35,6 +35,8 @@ const MomentsPage = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isActiveVideoPlaying, setIsActiveVideoPlaying] = useState(false);
+  const lastTapRef = useRef<{ time: number; index: number }>({ time: 0, index: -1 });
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Track play state of the active video for media session
   useEffect(() => {
@@ -592,7 +594,29 @@ const MomentsPage = () => {
               onTimeUpdate={() => handleTimeUpdate(index)}
               onSeeked={() => handleSeeked(index)}
               onLoadedMetadata={() => handleLoadedMetadata(index)}
-              onClick={() => togglePlay(index)}
+              onClick={(e) => {
+                const now = Date.now();
+                const isDbl = now - lastTapRef.current.time < 400 && lastTapRef.current.index === index;
+                lastTapRef.current = { time: now, index };
+
+                if (isDbl) {
+                  if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
+                  const v = videoRefs.current[index];
+                  if (v) {
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    if (e.clientX - rect.left > rect.width / 2) {
+                      v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
+                    } else {
+                      v.currentTime = Math.max(0, v.currentTime - 10);
+                    }
+                  }
+                  return;
+                }
+
+                tapTimerRef.current = setTimeout(() => {
+                  togglePlay(index);
+                }, 400);
+              }}
             />
           </div>
 

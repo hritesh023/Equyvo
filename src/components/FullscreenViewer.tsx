@@ -11,6 +11,7 @@ import { FullscreenContent } from '@/types';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
 import { useMediaSession } from '@/hooks/use-media-session';
+import { useVideoGestures } from '@/hooks/use-video-gestures';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
@@ -460,6 +461,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     artist: actualContent?.user || actualContent?.creator || (actualContent as any)?.username || 'Equyvo',
   });
 
+  const { handleClick: handleVideoTap, handleDoubleClick: handleVideoDblTap } = useVideoGestures({
+    videoRef,
+    seekTime: 10,
+    onSingleTap: () => {
+      togglePlay();
+    },
+    enabled: isVideoType,
+  });
+
   // Show controls on any keyboard activity (arrow keys, space, etc.)
   useEffect(() => {
     const onKeyActivity = () => {
@@ -631,14 +641,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       setLikeCount(current => Math.max(0, current + (next ? 1 : -1)));
       return next;
     });
-  };
-
-  const handleDoubleClick = () => {
-    // Double-click to like functionality
-    if (!isLiked) {
-      setIsLiked(true);
-      setLikeCount(current => current + 1);
-    }
   };
 
   const handleComment = () => {
@@ -1071,7 +1073,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               setShowDetailsPanel(true);
             }
           }}
-          onDoubleClick={handleDoubleClick}
+          onDoubleClick={(e) => {
+            handleVideoDblTap(e);
+          }}
           onClick={(e) => {
             const target = e.target as HTMLElement | null;
             
@@ -1083,19 +1087,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 target?.closest('[class*="z-"]') ||
                 target?.closest('.top-controls-bar')) return;
             
-            // In split view, only toggle play/pause for direct video clicks
             if (isSplitView) {
-              // Only toggle play/pause if clicking directly on the video element
               if (target?.closest('video')) {
                 e.stopPropagation();
                 e.preventDefault();
                 togglePlay();
                 return;
               }
-              // Don't handle clicks on the container in split view to avoid conflicts
               return;
             }
             
+            handleVideoTap(e);
             handleMouseMove();
           }}
         >
