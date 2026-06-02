@@ -154,6 +154,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onToggleFullscreen: handleToggleFullscreen,
   });
 
+  // Show controls on any keyboard activity
+  useEffect(() => {
+    const onKeyActivity = () => setShowControls(true);
+    window.addEventListener('keydown', onKeyActivity);
+    return () => window.removeEventListener('keydown', onKeyActivity);
+  }, []);
+
   // Get current user and check if they've liked the video
   useEffect(() => {
     const getCurrentUser = async () => {

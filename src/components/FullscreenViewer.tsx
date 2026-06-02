@@ -64,6 +64,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const mouseActivityRef = useRef<boolean>(false);
   const liveStreamIntervalRef = useRef<NodeJS.Timeout>();
   const detailsPanelTimeoutRef = useRef<NodeJS.Timeout>();
+  const controlsShowCountRef = useRef<number>(0);
   const navigate = useNavigate();
 
   // Detect mobile device and orientation
@@ -450,16 +451,45 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     onToggleFullscreen: toggleFullscreen,
   });
 
+  // Show controls on any keyboard activity (arrow keys, space, etc.)
+  useEffect(() => {
+    const onKeyActivity = () => {
+      setShowControls(true);
+      if (isVideoType) setShowDetailsPanel(true);
+      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (detailsPanelTimeoutRef.current) clearTimeout(detailsPanelTimeoutRef.current);
+      const showCount = controlsShowCountRef.current;
+      const delay = isDesktop
+        ? Math.min(HIDE_DELAY_BASE + showCount * HIDE_DELAY_INCREMENT, HIDE_DELAY_MAX)
+        : Math.min(HIDE_DELAY_MOBILE_BASE + showCount * HIDE_DELAY_MOBILE_INCREMENT, HIDE_DELAY_MOBILE_MAX);
+      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), delay);
+      if (isVideoType) {
+        detailsPanelTimeoutRef.current = setTimeout(() => setShowDetailsPanel(false), delay + 2000);
+      }
+    };
+    window.addEventListener('keydown', onKeyActivity);
+    return () => window.removeEventListener('keydown', onKeyActivity);
+  }, [isDesktop, isVideoType]);
+
+  const HIDE_DELAY_BASE = 4000;
+  const HIDE_DELAY_INCREMENT = 1000;
+  const HIDE_DELAY_MAX = 8000;
+  const HIDE_DELAY_MOBILE_BASE = 6000;
+  const HIDE_DELAY_MOBILE_INCREMENT = 1000;
+  const HIDE_DELAY_MOBILE_MAX = 10000;
+
   const handleMouseMove = () => {
     const now = Date.now();
     lastMouseMoveRef.current = now;
     setShowControls(true);
-    
+
+    controlsShowCountRef.current += 1;
+
     // For video content, also show details panel on hover
     if (isVideoType) {
       setShowDetailsPanel(true);
     }
-    
+
     // Clear any existing timeouts
     if (controlsTimeoutRef.current) {
       clearTimeout(controlsTimeoutRef.current);
@@ -467,30 +497,30 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     if (detailsPanelTimeoutRef.current) {
       clearTimeout(detailsPanelTimeoutRef.current);
     }
-    
+
     if (isDesktop) {
-      // Desktop: Hide controls when mouse stops moving
+      const showCount = controlsShowCountRef.current;
+      const delay = Math.min(HIDE_DELAY_BASE + (showCount - 1) * HIDE_DELAY_INCREMENT, HIDE_DELAY_MAX);
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
-      }, 1000); // 1 second of no movement
-      
-      // Hide details panel after a longer delay for video content
+      }, delay);
+
       if (isVideoType) {
         detailsPanelTimeoutRef.current = setTimeout(() => {
           setShowDetailsPanel(false);
-        }, 2000); // 2 seconds for details panel
+        }, delay + 2000);
       }
     } else {
-      // Mobile: Hide controls after 3 seconds
+      const showCount = controlsShowCountRef.current;
+      const delay = Math.min(HIDE_DELAY_MOBILE_BASE + (showCount - 1) * HIDE_DELAY_MOBILE_INCREMENT, HIDE_DELAY_MOBILE_MAX);
       controlsTimeoutRef.current = setTimeout(() => {
         setShowControls(false);
-      }, 3000);
-      
-      // Hide details panel after 4 seconds on mobile for video content
+      }, delay);
+
       if (isVideoType) {
         detailsPanelTimeoutRef.current = setTimeout(() => {
           setShowDetailsPanel(false);
-        }, 4000);
+        }, delay + 2000);
       }
     }
   };
@@ -542,6 +572,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       if (detailsPanelTimeoutRef.current) {
         clearTimeout(detailsPanelTimeoutRef.current);
       }
+      // Reset show counter when mouse leaves
+      controlsShowCountRef.current = 0;
       // Hide controls immediately when mouse leaves
       setShowControls(false);
       // Hide details panel immediately for video content
@@ -946,7 +978,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     >
       {/* Top bar with minimal controls */}
       <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-300 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
+        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
         style={{
           paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
           pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
@@ -1082,7 +1114,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           <div className="absolute bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none">
             {/* Details Section - above controls */}
             {!isSplitView && (
-              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-300 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0'}`}
+              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0'}`}
                 style={{
                   pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
                 }}
@@ -1226,7 +1258,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             
             {/* Custom Video Controls - YouTube Style */}
             <div 
-              className={`bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-300 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}
+              className={`bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-500 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}
               style={{ 
                 paddingBottom: isPortraitMoment
                   ? 'calc(env(safe-area-inset-bottom, 0px) + 120px)'

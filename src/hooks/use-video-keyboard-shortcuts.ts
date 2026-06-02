@@ -36,9 +36,6 @@ export function useVideoKeyboardShortcuts({
   }, [setIsPlaying]);
 
   useEffect(() => {
-    const isDesktop = window.innerWidth >= 768;
-    if (!isDesktop) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
