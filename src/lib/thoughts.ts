@@ -1,5 +1,6 @@
 import { Thought, Vote, Like, CreateThoughtData, VoteData, LikeData, ThoughtMedia } from '@/types/thoughts';
 import { getAuthenticatedUser } from './auth';
+import { MOCK_VIDEO_URLS } from './mock-constants';
 
 // Mock video duration validation
 export const validateVideoDuration = (file: File): Promise<{ valid: boolean; error?: string }> => {
@@ -53,7 +54,16 @@ const mockThoughts: Thought[] = [
     comments_count: 0,
     shares_count: 0,
     retweets_count: 0,
-    media: null,
+    media: [
+      {
+        type: 'video',
+        url: MOCK_VIDEO_URLS[0],
+        thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=300&fit=crop',
+        duration: 60,
+        width: 1920,
+        height: 1080
+      }
+    ],
     likes_count: 15,
     created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
@@ -69,7 +79,16 @@ const mockThoughts: Thought[] = [
     comments_count: 0,
     shares_count: 0,
     retweets_count: 0,
-    media: null,
+    media: [
+      {
+        type: 'video',
+        url: MOCK_VIDEO_URLS[1],
+        thumbnail: 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=400&h=300&fit=crop',
+        duration: 45,
+        width: 1920,
+        height: 1080
+      }
+    ],
     likes_count: 42,
     created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),

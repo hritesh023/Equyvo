@@ -27,6 +27,9 @@ interface Moment {
   isLiked?: boolean;
   likes?: number;
   comments?: number;
+  videoUrl?: string;
+  mediaType?: 'video' | 'image';
+  media?: string;
 }
 
 interface MomentViewerProps {
@@ -48,12 +51,14 @@ const MomentViewer: React.FC<MomentViewerProps> = ({
   onComment,
   onShare,
 }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
   const { isGloballyMuted, setGlobalMute } = useAudio();
   const [comment, setComment] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
   const [isLiked, setIsLiked] = useState(moment.isLiked || false);
   const [likesCount, setLikesCount] = useState(moment.likes || 0);
   const [showControls, setShowControls] = useState(true);
+  const isVideo = !!(moment.videoUrl || moment.media || moment.mediaType === 'video');
 
   // Auto-hide controls after 3 seconds
   useEffect(() => {
@@ -86,6 +91,18 @@ const MomentViewer: React.FC<MomentViewerProps> = ({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onNext, onPrevious, onClose]);
+
+  const togglePlayVideo = () => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (video.paused) {
+      video.play();
+      setIsPlaying(true);
+    } else {
+      video.pause();
+      setIsPlaying(false);
+    }
+  };
 
   const handleLike = () => {
     const newLikedState = !isLiked;
@@ -155,25 +172,39 @@ const MomentViewer: React.FC<MomentViewerProps> = ({
       <div className="relative w-full h-full max-w-md mx-auto flex flex-col">
         {/* Moment Image/Video */}
         <div className="relative flex-1 bg-black flex items-center justify-center">
-          <img
-            src={moment.image}
-            alt={moment.title}
-            className="w-full h-full object-contain"
-          />
+          {isVideo ? (
+            <video
+              ref={videoRef}
+              src={moment.videoUrl || moment.media}
+              className="w-full h-full object-contain"
+              loop
+              playsInline
+              muted={isGloballyMuted}
+              onClick={togglePlayVideo}
+            />
+          ) : (
+            <img
+              src={moment.image}
+              alt={moment.title}
+              className="w-full h-full object-contain"
+            />
+          )}
           
-          {/* Play/Pause Overlay */}
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div 
-              className="bg-black/50 backdrop-blur-sm rounded-full p-4 cursor-pointer"
-              onClick={() => setIsPlaying(!isPlaying)}
-            >
-              {isPlaying ? (
-                <Pause className="h-8 w-8 text-white" />
-              ) : (
-                <Play className="h-8 w-8 text-white ml-1" />
-              )}
+          {/* Play/Pause Overlay - only show for videos */}
+          {isVideo && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div 
+                className="bg-black/50 backdrop-blur-sm rounded-full p-4 cursor-pointer pointer-events-auto"
+                onClick={togglePlayVideo}
+              >
+                {isPlaying ? (
+                  <Pause className="h-8 w-8 text-white" />
+                ) : (
+                  <Play className="h-8 w-8 text-white ml-1" />
+                )}
+              </div>
             </div>
-          </div>
+          )}
         </div>
 
         {/* Bottom Section with Info and Actions */}

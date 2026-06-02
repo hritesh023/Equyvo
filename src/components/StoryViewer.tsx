@@ -48,6 +48,74 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
 
+  const togglePlayPause = () => {
+    const video = videoRef.current;
+    const audio = audioRef.current;
+    
+    if (!video && !audio) return;
+    
+    const newPlayingState = !isPlaying;
+    setIsPlaying(newPlayingState);
+    
+    if (video) {
+      if (newPlayingState) {
+        if (!isGloballyMuted) {
+          video.muted = false;
+        }
+        
+        video.play().then(() => {
+          if (audio) {
+            audio.currentTime = video.currentTime;
+            audio.muted = isGloballyMuted;
+            audio.play().catch(() => {});
+          }
+        }).catch(() => {
+          if (!video.muted) {
+            video.muted = true;
+            video.play().then(() => {
+              if (audio) {
+                audio.play().catch(() => {});
+              }
+            }).catch(() => {
+              showError('Failed to play video. Please try again.');
+              setIsPlaying(false);
+            });
+          } else {
+            showError('Failed to play video. Please try again.');
+            setIsPlaying(false);
+          }
+        });
+      } else {
+        video.pause();
+        if (audio) {
+          audio.pause();
+        }
+      }
+    } else if (audio) {
+      if (newPlayingState) {
+        audio.play().then(() => {
+        }).catch(() => {
+          showError('Failed to play audio. Please try again.');
+          setIsPlaying(false);
+        });
+      } else {
+        audio.pause();
+      }
+    }
+  };
+
+  const toggleMute = () => {
+    const newMutedState = !isGloballyMuted;
+    setGlobalMute(newMutedState);
+    
+    if (videoRef.current) {
+      videoRef.current.muted = newMutedState;
+    }
+    if (audioRef.current) {
+      audioRef.current.muted = newMutedState;
+    }
+  };
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -228,75 +296,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
   const handleShareAction = () => {
     handleShare();
-  };
-
-  
-  const togglePlayPause = () => {
-    const video = videoRef.current;
-    const audio = audioRef.current;
-    
-    if (!video && !audio) return;
-    
-    const newPlayingState = !isPlaying;
-    setIsPlaying(newPlayingState);
-    
-    if (video) {
-      if (newPlayingState) {
-        if (!isGloballyMuted) {
-          video.muted = false;
-        }
-        
-        video.play().then(() => {
-          if (audio) {
-            audio.currentTime = video.currentTime;
-            audio.muted = isGloballyMuted;
-            audio.play().catch(() => {});
-          }
-        }).catch(() => {
-          if (!video.muted) {
-            video.muted = true;
-            video.play().then(() => {
-              if (audio) {
-                audio.play().catch(() => {});
-              }
-            }).catch(() => {
-              showError('Failed to play video. Please try again.');
-              setIsPlaying(false);
-            });
-          } else {
-            showError('Failed to play video. Please try again.');
-            setIsPlaying(false);
-          }
-        });
-      } else {
-        video.pause();
-        if (audio) {
-          audio.pause();
-        }
-      }
-    } else if (audio) {
-      if (newPlayingState) {
-        audio.play().then(() => {
-        }).catch(() => {
-          showError('Failed to play audio. Please try again.');
-          setIsPlaying(false);
-        });
-      } else {
-        audio.pause();
-      }
-    }
-  };
-
-  const toggleMute = () => {
-    const newMutedState = !isGloballyMuted;
-    setGlobalMute(newMutedState);
-    
-    if (videoRef.current) {
-      videoRef.current.muted = newMutedState;
-    }
-    if (audioRef.current) {
-      audioRef.current.muted = newMutedState;
-    }
   };
 
   const handleVolumeChange = (newVolume: number) => {

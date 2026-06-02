@@ -14,6 +14,7 @@ import SaveButton from './SaveButton';
 import LongFormVideos from './LongFormVideos';
 import { getAuthenticatedUser } from '@/lib/auth';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
+import { MOCK_FALLBACK_VIDEO_URL, getFallbackVideoUrl } from '@/lib/mock-constants';
 
 interface VideoPlayerProps {
   video?: any;
@@ -55,9 +56,9 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   const [userLikes, setUserLikes] = useState<Set<string>>(new Set());
   const [currentViewMode, setCurrentViewMode] = useState<'fullscreen' | 'windowed' | 'halfscreen' | 'splitscreen'>(viewMode);
   const [currentVideo, setCurrentVideo] = useState(video);
-  const [currentVideoUrl, setCurrentVideoUrl] = useState(video?.videoUrl || video?.media || '');
+  const [currentVideoUrl, setCurrentVideoUrl] = useState(getFallbackVideoUrl(video?.videoUrl || video?.media));
   const [currentSecondVideo, setCurrentSecondVideo] = useState(secondVideo);
-  const [currentSecondVideoUrl, setCurrentSecondVideoUrl] = useState(secondVideo?.videoUrl || secondVideo?.media || '');
+  const [currentSecondVideoUrl, setCurrentSecondVideoUrl] = useState(getFallbackVideoUrl(secondVideo?.videoUrl || secondVideo?.media));
   const [isLoading, setIsLoading] = useState(false);
   const [isLoadingSecond, setIsLoadingSecond] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
@@ -87,7 +88,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     if (video && video.id !== currentVideo?.id) {
       setCurrentVideo(video);
-      setCurrentVideoUrl(video?.videoUrl || video?.media || '');
+      setCurrentVideoUrl(getFallbackVideoUrl(video?.videoUrl || video?.media));
       setRetryCount(0);
       // Reset like state for new video
       setIsLiked(false);
@@ -99,7 +100,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     if (secondVideo && secondVideo.id !== currentSecondVideo?.id) {
       setCurrentSecondVideo(secondVideo);
-      setCurrentSecondVideoUrl(secondVideo?.videoUrl || secondVideo?.media || '');
+      setCurrentSecondVideoUrl(getFallbackVideoUrl(secondVideo?.videoUrl || secondVideo?.media));
       setRetryCountSecond(0);
     }
   }, [secondVideo]);
@@ -107,7 +108,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Handle video change from sidebar
   const handleVideoChange = (newVideo: any) => {
     setCurrentVideo(newVideo);
-    setCurrentVideoUrl(newVideo?.videoUrl || newVideo?.media || '');
+    setCurrentVideoUrl(getFallbackVideoUrl(newVideo?.videoUrl || newVideo?.media));
     setRetryCount(0);
     setIsLoading(false);
     
@@ -125,7 +126,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   // Handle second video change
   const handleSecondVideoChange = (newVideo: any) => {
     setCurrentSecondVideo(newVideo);
-    setCurrentSecondVideoUrl(newVideo?.videoUrl || newVideo?.media || '');
+    setCurrentSecondVideoUrl(getFallbackVideoUrl(newVideo?.videoUrl || newVideo?.media));
     setRetryCountSecond(0);
     setIsLoadingSecond(false);
     
@@ -304,18 +305,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleVideoError = async (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const videoElement = e.target as HTMLVideoElement;
-    const videoSrc = currentVideo?.videoUrl || currentVideo?.media || '';
+    const fallbackUrls = currentVideo?.fallbackUrls || [MOCK_FALLBACK_VIDEO_URL];
     
-    // Try fallback URLs if available
-    if (currentVideo?.fallbackUrls && retryCount < currentVideo.fallbackUrls.length) {
+    if (retryCount < fallbackUrls.length) {
       setIsLoading(true);
-      const nextUrl = currentVideo.fallbackUrls[retryCount];
+      const nextUrl = fallbackUrls[retryCount];
         
       setCurrentVideoUrl(nextUrl);
       setRetryCount(retryCount + 1);
       
-      // Reset video element with new URL
       if (videoRef.current) {
         videoRef.current.src = nextUrl;
         videoRef.current.load();
@@ -328,18 +326,15 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
   
   const handleSecondVideoError = async (e: React.SyntheticEvent<HTMLVideoElement>) => {
-    const videoElement = e.target as HTMLVideoElement;
-    const videoSrc = currentSecondVideo?.videoUrl || currentSecondVideo?.media || '';
+    const fallbackUrls = currentSecondVideo?.fallbackUrls || [MOCK_FALLBACK_VIDEO_URL];
     
-    // Try fallback URLs if available
-    if (currentSecondVideo?.fallbackUrls && retryCountSecond < currentSecondVideo.fallbackUrls.length) {
+    if (retryCountSecond < fallbackUrls.length) {
       setIsLoadingSecond(true);
-      const nextUrl = currentSecondVideo.fallbackUrls[retryCountSecond];
+      const nextUrl = fallbackUrls[retryCountSecond];
       
       setCurrentSecondVideoUrl(nextUrl);
       setRetryCountSecond(retryCountSecond + 1);
       
-      // Reset video element with new URL
       if (secondVideoRef.current) {
         secondVideoRef.current.src = nextUrl;
         secondVideoRef.current.load();
