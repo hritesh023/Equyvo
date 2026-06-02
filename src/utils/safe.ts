@@ -7,8 +7,7 @@ export const safeAsync = async <T>(
 ): Promise<T | null> => {
   try {
     return await asyncFn();
-  } catch (error) {
-    console.error('Async operation failed:', error);
+  } catch {
     showError(errorMessage || 'An error occurred');
     return null;
   }

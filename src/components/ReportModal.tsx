@@ -54,18 +54,9 @@ const ReportModal: React.FC<ReportModalProps> = ({
       // Simulate API call to submit report
       await new Promise(resolve => setTimeout(resolve, 1000));
       
-      // Log the report (in real app, this would be sent to backend)
-      console.log('Report submitted:', {
-        contentId,
-        contentType,
-        reason: reportReason,
-        additionalInfo,
-        timestamp: new Date().toISOString()
-      });
-
       showSuccess('Report submitted successfully. We will review this content.');
       handleClose();
-    } catch (error) {
+    } catch {
       showError('Failed to submit report. Please try again.');
     } finally {
       setIsSubmitting(false);

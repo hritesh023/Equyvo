@@ -7,7 +7,6 @@ const DeleteButtonDemo: React.FC = () => {
   const handleDelete = async () => {
     // Simulate delete operation
     await new Promise(resolve => setTimeout(resolve, 1000));
-    console.log('Item deleted successfully');
   };
 
   return (

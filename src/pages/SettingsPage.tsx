@@ -58,8 +58,7 @@ const SettingsPage = () => {
       try {
         const user = await getAuthenticatedUser();
         setUser(user as any);
-      } catch (error) {
-        console.error('Error getting current user:', error);
+      } catch {
       }
     };
     

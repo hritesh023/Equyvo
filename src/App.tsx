@@ -52,21 +52,17 @@ const AppContent = () => {
     const checkAuth = async () => {
       try {
         const authStatus = await checkAuthStatus();
-        console.log('🔐 Auth status result:', authStatus);
         if (authStatus.isAuthenticated && authStatus.user) {
           setUser(authStatus.user);
           setIsLoading(false);
         } else {
-          // In mock/dev mode, check localStorage for stored user
           const storedUser = getStoredUser();
           if (storedUser) {
-            console.log('🔐 Found stored user in mock mode:', storedUser);
             setUser(storedUser);
           }
           setIsLoading(false);
         }
-      } catch (error) {
-        console.error('Error checking authentication:', error);
+      } catch {
         setIsLoading(false);
       }
     };
@@ -85,11 +81,9 @@ const AppContent = () => {
         clearStoredUser();
         setUser(null);
         window.location.href = '/auth';
-      } else {
-        console.error('Sign out error:', result.error);
       }
-    } catch (err) {
-      console.error('Sign out exception:', err);
+    } catch {
+      // Sign out failed silently
     }
   };
   if (isLoading) {

@@ -87,11 +87,9 @@ const ImageViewer: React.FC<ImageViewerProps> = ({ content, onClose }) => {
               maxWidth: '100vw',
               maxHeight: '100vh'
             }}
-            onError={(e) => {
-              console.error('Image error:', e);
+            onError={() => {
               showError('Failed to load image. Please try again later.');
             }}
-            onLoad={() => console.log('Image loaded successfully')}
           />
 
           {/* Fullscreen Toggle */}

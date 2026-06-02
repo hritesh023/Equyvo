@@ -63,7 +63,7 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
                 <div className="relative mb-8">
                     <div className="w-24 h-24 sm:w-32 sm:h-32 md:w-40 md:h-40 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(34,211,238,0.5)] animate-bounce">
                         <img
-                            src="/app-icon.png"
+                            src="/Equyvo_logo.png"
                             alt="Equyvo Logo"
                             className="w-full h-full object-cover"
                         />
@@ -73,7 +73,7 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
                 </div>
 
                 {/* App name with gradient text */}
-                <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black bg-clip-text text-transparent bg-gradient-to-r from-cyan-400 via-blue-500 to-cyan-300 mb-6 tracking-tight animate-pulse">
+                <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 mb-6 animate-pulse leading-[2.5] py-6 px-4" style={{ fontFamily: "'Pacifico', cursive", overflow: 'visible' }}>
                     equyvo
                 </h1>
 

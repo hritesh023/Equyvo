@@ -6,9 +6,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { X, Upload, Image, FileVideo, Trash2 } from 'lucide-react';
+import { X, Upload, Image, FileVideo, Trash2, Loader2 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
+import { uploadToCloudinary, isCloudinaryConfigured, getOptimizedImageUrl } from '@/lib/cloudinary';
 
 interface EditPostModalProps {
   isOpen: boolean;
@@ -78,20 +79,27 @@ const EditPostModal: React.FC<EditPostModalProps> = ({
     }
 
     setIsLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      const updatedPost = {
-        ...currentPost,
-        content,
-        image: mediaPreview,
-      };
 
-      onSave(updatedPost);
-      showSuccess('Post updated successfully!');
-      onClose();
-      setIsLoading(false);
-    }, 1000);
+    let mediaUrl = mediaPreview;
+    if (mediaFile && isCloudinaryConfigured()) {
+      try {
+        const result = await uploadToCloudinary(mediaFile, { folder: 'equyvo/posts' });
+        mediaUrl = result.secureUrl || getOptimizedImageUrl(result.publicId);
+      } catch {
+        showError('Failed to upload media. Using local preview.');
+      }
+    }
+
+    const updatedPost = {
+      ...currentPost,
+      content,
+      image: mediaUrl,
+    };
+
+    onSave(updatedPost);
+    showSuccess('Post updated successfully!');
+    onClose();
+    setIsLoading(false);
   };
 
   const handleRemoveMedia = () => {

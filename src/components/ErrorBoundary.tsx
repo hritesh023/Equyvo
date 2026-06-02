@@ -39,20 +39,6 @@ class ErrorBoundary extends Component<Props & { navigate?: any }, State> {
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('Uncaught error:', error, errorInfo);
-    
-    // Log error details for debugging
-    console.group('🚨 Error Boundary Caught Error');
-    console.error('Error:', error);
-    console.error('Error Info:', errorInfo);
-    console.error('Component Stack:', errorInfo.componentStack);
-    console.groupEnd();
-    
-    // Optionally send error to analytics service in production
-    if (process.env.NODE_ENV === 'production') {
-      // In a real app, you might send this to Sentry, LogRocket, etc.
-      console.warn('Error would be sent to error tracking service in production');
-    }
   }
 
   public render() {

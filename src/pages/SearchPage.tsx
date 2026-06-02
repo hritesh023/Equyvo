@@ -20,68 +20,9 @@ import FullscreenViewer from '@/components/FullscreenViewer';
 import { cn } from '@/lib/utils';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
+import { searchContent, ContentIndexItem, getTrendingContent, getAllContent } from '@/lib/content-index';
 
-// Mock search results data
-const mockSearchResults = [
-  {
-    id: '1',
-    title: 'Amazing Sunset Photography Tips',
-    description: 'Learn how to capture stunning sunset photos with these professional techniques',
-    type: 'video' as const,
-    creator: 'PhotoPro',
-    views: '125K',
-    thumbnail: 'https://picsum.photos/seed/sunset1/300/200',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    category: 'Photography',
-    tags: ['photography', 'sunset', 'tips'],
-    duration: '10:24',
-    publishedAt: '2 days ago'
-  },
-  {
-    id: '2',
-    title: 'Quick & Easy Dinner Recipes',
-    description: 'Delicious recipes you can make in under 30 minutes',
-    type: 'photo' as const,
-    creator: 'FoodieLife',
-    views: '89K',
-    thumbnail: 'https://picsum.photos/seed/food1/300/200',
-    imageUrl: 'https://picsum.photos/seed/food1/800/600',
-    category: 'Food',
-    tags: ['food', 'recipes', 'dinner'],
-    publishedAt: '1 day ago'
-  },
-  {
-    id: '3',
-    title: 'Morning Yoga Flow for Beginners',
-    description: 'Start your day with this gentle yoga sequence',
-    type: 'video' as const,
-    creator: 'YogaGuru',
-    views: '234K',
-    thumbnail: 'https://picsum.photos/seed/yoga1/300/200',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    category: 'Fitness',
-    tags: ['yoga', 'fitness', 'morning'],
-    duration: '15:30',
-    publishedAt: '3 days ago'
-  }
-];
-
-interface SearchItem {
-  id: string;
-  title?: string;
-  description?: string;
-  type?: string;
-  creator?: string;
-  views?: string;
-  thumbnail?: string;
-  videoUrl?: string;
-  imageUrl?: string;
-  category?: string;
-  tags?: string[];
-  duration?: string;
-  publishedAt?: string;
-  [key: string]: unknown;
-}
+type SearchItem = ContentIndexItem;
 
 const SearchPage: React.FC = () => {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -89,9 +30,10 @@ const SearchPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'split'>('grid');
   const [sortBy, setSortBy] = useState('relevance');
   const [filterCategory, setFilterCategory] = useState('all');
-  const [results, setResults] = useState<SearchItem[]>(mockSearchResults);
+  const [results, setResults] = useState<SearchItem[]>(getAllContent().slice(0, 12));
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [isAiRecommended, setIsAiRecommended] = useState(false);
   const [showSplitScreen, setShowSplitScreen] = useState(false);
   const [selectedItem, setSelectedItem] = useState<SearchItem | null>(null);
   const [showCommentSection, setShowCommentSection] = useState(false);
@@ -114,6 +56,14 @@ const SearchPage: React.FC = () => {
   const handleShare = (item: SearchItem) => {
     showSuccess(`Sharing "${item.title}"...`);
     // Share functionality will be handled by ShareButton component
+  };
+
+  const getFullscreenType = (resultType: string): 'post' | 'live' | 'video' | 'moment' | 'image' => {
+    if (resultType === 'moment') return 'moment';
+    if (resultType === 'story') return 'story' as any;
+    if (resultType === 'video') return 'video';
+    if (resultType === 'photo') return 'image';
+    return 'image';
   };
 
   const handleOpenFullscreen = (content: FullscreenContent, type: 'post' | 'live' | 'video' | 'moment' | 'image') => {
@@ -172,29 +122,26 @@ const SearchPage: React.FC = () => {
     showSuccess('🔗 Link copied to clipboard!');
   };
 
-  // Memoized filtering logic to prevent unnecessary re-renders
+  // Search using content index
   const filterResults = useCallback((searchQuery: string) => {
-    return mockSearchResults.filter(result =>
-      result.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      result.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      result.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      result.category.toLowerCase().includes(searchQuery.toLowerCase())
-    );
+    const { results, isAiRecommended: aiRec } = searchContent(searchQuery);
+    setIsAiRecommended(aiRec);
+    return results;
   }, []);
 
-  // Simulate search loading with proper initial state handling
+  // Perform search when query changes
   useEffect(() => {
     if (query) {
       setIsLoading(true);
-      // Simulate API call
       setTimeout(() => {
         const filteredResults = filterResults(query);
         setResults(filteredResults);
         setIsLoading(false);
         setIsInitialLoad(false);
-      }, 800);
+      }, 400);
     } else {
-      setResults(mockSearchResults);
+      setResults(getAllContent().slice(0, 12));
+      setIsAiRecommended(false);
       setIsInitialLoad(false);
     }
   }, [query, filterResults]);
@@ -243,10 +190,11 @@ const SearchPage: React.FC = () => {
 
   const handleCategoryFilter = (value: string) => {
     setFilterCategory(value);
+    const all = getAllContent();
     if (value === 'all') {
-      setResults(mockSearchResults);
+      setResults(all.slice(0, 20));
     } else {
-      const filtered = mockSearchResults.filter(result => result.category === value);
+      const filtered = all.filter(result => result.category === value);
       setResults(filtered);
     }
   };
@@ -267,7 +215,7 @@ const SearchPage: React.FC = () => {
     setSelectedItem(null);
   };
 
-  const categories = ['all', ...Array.from(new Set(mockSearchResults.map(r => r.category)))];
+  const categories = ['all', ...Array.from(new Set(getAllContent().map(r => r.category)))];
 
   return (
     <>
@@ -363,6 +311,12 @@ const SearchPage: React.FC = () => {
                 </h1>
                 <p className="text-muted-foreground">
                   {isLoading ? 'Searching...' : `Found ${results.length} results${query ? ` for "${query}"` : ''}`}
+                  {isAiRecommended && !isLoading && (
+                    <span className="ml-2 inline-flex items-center gap-1 text-xs bg-gradient-to-r from-purple-100 to-blue-100 dark:from-purple-900/30 dark:to-blue-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full font-medium">
+                      <Sparkles className="h-3 w-3" />
+                      AI Recommended
+                    </span>
+                  )}
                 </p>
               </div>
               
@@ -472,6 +426,23 @@ const SearchPage: React.FC = () => {
             />
           )}
 
+          {/* AI Recommendation Banner */}
+          {!isLoading && !isInitialLoad && isAiRecommended && query && results.length > 0 && (
+            <div className="mb-6 p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-950/30 dark:to-blue-950/30 border border-purple-200/50 dark:border-purple-800/30 rounded-lg">
+              <div className="flex items-start gap-3">
+                <Sparkles className="h-5 w-5 text-purple-500 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-sm font-medium text-purple-700 dark:text-purple-300">
+                    AI Recommendation for "{query}"
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Showing popular and trending content that matches your search. Try refining your search for more specific results.
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Results Grid/List */}
           {!isLoading && !isInitialLoad && !showSplitScreen && results.length > 0 && (
             <div className={cn(
@@ -480,7 +451,7 @@ const SearchPage: React.FC = () => {
                 : 'space-y-4'
             )}>
               {results.map((result) => (
-                <Card key={result.id} className="group hover:shadow-lg transition-all duration-300 cursor-pointer" onClick={() => handleOpenFullscreen(result, result.type === 'video' ? 'video' : 'image')}>
+                <Card key={result.id} className="group hover:shadow-lg transition-all duration-300 cursor-pointer" onClick={() => handleOpenFullscreen(result, getFullscreenType(result.type))}>
                   {viewMode === 'grid' ? (
                     // Grid View
                     <>
@@ -500,7 +471,7 @@ const SearchPage: React.FC = () => {
                             variant="secondary" 
                             size="sm" 
                             className="opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-                            onClick={() => handleOpenFullscreen(result, result.type === 'video' ? 'video' : 'image')}
+                            onClick={() => handleOpenFullscreen(result, getFullscreenType(result.type))}
                           >
                             {result.type === 'video' ? 'Play' : 'View'}
                           </Button>
@@ -537,7 +508,7 @@ const SearchPage: React.FC = () => {
                                 e.stopPropagation();
                                 // Show tag bar and open content in fullscreen
                                 handleTagBarClick(tag);
-                                handleOpenFullscreen(result, result.type === 'video' ? 'video' : 'image');
+                                handleOpenFullscreen(result, getFullscreenType(result.type));
                               }}
                             >
                               #{tag}
@@ -596,7 +567,7 @@ const SearchPage: React.FC = () => {
                                 e.stopPropagation();
                                 // Show tag bar and open content in fullscreen
                                 handleTagBarClick(tag);
-                                handleOpenFullscreen(result, result.type === 'video' ? 'video' : 'image');
+                                handleOpenFullscreen(result, getFullscreenType(result.type));
                               }}
                             >
                               #{tag}
@@ -651,7 +622,7 @@ const SearchPage: React.FC = () => {
                           <Button 
                             variant="outline" 
                             size="sm"
-                            onClick={() => handleOpenFullscreen(result, result.type === 'video' ? 'video' : 'image')}
+                            onClick={() => handleOpenFullscreen(result, getFullscreenType(result.type))}
                           >
                             {result.type === 'video' ? 'Play' : 'View'}
                           </Button>
@@ -675,18 +646,28 @@ const SearchPage: React.FC = () => {
           {!isLoading && !isInitialLoad && results.length === 0 && (
             <div className="text-center py-12">
               <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No results found</h3>
+              <h3 className="text-lg font-semibold mb-2">No exact matches found</h3>
               <p className="text-muted-foreground mb-4">
-                {query ? `No results found for "${query}"` : 'No content available'}
+                {query ? `No content matches "${query}" exactly` : 'No content available'}
               </p>
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Try:</p>
                 <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>• Checking your spelling</li>
-                  <li>• Using more general terms</li>
                   <li>• Using different keywords</li>
-                  <li>• Browsing categories</li>
+                  <li>• Browsing categories below</li>
                 </ul>
+                <div className="mt-4 flex flex-wrap justify-center gap-2">
+                  {['Photography', 'Food', 'Fitness', 'Technology', 'Travel', 'Fashion', 'Art', 'Gaming', 'Music'].map(cat => (
+                    <Badge
+                      key={cat}
+                      variant="outline"
+                      className="cursor-pointer hover:bg-primary hover:text-primary-foreground transition-all"
+                      onClick={() => handleCategoryFilter(cat)}
+                    >
+                      {cat}
+                    </Badge>
+                  ))}
+                </div>
               </div>
             </div>
           )}

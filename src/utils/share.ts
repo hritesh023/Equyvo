@@ -35,7 +35,6 @@ export const shareContent = async (title: string, text: string, url?: string) =>
       }
     }
   } catch (error) {
-    console.error('Error sharing:', error);
     return { 
       success: false, 
       error: error instanceof Error ? error.message : 'Share failed' 

@@ -30,8 +30,7 @@ export const useWatchHistory = () => {
       const filtered = parsed.filter((h: WatchHistoryItem) => h.id !== item.id);
       const updated = [historyItem, ...filtered].slice(0, 100);
       localStorage.setItem('watchHistory', JSON.stringify(updated));
-    } catch (error) {
-      console.error('Failed to save watch history:', error);
+    } catch {
     }
   }, []);
 

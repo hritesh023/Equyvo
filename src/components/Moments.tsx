@@ -1,7 +1,7 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Video, Camera, Eye, ThumbsUp, MessageCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, AlertTriangle, Maximize, Bookmark } from 'lucide-react';
+import { Play, Pause, Video, Camera, Eye, ThumbsUp, MessageCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, AlertTriangle, Maximize, Bookmark, RotateCcw } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { handleAsyncError, createError } from '@/utils/error-handling';
 import { usePlatformOptimizations } from '@/hooks/use-platform-optimizations';
@@ -107,13 +107,11 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     const finalVideoUrl = actualVideoUrl || fallbackUrl;
     
     if (!finalVideoUrl) {
-      console.log('Cannot play video - no URL:', { momentId, actualVideoUrl });
       return;
     }
 
     const video = videoRefs.current[momentId];
     if (!video) {
-      console.log('No video element found for moment:', momentId);
       return;
     }
 
@@ -149,30 +147,24 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
         // Try to play with user's audio preference
         await video.play();
         setIsLoading(prev => ({ ...prev, [momentId]: false }));
-        console.log('Video playing successfully:', momentId);
       } catch (error) {
-        console.error('Video play failed, trying muted:', error);
         // Fallback: force mute and try again for autoplay compatibility
         video.muted = true;
         try {
           await video.play();
           setIsLoading(prev => ({ ...prev, [momentId]: false }));
-          console.log('Video playing with forced mute:', momentId);
           // Show user that video is muted so they can unmute
           if (!isMuted) {
             setIsMuted(true);
           }
         } catch (e) {
-          console.error('Video play failed completely:', e);
           // Try fallback video as last resort
           if (actualVideoUrl !== fallbackUrl) {
             video.src = fallbackUrl;
             try {
               await video.play();
               setIsLoading(prev => ({ ...prev, [momentId]: false }));
-              console.log('Fallback video playing:', momentId);
             } catch (fallbackError) {
-              console.error('Fallback video also failed:', fallbackError);
               handleVideoError(momentId, fallbackError);
             }
           } else {
@@ -204,10 +196,11 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     const momentContent = {
       ...moment,
       type: 'moment',
+      contentType: 'moment',
       videoUrl: moment.videoUrl || moment.media,
       media: moment.media,
       thumbnail: moment.thumbnail || moment.media,
-      mediaType: moment.mediaType,
+      mediaType: 'moment',
       creator: moment.user,
       content: moment.content,
       likes: moment.likes,
@@ -227,7 +220,6 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       // Force fullscreen mode for moments
       viewMode: 'fullscreen'
     };
-    console.log('Opening moment in fullscreen portrait mode:', momentContent);
     onFullscreen(momentContent);
   };
 
@@ -239,7 +231,6 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   };
 
   const handleVideoError = (momentId: string, error?: Event | React.SyntheticEvent) => {
-    console.warn(`Video failed to load for moment ${momentId}:`, error);
     const video = videoRefs.current[momentId];
     const moment = moments.find(m => m.id === momentId);
     
@@ -249,14 +240,12 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       
       // If current source failed and it's not already the fallback, try fallback
       if (!currentSrc.includes('BigBuckBunny.mp4')) {
-        console.log(`Trying fallback video for moment ${momentId}`);
         video.src = fallbackUrl;
         video.load();
         
         // Try to play the fallback video
         setTimeout(() => {
           video.play().then(() => {
-            console.log(`Fallback video playing for moment ${momentId}`);
             setIsLoading(prev => ({ ...prev, [momentId]: false }));
             // Clear error state since fallback is working
             setVideoErrors(prev => {
@@ -264,8 +253,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
               newSet.delete(momentId);
               return newSet;
             });
-          }).catch(fallbackError => {
-            console.error(`Fallback video also failed for moment ${momentId}:`, fallbackError);
+          }).catch(() => {
             setVideoErrors(prev => new Set(prev).add(momentId));
             setIsLoading(prev => ({ ...prev, [momentId]: false }));
           });
@@ -293,7 +281,6 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   };
 
   const handleThumbnailError = (momentId: string) => {
-    console.warn(`Thumbnail failed to load for moment ${momentId}`);
     setThumbnailErrors(prev => new Set(prev).add(momentId));
   };
 
@@ -384,7 +371,6 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     const newDuration = { ...videoDuration };
     newDuration[momentId] = video.duration || 0;
     setVideoDuration(newDuration);
-    console.log(`Video ${momentId} loaded, duration: ${video.duration}s`);
   };
 
   const handleVideoHover = (momentId: string, isHovering: boolean, videoUrl?: string) => {
@@ -420,9 +406,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       
       video.play().then(() => {
         setIsLoading(prev => ({ ...prev, [momentId]: false }));
-        console.log('Hover video playing successfully (muted):', momentId);
       }).catch(error => {
-        console.error('Hover video play failed:', error);
         handleVideoError(momentId, error);
       });
     } else {
@@ -445,6 +429,75 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       scrollContainerRef.current.scrollBy({ left: 200, behavior: 'smooth' });
     }
   };
+
+  // Desktop keyboard shortcuts for video control
+  useEffect(() => {
+    const isDesktop = window.innerWidth >= 768;
+    if (!isDesktop) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+      const videoEntries = Object.entries(videoRefs.current);
+      if (videoEntries.length === 0) return;
+
+      const playingIds = Array.from(playingVideos);
+      const activeId = playingIds.length > 0 ? playingIds[0] : videoEntries[0][0];
+      const video = videoRefs.current[activeId];
+      if (!video) return;
+
+      switch (e.key) {
+        case ' ':
+        case 'k':
+        case 'K':
+          e.preventDefault();
+          if (video.paused) video.play(); else video.pause();
+          break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 5);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 5);
+          break;
+        case 'j':
+        case 'J':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 10);
+          break;
+        case 'l':
+        case 'L':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          break;
+        case 'm':
+        case 'M':
+          e.preventDefault();
+          video.muted = !isMuted;
+          setIsMuted(!isMuted);
+          break;
+        case ',':
+          e.preventDefault();
+          video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+          break;
+        case '.':
+          e.preventDefault();
+          video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+          break;
+      }
+
+      if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        const pct = parseInt(e.key) / 10;
+        video.currentTime = (video.duration || 0) * pct;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [playingVideos, isMuted, moments]);
 
   // Ensure moments fill the horizontal space by duplicating if needed
   const getDisplayMoments = () => {
@@ -526,9 +579,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                           src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
                           alt="Moment thumbnail"
                           className="w-full h-full object-cover"
-                          onError={(e) => {
+                            onError={(e) => {
                             const target = e.target as HTMLImageElement;
-                            console.log('Thumbnail error for moment:', moment.id);
                             // Try multiple fallback images in sequence
                             if (!target.src.includes('picsum.photos/seed/')) {
                               target.src = `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`;
@@ -563,10 +615,10 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <video
                           ref={(el) => { if (el) videoRefs.current[moment.id] = el; }}
                           src={moment.videoUrl || moment.media}
-                          className="absolute inset-0 w-full h-full object-contain"
+                          className="absolute inset-0 w-full h-full object-cover"
                           style={{
                             aspectRatio: '9/16',
-                            objectFit: 'contain'
+                            objectFit: 'cover'
                           }}
                           muted={isMuted}
                           loop
@@ -576,11 +628,9 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                           onMouseEnter={() => handleVideoHover(moment.id, true, moment.videoUrl || moment.media)}
                           onMouseLeave={() => handleVideoHover(moment.id, false, moment.videoUrl || moment.media)}
                           onError={(e) => {
-                            console.log('Video error for moment:', moment.id, e);
                             handleVideoError(moment.id, e);
                           }}
                           onLoadedData={() => {
-                            console.log('Video loaded successfully for moment:', moment.id);
                             handleVideoLoaded(moment.id);
                           }}
                           onTimeUpdate={() => handleTimeUpdate(moment.id, videoRefs.current[moment.id])}
@@ -652,6 +702,16 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       {playingVideos.has(moment.id) && (
                         <div className="absolute bottom-2 left-2 right-2 z-20">
                           <div className="flex items-center gap-1">
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const v = videoRefs.current[moment.id];
+                                if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                              }}
+                              className="max-md:hidden text-white/70 hover:text-white p-0.5"
+                            >
+                              <RotateCcw className="h-2.5 w-2.5" />
+                            </button>
                             <span className="text-white text-xs font-medium min-w-[25px]">
                               {formatTime(currentTime[moment.id] || 0)}
                             </span>
@@ -674,6 +734,16 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                             <span className="text-white text-xs font-medium min-w-[25px]">
                               {formatTime(videoDuration[moment.id] || 0)}
                             </span>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const v = videoRefs.current[moment.id];
+                                if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                              }}
+                              className="max-md:hidden text-white/70 hover:text-white p-0.5"
+                            >
+                              <RotateCcw className="h-2.5 w-2.5 scale-x-[-1]" />
+                            </button>
                           </div>
                         </div>
                       )}
@@ -853,11 +923,9 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         handleVideoPlayPause(moment.id, moment.videoUrl || moment.media);
                       }}
                       onError={(e) => {
-                        console.log('Video error for moment:', moment.id, e);
                         handleVideoError(moment.id, e);
                       }}
                       onLoadedData={() => {
-                        console.log('Video loaded successfully for moment:', moment.id);
                         handleVideoLoaded(moment.id);
                       }}
                       onTimeUpdate={() => handleTimeUpdate(moment.id, videoRefs.current[moment.id])}
@@ -913,6 +981,16 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                   {playingVideos.has(moment.id) && (
                     <div className="absolute bottom-2 left-2 right-2 z-20">
                       <div className="flex items-center gap-1">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const v = videoRefs.current[moment.id];
+                            if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                          }}
+                          className="max-md:hidden text-white/70 hover:text-white p-0.5"
+                        >
+                          <RotateCcw className="h-2.5 w-2.5" />
+                        </button>
                         <span className="text-white text-xs font-medium min-w-[25px]">
                           {formatTime(currentTime[moment.id] || 0)}
                         </span>
@@ -935,6 +1013,16 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <span className="text-white text-xs font-medium min-w-[25px]">
                           {formatTime(videoDuration[moment.id] || 0)}
                         </span>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const v = videoRefs.current[moment.id];
+                            if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                          }}
+                          className="max-md:hidden text-white/70 hover:text-white p-0.5"
+                        >
+                          <RotateCcw className="h-2.5 w-2.5 scale-x-[-1]" />
+                        </button>
                       </div>
                     </div>
                   )}

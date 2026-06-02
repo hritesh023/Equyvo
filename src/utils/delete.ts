@@ -13,21 +13,13 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
     // Simulate API call to delete content
     await new Promise(resolve => setTimeout(resolve, 1000));
     
-    // Log the deletion (in real app, this would be sent to backend)
-    console.log('Content deleted:', {
-      postId,
-      contentType,
-      timestamp: new Date().toISOString()
-    });
-
     showSuccess(`${contentType.charAt(0).toUpperCase() + contentType.slice(1)} deleted successfully`);
     
     // Notify parent component of successful deletion
     if (onDeleteComplete) {
       onDeleteComplete(postId);
     }
-  } catch (error) {
-    console.error('Delete error:', error);
+  } catch {
     showError(`Failed to delete ${contentType}. Please try again.`);
     throw error;
   }

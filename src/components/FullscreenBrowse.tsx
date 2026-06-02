@@ -170,7 +170,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
       <div className="bg-black/90 backdrop-blur-md border-b border-white/10 p-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
-            <img src="/app-icon.png" alt="Equyvo" className="h-8 w-8" />
+            <img src="/Equyvo_logo.png" alt="Equyvo" className="h-8 w-8" />
             <h1 className="text-white text-xl font-bold">Equyvo</h1>
           </div>
           <div className="flex items-center gap-2">

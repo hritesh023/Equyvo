@@ -51,8 +51,7 @@ const DeleteButton: React.FC<DeleteButtonProps> = ({
     try {
       await onDelete();
       setIsOpen(false);
-    } catch (error) {
-      console.error('Delete failed:', error);
+    } catch {
     } finally {
       setIsDeleting(false);
     }

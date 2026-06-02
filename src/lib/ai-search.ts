@@ -1,4 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
+import { searchContent, getTrendingContent, getAllContent } from './content-index';
 
 // Types for search suggestions
 export interface SearchSuggestion {
@@ -37,8 +38,8 @@ class AISearchService {
       if (stored) {
         this.searchHistory = JSON.parse(stored);
       }
-    } catch (error) {
-      console.error('Failed to load search history:', error);
+    } catch {
+      // If loading fails, just return empty history
     }
     return this.searchHistory;
   }
@@ -59,8 +60,7 @@ class AISearchService {
 
     try {
       localStorage.setItem('equyvo_search_history', JSON.stringify(this.searchHistory));
-    } catch (error) {
-      console.error('Failed to save search history:', error);
+    } catch {
     }
   }
 
@@ -128,7 +128,7 @@ class AISearchService {
         ]
       },
       {
-        keywords: ['food', 'cooking', 'recipe', 'kitchen', 'chef'],
+        keywords: ['food', 'cooking', 'recipe', 'kitchen', 'chef', 'bake', 'cake'],
         suggestions: [
           { label: 'quick recipes', category: 'Food', description: 'Fast and easy recipes' },
           { label: 'baking tutorials', category: 'Food', description: 'Learn baking techniques' },
@@ -137,7 +137,7 @@ class AISearchService {
         ]
       },
       {
-        keywords: ['fitness', 'workout', 'gym', 'exercise', 'health'],
+        keywords: ['fitness', 'workout', 'gym', 'exercise', 'health', 'yoga'],
         suggestions: [
           { label: 'home workouts', category: 'Fitness', description: 'Effective home workout routines' },
           { label: 'yoga flows', category: 'Fitness', description: 'Relaxing yoga sequences' },
@@ -155,7 +155,7 @@ class AISearchService {
         ]
       },
       {
-        keywords: ['tech', 'technology', 'coding', 'programming', 'software'],
+        keywords: ['tech', 'technology', 'coding', 'programming', 'software', 'ai', 'artificial intelligence'],
         suggestions: [
           { label: 'tech reviews', category: 'Technology', description: 'Latest tech product reviews' },
           { label: 'coding tutorials', category: 'Technology', description: 'Learn programming languages' },
@@ -164,7 +164,7 @@ class AISearchService {
         ]
       },
       {
-        keywords: ['fashion', 'style', 'outfit', 'clothing', 'trend'],
+        keywords: ['fashion', 'style', 'outfit', 'clothing', 'trend', 'tie'],
         suggestions: [
           { label: 'fashion trends', category: 'Fashion', description: 'Latest fashion trends' },
           { label: 'outfit ideas', category: 'Fashion', description: 'Daily outfit inspiration' },
@@ -207,6 +207,23 @@ class AISearchService {
       }
     }
 
+    // If no keyword pattern matched, try content-index-based suggestions
+    if (matchedSuggestions.length === 0) {
+      const indexResults = searchContent(query);
+      if (indexResults.results.length > 0 && !indexResults.isAiRecommended) {
+        const contentSuggestions = indexResults.results.slice(0, 4).map(item => ({
+          id: `content-${item.id}`,
+          label: item.title,
+          category: item.category,
+          description: item.description.slice(0, 80) + '...',
+          type: 'ai-generated' as const,
+          confidence: 0.75,
+          metadata: { contentId: item.id }
+        }));
+        matchedSuggestions.push(...contentSuggestions);
+      }
+    }
+
     // Always return suggestions for any input, including random strings
     if (matchedSuggestions.length === 0) {
       return this.generateGeneralSuggestions(query);
@@ -217,7 +234,7 @@ class AISearchService {
 
   // Generate general suggestions when no specific pattern matches
   private generateGeneralSuggestions(query: string): SearchSuggestion[] {
-    // For any input (including random strings like "dkjfh"), generate creative suggestions
+    // For any input (including random strings like "nghxftg"), generate creative suggestions
     const generalSuggestions = [
       { label: `${query} tutorials`, category: 'Education', description: `Learn everything about ${query}` },
       { label: `${query} explained`, category: 'Education', description: `What is ${query}? Complete guide` },
@@ -229,12 +246,26 @@ class AISearchService {
       { label: `${query} videos`, category: 'Video', description: `Watch ${query} video content` }
     ];
 
-    return generalSuggestions.map(suggestion => ({
+    const result = generalSuggestions.map(suggestion => ({
       id: `general-${Math.random().toString(36).substr(2, 9)}`,
       ...suggestion,
       type: 'ai-generated' as const,
       confidence: 0.6
     }));
+
+    // Also mix in trending content from the app for better discovery
+    const trending = getTrendingContent().slice(0, 3);
+    const trendingSuggestions = trending.map(item => ({
+      id: `trending-${item.id}`,
+      label: item.title,
+      category: item.category,
+      description: item.description.slice(0, 60) + '...',
+      type: 'trending' as const,
+      confidence: 0.75,
+      metadata: { contentId: item.id }
+    }));
+
+    return [...result, ...trendingSuggestions];
   }
 
   // Get recent search suggestions
@@ -428,8 +459,7 @@ export function useAISearch() {
     try {
       const results = await searchService.generateSuggestions(query);
       setSuggestions(results);
-    } catch (error) {
-      console.error('Failed to generate suggestions:', error);
+    } catch {
       setSuggestions([]);
     } finally {
       setIsLoading(false);

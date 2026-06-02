@@ -1,13 +1,14 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain } from 'lucide-react';
+import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2 } from 'lucide-react';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
+import { uploadToCloudinary, isCloudinaryConfigured, getThumbnailUrl, getOptimizedImageUrl, getOptimizedVideoUrl } from '@/lib/cloudinary';
 
 const CreatePage = () => {
   const [activeTab, setActiveTab] = useState('story');
@@ -43,6 +44,7 @@ const CreatePage = () => {
   const [uploadedTextStories, setUploadedTextStories] = useState<UploadedTextStory[]>([]);
   const [showContentManagement, setShowContentManagement] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'text-stories'>('all');
+  const [isUploading, setIsUploading] = useState(false);
 
   // Type definitions for scheduled and draft posts
   interface ScheduledPost {
@@ -257,7 +259,7 @@ const CreatePage = () => {
     }
   };
 
-  const handlePostStory = (action: 'post' | 'schedule' | 'draft' = 'post') => {
+  const handlePostStory = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     if (storyFiles.length === 0) {
       showError('Please select at least one file for your story');
       return;
@@ -270,28 +272,42 @@ const CreatePage = () => {
 
     switch (action) {
       case 'post':
-        // Add stories to uploaded stories list with analytics
-        const newUploadedStories: UploadedStory[] = storyFiles.map((file, index) => ({
+        setIsUploading(true);
+        const uploadedStoryResults = await Promise.all(
+          storyFiles.map(async (file) => {
+            try {
+              if (isCloudinaryConfigured()) {
+                const result = await uploadToCloudinary(file, { folder: 'equyvo/stories' });
+                return { file, result };
+              }
+            } catch (err) {
+              showError(`Upload failed for ${file.name}`);
+            }
+            return { file, result: null };
+          })
+        );
+
+        const newUploadedStories: UploadedStory[] = uploadedStoryResults.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           type: file.type.startsWith('image/') ? 'image' : 'video',
           fileName: file.name,
           fileSize: file.size,
           duration: file.type.startsWith('video/') ? '0:15' : undefined,
-          thumbnail: 'https://picsum.photos/seed/' + file.name + '/300/400',
+          thumbnail: result?.secureUrl || getThumbnailUrl(result?.publicId || '', { width: 300, height: 400 }) || 'https://picsum.photos/seed/' + file.name + '/300/400',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 500),
           likes: Math.floor(Math.random() * 50),
           comments: Math.floor(Math.random() * 25),
           shares: Math.floor(Math.random() * 10),
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }));
 
         setUploadedStories(prev => [...prev, ...newUploadedStories]);
+        setIsUploading(false);
         showSuccess('Story posted successfully! It will be available for 24 hours.');
         setStoryFiles([]);
         
-        // Emit event to notify HomePage that user has uploaded stories
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
         break;
       case 'schedule':
@@ -396,7 +412,7 @@ const CreatePage = () => {
     }
   };
 
-  const handlePostThought = (action: 'post' | 'schedule' | 'draft' = 'post') => {
+  const handlePostThought = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     if (!thoughtContent.trim()) {
       showError('Please enter your thought');
       return;
@@ -409,13 +425,23 @@ const CreatePage = () => {
 
     switch (action) {
       case 'post':
-        // Add thought to uploaded thoughts list with analytics
+        setIsUploading(true);
+        let cloudinaryUrl: string | undefined;
+        if (thoughtVideo && isCloudinaryConfigured()) {
+          try {
+            const result = await uploadToCloudinary(thoughtVideo, { folder: 'equyvo/thoughts' });
+            cloudinaryUrl = result.secureUrl;
+          } catch (err) {
+            showError('Upload failed for thought media');
+          }
+        }
+
         const newUploadedThought: UploadedThought = {
           id: Date.now().toString(),
           content: thoughtContent,
           hasMedia: !!thoughtVideo,
           mediaType: thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined,
-          mediaUrl: thoughtVideo ? 'https://picsum.photos/seed/' + thoughtVideo.name + '/300/200' : undefined,
+          mediaUrl: cloudinaryUrl || (thoughtVideo ? 'https://picsum.photos/seed/' + thoughtVideo.name + '/300/200' : undefined),
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 200),
@@ -426,6 +452,7 @@ const CreatePage = () => {
         };
 
         setUploadedThoughts(prev => [...prev, newUploadedThought]);
+        setIsUploading(false);
         showSuccess('Thought posted successfully!');
         setThoughtContent('');
         setThoughtVideo(null);
@@ -462,7 +489,7 @@ const CreatePage = () => {
     }
   };
 
-  const handlePostPhotos = (action: 'post' | 'schedule' | 'draft' = 'post') => {
+  const handlePostPhotos = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     if (photoFiles.length === 0) {
       showError('Please select at least one photo');
       return;
@@ -475,12 +502,26 @@ const CreatePage = () => {
 
     switch (action) {
       case 'post':
-        // Add photos to uploaded photos list with analytics
-        const newUploadedPhotos: UploadedPhoto[] = photoFiles.map((file, index) => ({
+        setIsUploading(true);
+        const uploadedPhotoResults = await Promise.all(
+          photoFiles.map(async (file) => {
+            try {
+              if (isCloudinaryConfigured()) {
+                const result = await uploadToCloudinary(file, { folder: 'equyvo/photos' });
+                return { file, result };
+              }
+            } catch (err) {
+              showError(`Upload failed for ${file.name}`);
+            }
+            return { file, result: null };
+          })
+        );
+
+        const newUploadedPhotos: UploadedPhoto[] = uploadedPhotoResults.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: 'https://picsum.photos/seed/' + file.name + '/300/400',
+          thumbnail: result?.secureUrl || getOptimizedImageUrl(result?.publicId || '') || 'https://picsum.photos/seed/' + file.name + '/300/400',
           caption: photoCaption,
           uploadDate: new Date(),
           isPrivate: false,
@@ -491,6 +532,7 @@ const CreatePage = () => {
         }));
 
         setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
+        setIsUploading(false);
         showSuccess(`${photoFiles.length} photo(s) posted successfully!`);
         setPhotoFiles([]);
         setPhotoCaption('');
@@ -527,7 +569,7 @@ const CreatePage = () => {
     }
   };
 
-  const handlePostVideos = (action: 'post' | 'schedule' | 'draft' = 'post') => {
+  const handlePostVideos = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     if (videoFiles.length === 0) {
       showError('Please select at least one video');
       return;
@@ -540,14 +582,28 @@ const CreatePage = () => {
 
     switch (action) {
       case 'post':
-        // Add videos to uploaded videos list with analytics
-        const newUploadedVideos: UploadedVideo[] = videoFiles.map((file, index) => ({
+        setIsUploading(true);
+        const uploadedVideoResults = await Promise.all(
+          videoFiles.map(async (file) => {
+            try {
+              if (isCloudinaryConfigured()) {
+                const result = await uploadToCloudinary(file, { folder: 'equyvo/videos' });
+                return { file, result };
+              }
+            } catch (err) {
+              showError(`Upload failed for ${file.name}`);
+            }
+            return { file, result: null };
+          })
+        );
+
+        const newUploadedVideos: UploadedVideo[] = uploadedVideoResults.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           title: videoCaption || file.name,
           fileName: file.name,
           fileSize: file.size,
-          duration: '0:00', // Would be calculated from actual video
-          thumbnail: 'https://picsum.photos/seed/' + file.name + '/300/180',
+          duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
+          thumbnail: result?.secureUrl || getThumbnailUrl(result?.publicId || '', { width: 300, height: 180 }) || 'https://picsum.photos/seed/' + file.name + '/300/180',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 1000),
@@ -559,6 +615,7 @@ const CreatePage = () => {
         }));
 
         setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
+        setIsUploading(false);
         showSuccess(`${videoFiles.length} video(s) posted successfully!`);
         setVideoFiles([]);
         setVideoCaption('');
@@ -636,7 +693,6 @@ const CreatePage = () => {
       setIsRecording(true);
 
       showSuccess('Live stream started and recording has begun!');
-      console.log('Live stream recording started');
 
     } catch (error) {
       if (error instanceof Error) {
@@ -669,18 +725,29 @@ const CreatePage = () => {
     setLiveDescription('');
   };
 
-  const handleSaveRecording = (blob: Blob) => {
-    // Create a file from the blob
+  const handleSaveRecording = async (blob: Blob) => {
     const file = new File([blob], `live-stream-${Date.now()}.webm`, { type: 'video/webm' });
 
-    // Add to uploaded videos list with analytics
+    setIsUploading(true);
+    let cloudinaryResult: { secureUrl: string; publicId: string; duration?: number } | null = null;
+    if (isCloudinaryConfigured()) {
+      try {
+        cloudinaryResult = await uploadToCloudinary(file, { folder: 'equyvo/live' });
+      } catch (err) {
+        showError('Upload failed for live recording');
+      }
+    }
+    setIsUploading(false);
+
     const newUploadedVideo: UploadedVideo = {
       id: Date.now().toString(),
       title: liveTitle || `Live Stream ${new Date().toLocaleString()}`,
       fileName: file.name,
       fileSize: file.size,
-      duration: '0:00', // Would be calculated from actual video
-      thumbnail: 'https://picsum.photos/seed/' + file.name + '/300/180',
+      duration: cloudinaryResult?.duration
+        ? `${Math.floor(cloudinaryResult.duration / 60)}:${String(Math.floor(cloudinaryResult.duration % 60)).padStart(2, '0')}`
+        : '0:00',
+      thumbnail: cloudinaryResult?.secureUrl || 'https://picsum.photos/seed/' + file.name + '/300/180',
       uploadDate: new Date(),
       isPrivate: false,
       views: 0,
@@ -693,7 +760,6 @@ const CreatePage = () => {
 
     setUploadedVideos(prev => [...prev, newUploadedVideo]);
 
-    // Also download the file to user's device
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -2130,6 +2196,17 @@ const CreatePage = () => {
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {/* Upload Loading Overlay */}
+      {isUploading && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
+          <Card className="p-8 text-center">
+            <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-primary" />
+            <p className="text-lg font-semibold">Uploading your media to Cloudinary...</p>
+            <p className="text-sm text-muted-foreground mt-2">This may take a moment depending on file size</p>
+          </Card>
+        </div>
       )}
 
       {/* Schedule Modal */}

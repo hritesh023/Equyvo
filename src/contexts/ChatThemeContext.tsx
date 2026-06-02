@@ -27,8 +27,7 @@ export function ChatThemeProvider({ children }: { children: React.ReactNode }) {
     if (savedTheme) {
       try {
         setChatThemeState(JSON.parse(savedTheme));
-      } catch (error) {
-        console.error('Error parsing chat theme:', error);
+      } catch {
       }
     }
   }, []);

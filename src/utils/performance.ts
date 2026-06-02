@@ -51,15 +51,8 @@ class PerformanceMonitor {
     return total / this.metrics.length;
   }
 
-  logSlowRenders(threshold: number = 100): void {
-    const slowRenders = this.metrics.filter(m => m.renderTime > threshold);
-    if (slowRenders.length > 0) {
-      console.group('🐌 Slow Renders Detected');
-      slowRenders.forEach((m, i) => {
-        console.warn(`Render ${i + 1}: ${m.renderTime.toFixed(2)}ms`);
-      });
-      console.groupEnd();
-    }
+  logSlowRenders(_threshold: number = 100): void {
+    const slowRenders = this.metrics.filter(m => m.renderTime > _threshold);
   }
 
   // Memory usage monitoring (if available)
@@ -83,7 +76,6 @@ export function usePerformanceMonitor(componentName: string) {
   const endMeasure = () => {
     const duration = performanceMonitor.endMeasure(componentName);
     if (duration > 100) {
-      console.warn(`🐌 Slow render: ${componentName} took ${duration.toFixed(2)}ms`);
     }
   };
 

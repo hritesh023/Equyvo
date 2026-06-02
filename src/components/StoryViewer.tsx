@@ -1,7 +1,5 @@
-"use client";
-
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2 } from 'lucide-react';
+import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,23 +14,7 @@ import SaveButton from '@/components/SaveButton';
 import ShareButton from '@/components/ShareButton';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAudio } from '../contexts/AudioContext';
-
-interface Story {
-  id: string;
-  user: string;
-  avatar: string;
-  image: string;
-  time: string;
-  video?: string;
-  audio?: string;
-  type?: 'image' | 'video';
-  userId?: string; // Future: User ID for backend filtering
-  profileId?: string; // Future: Profile ID to match with story
-  isBotContent?: boolean; // Current: Mark as bot content
-  content?: string; // Optional story content/text
-  isFollowing?: boolean;
-  isOwn?: boolean;
-}
+import type { Story } from '@/types';
 
 interface StoryViewerProps {
   stories: Story[];
@@ -66,9 +48,13 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
 
-  // Handle keyboard navigation
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+      const video = videoRef.current;
+
       switch (e.key) {
         case 'ArrowLeft':
           e.preventDefault();
@@ -82,18 +68,56 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             onNext();
           }
           break;
+        case ' ':
+        case 'k':
+        case 'K':
+          e.preventDefault();
+          if (currentStory?.type === 'video') {
+            togglePlayPause();
+          }
+          break;
+        case 'j':
+        case 'J':
+          e.preventDefault();
+          if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+          break;
+        case 'l':
+        case 'L':
+          e.preventDefault();
+          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          break;
+        case 'm':
+        case 'M':
+          e.preventDefault();
+          toggleMute();
+          break;
         case 'Escape':
           e.preventDefault();
           onClose();
           break;
+        case ',':
+          e.preventDefault();
+          if (video) video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+          break;
+        case '.':
+          e.preventDefault();
+          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+          break;
+      }
+
+      if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (video) {
+          const pct = parseInt(e.key) / 10;
+          video.currentTime = (video.duration || 0) * pct;
+        }
       }
     };
 
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [currentIndex, stories.length, onNext, onPrevious, onClose]);
+  }, [currentIndex, stories.length, onNext, onPrevious, onClose, currentStory, togglePlayPause, toggleMute]);
 
-  // Auto-hide controls after 3 seconds, but keep header always visible
   useEffect(() => {
     const timer = setTimeout(() => {
       setShowControls(false);
@@ -102,23 +126,19 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     return () => clearTimeout(timer);
   }, [currentIndex, showControls]);
 
-  // Handle video/audio playback and photo progress
   useEffect(() => {
     const story = stories[currentIndex];
     if (!story) return;
 
-    // Reset states
     setProgress(0);
     setVideoError(false);
     setVideoLoaded(false);
     setIsPlaying(false);
     
-    // Clear any existing intervals
     if (progressIntervalRef.current) {
       clearInterval(progressIntervalRef.current);
     }
 
-    // For videos, wait for video to load before starting progress
     if (story.type === 'video' && videoRef.current) {
       const video = videoRef.current;
       
@@ -129,15 +149,12 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       
       const handleVideoError = () => {
         setVideoError(true);
-        console.error('Video failed to load');
-        // Still start progress so user can navigate
         startProgress();
       };
       
       video.addEventListener('loadeddata', handleVideoLoad);
       video.addEventListener('error', handleVideoError);
       
-      // Load video if not already loaded
       if (video.readyState < 2) {
         video.load();
       } else {
@@ -153,7 +170,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         }
       };
     } else {
-      // For images or if no video ref, start progress immediately
       startProgress();
     }
     
@@ -169,7 +185,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           if (newProgress >= 100) {
             clearInterval(progressIntervalRef.current!);
             
-            // Auto-advance
             if (currentIndex < stories.length - 1) {
               onNext();
             } else {
@@ -187,12 +202,11 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const handleDelete = () => {
     if (onDeleteStory) {
       onDeleteStory(currentStory.id);
-      showSuccess('🗑️ Story deleted successfully.');
-      onClose(); // Close the story viewer after deletion
+      showSuccess('Story deleted successfully.');
+      onClose();
     } else {
-      showSuccess('🗑️ Story deleted successfully.');
-      console.log("Delete story:", currentStory.id);
-      onClose(); // Close the story viewer after deletion
+      showSuccess('Story deleted successfully.');
+      onClose();
     }
   };
 
@@ -203,19 +217,17 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         text: 'Check out this amazing story!',
         url: window.location.href
       }).catch(() => {
-        // Fallback to clipboard
         navigator.clipboard.writeText(window.location.href);
-        showSuccess('🔗 Story link copied to clipboard!');
+        showSuccess('Story link copied to clipboard!');
       });
     } else {
       navigator.clipboard.writeText(window.location.href);
-      showSuccess('🔗 Story link copied to clipboard!');
+      showSuccess('Story link copied to clipboard!');
     }
   };
 
   const handleShareAction = () => {
     handleShare();
-    // You can add additional share tracking here if needed
   };
 
   
@@ -230,7 +242,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     
     if (video) {
       if (newPlayingState) {
-        // When user clicks to play, try to unmute if not explicitly muted
         if (!isGloballyMuted) {
           video.muted = false;
         }
@@ -239,21 +250,16 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           if (audio) {
             audio.currentTime = video.currentTime;
             audio.muted = isGloballyMuted;
-            audio.play().catch(e => console.log('Audio play prevented:', e));
+            audio.play().catch(() => {});
           }
-          showSuccess('▶️ Playing video' + (video.muted ? ' (muted)' : ' with audio'));
-        }).catch(e => {
-          console.error('Video play failed:', e);
-          // Fallback: try playing muted if unmuted fails
+        }).catch(() => {
           if (!video.muted) {
             video.muted = true;
             video.play().then(() => {
               if (audio) {
-                audio.play().catch(e => console.log('Audio play prevented:', e));
+                audio.play().catch(() => {});
               }
-              showSuccess('▶️ Playing video (auto-muted for browser compatibility)');
-            }).catch(e => {
-              console.error('Muted play also failed:', e);
+            }).catch(() => {
               showError('Failed to play video. Please try again.');
               setIsPlaying(false);
             });
@@ -267,20 +273,16 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         if (audio) {
           audio.pause();
         }
-        showSuccess('⏸️ Video paused');
       }
     } else if (audio) {
       if (newPlayingState) {
         audio.play().then(() => {
-          showSuccess('▶️ Playing audio');
-        }).catch(e => {
-          console.error('Audio play failed:', e);
+        }).catch(() => {
           showError('Failed to play audio. Please try again.');
           setIsPlaying(false);
         });
       } else {
         audio.pause();
-        showSuccess('⏸️ Audio paused');
       }
     }
   };
@@ -309,15 +311,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
   const handleSendComment = () => {
     if (comment.trim()) {
-      // Simulate posting comment to backend
-      console.log('Posting comment:', comment);
       showSuccess('Comment posted successfully!');
       setComment('');
-      
-      // In a real app, you would:
-      // 1. Send comment to backend
-      // 2. Update comments list
-      // 3. Show success/error feedback
     } else {
       showError('Please enter a comment');
     }
@@ -333,6 +328,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
   if (!currentStory) return null;
 
+  const isVideo = currentStory.type === 'video';
+
   return (
     <div 
       className="story-viewer fade-in"
@@ -340,7 +337,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       onClick={() => setShowControls(true)}
     >
       <div className="story-content">
-        {/* Instagram-style Progress Bar */}
         <div className="story-progress">
           <div className="flex gap-1 px-4 py-2">
             {stories.map((_, index) => (
@@ -366,16 +362,10 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           </div>
         </div>
 
-        
-        {/* Header */}
         <div className="story-header">
           <div className="story-user-info">
             <Avatar 
               className="w-10 h-10 border-2 border-white cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
-              onClick={() => {
-                // Navigate to user profile when avatar is clicked
-                console.log(`Navigate to ${currentStory.user}'s profile`);
-              }}
               title={`${currentStory.user}'s Profile`}
             >
               <AvatarImage src={currentStory.avatar} />
@@ -388,7 +378,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {/* 3-dot menu */}
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button 
@@ -431,7 +420,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               </DropdownMenuContent>
             </DropdownMenu>
             
-            {/* Save button */}
             <div onClick={(e) => e.stopPropagation()}>
               <SaveButton 
                 postId={currentStory.id} 
@@ -447,21 +435,19 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               />
             </div>
             
-            {/* Close button */}
             <Button variant="ghost" size="icon" onClick={onClose} className="text-white hover:bg-white/20">
               <X className="h-6 w-6" />
             </Button>
           </div>
         </div>
 
-        {/* Story Media */}
         <div className="relative w-full h-full">
-          {currentStory.type === 'video' ? (
+          {isVideo ? (
             <>
               {videoError ? (
                 <div className="story-image flex items-center justify-center bg-black/80">
                   <div className="text-center text-white">
-                    <p className="text-lg mb-2">⚠️ Video failed to load</p>
+                    <p className="text-lg mb-2">Video failed to load</p>
                     <p className="text-sm opacity-70">Please check your connection</p>
                   </div>
                 </div>
@@ -501,7 +487,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             />
           )}
           
-          {/* Audio element for background music */}
           {currentStory.audio && (
             <audio
               ref={audioRef}
@@ -511,9 +496,18 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             />
           )}
 
-          {/* Media Controls Overlay */}
-          {currentStory.type === 'video' && showControls && (
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          {isVideo && showControls && (
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none gap-4">
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const v = videoRef.current;
+                  if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                }}
+                className="max-md:hidden bg-black/40 hover:bg-black/60 backdrop-blur-sm rounded-full p-2.5 pointer-events-auto cursor-pointer text-white/80 hover:text-white transition-all"
+              >
+                <RotateCcw className="h-5 w-5" />
+              </button>
               <div 
                 className="bg-black/50 backdrop-blur-sm rounded-full p-4 pointer-events-auto cursor-pointer" 
                 onClick={(e) => {
@@ -532,13 +526,20 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               >
                 {isPlaying ? <Pause className="h-8 w-8 text-white" /> : <Play className="h-8 w-8 text-white" />}
               </div>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  const v = videoRef.current;
+                  if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                }}
+                className="max-md:hidden bg-black/40 hover:bg-black/60 backdrop-blur-sm rounded-full p-2.5 pointer-events-auto cursor-pointer text-white/80 hover:text-white transition-all"
+              >
+                <RotateCcw className="h-5 w-5 scale-x-[-1]" />
+              </button>
             </div>
           )}
         </div>
 
-        {/* Navigation buttons only - no tap areas */}
-        
-        {/* Instagram-style navigation buttons */}
         <Button
           variant="ghost"
           size="icon"
@@ -560,8 +561,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           <span className="text-xl font-bold">&gt;</span>
         </Button>
 
-
-        {/* Comment Input at Bottom - Always visible */}
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-black/70 backdrop-blur-lg p-4 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-3">
             <Button

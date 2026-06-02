@@ -21,36 +21,7 @@ class SimpleErrorBoundary extends Component<Props, State> {
     return { hasError: true, error };
   }
 
-  public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('🚨 Simple Error Boundary Caught Error');
-    console.error('Error:', error);
-    console.error('Error Info:', errorInfo);
-    console.error('Component Stack:', errorInfo.componentStack);
-    
-    // Also log to document for visibility
-    const errorDiv = document.createElement('div');
-    errorDiv.style.cssText = `
-      position: fixed;
-      top: 10px;
-      right: 10px;
-      background: #ff4444;
-      color: white;
-      padding: 10px;
-      border-radius: 5px;
-      z-index: 999999;
-      font-family: monospace;
-      font-size: 12px;
-      max-width: 300px;
-    `;
-    errorDiv.innerHTML = `
-      <strong>Error:</strong> ${error.message}<br>
-      <small>Check console for details</small>
-    `;
-    document.body.appendChild(errorDiv);
-    
-    setTimeout(() => {
-      document.body.removeChild(errorDiv);
-    }, 5000);
+  public componentDidCatch(_error: Error, _errorInfo: ErrorInfo) {
   }
 
   public render() {

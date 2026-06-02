@@ -20,13 +20,16 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getAuthenticatedUser } from '@/lib/auth';
-import { FullscreenContent, Post } from '@/types';
+import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
+import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile } from '@/utils/profile-navigation';
 
 const HomePage = () => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
+  const isTablet = useIsTablet();
+  const showChatsTab = isMobile || isTablet;
   const [showStoryViewer, setShowStoryViewer] = useState(false);
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
   const [savedStories, setSavedStories] = useState<Set<string>>(new Set());
@@ -42,9 +45,15 @@ const HomePage = () => {
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
   const [followedCreators, setFollowedCreators] = useState<Set<string>>(new Set());
   const [userHasStories, setUserHasStories] = useState(false);
-  const [activeTab, setActiveTab] = useState<'foryou' | 'following'>('foryou');
+  const [activeTab, setActiveTab] = useState<'foryou' | 'following' | 'chats'>('foryou');
   const [followingAccounts, setFollowingAccounts] = useState<string[]>(['Equyvo Official', 'Emma Thompson', 'Tech Enthusiast']);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!showChatsTab && activeTab === 'chats') {
+      setActiveTab('foryou');
+    }
+  }, [showChatsTab, activeTab]);
   
   // Real posts data from Supabase with bot content fallback
   const [enhancedPosts, setEnhancedPosts] = useState<Post[]>([]);
@@ -125,8 +134,7 @@ const HomePage = () => {
         // Combine with bot content for better demo experience
         const combinedPosts = [...posts, ...botPosts];
         setEnhancedPosts(combinedPosts);
-      } catch (error) {
-        console.error('Error loading posts:', error);
+      } catch {
         setEnhancedPosts(botPosts);
       } finally {
         setIsLoadingPosts(false);
@@ -164,16 +172,15 @@ const HomePage = () => {
   }, []);
 
   // Real stories data from mock data
-  const [stories, setStories] = useState<any[]>([]);
+  const [stories, setStories] = useState<Story[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(true);
 
-  // Bot stories fallback for when there are no real stories
-  const botStories = [
-    { id: '1', user: 'Alice', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=500&fit=crop', time: '2 hours ago' },
-    { id: '2', user: 'Bob', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&h=500&fit=crop', time: '4 hours ago' },
-    { id: '3', user: 'Charlie', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300&h=500&fit=crop', time: '6 hours ago' },
-    { id: '4', user: 'Diana', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=300&h=500&fit=crop', time: '8 hours ago' },
-    { id: '5', user: 'Eve', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=300&h=500&fit=crop', time: '12 hours ago' },
+  const botStories: Story[] = [
+    { id: '1', user: 'Alice', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=500&fit=crop', time: '2 hours ago', type: 'image', isBotContent: true },
+    { id: '2', user: 'Bob', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&h=500&fit=crop', time: '4 hours ago', type: 'image', isBotContent: true },
+    { id: '3', user: 'Charlie', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300&h=500&fit=crop', time: '6 hours ago', type: 'video', video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', isBotContent: true },
+    { id: '4', user: 'Diana', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=300&h=500&fit=crop', time: '8 hours ago', type: 'image', isBotContent: true },
+    { id: '5', user: 'Eve', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=300&h=500&fit=crop', time: '12 hours ago', type: 'video', video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', isBotContent: true },
   ];
 
   // Fetch stories using mock data
@@ -183,8 +190,7 @@ const HomePage = () => {
         setIsLoadingStories(true);
         const stories = await fetchStories();
         setStories(stories.length > 0 ? stories : botStories);
-      } catch (error) {
-        console.error('Error loading stories:', error);
+      } catch {
         setStories(botStories);
       } finally {
         setIsLoadingStories(false);
@@ -261,8 +267,7 @@ const HomePage = () => {
         setIsLoadingMoments(true);
         const moments = await fetchMoments();
         setMoments(moments.length > 0 ? moments : botMoments);
-      } catch (error) {
-        console.error('Error loading moments:', error);
+      } catch {
         setMoments(botMoments);
       } finally {
         setIsLoadingMoments(false);
@@ -324,10 +329,9 @@ const HomePage = () => {
     }
   };
 
-  // Moments handlers
+  // Moments handlers - open TikTok-style feed
   const handleFullscreen = (content: FullscreenContent | any) => {
-    setFullscreenContent(content);
-    setFullscreenType('moment');
+    navigate('/app/moments');
   };
 
   const handleComment = (momentId: string, user: string) => {
@@ -439,7 +443,6 @@ const HomePage = () => {
         newSet.delete(postId);
         showSuccess('🗑️ Post removed from saved');
         
-        console.log('Dispatching contentUnsaved event for:', postId, post);
         // Dispatch event to notify profile page
         window.dispatchEvent(new CustomEvent('contentUnsaved', { 
           detail: { postId, content: post } 
@@ -459,7 +462,6 @@ const HomePage = () => {
           localStorage.setItem('savedContentData', JSON.stringify(savedContent));
         }
         
-        console.log('Dispatching contentSaved event for:', postId, post);
         // Dispatch event to notify profile page
         window.dispatchEvent(new CustomEvent('contentSaved', { 
           detail: { postId, content: post } 
@@ -469,9 +471,10 @@ const HomePage = () => {
     });
   };
 
-  const handleFullscreenPost = (post: Post) => {
+  const handleFullscreenPost = (post: any) => {
     setFullscreenContent(post);
-    setFullscreenType('post');
+    const postType = post.type || post.contentType || 'post';
+    setFullscreenType(postType === 'moment' || postType === 'video' ? postType : 'post');
   };
 
   const handleReportPost = (postId: string) => {
@@ -607,9 +610,9 @@ const HomePage = () => {
           />
         )}
 
-        {/* Main Feed with For You and Following Tabs */}
-        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foryou' | 'following')} className="w-full">
-          <TabsList className="grid w-full grid-cols-2 mb-4 lg:mb-6 max-w-sm sm:max-w-md mx-auto bg-muted/50 backdrop-blur-sm">
+        {/* Main Feed with For You, Following, and optionally Chats tabs */}
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foryou' | 'following' | 'chats')} className="w-full">
+          <TabsList className={`grid w-full mb-4 lg:mb-6 max-w-sm sm:max-w-md mx-auto bg-muted/50 backdrop-blur-sm ${showChatsTab ? 'grid-cols-3' : 'grid-cols-2'}`}>
             <TabsTrigger value="foryou" className="flex items-center justify-center gap-1 lg:gap-2 text-xs sm:text-sm lg:text-sm w-full data-[state=active]:bg-background data-[state=active]:shadow-sm">
               <Sparkles className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
               <span className="truncate font-medium">For You</span>
@@ -618,6 +621,12 @@ const HomePage = () => {
               <Users className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
               <span className="truncate font-medium">Following</span>
             </TabsTrigger>
+            {showChatsTab && (
+              <TabsTrigger value="chats" className="flex items-center justify-center gap-1 lg:gap-2 text-xs sm:text-sm lg:text-sm w-full data-[state=active]:bg-background data-[state=active]:shadow-sm">
+                <MessageCircle className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
+                <span className="truncate font-medium">Chats</span>
+              </TabsTrigger>
+            )}
           </TabsList>
           
           <TabsContent value="foryou" className="mt-0">
@@ -686,6 +695,12 @@ const HomePage = () => {
               />
             )}
           </TabsContent>
+
+          {showChatsTab && (
+            <TabsContent value="chats" className="mt-0">
+              <ChatSidebar isMobile={true} />
+            </TabsContent>
+          )}
         </Tabs>
       </div>
 

@@ -32,8 +32,8 @@ const AuthPage = () => {
         if (authStatus.isAuthenticated && authStatus.user) {
           window.location.href = '/app/home';
         }
-      } catch (error) {
-        console.error('Auth check error:', error);
+      } catch {
+        // Auth check failed silently
       }
     };
     
@@ -79,7 +79,6 @@ const AuthPage = () => {
             // User is automatically signed in
             const signInResult = await signInWithEmail(email, password);
             if (signInResult.success && signInResult.user) {
-              localStorage.removeItem('userProfile');
               storeCurrentUser(signInResult.user);
             }
             window.location.href = '/app/home';
@@ -89,7 +88,6 @@ const AuthPage = () => {
               const signInResult = await signInWithEmail(email, password);
               if (signInResult.success) {
                 if (signInResult.user) {
-                  localStorage.removeItem('userProfile');
                   storeCurrentUser(signInResult.user);
                 }
                 window.location.href = '/app/home';
@@ -112,7 +110,6 @@ const AuthPage = () => {
         
         if (result.success) {
           if (result.user) {
-            localStorage.removeItem('userProfile');
             storeCurrentUser(result.user);
           }
           window.location.href = '/app/home';
@@ -140,9 +137,9 @@ const AuthPage = () => {
       <Card className="w-full max-w-md p-6 border-white/10 bg-black/40 backdrop-blur-xl shadow-2xl relative z-10">
         <CardHeader className="text-center pb-2">
           <div className="w-24 h-24 mx-auto mb-6 rounded-2xl overflow-hidden shadow-lg ring-2 ring-white/10">
-            <img src="/logo.jpg" alt="Equyvo Logo" className="w-full h-full object-cover" />
+            <img src="/Equyvo_logo.png" alt="Equyvo Logo" className="w-full h-full object-cover" />
           </div>
-          <CardTitle className="text-4xl font-black tracking-tight mb-2 bg-clip-text text-transparent bg-gradient-to-r from-blue-400 to-purple-500">
+          <CardTitle className="text-4xl font-black tracking-tight mb-2 bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-[2.5] py-3" style={{ fontFamily: "'Pacifico', cursive", overflow: 'visible' }}>
             equyvo
           </CardTitle>
           <CardDescription className="text-lg">

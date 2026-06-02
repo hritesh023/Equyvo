@@ -19,11 +19,12 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import ReportModal from '@/components/ReportModal';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import type { FullscreenContent, ContentType } from '@/types';
 
 const DiscoverPage = () => {
   const [activeTab, setActiveTab] = useState('grid');
-  const [fullscreenContent, setFullscreenContent] = useState<any>(null);
-  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image'>('image');
+  const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
+  const [fullscreenType, setFullscreenType] = useState<ContentType>('image');
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [commentedPosts, setCommentedPosts] = useState<Set<string>>(new Set());
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
@@ -57,7 +58,7 @@ const DiscoverPage = () => {
     setFullscreenBrowseOpen(true);
   };
 
-  const handleOpenFullscreen = (content: any, type: 'post' | 'live' | 'video' | 'moment' | 'image') => {
+  const handleOpenFullscreen = (content: FullscreenContent, type: ContentType) => {
     setFullscreenContent(content);
     setFullscreenType(type);
   };
@@ -153,7 +154,6 @@ const DiscoverPage = () => {
     // Handle split view video selection
     const handleSplitViewVideoSelected = (event: CustomEvent) => {
       const { content } = event.detail;
-      console.log('Split view video selected in DiscoverPage:', content);
       
       // Set the new content immediately
       setFullscreenContent(content);
@@ -209,15 +209,26 @@ const DiscoverPage = () => {
 
   const currentTags = sectionTags[activeTab as keyof typeof sectionTags] || [];
 
+  // Sample video URLs for video and live content
+  const sampleVideoUrls = [
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
+  ];
+
   // Mock data with proper categories and content types
   const generateMockData = (section: string, count: number) => {
     return Array.from({ length: count }, (_, i) => {
-      // Define category to content type mappings
       const categoryContentTypeMap: { [key: string]: string[] } = {
         'photography': ['image'],
         'video': ['video'],
         'music': ['video', 'live'],
-        'live': ['live'], // Live section only generates live content
+        'live': ['live'],
         'art': ['image'],
         'gaming': ['video', 'live'],
         'education': ['video', 'live']
@@ -225,7 +236,6 @@ const DiscoverPage = () => {
       
       const categoryOptions = ['photography', 'video', 'music', 'live', 'art', 'gaming', 'education'];
       
-      // For live section, only use categories that support live content
       let allowedCategories;
       if (section === 'live') {
         allowedCategories = ['live', 'music', 'gaming', 'education'];
@@ -236,7 +246,6 @@ const DiscoverPage = () => {
       const randomCategory = allowedCategories[i % allowedCategories.length];
       const allowedContentTypes = categoryContentTypeMap[randomCategory];
       
-      // For live section, force contentType to be 'live'
       let randomContentType;
       if (section === 'live') {
         randomContentType = 'live';
@@ -244,15 +253,18 @@ const DiscoverPage = () => {
         randomContentType = allowedContentTypes[i % allowedContentTypes.length];
       }
       
-      // Generate different timestamps for time filtering
       const now = new Date();
       const timestamps = [
-        now, // today
-        new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000), // 3 days ago (this week)
-        new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000), // 15 days ago (this month)
-        new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000), // 60 days ago (older)
+        now,
+        new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
+        new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000),
+        new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000),
       ];
       const randomTimestamp = timestamps[i % timestamps.length];
+
+      const isVideo = randomContentType === 'video';
+      const isLive = randomContentType === 'live';
+      const videoUrl = isVideo || isLive ? sampleVideoUrls[i % sampleVideoUrls.length] : undefined;
 
       return {
         id: `${section}-${i}`,
@@ -262,11 +274,14 @@ const DiscoverPage = () => {
         likes: 100 + i * 20,
         views: 1000 + i * 100,
         comments: 10 + i,
-        // Add other properties as needed
         title: `${section.charAt(0).toUpperCase() + section.slice(1)} Item ${i + 1}`,
         creator: 'User',
         image: `https://picsum.photos/seed/${section}${i}/500/500`,
         thumbnail: `https://picsum.photos/seed/${section}${i}/500/500`,
+        videoUrl,
+        isLive,
+        live: isLive,
+        duration: isVideo ? `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}` : undefined,
       };
     });
   };
@@ -569,15 +584,24 @@ const DiscoverPage = () => {
                 className="group cursor-pointer hover:shadow-lg transition-all duration-300"
                 onClick={() => handleOpenFullscreen({
                   id: item.id,
-                  type: item.contentType,
+                  type: item.contentType === 'video' ? 'moment' : item.contentType,
+                  contentType: item.contentType,
+                  forcePortrait: item.contentType === 'video',
                   title: item.title,
                   creator: item.creator,
+                  creatorId: `user-${item.creator}`,
                   image: item.image,
                   thumbnail: item.thumbnail,
+                  videoUrl: item.videoUrl,
+                  mediaUrl: item.videoUrl,
                   likes: postLikes.get(item.id) || item.likes,
                   comments: item.comments,
-                  category: item.category
-                }, item.contentType)}
+                  category: item.category,
+                  isLive: item.isLive,
+                  live: item.live,
+                  views: item.views,
+                  duration: item.duration,
+                }, item.contentType === 'video' ? 'moment' : item.contentType)}
               >
                 <CardContent className="p-4">
                   <div className="flex gap-4">
@@ -596,12 +620,20 @@ const DiscoverPage = () => {
                         <Badge variant="secondary" className="text-xs">
                           {item.category}
                         </Badge>
-                        <Badge variant="outline" className="text-xs">
-                          {item.contentType}
+                        <Badge variant={item.contentType === 'live' ? 'destructive' : 'outline'} className="text-xs">
+                          {item.contentType === 'live' ? (
+                            <span className="flex items-center gap-1"><div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" /> LIVE</span>
+                          ) : item.contentType === 'video' ? (
+                            <span className="flex items-center gap-1"><Video className="w-3 h-3" /> Video</span>
+                          ) : (
+                            <span className="flex items-center gap-1"><Image className="w-3 h-3" /> Photo</span>
+                          )}
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground mb-3">
-                        Beautiful content from {item.creator} - {item.contentType === 'video' ? 'This is a video post with amazing content' : 'This is an image post with stunning visuals'}
+                        {item.contentType === 'live' ? `🔴 Live streaming by ${item.creator} - join now!` :
+                         item.contentType === 'video' ? `▶️ Video content from ${item.creator} - watch this amazing video` :
+                         `📷 Photo by ${item.creator} - stunning visual content`}
                       </p>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
@@ -685,22 +717,31 @@ const DiscoverPage = () => {
               className={`relative aspect-square bg-muted group cursor-pointer overflow-hidden ${i % 3 === 0 && i % 2 === 0 ? 'row-span-2 col-span-2' : ''}`}
               onClick={() => handleOpenFullscreen({
                 id: item.id,
-                type: item.contentType,
+                type: item.contentType === 'video' ? 'moment' : item.contentType,
+                contentType: item.contentType,
+                forcePortrait: item.contentType === 'video',
                 title: item.title,
                 creator: item.creator,
+                creatorId: `user-${item.creator}`,
                 image: item.image,
                 thumbnail: item.thumbnail,
+                videoUrl: item.videoUrl,
+                mediaUrl: item.videoUrl,
                 likes: postLikes.get(item.id) || item.likes,
                 comments: item.comments,
-                category: item.category
-              }, item.contentType)}
+                category: item.category,
+                isLive: item.isLive,
+                live: item.live,
+                views: item.views,
+                duration: item.duration,
+              }, item.contentType === 'video' ? 'moment' : item.contentType)}
             >
               <img
                 src={item.thumbnail}
                 alt="Post"
                 className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
               />
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 text-white">
+              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex items-center justify-center gap-3 text-white">
                 <button 
                   onClick={(e) => {
                     e.stopPropagation();
@@ -741,6 +782,12 @@ const DiscoverPage = () => {
                   <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                 </button>
               </div>
+              {item.contentType === 'live' && (
+                <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-600 text-white text-xs px-2 py-0.5 rounded animate-pulse">
+                  <div className="w-1.5 h-1.5 bg-white rounded-full" />
+                  LIVE
+                </div>
+              )}
               {item.contentType === 'video' && (
                 <div className="absolute top-2 right-2">
                   <Video className="w-5 h-5 text-white drop-shadow-md" />
@@ -748,7 +795,7 @@ const DiscoverPage = () => {
               )}
               {item.contentType === 'video' && (
                 <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                  {Math.floor(Math.random() * 10) + 1}:{Math.floor(Math.random() * 60).toString().padStart(2, '0')}
+                  {item.duration || `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}`}
                 </div>
               )}
               <div className="absolute top-2 left-2">
@@ -792,20 +839,27 @@ const DiscoverPage = () => {
               className="overflow-hidden hover:shadow-lg transition-all duration-300 border-border/50 group cursor-pointer"
               onClick={() => handleOpenFullscreen({
                 id: item.id,
-                type: item.contentType,
+                type: item.contentType === 'video' ? 'moment' : item.contentType,
+                contentType: item.contentType,
+                forcePortrait: item.contentType === 'video',
                 title: item.title,
                 creator: item.creator,
-                videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                creatorId: `user-${item.creator}`,
+                videoUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                mediaUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                 thumbnail: item.thumbnail,
+                image: item.image,
                 likes: postLikes.get(item.id) || item.likes,
                 views: item.views,
-                duration: '3:45',
+                duration: item.duration || '3:45',
                 published: `${Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago`,
                 verified: true,
                 subscribers: 50000 + i * 10000,
                 description: 'This is an amazing trending content that everyone is talking about!',
-                category: item.category
-              }, item.contentType)}
+                category: item.category,
+                isLive: item.isLive,
+                live: item.live,
+              }, item.contentType === 'video' ? 'moment' : item.contentType)}
             >
               <div className="relative aspect-video">
                 <img src={item.thumbnail} className="w-full h-full object-cover" />
@@ -889,11 +943,15 @@ const DiscoverPage = () => {
               className="group cursor-pointer"
               onClick={() => handleOpenFullscreen({
                 id: item.id,
-                type: item.contentType,
+                type: 'live',
+                contentType: 'live',
                 title: item.title,
                 creator: item.creator,
-                videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                creatorId: `user-${item.creator}`,
+                videoUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                mediaUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                 thumbnail: item.thumbnail,
+                image: item.image,
                 isLive: true,
                 live: true,
                 likes: postLikes.get(item.id) || item.likes,
@@ -901,8 +959,9 @@ const DiscoverPage = () => {
                 verified: true,
                 subscribers: 25000 + i * 5000,
                 description: 'Live streaming content - join the stream now!',
-                category: item.category
-              }, item.contentType)}
+                category: item.category,
+                duration: item.duration,
+              }, 'live')}
             >
               <div className="relative aspect-video">
                 <img src={item.thumbnail} className="w-full h-full object-cover rounded-t-lg" />
@@ -986,20 +1045,26 @@ const DiscoverPage = () => {
               className="flex flex-col sm:flex-row gap-4 group cursor-pointer hover:bg-muted/30 p-2 rounded-xl transition-colors"
               onClick={() => handleOpenFullscreen({
                 id: item.id,
-                type: item.contentType,
-                title: 'Comprehensive Guide to building Social Media Apps in 2026 - Full Course',
+                type: 'video',
+                contentType: item.contentType,
+                title: item.title || 'Comprehensive Guide to building Social Media Apps in 2026 - Full Course',
                 creator: item.creator,
-                videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                creatorId: `user-${item.creator}`,
+                videoUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+                mediaUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                 thumbnail: item.thumbnail,
+                image: item.image,
                 likes: postLikes.get(item.id) || item.likes,
                 views: item.views,
-                duration: '12:45',
+                duration: item.duration || '12:45',
                 published: `${Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago`,
                 verified: true,
                 subscribers: 100000 + i * 20000,
                 description: 'In this video we will explore how to build a production ready social media application using the latest tech stack...',
-                category: item.category
-              }, item.contentType)}
+                category: item.category,
+                isLive: item.isLive,
+                live: item.live,
+              }, 'video')}
             >
               <div className="relative sm:w-64 md:w-80 flex-shrink-0 aspect-video rounded-xl overflow-hidden shadow-md">
                 <img src={item.thumbnail} className="w-full h-full object-cover" />

@@ -225,9 +225,7 @@ const ProfilePage = () => {
         try {
           const reactedThoughts = JSON.parse(savedReactedThoughts);
           setUserReactedPosts(reactedThoughts as Post[]);
-          console.log('Loaded user reacted thoughts from localStorage:', reactedThoughts);
         } catch (error) {
-          console.error('Error loading user reacted thoughts:', error);
         }
       }
     }
@@ -265,7 +263,6 @@ const ProfilePage = () => {
   useEffect(() => {
     const handleContentSaved = (event: CustomEvent) => {
       const { postId, content } = event.detail;
-      console.log('Content saved:', postId, content);
       
       // Update saved posts set
       setSavedPosts(prev => new Set(prev).add(postId));
@@ -297,20 +294,17 @@ const ProfilePage = () => {
 
     const handleContentUnsaved = (event: CustomEvent) => {
       const { postId, content } = event.detail;
-      console.log('Content unsaved event received:', postId, content);
       
       // Update saved posts set
       setSavedPosts(prev => {
         const newSet = new Set(prev);
         newSet.delete(postId);
-        console.log('Updated savedPosts set:', newSet);
         return newSet;
       });
       
       // Remove from all saved content immediately
       setAllSavedContent(prev => {
         const filtered = prev.filter(item => item.id !== postId);
-        console.log('Filtered allSavedContent:', filtered);
         return filtered;
       });
       
@@ -320,14 +314,12 @@ const ProfilePage = () => {
         const savedContent = JSON.parse(savedContentData);
         delete savedContent[postId];
         localStorage.setItem('savedContentData', JSON.stringify(savedContent));
-        console.log('Removed from savedContentData:', postId);
       }
     };
 
     // Listen for thought reacted events from ThoughtsPage
     const handleThoughtReacted = (event: CustomEvent) => {
       const { userReactedThought, userReactedThoughts } = event.detail;
-      console.log('Thought reacted event received:', userReactedThought);
       
       // Add the reacted thought to user's reacted posts
       setUserReactedPosts(prev => [userReactedThought as Post, ...prev] as Post[]);
@@ -336,7 +328,6 @@ const ProfilePage = () => {
     // Listen for thought unreacted events from ThoughtsPage
     const handleThoughtUnreacted = (event: CustomEvent) => {
       const { thoughtId, userReactedThoughts } = event.detail;
-      console.log('Thought unreacted event received:', thoughtId);
       
       // Remove the reacted thought from user's reacted posts
       setUserReactedPosts(prev => prev.filter(p => (p as any).originalThoughtId !== thoughtId));
@@ -359,7 +350,6 @@ const ProfilePage = () => {
   useEffect(() => {
     const handleSplitViewVideoSelected = (event: CustomEvent) => {
       const { content } = event.detail;
-      console.log('Split view video selected in ProfilePage:', content);
       
       // Set the new content immediately
       setFullscreenContent(content);
@@ -406,7 +396,6 @@ const ProfilePage = () => {
         return dateB - dateA; // Most recent first
       });
 
-      console.log('Final allSavedContent:', allContent);
       setAllSavedContent(allContent as Post[]);
     };
 
@@ -730,11 +719,12 @@ const ProfilePage = () => {
   const handleFullscreen = (post: Post) => {
     // Track content view in history
     addToWatchHistory(post);
+    const isMoment = post.type === 'moment' || post.mediaType === 'moment';
     
     // Enhanced content structure for fullscreen viewer with complete metadata
     const mediaContent = {
       ...post,
-      type: post.type || post.mediaType || (post.videoUrl || post.media?.includes('video') ? 'video' : 'image'),
+      type: isMoment ? 'moment' : (post.type || post.mediaType || (post.videoUrl ? 'video' : 'image')),
       videoUrl: post.videoUrl || post.media,
       media: post.media || post.image,
       thumbnail: post.thumbnail || post.image || post.media,
@@ -752,12 +742,12 @@ const ProfilePage = () => {
       verified: Math.random() > 0.7,
       subscribers: Math.floor(Math.random() * 100000),
       fallbackImage: post.thumbnail || post.image || post.media,
-      // Ensure proper aspect ratio and orientation
-      aspectRatio: post.type === 'moment' ? '9/16' : post.image ? '16/9' : undefined,
-      forcePortrait: post.type === 'moment' || post.mediaType === 'moment'
+      // Ensure proper aspect ratio and orientation for moments
+      aspectRatio: isMoment ? '9/16' : post.image ? '16/9' : undefined,
+      forcePortrait: isMoment,
+      viewMode: isMoment ? 'fullscreen' : undefined
     };
     
-    console.log('ProfilePage: Opening content in fullscreen:', mediaContent);
     setFullscreenContent(mediaContent);
   };
 
@@ -804,16 +794,12 @@ const ProfilePage = () => {
       try {
         await video.play();
         setIsLoading(prev => ({ ...prev, [postId]: false }));
-        console.log('ProfilePage video playing successfully:', postId);
       } catch (error) {
-        console.error('ProfilePage video play failed, trying muted:', error);
         video.muted = true;
         try {
           await video.play();
           setIsLoading(prev => ({ ...prev, [postId]: false }));
-          console.log('ProfilePage video playing with forced mute:', postId);
         } catch (e) {
-          console.error('ProfilePage video play failed completely:', e);
           handleVideoError(postId, e);
         }
       }
@@ -833,7 +819,6 @@ const ProfilePage = () => {
   };
 
   const handleVideoError = (postId: string, error?: Event | React.SyntheticEvent) => {
-    console.warn(`ProfilePage video failed to load for post ${postId}:`, error);
     setVideoErrors(prev => new Set(prev).add(postId));
     setPlayingVideos(prev => {
       const newSet = new Set(prev);
@@ -859,7 +844,6 @@ const ProfilePage = () => {
     const newDuration = { ...videoDuration };
     newDuration[postId] = video.duration || 0;
     setVideoDuration(newDuration);
-    console.log(`ProfilePage video ${postId} loaded, duration: ${video.duration}s`);
   };
 
   const formatTime = (time: number) => {
@@ -1008,8 +992,6 @@ const ProfilePage = () => {
                         onClick={() => handleFullscreen(post)}
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
-                          console.warn('Image failed to load in profile page:', post.media);
-                          // Try to use a fallback image
                           target.src = `https://picsum.photos/seed/fallback-${post.id}/400/300.jpg`;
                         }}
                       />
@@ -1229,8 +1211,6 @@ const ProfilePage = () => {
                             className="absolute inset-0 w-full h-full object-cover"
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              console.warn('Video thumbnail failed to load in thoughts section:', post.thumbnail || post.media);
-                              // Try to use a fallback image
                               target.src = `https://picsum.photos/seed/fallback-video-${post.id}/400/300.jpg`;
                             }}
                           />
@@ -1248,7 +1228,7 @@ const ProfilePage = () => {
                             onLoadedMetadata={() => handleLoadedMetadata(post.id, videoRefs.current[post.id])}
                             onMouseEnter={(e) => {
                               const video = e.target as HTMLVideoElement;
-                              video.play().catch(err => console.log('Autoplay prevented:', err));
+                              video.play().catch(() => {});
                             }}
                             onMouseLeave={(e) => {
                               const video = e.target as HTMLVideoElement;
@@ -1298,8 +1278,6 @@ const ProfilePage = () => {
                           onClick={() => handleFullscreen(post)}
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
-                            console.warn('Image failed to load in thoughts section:', post.media);
-                            // Try to use a fallback image
                             target.src = `https://picsum.photos/seed/fallback-${post.id}/400/300.jpg`;
                           }}
                         />
@@ -1439,8 +1417,6 @@ const ProfilePage = () => {
                             onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              console.warn('Saved content image failed to load:', post.media || post.thumbnail || post.image);
-                              // Try to use a fallback image
                               target.src = `https://picsum.photos/seed/fallback-saved-${post.id}/400/300.jpg`;
                             }}
                           />

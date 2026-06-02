@@ -11,8 +11,8 @@ export const validateVideoDuration = (file: File): Promise<{ valid: boolean; err
       window.URL.revokeObjectURL(video.src);
       const duration = video.duration;
       
-      // Max 60 seconds for stories, 10 minutes for regular videos
-      const maxDuration = 60; // 60 seconds
+      // Max 5 minutes for thoughts
+      const maxDuration = 300; // 5 minutes
       const minDuration = 1; // 1 second
       
       if (duration < minDuration) {
@@ -98,7 +98,6 @@ export const getThoughts = async (limit = 20, offset = 0) => {
     
     return thoughtsWithVotes;
   } catch (error) {
-    console.error('Error fetching thoughts:', error);
     return [];
   }
 };
@@ -148,7 +147,6 @@ platform: 'equyvo',
 
     return newThought;
   } catch (error) {
-    console.error('Error creating thought:', error);
     throw error;
   }
 };
@@ -178,7 +176,6 @@ export const deleteThought = async (thoughtId: string) => {
     mockThoughts.splice(index, 1);
     return true;
   } catch (error) {
-    console.error('Error deleting thought:', error);
     throw error;
   }
 };
@@ -202,7 +199,6 @@ export const voteOnThought = async (voteData: VoteData) => {
     }
 
     // Mock vote processing
-    console.log('Vote processed:', voteData);
     
     return {
       success: true,
@@ -211,7 +207,6 @@ export const voteOnThought = async (voteData: VoteData) => {
       user_vote: voteData.vote_type
     };
   } catch (error) {
-    console.error('Error voting on thought:', error);
     throw error;
   }
 };
@@ -233,7 +228,6 @@ export const getThoughtVotes = async (thoughtId: string) => {
       user_vote: user ? (Math.random() > 0.5 ? 'upvote' : null) : null
     };
   } catch (error) {
-    console.error('Error getting thought votes:', error);
     return {
       upvotes_count: 0,
       downvotes_count: 0,
@@ -274,7 +268,6 @@ export const likeThought = async (likeData: LikeData) => {
       likes_count: thought.likes_count
     };
   } catch (error) {
-    console.error('Error liking thought:', error);
     throw error;
   }
 };
@@ -297,7 +290,6 @@ export const getThoughtLikes = async (thoughtId: string) => {
       user_has_liked: user ? Math.random() > 0.7 : false
     };
   } catch (error) {
-    console.error('Error getting thought likes:', error);
     return {
       likes_count: 0,
       user_has_liked: false

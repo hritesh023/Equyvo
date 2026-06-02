@@ -172,8 +172,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     
     try {
       await deleteContent({ postId, onDeleteComplete: onDelete });
-    } catch (error) {
-      console.error('Delete failed:', error);
+    } catch {
     }
   };
 
@@ -187,8 +186,6 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
   };
 
   const handleSaveEdit = (updatedPost: any) => {
-    // In a real app, this would call an API to update the post
-    console.log('Post updated:', updatedPost);
     setShowEditModal(false);
     setEditingPost(null);
     setEditingPostId('');
@@ -201,9 +198,10 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     }
     
     // Enhanced content structure for fullscreen viewer
+    const isMomentPost = post.type === 'moment';
     const fullscreenContent = {
       ...post,
-      type: post.image ? ('image' as any) : post.type, // Keep original type for non-image posts
+      type: isMomentPost ? 'moment' : (post.image ? ('image' as any) : post.type), // Keep original type for non-image posts
       videoUrl: post.videoUrl,
       media: post.image || post.media,
       thumbnail: post.image || post.thumbnail || post.media,
@@ -222,11 +220,10 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
       subscribers: Math.floor(Math.random() * 100000),
       fallbackImage: post.image || post.thumbnail || post.media,
       // Ensure proper aspect ratio for images
-      aspectRatio: post.image ? '16/9' : undefined,
-      forcePortrait: false
+      aspectRatio: isMomentPost ? '9/16' : (post.image ? '16/9' : undefined),
+      forcePortrait: isMomentPost
     };
     
-    console.log('Opening post in fullscreen:', fullscreenContent);
     
     // Open content in fullscreen viewer
     onFullscreen(fullscreenContent as any);

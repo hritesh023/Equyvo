@@ -88,8 +88,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
     
     try {
       await deleteContent({ postId, onDeleteComplete: onDelete });
-    } catch (error) {
-      console.error('Delete failed:', error);
+    } catch {
     }
   };
 
@@ -103,7 +102,6 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
   };
 
   const handleSaveEdit = (updatedPost: any) => {
-    console.log('Post updated:', updatedPost);
     setShowEditModal(false);
     setEditingPost(null);
     setEditingPostId('');
@@ -116,9 +114,10 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
     }
     
     // Enhanced content structure for fullscreen viewer
+    const isMomentPost = post.type === 'moment';
     const fullscreenContent = {
       ...post,
-      type: post.image ? ('image' as any) : post.type, // Keep original type for non-image posts
+      type: isMomentPost ? 'moment' : (post.image ? ('image' as any) : post.type), // Keep original type for non-image posts
       videoUrl: post.videoUrl,
       media: post.image || post.media,
       thumbnail: post.image || post.thumbnail || post.media,
@@ -137,17 +136,15 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
       subscribers: Math.floor(Math.random() * 100000),
       fallbackImage: post.image || post.thumbnail || post.media,
       // Ensure proper aspect ratio for images
-      aspectRatio: post.image ? '16/9' : undefined,
-      forcePortrait: false
+      aspectRatio: isMomentPost ? '9/16' : (post.image ? '16/9' : undefined),
+      forcePortrait: isMomentPost
     };
     
-    console.log('Opening post in fullscreen:', fullscreenContent);
     
     // Make bot content playable when tapped
     if (post.user.includes('Official') || post.user.includes('Tech') || post.user.includes('Bot')) {
       if (!post.image) {
         showSuccess(`🎵 Playing content from ${post.user}`);
-        console.log('Playing bot content:', post);
       } else {
         onFullscreen(fullscreenContent as any);
       }
@@ -194,7 +191,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                         className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                         onClick={() => {
                           // Navigate to user profile when avatar is clicked
-                          console.log(`Navigate to ${post.user}'s profile`);
+
                         }}
                         title={`${post.user}'s Profile`}
                       >

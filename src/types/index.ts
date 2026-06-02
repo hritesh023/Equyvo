@@ -1,6 +1,9 @@
+export type ContentType = 'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story';
+
 export interface FullscreenContent {
   id: string;
-  type?: 'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story';
+  type?: ContentType;
+  contentType?: string;
   src?: string;
   thumbnail?: string;
   title?: string;
@@ -8,8 +11,29 @@ export interface FullscreenContent {
   avatar?: string;
   time?: string;
   content?: string;
+  description?: string;
   likes?: number;
   comments?: number;
+  videoUrl?: string;
+  mediaUrl?: string;
+  media?: string;
+  url?: string;
+  image?: string;
+  creator?: string;
+  creatorId?: string;
+  category?: string;
+  isLive?: boolean;
+  live?: boolean;
+  views?: number;
+  published?: string;
+  duration?: string;
+  verified?: boolean;
+  subscribers?: number;
+  forcePortrait?: boolean;
+  isFromMinimized?: boolean;
+  restoreTime?: number;
+  restorePaused?: boolean;
+  tags?: string[];
   [key: string]: unknown;
 }
 
@@ -81,7 +105,14 @@ export interface Story {
   user: string;
   avatar?: string;
   image: string;
+  video?: string;
+  audio?: string;
+  type?: 'image' | 'video';
   time?: string;
+  content?: string;
   userId?: string;
   createdAt?: string;
+  isBotContent?: boolean;
+  isFollowing?: boolean;
+  isOwn?: boolean;
 }

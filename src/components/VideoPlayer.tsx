@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -13,6 +13,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import SaveButton from './SaveButton';
 import LongFormVideos from './LongFormVideos';
 import { getAuthenticatedUser } from '@/lib/auth';
+import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
 
 interface VideoPlayerProps {
   video?: any;
@@ -41,18 +42,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   onVideoChange,
   onSecondVideoChange
 }) => {
-  // Guard clause to prevent rendering if video is undefined
-  if (!video) {
-    return (
-      <div className="fixed inset-0 bg-black z-50 flex items-center justify-center">
-        <div className="text-white text-center">
-          <p className="text-lg mb-4">Video not available</p>
-          <Button onClick={onClose}>Close</Button>
-        </div>
-      </div>
-    );
-  }
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [isMuted, setIsMuted] = useState(true);
@@ -117,7 +106,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   // Handle video change from sidebar
   const handleVideoChange = (newVideo: any) => {
-    console.log('VideoPlayer: handleVideoChange called with:', newVideo);
     setCurrentVideo(newVideo);
     setCurrentVideoUrl(newVideo?.videoUrl || newVideo?.media || '');
     setRetryCount(0);
@@ -136,7 +124,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   
   // Handle second video change
   const handleSecondVideoChange = (newVideo: any) => {
-    console.log('VideoPlayer: handleSecondVideoChange called with:', newVideo);
     setCurrentSecondVideo(newVideo);
     setCurrentSecondVideoUrl(newVideo?.videoUrl || newVideo?.media || '');
     setRetryCountSecond(0);
@@ -151,6 +138,21 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   useEffect(() => {
     setCurrentViewMode(viewMode);
   }, [viewMode]);
+
+  const handleToggleFullscreen = useCallback(() => {
+    setCurrentViewMode(prev => prev === 'fullscreen' ? 'windowed' : 'fullscreen');
+  }, []);
+
+  useVideoKeyboardShortcuts({
+    videoRef,
+    isPlaying,
+    setIsPlaying,
+    isMuted,
+    setIsMuted,
+    volume,
+    setVolume,
+    onToggleFullscreen: handleToggleFullscreen,
+  });
 
   // Get current user and check if they've liked the video
   useEffect(() => {
@@ -176,7 +178,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
       const hasLiked = localStorage.getItem(`liked_${videoId}`) === 'true';
       setIsLiked(hasLiked);
     } catch (error) {
-      console.error('Error checking like status:', error);
     }
   };
 
@@ -232,21 +233,35 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const video = videoRef.current;
-    if (!video) return;
-
     const newTime = parseFloat(e.target.value);
-    video.currentTime = newTime;
     setCurrentTime(newTime);
+    const video = videoRef.current;
+    if (video) {
+      video.currentTime = newTime;
+    }
+  };
+  
+  const handleSeeked = () => {
+    const video = videoRef.current;
+    if (video) {
+      setCurrentTime(video.currentTime);
+    }
+  };
+  
+  const handleSeekedSecond = () => {
+    const video = secondVideoRef.current;
+    if (video) {
+      setCurrentTimeSecond(video.currentTime);
+    }
   };
   
   const handleSeekSecond = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const video = secondVideoRef.current;
-    if (!video) return;
-
     const newTime = parseFloat(e.target.value);
-    video.currentTime = newTime;
     setCurrentTimeSecond(newTime);
+    const video = secondVideoRef.current;
+    if (video) {
+      video.currentTime = newTime;
+    }
   };
 
   const handleLike = async () => {
@@ -277,7 +292,6 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
         showSuccess('Like removed');
       }
     } catch (error) {
-      console.error('Error updating like:', error);
       showError('Failed to update like');
     }
   };
@@ -286,25 +300,11 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const videoElement = e.target as HTMLVideoElement;
     const videoSrc = currentVideo?.videoUrl || currentVideo?.media || '';
     
-    console.error('Video error in VideoPlayer:', {
-      error: e,
-      videoError: videoElement.error,
-      networkState: videoElement.networkState,
-      readyState: videoElement.readyState,
-      src: videoElement.src,
-      currentSrc: videoElement.currentSrc,
-      videoSrc: videoSrc,
-      currentVideoUrl: currentVideoUrl,
-      retryCount: retryCount,
-      video: currentVideo
-    });
-
     // Try fallback URLs if available
     if (currentVideo?.fallbackUrls && retryCount < currentVideo.fallbackUrls.length) {
       setIsLoading(true);
       const nextUrl = currentVideo.fallbackUrls[retryCount];
-      console.log(`Retrying with fallback URL ${retryCount + 1}: ${nextUrl}`);
-      
+        
       setCurrentVideoUrl(nextUrl);
       setRetryCount(retryCount + 1);
       
@@ -324,24 +324,10 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     const videoElement = e.target as HTMLVideoElement;
     const videoSrc = currentSecondVideo?.videoUrl || currentSecondVideo?.media || '';
     
-    console.error('Second video error in VideoPlayer:', {
-      error: e,
-      videoError: videoElement.error,
-      networkState: videoElement.networkState,
-      readyState: videoElement.readyState,
-      src: videoElement.src,
-      currentSrc: videoElement.currentSrc,
-      videoSrc: videoSrc,
-      currentVideoUrl: currentSecondVideoUrl,
-      retryCount: retryCountSecond,
-      video: currentSecondVideo
-    });
-
     // Try fallback URLs if available
     if (currentSecondVideo?.fallbackUrls && retryCountSecond < currentSecondVideo.fallbackUrls.length) {
       setIsLoadingSecond(true);
       const nextUrl = currentSecondVideo.fallbackUrls[retryCountSecond];
-      console.log(`Retrying second video with fallback URL ${retryCountSecond + 1}: ${nextUrl}`);
       
       setCurrentSecondVideoUrl(nextUrl);
       setRetryCountSecond(retryCountSecond + 1);
@@ -445,6 +431,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onCanPlay, 
     onLoadedMetadata,
     onTimeUpdate,
+    onSeeked,
     position = 'left'
   }: {
     video: any;
@@ -464,6 +451,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
     onCanPlay: () => void;
     onLoadedMetadata: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
     onTimeUpdate: (e: React.SyntheticEvent<HTMLVideoElement>) => void;
+    onSeeked?: () => void;
     position?: 'left' | 'right';
   }) => {
     const getVideoStyles = () => {
@@ -523,6 +511,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
             onClick={onTogglePlay}
             onLoadedMetadata={onLoadedMetadata}
             onTimeUpdate={onTimeUpdate}
+            onSeeked={onSeeked}
             onError={onError}
             onLoadStart={onLoadStart}
             onCanPlay={onCanPlay}
@@ -577,13 +566,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   {/* Progress Fill */}
                   <div 
                     className="absolute left-0 top-0 h-full bg-gradient-to-r from-red-500 to-red-600 rounded-full transition-all duration-100 ease-out"
-                    style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                    style={{ width: `${((currentTime) / (duration || 100)) * 100}%` }}
                   />
                   {/* Buffered Progress */}
                   <div 
                     className="absolute left-0 top-0 h-full bg-white/50 rounded-full transition-all duration-300"
                     style={{ 
-                      width: videoRef.current?.buffered?.length && videoRef.current.buffered.end(videoRef.current.buffered.length - 1) 
+                      width: videoRef.current?.buffered?.length && duration && videoRef.current.buffered.end(videoRef.current.buffered.length - 1) 
                         ? `${(videoRef.current.buffered.end(videoRef.current.buffered.length - 1) / duration) * 100}%` 
                         : '0%' 
                     }}
@@ -593,13 +582,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                   {/* Seek Handle */}
                   <div 
                     className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 transform group-hover:scale-110"
-                    style={{ left: `calc(${duration ? (currentTime / duration) * 100 : 0}% - 8px)` }}
+                    style={{ left: `calc(${((currentTime) / (duration || 100)) * 100}% - 8px)` }}
                   />
                   {/* Clickable Overlay */}
                   <input
                     type="range"
                     min="0"
-                    max={duration || 0}
+                    max={duration || 100}
                     value={currentTime}
                     onChange={onSeek}
                     className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -609,7 +598,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 </div>
                 <div className="flex justify-between text-xs text-white mt-1">
                   <span className="font-medium drop-shadow-sm">{formatTime(currentTime)}</span>
-                  <span className="font-medium drop-shadow-sm">{formatTime(duration)}</span>
+                  <span className="font-medium drop-shadow-sm">{formatTime(duration || 100)}</span>
                 </div>
               </div>
               
@@ -618,6 +607,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 <div className="flex items-center gap-2">
                   <Button variant="ghost" size="sm" onClick={onTogglePlay} className="text-white hover:bg-white/20 pointer-events-auto">
                     {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    const v = videoRef.current;
+                    if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                  }} className="text-white hover:bg-white/20 pointer-events-auto max-md:hidden">
+                    <SkipBack className="h-4 w-4" />
+                  </Button>
+                  <Button variant="ghost" size="sm" onClick={() => {
+                    const v = videoRef.current;
+                    if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                  }} className="text-white hover:bg-white/20 pointer-events-auto max-md:hidden">
+                    <SkipForward className="h-4 w-4" />
                   </Button>
                   <Button variant="ghost" size="sm" onClick={onToggleMute} className="text-white hover:bg-white/20 pointer-events-auto">
                     {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
@@ -665,6 +666,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     const video = e.target as HTMLVideoElement;
                     setCurrentTime(video.currentTime);
                   }}
+                  onSeeked={handleSeeked}
                   position="left"
                 />
               </div>
@@ -696,6 +698,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     const video = e.target as HTMLVideoElement;
                     setCurrentTimeSecond(video.currentTime);
                   }}
+                  onSeeked={handleSeekedSecond}
                   position="right"
                 />
               </div>
@@ -797,6 +800,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                     const video = e.target as HTMLVideoElement;
                     setCurrentTime(video.currentTime);
                   }}
+                  onSeeked={handleSeeked}
                   onError={handleVideoError}
                   onLoadStart={() => setIsLoading(true)}
                   onCanPlay={() => setIsLoading(false)}
@@ -887,13 +891,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         {/* Progress Fill */}
                         <div
                           className="absolute left-0 top-0 h-full bg-gradient-to-r from-red-500 to-red-600 rounded-full transition-all duration-100 ease-out"
-                          style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                          style={{ width: `${((currentTime) / (duration || 100)) * 100}%` }}
                         />
                         {/* Buffered Progress */}
                         <div
                           className="absolute left-0 top-0 h-full bg-white/50 rounded-full transition-all duration-300"
                           style={{
-                            width: videoRef.current?.buffered?.length && videoRef.current.buffered.end(videoRef.current.buffered.length - 1)
+                            width: videoRef.current?.buffered?.length && duration && videoRef.current.buffered.end(videoRef.current.buffered.length - 1)
                               ? `${(videoRef.current.buffered.end(videoRef.current.buffered.length - 1) / duration) * 100}%`
                               : '0%'
                           }}
@@ -903,13 +907,13 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                         {/* Seek Handle */}
                         <div
                           className="absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-white rounded-full shadow-lg opacity-0 group-hover:opacity-100 transition-opacity duration-200 transform group-hover:scale-110"
-                          style={{ left: `calc(${duration ? (currentTime / duration) * 100 : 0}% - 8px)` }}
+                          style={{ left: `calc(${((currentTime) / (duration || 100)) * 100}% - 8px)` }}
                         />
                         {/* Clickable Overlay */}
                         <input
                           type="range"
                           min="0"
-                          max={duration || 0}
+                          max={duration || 100}
                           value={currentTime}
                           onChange={handleSeek}
                           className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
@@ -919,7 +923,7 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       </div>
                       <div className="flex justify-between text-xs text-white mt-1">
                         <span className="font-medium drop-shadow-sm">{formatTime(currentTime)}</span>
-                        <span className="font-medium drop-shadow-sm">{formatTime(duration)}</span>
+                        <span className="font-medium drop-shadow-sm">{formatTime(duration || 100)}</span>
                       </div>
                     </div>
 
@@ -928,6 +932,18 @@ const VideoPlayer: React.FC<VideoPlayerProps> = ({
                       <div className="flex items-center gap-2">
                         <Button variant="ghost" size="sm" onClick={togglePlay} className="text-white hover:bg-white/20 pointer-events-auto">
                           {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const v = videoRef.current;
+                          if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                        }} className="text-white hover:bg-white/20 pointer-events-auto max-md:hidden">
+                          <SkipBack className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => {
+                          const v = videoRef.current;
+                          if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                        }} className="text-white hover:bg-white/20 pointer-events-auto max-md:hidden">
+                          <SkipForward className="h-4 w-4" />
                         </Button>
                         <div className="flex items-center gap-2">
                           <Button variant="ghost" size="sm" onClick={toggleMute} className="text-white hover:bg-white/20 pointer-events-auto">

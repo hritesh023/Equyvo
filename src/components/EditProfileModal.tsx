@@ -8,8 +8,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { X, Upload, Camera } from 'lucide-react';
+import { X, Upload, Camera, Loader2 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
+import { uploadToCloudinary, isCloudinaryConfigured, getAvatarUrl } from '@/lib/cloudinary';
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -34,6 +35,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [bio, setBio] = useState(currentProfile.bio);
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState(currentProfile.avatar);
+  const [isUploading, setIsUploading] = useState(false);
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -55,7 +57,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
     if (!name.trim()) {
       showError('Name is required');
       return;
@@ -69,11 +71,23 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       return;
     }
 
+    let avatarUrl = avatarPreview;
+    if (avatarFile && isCloudinaryConfigured()) {
+      setIsUploading(true);
+      try {
+        const result = await uploadToCloudinary(avatarFile, { folder: 'equyvo/avatars' });
+        avatarUrl = getAvatarUrl(result.publicId);
+      } catch {
+        showError('Failed to upload avatar. Using local preview.');
+      }
+      setIsUploading(false);
+    }
+
     const updatedProfile = {
       name,
       username,
       bio,
-      avatar: avatarPreview,
+      avatar: avatarUrl,
     };
 
     onSave(updatedProfile);
@@ -177,8 +191,12 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
             <Button variant="outline" onClick={onClose} className="flex-1">
               Cancel
             </Button>
-            <Button onClick={handleSave} className="flex-1">
-              Save Changes
+            <Button onClick={handleSave} disabled={isUploading} className="flex-1">
+              {isUploading ? (
+                <><Loader2 className="h-4 w-4 animate-spin mr-2" /> Uploading...</>
+              ) : (
+                'Save Changes'
+              )}
             </Button>
           </div>
         </CardContent>

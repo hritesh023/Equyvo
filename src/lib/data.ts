@@ -43,16 +43,46 @@ const mockMoments: Moment[] = [
     id: '1',
     user: 'mike_wilson',
     content: 'Quick coding session update',
-    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=300&fit=crop',
+    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=700&fit=crop&auto=format&dpr=2',
     mediaType: 'video',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
     likes: 89,
     comments: 15,
     views: 342,
     time: '1 hour ago',
     userId: 'user3',
     createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: '2',
+    user: 'sarah_creative',
+    content: 'Morning inspiration!',
+    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    thumbnail: 'https://images.unsplash.com/photo-1490730141103-6cac27aaab94?w=400&h=700&fit=crop&auto=format&dpr=2',
+    mediaType: 'video',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
+    likes: 234,
+    comments: 42,
+    views: 1024,
+    time: '3 hours ago',
+    userId: 'user4',
+    createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: '3',
+    user: 'alex_adventures',
+    content: 'City vibes!',
+    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    thumbnail: 'https://images.unsplash.com/photo-1516373363238-71c1eee6e0c5?w=400&h=700&fit=crop&auto=format&dpr=2',
+    mediaType: 'video',
+    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
+    likes: 567,
+    comments: 89,
+    views: 2341,
+    time: '5 hours ago',
+    userId: 'user5',
+    createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
   }
 ];
 
@@ -63,9 +93,31 @@ const mockStories: Story[] = [
     avatar: 'https://github.com/tailwindlabs.png',
     image: 'https://images.unsplash.com/photo-1559526324-59b1a3440d8b?w=400&h=600&fit=crop',
     time: '30 minutes ago',
+    type: 'image',
     userId: 'user4',
     createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString()
-  }
+  },
+  {
+    id: '2',
+    user: 'sarah_creative',
+    avatar: 'https://github.com/vercel.png',
+    image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=600&fit=crop',
+    video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
+    time: '1 hour ago',
+    type: 'video',
+    userId: 'user5',
+    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString()
+  },
+  {
+    id: '3',
+    user: 'mike_adventures',
+    avatar: 'https://github.com/reactjs.png',
+    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=600&fit=crop',
+    time: '2 hours ago',
+    type: 'image',
+    userId: 'user6',
+    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
+  },
 ];
 
 // Fetch posts (using mock data for now)
@@ -74,10 +126,8 @@ export const fetchPosts = async (userId?: string, limit = 50): Promise<Post[]> =
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 500));
     
-    console.log('Fetching mock posts for user:', userId);
     return mockPosts.slice(0, limit);
-  } catch (error) {
-    console.error('Error in fetchPosts:', error);
+  } catch {
     return [];
   }
 };
@@ -88,10 +138,8 @@ export const fetchMoments = async (limit = 20): Promise<Moment[]> => {
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 300));
     
-    console.log('Fetching mock moments');
     return mockMoments.slice(0, limit);
-  } catch (error) {
-    console.error('Error in fetchMoments:', error);
+  } catch {
     return [];
   }
 };
@@ -102,10 +150,8 @@ export const fetchStories = async (limit = 20): Promise<Story[]> => {
     // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 200));
     
-    console.log('Fetching mock stories');
     return mockStories.slice(0, limit);
-  } catch (error) {
-    console.error('Error in fetchStories:', error);
+  } catch {
     return [];
   }
 };
@@ -144,8 +190,7 @@ export const createPost = async (postData: {
     mockPosts.unshift(newPost);
 
     return { success: true, post: newPost };
-  } catch (error) {
-    console.error('Error in createPost:', error);
+  } catch {
     return { success: false, error: 'Failed to create post' };
   }
 };
@@ -167,8 +212,7 @@ export const getUserProfile = async (userId: string) => {
     };
 
     return mockProfile;
-  } catch (error) {
-    console.error('Error in getUserProfile:', error);
+  } catch {
     return null;
   }
 };

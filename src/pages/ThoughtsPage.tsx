@@ -304,14 +304,12 @@ const ThoughtsPage = memo(() => {
       const { data, error } = await getThoughts();
       if (error || !data || data.length === 0) {
         // Fallback to mock data for demo
-        console.log('Using mock data - error:', error, 'data length:', data?.length);
         setThoughts(getMockThoughts());
       } else {
         setThoughts(data);
       }
-    } catch (error) {
+    } catch {
       // Fallback to mock data for demo
-      console.log('Error fetching thoughts, using mock data:', error);
       setThoughts(getMockThoughts());
     } finally {
       setLoading(false);
@@ -627,21 +625,18 @@ const ThoughtsPage = memo(() => {
       try {
         const { error } = await voteOnThought({ thought_id: thoughtId, vote_type: voteType });
         if (error) {
-          console.log('Database sync failed (expected in development):', error);
           // Don't revert local state in development if database fails
           if (!import.meta.env.DEV) {
             setThoughts(thoughts);
           }
         }
-      } catch (error) {
-        console.log('Vote sync error (expected in development):', error);
+      } catch {
         // Don't revert local state in development if database fails
         if (!import.meta.env.DEV) {
           setThoughts(thoughts);
         }
       }
-    } catch (error) {
-      console.log('Vote sync error (expected in development):', error);
+    } catch {
       // Don't revert local state in development if database fails
       if (!import.meta.env.DEV) {
         setThoughts(thoughts);
@@ -683,10 +678,10 @@ const ThoughtsPage = memo(() => {
       // Try to sync with database (will fail gracefully with mock data)
       try {
         await likeThought({ thought_id: thoughtId });
-      } catch (error) {
+      } catch {
         // Database sync failed (expected with mock data)
       }
-    } catch (error) {
+    } catch {
       // Database sync failed (expected with mock data)
     } finally {
       setLiking(null);
@@ -731,7 +726,7 @@ const ThoughtsPage = memo(() => {
       
       // Save to localStorage for persistence
       localStorage.setItem('savedThoughts', JSON.stringify(Array.from(newSavedThoughts)));
-    } catch (error) {
+    } catch {
       // Handle save error
     }
   };
@@ -755,7 +750,7 @@ const ThoughtsPage = memo(() => {
           alert('Link copied to clipboard!');
         }
       }
-    } catch (error) {
+    } catch {
       // Handle share error
     } finally {
       setSharing(null);
@@ -781,7 +776,7 @@ const ThoughtsPage = memo(() => {
         
         setNewComment('');
         setCommentDialogOpen(null);
-      } catch (error) {
+      } catch {
         // Handle comment error
       }
     }
@@ -792,7 +787,7 @@ const ThoughtsPage = memo(() => {
       const shareUrl = `${window.location.origin}/thoughts/${thoughtId}`;
       await navigator.clipboard.writeText(shareUrl);
       alert('Link copied to clipboard!');
-    } catch (error) {
+    } catch {
       // Handle copy link error
     }
   };
@@ -818,7 +813,7 @@ const ThoughtsPage = memo(() => {
       
       // Here you would typically sync with your database
       // For now, we'll just update the local state
-    } catch (error) {
+    } catch {
       // Handle retweet error
     } finally {
       setRetweeting(null);
@@ -920,7 +915,7 @@ const ThoughtsPage = memo(() => {
       const video = originalVideoRef.current;
       video.currentTime = originalVideoState.currentTime;
       if (originalVideoState.isPlaying) {
-        video.play().catch(e => console.log('Failed to resume video:', e));
+        video.play().catch(() => {});
       }
     }
     
@@ -934,7 +929,7 @@ const ThoughtsPage = memo(() => {
     if (saved) {
       try {
         setSavedThoughts(new Set(JSON.parse(saved)));
-      } catch (error) {
+      } catch {
         // Handle load saved thoughts error
       }
     }
@@ -949,7 +944,7 @@ const ThoughtsPage = memo(() => {
         // Also set reacted thoughts IDs for UI state
         const reactedIds = new Set<string>(reactedThoughts.map((t: any) => t.originalThoughtId).filter(Boolean));
         setReactedThoughts(reactedIds);
-      } catch (error) {
+      } catch {
         // Handle load reacted thoughts error
       }
     }

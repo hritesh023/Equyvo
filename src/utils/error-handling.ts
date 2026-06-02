@@ -180,8 +180,7 @@ class ErrorReportingService {
         },
         body: JSON.stringify(report)
       });
-    } catch (e) {
-      console.warn('Failed to send error report to service:', e);
+    } catch {
     }
   }
 

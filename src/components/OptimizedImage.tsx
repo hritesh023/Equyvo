@@ -64,21 +64,22 @@ const OptimizedImage: React.FC<OptimizedImageProps> = ({
     onError?.();
   };
 
-  // Convert to webp if browser supports it
-  const supportsWebP = () => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 1;
-    canvas.height = 1;
-    return canvas.toDataURL('image/webp').indexOf('data:image/webp') === 0;
-  };
-
   const getOptimizedSrc = (originalSrc: string) => {
-    if (!supportsWebP() || originalSrc.includes('.svg')) {
-      return originalSrc;
+    if (originalSrc.includes('.svg')) return originalSrc;
+
+    const cloudinaryMatch = originalSrc.match(/(res\.cloudinary\.com\/\w+\/image\/upload\/)/);
+    if (cloudinaryMatch) {
+      const prefix = cloudinaryMatch[1];
+      const everythingAfter = originalSrc.slice(prefix.length);
+
+      if (!everythingAfter.includes('f_auto')) {
+        return originalSrc.replace(prefix, prefix + 'f_auto,q_auto:good/');
+      }
+      if (!everythingAfter.includes('q_auto')) {
+        return originalSrc.replace(prefix, prefix + 'q_auto:good/');
+      }
     }
-    
-    // For external images, we'd typically use a CDN service
-    // For now, return original src
+
     return originalSrc;
   };
 
@@ -149,8 +150,7 @@ export const preloadImage = (src: string): Promise<void> => {
 export const preloadImages = async (srcs: string[]): Promise<void> => {
   try {
     await Promise.all(srcs.map(preloadImage));
-  } catch (error) {
-    console.warn('Failed to preload some images:', error);
+  } catch {
   }
 };
 

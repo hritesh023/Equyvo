@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send, RotateCcw } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from '@/lib/utils';
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -29,6 +29,8 @@ const MomentsPage = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const scrollTimeoutRef = useRef<NodeJS.Timeout>();
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
 
   // Mock moments data with working video URLs
   const moments = [
@@ -198,10 +200,10 @@ const MomentsPage = () => {
                 if (index === activeVideoIndex) {
                   setIsMuted(false);
                   setAutoUnmuted(true);
-                  console.log(`Video ${index} auto-unmuted on view`);
+
                 }
               }, 200); // Very short delay for reliable unmute
-            }).catch(() => console.log('Autoplay prevented'));
+            }).catch(() => {});
           }
         } else if (!entry.isIntersecting) {
           // Pause video when not visible
@@ -231,23 +233,19 @@ const MomentsPage = () => {
         
         const attemptPlay = (attempts = 0) => {
           if (attempts >= 10) {
-            console.log('Auto-play failed after 10 attempts');
             return;
           }
           
           firstVideo.play()
             .then(() => {
-              console.log('First video auto-played successfully');
               // Immediately auto-unmute on visit
               setTimeout(() => {
                 firstVideo.muted = false;
                 setIsMuted(false);
                 setAutoUnmuted(true);
-                console.log('Video auto-unmuted on page visit');
               }, 200); // Very short delay for reliable unmute
             })
-            .catch(error => {
-              console.log(`Auto-play attempt ${attempts + 1} failed:`, error);
+            .catch(() => {
               setTimeout(() => attemptPlay(attempts + 1), 100 * (attempts + 1));
             });
         };
@@ -266,6 +264,11 @@ const MomentsPage = () => {
       const container = containerRef.current;
       if (!container) return;
 
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+
+      const video = videoRefs.current[activeVideoIndex];
+
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
@@ -277,6 +280,8 @@ const MomentsPage = () => {
           }
           break;
         case ' ':
+        case 'k':
+        case 'K':
           e.preventDefault();
           // Toggle play/pause
           togglePlay(activeVideoIndex);
@@ -290,11 +295,45 @@ const MomentsPage = () => {
             prevSlide.scrollIntoView({ behavior: 'smooth', block: 'start' });
           }
           break;
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (video) video.currentTime = Math.max(0, video.currentTime - 5);
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 5);
+          break;
+        case 'j':
+        case 'J':
+          e.preventDefault();
+          if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+          break;
+        case 'l':
+        case 'L':
+          e.preventDefault();
+          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          break;
         case 'm':
         case 'M':
-          // Toggle mute
-          toggleMute(e as any);
+          e.preventDefault();
+          toggleMuteVideo();
           break;
+        case ',':
+          e.preventDefault();
+          if (video) video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+          break;
+        case '.':
+          e.preventDefault();
+          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+          break;
+      }
+
+      if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (video) {
+          const pct = parseInt(e.key) / 10;
+          video.currentTime = (video.duration || 0) * pct;
+        }
       }
     };
 
@@ -314,7 +353,6 @@ const MomentsPage = () => {
             currentVideo.muted = false;
             setIsMuted(false);
             setAutoUnmuted(true);
-            console.log('Portrait video auto-unmuted after user engagement');
           }
         } else {
           // Wait for metadata to load
@@ -323,7 +361,6 @@ const MomentsPage = () => {
               currentVideo.muted = false;
               setIsMuted(false);
               setAutoUnmuted(true);
-              console.log('Portrait video auto-unmuted after metadata loaded');
             }
             currentVideo.removeEventListener('loadedmetadata', handleLoadedMetadata);
           };
@@ -333,10 +370,20 @@ const MomentsPage = () => {
     }
   }, [hasEngaged, activeVideoIndex, autoUnmuted]);
 
+  // Reset time/duration when active video changes
+  useEffect(() => {
+    setCurrentTime(0);
+    setDuration(0);
+  }, [activeVideoIndex]);
+
   // Update mute state for all videos (removed - now controlled individually)
 
   const toggleMute = (e: React.MouseEvent) => {
     e.stopPropagation();
+    toggleMuteVideo();
+  };
+
+  const toggleMuteVideo = () => {
     setHasEngaged(true);
     setAutoUnmuted(true); // Prevent auto-unmute from triggering again
     const currentVideo = videoRefs.current[activeVideoIndex];
@@ -344,7 +391,6 @@ const MomentsPage = () => {
       const newMutedState = !currentVideo.muted;
       currentVideo.muted = newMutedState;
       setIsMuted(newMutedState);
-      console.log('Manual toggle - Video muted:', newMutedState);
     }
   };
 
@@ -359,6 +405,38 @@ const MomentsPage = () => {
         video.pause();
       }
     }
+  };
+
+  const formatTime = (seconds: number) => {
+    if (!seconds || isNaN(seconds)) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  const handleTimeUpdate = (index: number) => {
+    const video = videoRefs.current[index];
+    if (video) {
+      setCurrentTime(video.currentTime);
+    }
+  };
+
+  const handleLoadedMetadata = (index: number) => {
+    const video = videoRefs.current[index];
+    if (video) {
+      setDuration(video.duration);
+    }
+  };
+
+  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const video = videoRefs.current[activeVideoIndex];
+    if (!video || !video.duration) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
+    const newTime = percentage * video.duration;
+    video.currentTime = newTime;
+    setCurrentTime(newTime);
   };
 
   const toggleLike = (momentId: string) => {
@@ -462,11 +540,9 @@ const MomentsPage = () => {
               playsInline
               muted={true}
               autoPlay
+              onTimeUpdate={() => handleTimeUpdate(index)}
+              onLoadedMetadata={() => handleLoadedMetadata(index)}
               onClick={() => togglePlay(index)}
-              onLoadStart={() => console.log(`Video ${index} loading started: ${moment.videoUrl}`)}
-              onCanPlay={() => console.log(`Video ${index} can play`)}
-              onError={(e) => console.error(`Video ${index} error:`, e)}
-              onLoadedMetadata={() => console.log(`Video ${index} metadata loaded: ${videoRefs.current[index]?.videoWidth}x${videoRefs.current[index]?.videoHeight}`)}
             />
           </div>
 
@@ -585,6 +661,49 @@ const MomentsPage = () => {
                 )}
               </div>
             </div>
+            {duration > 10 && (
+              <div className="absolute bottom-2 left-4 right-4 z-30 pointer-events-auto">
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const v = videoRefs.current[activeVideoIndex];
+                      if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                    }}
+                    className="max-md:hidden text-white/70 hover:text-white p-1"
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </button>
+                  <span className="text-white/70 text-[10px] font-medium min-w-[28px] text-right tabular-nums">
+                    {formatTime(currentTime)}
+                  </span>
+                  <div 
+                    className="flex-1 h-1 bg-white/20 rounded-full cursor-pointer group hover:h-1.5 transition-all duration-200"
+                    onClick={handleSeek}
+                  >
+                    <div 
+                      className="h-full bg-white rounded-full transition-all duration-100 relative"
+                      style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
+                    >
+                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md" />
+                    </div>
+                  </div>
+                  <span className="text-white/70 text-[10px] font-medium min-w-[28px] tabular-nums">
+                    {formatTime(duration)}
+                  </span>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const v = videoRefs.current[activeVideoIndex];
+                      if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                    }}
+                    className="max-md:hidden text-white/70 hover:text-white p-1"
+                  >
+                    <RotateCcw className="h-3 w-3 scale-x-[-1]" />
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       ))}

@@ -197,7 +197,6 @@ const LongFormVideos: React.FC<LongFormVideosProps> = ({
   };
 
   const handleVideoClick = (video: any) => {
-    console.log('Video clicked in LongFormVideos:', video);
     addToWatchHistory(video);
     onVideoClick(video);
     showSuccess(`🎬 Now playing: ${video.title}`);

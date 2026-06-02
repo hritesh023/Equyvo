@@ -1,35 +1,23 @@
-// Re-enable AWS Cognito with minimal configuration
 import { CognitoUserPool, CognitoUserAttribute, CognitoUser, AuthenticationDetails } from 'amazon-cognito-identity-js';
 
-// AWS Cognito configuration
 const poolData = {
   UserPoolId: import.meta.env.VITE_AWS_USER_POOL_ID,
   ClientId: import.meta.env.VITE_AWS_APP_CLIENT_ID,
   region: import.meta.env.VITE_AWS_REGION || 'eu-north-1'
 };
 
-console.log("AWS User Pool ID:", poolData.UserPoolId);
-console.log("AWS Client ID:", poolData.ClientId);
-console.log("AWS Region:", poolData.region);
+const hasCredentials = !!(poolData.UserPoolId && poolData.ClientId);
 
-// Force mock mode for development
-const hasAwsCredentials = false; // Force disable AWS Cognito
+export const userPool = hasCredentials ? new CognitoUserPool(poolData) : null;
 
-console.log('🔧 AWS Cognito disabled - using mock authentication mode');
-
-export const userPool = null; // Force null to use mock authentication
-
-// Helper function to get current authenticated user
 export const getCurrentUser = () => {
   if (!userPool) return null;
   return userPool.getCurrentUser();
 };
 
-// Helper function to get current session
 export const getCurrentSession = () => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      // Return mock session for development
       const mockSession = {
         getIdToken: () => ({
           decodePayload: () => ({
@@ -53,7 +41,6 @@ export const getCurrentSession = () => {
 
     currentUser.getSession((err: any, session: any) => {
       if (err) {
-        console.error('Session error:', err);
         resolve(null);
       } else {
         resolve(session);
@@ -62,12 +49,9 @@ export const getCurrentSession = () => {
   });
 };
 
-// Sign up function
 export const signUp = (email: string, password: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      // Mock sign up for development
-      console.log('Using mock sign up for development');
       resolve({
         user: {
           getUsername: () => email,
@@ -95,12 +79,9 @@ export const signUp = (email: string, password: string) => {
   });
 };
 
-// Sign in function
 export const signIn = (email: string, password: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      // Mock authentication for development
-      console.log('Using mock authentication for development');
       const mockSession = {
         getIdToken: () => ({
           decodePayload: () => ({
@@ -136,14 +117,12 @@ export const signIn = (email: string, password: string) => {
         reject(err);
       },
       newPasswordRequired: () => {
-        // Handle new password requirement if needed
         reject(new Error('New password required'));
       },
     });
   });
 };
 
-// Sign out function
 export const signOut = () => {
   const currentUser = getCurrentUser();
   if (currentUser) {
@@ -151,12 +130,9 @@ export const signOut = () => {
   }
 };
 
-// Confirm registration function
 export const confirmRegistration = (email: string, code: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      // Mock confirmation for development
-      console.log('Using mock confirmation for development');
       resolve('SUCCESS');
       return;
     }
@@ -178,12 +154,9 @@ export const confirmRegistration = (email: string, code: string) => {
   });
 };
 
-// Resend confirmation code function
 export const resendConfirmationCode = (email: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      // Mock resend confirmation for development
-      console.log('Using mock resend confirmation for development');
       resolve('SUCCESS');
       return;
     }

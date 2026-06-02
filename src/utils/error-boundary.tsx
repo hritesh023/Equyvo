@@ -25,17 +25,10 @@ class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    console.error('ErrorBoundary caught an error:', error, errorInfo);
     this.setState({
       error,
       errorInfo
     });
-
-    // Log error to monitoring service in production
-    if (import.meta.env.PROD) {
-      // Add error logging service here
-      console.log('Production error:', { error, errorInfo });
-    }
   }
 
   handleReset = () => {
