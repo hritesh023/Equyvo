@@ -360,53 +360,68 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     };
   }, []);
 
+  // Poll currentTime every 200ms to keep progress bar in sync
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
 
-    const updateTime = () => {
+    const poll = setInterval(() => {
       setCurrentTime(video.currentTime);
-    };
-    const updateDuration = () => {
-      setDuration(video.duration);
-    };
+    }, 200);
+
+    return () => clearInterval(poll);
+  }, []);
+
+  // Sync isPlaying state with native video events
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
     const handlePlay = () => setIsPlaying(true);
     const handlePause = () => setIsPlaying(false);
-    const handleSeeked = () => {
-      setCurrentTime(video.currentTime);
-    };
 
-    video.addEventListener('timeupdate', updateTime);
-    video.addEventListener('loadedmetadata', updateDuration);
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
-    video.addEventListener('seeked', handleSeeked);
-    video.addEventListener('seeking', updateTime);
-
-    // Restore video state if coming from minimized viewer
-    if (actualContent?.isFromMinimized) {
-      const restoreTime = actualContent?.restoreTime || 0;
-      const restorePaused = actualContent?.restorePaused !== false; // Default to paused unless explicitly false
-      
-      setTimeout(() => {
-        if (video.duration) {
-          video.currentTime = restoreTime;
-          if (!restorePaused) {
-            video.play().catch(() => {});
-          }
-        }
-      }, 100);
-    }
 
     return () => {
-      video.removeEventListener('timeupdate', updateTime);
-      video.removeEventListener('loadedmetadata', updateDuration);
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
-      video.removeEventListener('seeked', handleSeeked);
-      video.removeEventListener('seeking', updateTime);
     };
   }, []);
+
+  // Update duration when metadata loads
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const updateDuration = () => setDuration(video.duration);
+    video.addEventListener('loadedmetadata', updateDuration);
+
+    if (video.readyState >= HTMLMediaElement.HAVE_METADATA) {
+      updateDuration();
+    }
+
+    return () => video.removeEventListener('loadedmetadata', updateDuration);
+  }, []);
+
+  // Restore video state if coming from minimized viewer
+  useEffect(() => {
+    if (!actualContent?.isFromMinimized) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const restoreTime = actualContent?.restoreTime || 0;
+    const restorePaused = actualContent?.restorePaused !== false;
+
+    setTimeout(() => {
+      if (video.duration) {
+        video.currentTime = restoreTime;
+        if (!restorePaused) {
+          video.play().catch(() => {});
+        }
+      }
+    }, 100);
+  }, [actualContent?.isFromMinimized, actualContent?.restoreTime, actualContent?.restorePaused]);
 
   // Ensure videos start unmuted in fullscreen mode
   useEffect(() => {
@@ -470,79 +485,31 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     enabled: isVideoType,
   });
 
-  // Show controls on any keyboard activity (arrow keys, space, etc.)
+  const HIDE_DELAY = 5000;
+
+  // Show controls on any keyboard activity, auto-hide after 5s
   useEffect(() => {
     const onKeyActivity = () => {
-      setShowControls(true);
-      if (isVideoType) setShowDetailsPanel(true);
-      controlsShowCountRef.current += 1;
-      if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-      if (detailsPanelTimeoutRef.current) clearTimeout(detailsPanelTimeoutRef.current);
-      const showCount = controlsShowCountRef.current;
-      const delay = isDesktop
-        ? Math.min(HIDE_DELAY_BASE + (showCount - 1) * HIDE_DELAY_INCREMENT, HIDE_DELAY_MAX)
-        : Math.min(HIDE_DELAY_MOBILE_BASE + (showCount - 1) * HIDE_DELAY_MOBILE_INCREMENT, HIDE_DELAY_MOBILE_MAX);
-      controlsTimeoutRef.current = setTimeout(() => setShowControls(false), delay);
-      if (isVideoType) {
-        detailsPanelTimeoutRef.current = setTimeout(() => setShowDetailsPanel(false), delay + 2000);
-      }
+      scheduleHide();
     };
     window.addEventListener('keydown', onKeyActivity);
     return () => window.removeEventListener('keydown', onKeyActivity);
-  }, [isDesktop, isVideoType]);
+  }, []);
 
-  const HIDE_DELAY_BASE = 6000;
-  const HIDE_DELAY_INCREMENT = 2000;
-  const HIDE_DELAY_MAX = 15000;
-  const HIDE_DELAY_MOBILE_BASE = 8000;
-  const HIDE_DELAY_MOBILE_INCREMENT = 2000;
-  const HIDE_DELAY_MOBILE_MAX = 20000;
+  const scheduleHide = () => {
+    setShowControls(true);
+    if (isVideoType) setShowDetailsPanel(true);
+    if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+    if (detailsPanelTimeoutRef.current) clearTimeout(detailsPanelTimeoutRef.current);
+    controlsTimeoutRef.current = setTimeout(() => setShowControls(false), HIDE_DELAY);
+    if (isVideoType) {
+      detailsPanelTimeoutRef.current = setTimeout(() => setShowDetailsPanel(false), HIDE_DELAY);
+    }
+  };
 
   const handleMouseMove = () => {
-    const now = Date.now();
-    lastMouseMoveRef.current = now;
-    setShowControls(true);
-
-    controlsShowCountRef.current += 1;
-
-    // For video content, also show details panel on hover
-    if (isVideoType) {
-      setShowDetailsPanel(true);
-    }
-
-    // Clear any existing timeouts
-    if (controlsTimeoutRef.current) {
-      clearTimeout(controlsTimeoutRef.current);
-    }
-    if (detailsPanelTimeoutRef.current) {
-      clearTimeout(detailsPanelTimeoutRef.current);
-    }
-
-    if (isDesktop) {
-      const showCount = controlsShowCountRef.current;
-      const delay = Math.min(HIDE_DELAY_BASE + (showCount - 1) * HIDE_DELAY_INCREMENT, HIDE_DELAY_MAX);
-      controlsTimeoutRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, delay);
-
-      if (isVideoType) {
-        detailsPanelTimeoutRef.current = setTimeout(() => {
-          setShowDetailsPanel(false);
-        }, delay + 2000);
-      }
-    } else {
-      const showCount = controlsShowCountRef.current;
-      const delay = Math.min(HIDE_DELAY_MOBILE_BASE + (showCount - 1) * HIDE_DELAY_MOBILE_INCREMENT, HIDE_DELAY_MOBILE_MAX);
-      controlsTimeoutRef.current = setTimeout(() => {
-        setShowControls(false);
-      }, delay);
-
-      if (isVideoType) {
-        detailsPanelTimeoutRef.current = setTimeout(() => {
-          setShowDetailsPanel(false);
-        }, delay + 2000);
-      }
-    }
+    lastMouseMoveRef.current = Date.now();
+    scheduleHide();
   };
 
   const togglePlay = () => {
@@ -592,8 +559,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       if (detailsPanelTimeoutRef.current) {
         clearTimeout(detailsPanelTimeoutRef.current);
       }
-      // Reset show counter when mouse leaves
-      controlsShowCountRef.current = 0;
       // Hide controls immediately when mouse leaves
       setShowControls(false);
       // Hide details panel immediately for video content
@@ -1079,13 +1044,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           onClick={(e) => {
             const target = e.target as HTMLElement | null;
             
-            // Early return for any actionable elements or top controls
-            if (target?.closest('button') || 
-                target?.closest('input') || 
-                target?.closest('[role="button"]') ||
-                target?.closest('.absolute') ||
-                target?.closest('[class*="z-"]') ||
-                target?.closest('.top-controls-bar')) return;
+            // Allow top bar buttons (close/minimize/split) to work without interference
+            if (target?.closest('.top-controls-bar')) return;
             
             if (isSplitView) {
               if (target?.closest('video')) {
@@ -1097,8 +1057,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               return;
             }
             
-            handleVideoTap(e);
-            handleMouseMove();
+            // If overlay is visible, hide it immediately regardless of what was clicked
+            if (showControls || showDetailsPanel) {
+              if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+              if (detailsPanelTimeoutRef.current) clearTimeout(detailsPanelTimeoutRef.current);
+              setShowControls(false);
+              if (isVideoType) setShowDetailsPanel(false);
+              return;
+            }
+            
+            // If overlay is hidden, toggle play/pause and show overlay (YouTube behavior)
+            togglePlay();
+            scheduleHide();
           }}
         >
           {fallbackVideoSrc ? (
@@ -1112,7 +1082,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               controls={false}
               muted={false}
               loop={isPortraitMoment || isStory}
-              onPlay={() => { setShowControls(true); if (isVideoType) setShowDetailsPanel(true); }}
+              onTimeUpdate={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
+              onSeeked={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
+              onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); }}
             />
           ) : (
             <div className="absolute inset-0 w-full h-full flex items-center justify-center" style={{ zIndex: 1, pointerEvents: 'none' }}>
@@ -1269,7 +1241,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               </div>
             )}
             
-            {/* Custom Video Controls - YouTube Style */}
+            {/* Custom Video Controls */}
             <div 
               className={`bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-500 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}
               style={{ 
@@ -1357,7 +1329,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       onClick={toggleMute}
                       className="text-white hover:text-blue-400 transition-colors p-2 hover:bg-white/10 rounded-full"
                     >
-                      <Volume2 className="h-5 w-5" />
+                      {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
                     </button>
                     <input
                       type="range"

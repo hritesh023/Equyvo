@@ -238,12 +238,11 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       
       const handleVideoLoad = () => {
         setVideoLoaded(true);
-        startProgress();
       };
       
       const handleVideoError = () => {
         setVideoError(true);
-        startProgress();
+        startImageTimer();
       };
       
       video.addEventListener('loadeddata', handleVideoLoad);
@@ -253,7 +252,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         video.load();
       } else {
         setVideoLoaded(true);
-        startProgress();
       }
       
       return () => {
@@ -263,12 +261,12 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           clearInterval(progressIntervalRef.current);
         }
       };
-    } else {
-      startProgress();
+    } else if (story.type !== 'video') {
+      startImageTimer();
     }
     
-    function startProgress() {
-      const duration = story.type === 'video' ? 6000 : 3000;
+    function startImageTimer() {
+      const duration = 3000;
       const interval = 50;
       const increment = (interval / duration) * 100;
       
@@ -488,7 +486,6 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                     src={currentStory.video}
                     className={`story-image ${videoLoaded ? 'block' : 'hidden'}`}
                     muted={isGloballyMuted}
-                    loop
                     preload="metadata"
                     playsInline
                     onClick={(e) => {
@@ -518,6 +515,15 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                     onLoadedData={() => setVideoLoaded(true)}
                     onPlay={() => setShowControls(true)}
                     onError={() => setVideoError(true)}
+                    onTimeUpdate={(e) => {
+                      const v = e.currentTarget;
+                      if (v.duration) {
+                        setProgress(Math.min((v.currentTime / v.duration) * 100, 100));
+                      }
+                    }}
+                    onEnded={() => {
+                      if (currentIndex < stories.length - 1) onNext(); else onClose();
+                    }}
                   />
                 </>
               )}
