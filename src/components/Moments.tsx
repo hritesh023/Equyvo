@@ -44,6 +44,10 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   const [isSeeking, setIsSeeking] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<{[key: string]: HTMLVideoElement}>({});
+  const playingVideosRef = useRef(playingVideos);
+  playingVideosRef.current = playingVideos;
+  const isMutedRef = useRef(isMuted);
+  isMutedRef.current = isMuted;
   const { getVideoProps, getTouchHandlers, debounce, deviceCapabilities } = usePlatformOptimizations();
 
   const stopAllVideos = () => {
@@ -367,6 +371,13 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     }
   };
 
+  const handleSeeked = (momentId: string, video: HTMLVideoElement | null) => {
+    if (!video || !video.duration) return;
+    const progress = (video.currentTime / video.duration) * 100;
+    setVideoProgress(prev => ({ ...prev, [momentId]: progress || 0 }));
+    setCurrentTime(prev => ({ ...prev, [momentId]: video.currentTime || 0 }));
+  };
+
   const handleLoadedMetadata = (momentId: string, video: HTMLVideoElement) => {
     const newDuration = { ...videoDuration };
     newDuration[momentId] = video.duration || 0;
@@ -430,19 +441,17 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     }
   };
 
-  // Desktop keyboard shortcuts for video control
+  // Desktop keyboard shortcuts for video control - always active on desktop
   useEffect(() => {
-    const isDesktop = window.innerWidth >= 768;
-    if (!isDesktop) return;
-
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
+      if (window.innerWidth < 768) return;
 
       const videoEntries = Object.entries(videoRefs.current);
       if (videoEntries.length === 0) return;
 
-      const playingIds = Array.from(playingVideos);
+      const playingIds = Array.from(playingVideosRef.current);
       const activeId = playingIds.length > 0 ? playingIds[0] : videoEntries[0][0];
       const video = videoRefs.current[activeId];
       if (!video) return;
@@ -475,8 +484,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
         case 'm':
         case 'M':
           e.preventDefault();
-          video.muted = !isMuted;
-          setIsMuted(!isMuted);
+          video.muted = !isMutedRef.current;
+          setIsMuted(!isMutedRef.current);
           break;
         case ',':
           e.preventDefault();
@@ -497,7 +506,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [playingVideos, isMuted, moments]);
+  }, []);
 
   // Ensure moments fill the horizontal space by duplicating if needed
   const getDisplayMoments = () => {
@@ -634,6 +643,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                             handleVideoLoaded(moment.id);
                           }}
                           onTimeUpdate={() => handleTimeUpdate(moment.id, videoRefs.current[moment.id])}
+                          onSeeked={() => handleSeeked(moment.id, videoRefs.current[moment.id])}
                           onLoadedMetadata={() => handleLoadedMetadata(moment.id, videoRefs.current[moment.id])}
                           onClick={(e) => {
                             e.stopPropagation();
@@ -929,6 +939,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         handleVideoLoaded(moment.id);
                       }}
                       onTimeUpdate={() => handleTimeUpdate(moment.id, videoRefs.current[moment.id])}
+                      onSeeked={() => handleSeeked(moment.id, videoRefs.current[moment.id])}
                       onLoadedMetadata={() => handleLoadedMetadata(moment.id, videoRefs.current[moment.id])}
                       onPlay={() => {
                         // Ensure video only plays if it's in the playingVideos set

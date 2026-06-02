@@ -35,6 +35,14 @@ export function useVideoKeyboardShortcuts({
     }
   }, [setIsPlaying]);
 
+  const seekTo = useCallback((video: HTMLVideoElement, time: number) => {
+    try {
+      video.currentTime = Math.max(0, Math.min(time, video.duration || Infinity));
+    } catch {
+      // Silently handle cases where video metadata hasn't loaded
+    }
+  }, []);
+
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
@@ -52,21 +60,21 @@ export function useVideoKeyboardShortcuts({
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          video.currentTime = Math.max(0, video.currentTime - 5);
+          seekTo(video, video.currentTime - 5);
           break;
         case 'ArrowRight':
           e.preventDefault();
-          video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 5);
+          seekTo(video, video.currentTime + 5);
           break;
         case 'j':
         case 'J':
           e.preventDefault();
-          video.currentTime = Math.max(0, video.currentTime - 10);
+          seekTo(video, video.currentTime - 10);
           break;
         case 'l':
         case 'L':
           e.preventDefault();
-          video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          seekTo(video, video.currentTime + 10);
           break;
         case 'ArrowUp':
           e.preventDefault();
@@ -105,11 +113,11 @@ export function useVideoKeyboardShortcuts({
           break;
         case ',':
           e.preventDefault();
-          video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+          seekTo(video, video.currentTime - 1 / 30);
           break;
         case '.':
           e.preventDefault();
-          video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+          seekTo(video, video.currentTime + 1 / 30);
           break;
         case '[':
           e.preventDefault();
@@ -138,12 +146,11 @@ export function useVideoKeyboardShortcuts({
 
       if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        const pct = parseInt(e.key) / 10;
-        video.currentTime = (video.duration || 0) * pct;
+        seekTo(video, (video.duration || 0) * (parseInt(e.key) / 10));
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [videoRef, isPlaying, setIsPlaying, isMuted, setIsMuted, volume, setVolume, playbackRate, setPlaybackRate, onToggleFullscreen, togglePlay]);
+  }, [videoRef, isPlaying, setIsPlaying, isMuted, setIsMuted, volume, setVolume, playbackRate, setPlaybackRate, onToggleFullscreen, togglePlay, seekTo]);
 }

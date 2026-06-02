@@ -12,6 +12,7 @@ import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { useMediaSession } from '@/hooks/use-media-session';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -29,8 +30,30 @@ const MomentsPage = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
   const scrollTimeoutRef = useRef<NodeJS.Timeout>();
+  const activeVideoIndexRef = useRef(activeVideoIndex);
+  activeVideoIndexRef.current = activeVideoIndex;
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  const [isActiveVideoPlaying, setIsActiveVideoPlaying] = useState(false);
+
+  // Track play state of the active video for media session
+  useEffect(() => {
+    const video = videoRefs.current[activeVideoIndex];
+    if (!video) return;
+
+    const onPlay = () => setIsActiveVideoPlaying(true);
+    const onPause = () => setIsActiveVideoPlaying(false);
+
+    video.addEventListener('play', onPlay);
+    video.addEventListener('pause', onPause);
+
+    setIsActiveVideoPlaying(!video.paused);
+
+    return () => {
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('pause', onPause);
+    };
+  }, [activeVideoIndex]);
 
   // Mock moments data with working video URLs
   const moments = [
@@ -87,6 +110,21 @@ const MomentsPage = () => {
       isSaved: true
     }
   ];
+
+  useMediaSession({
+    videoRef: {
+      current: videoRefs.current[activeVideoIndex] || null,
+    } as React.RefObject<HTMLVideoElement | null>,
+    isPlaying: isActiveVideoPlaying,
+    setIsPlaying: (val: boolean) => {
+      const video = videoRefs.current[activeVideoIndex];
+      if (!video) return;
+      if (val) video.play();
+      else video.pause();
+    },
+    title: moments[activeVideoIndex]?.description || moments[activeVideoIndex]?.user || 'Moment',
+    artist: moments[activeVideoIndex]?.user || 'Equyvo',
+  });
 
   // Initialize likes state only (remove auto like/save initialization)
   useEffect(() => {
@@ -258,7 +296,7 @@ const MomentsPage = () => {
     playFirstVideo();
   }, []);
 
-  // Keyboard navigation for desktop
+  // Keyboard navigation for desktop - always active
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const container = containerRef.current;
@@ -267,51 +305,53 @@ const MomentsPage = () => {
       const target = e.target as HTMLElement;
       if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
 
-      const video = videoRefs.current[activeVideoIndex];
+      const idx = activeVideoIndexRef.current;
+      const video = videoRefs.current[idx];
 
       switch (e.key) {
         case 'ArrowDown':
           e.preventDefault();
-          // Scroll to next video
-          const nextIndex = Math.min(activeVideoIndex + 1, moments.length - 1);
-          const nextSlide = container.querySelector(`[data-index="${nextIndex}"]`) as HTMLElement;
-          if (nextSlide) {
-            nextSlide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          {
+            const nextIndex = Math.min(idx + 1, moments.length - 1);
+            const nextSlide = container.querySelector(`[data-index="${nextIndex}"]`) as HTMLElement;
+            if (nextSlide) {
+              nextSlide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
           }
           break;
         case ' ':
         case 'k':
         case 'K':
           e.preventDefault();
-          // Toggle play/pause
-          togglePlay(activeVideoIndex);
+          togglePlay(idx);
           break;
         case 'ArrowUp':
           e.preventDefault();
-          // Scroll to previous video
-          const prevIndex = Math.max(activeVideoIndex - 1, 0);
-          const prevSlide = container.querySelector(`[data-index="${prevIndex}"]`) as HTMLElement;
-          if (prevSlide) {
-            prevSlide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          {
+            const prevIndex = Math.max(idx - 1, 0);
+            const prevSlide = container.querySelector(`[data-index="${prevIndex}"]`) as HTMLElement;
+            if (prevSlide) {
+              prevSlide.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
           }
           break;
         case 'ArrowLeft':
           e.preventDefault();
-          if (video) video.currentTime = Math.max(0, video.currentTime - 5);
+          if (video) try { video.currentTime = Math.max(0, video.currentTime - 5); } catch {}
           break;
         case 'ArrowRight':
           e.preventDefault();
-          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 5);
+          if (video) try { video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 5); } catch {}
           break;
         case 'j':
         case 'J':
           e.preventDefault();
-          if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+          if (video) try { video.currentTime = Math.max(0, video.currentTime - 10); } catch {}
           break;
         case 'l':
         case 'L':
           e.preventDefault();
-          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          if (video) try { video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10); } catch {}
           break;
         case 'm':
         case 'M':
@@ -320,26 +360,28 @@ const MomentsPage = () => {
           break;
         case ',':
           e.preventDefault();
-          if (video) video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+          if (video) try { video.currentTime = Math.max(0, video.currentTime - 1 / 30); } catch {}
           break;
         case '.':
           e.preventDefault();
-          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+          if (video) try { video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30); } catch {}
           break;
       }
 
       if (e.key >= '0' && e.key <= '9' && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
         if (video) {
-          const pct = parseInt(e.key) / 10;
-          video.currentTime = (video.duration || 0) * pct;
+          try {
+            const pct = parseInt(e.key) / 10;
+            video.currentTime = (video.duration || 0) * pct;
+          } catch {}
         }
       }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeVideoIndex, moments.length]);
+  }, []);
 
   // Auto-unmute portrait videos after user engagement
   useEffect(() => {
@@ -385,8 +427,8 @@ const MomentsPage = () => {
 
   const toggleMuteVideo = () => {
     setHasEngaged(true);
-    setAutoUnmuted(true); // Prevent auto-unmute from triggering again
-    const currentVideo = videoRefs.current[activeVideoIndex];
+    setAutoUnmuted(true);
+    const currentVideo = videoRefs.current[activeVideoIndexRef.current];
     if (currentVideo) {
       const newMutedState = !currentVideo.muted;
       currentVideo.muted = newMutedState;
@@ -415,6 +457,13 @@ const MomentsPage = () => {
   };
 
   const handleTimeUpdate = (index: number) => {
+    const video = videoRefs.current[index];
+    if (video) {
+      setCurrentTime(video.currentTime);
+    }
+  };
+
+  const handleSeeked = (index: number) => {
     const video = videoRefs.current[index];
     if (video) {
       setCurrentTime(video.currentTime);
@@ -541,6 +590,7 @@ const MomentsPage = () => {
               muted={true}
               autoPlay
               onTimeUpdate={() => handleTimeUpdate(index)}
+              onSeeked={() => handleSeeked(index)}
               onLoadedMetadata={() => handleLoadedMetadata(index)}
               onClick={() => togglePlay(index)}
             />

@@ -10,6 +10,7 @@ import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
+import { useMediaSession } from '@/hooks/use-media-session';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
@@ -451,17 +452,26 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     onToggleFullscreen: toggleFullscreen,
   });
 
+  useMediaSession({
+    videoRef,
+    isPlaying,
+    setIsPlaying,
+    title: actualContent?.title || actualContent?.description || actualContent?.content || 'Video',
+    artist: actualContent?.user || actualContent?.creator || (actualContent as any)?.username || 'Equyvo',
+  });
+
   // Show controls on any keyboard activity (arrow keys, space, etc.)
   useEffect(() => {
     const onKeyActivity = () => {
       setShowControls(true);
       if (isVideoType) setShowDetailsPanel(true);
+      controlsShowCountRef.current += 1;
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
       if (detailsPanelTimeoutRef.current) clearTimeout(detailsPanelTimeoutRef.current);
       const showCount = controlsShowCountRef.current;
       const delay = isDesktop
-        ? Math.min(HIDE_DELAY_BASE + showCount * HIDE_DELAY_INCREMENT, HIDE_DELAY_MAX)
-        : Math.min(HIDE_DELAY_MOBILE_BASE + showCount * HIDE_DELAY_MOBILE_INCREMENT, HIDE_DELAY_MOBILE_MAX);
+        ? Math.min(HIDE_DELAY_BASE + (showCount - 1) * HIDE_DELAY_INCREMENT, HIDE_DELAY_MAX)
+        : Math.min(HIDE_DELAY_MOBILE_BASE + (showCount - 1) * HIDE_DELAY_MOBILE_INCREMENT, HIDE_DELAY_MOBILE_MAX);
       controlsTimeoutRef.current = setTimeout(() => setShowControls(false), delay);
       if (isVideoType) {
         detailsPanelTimeoutRef.current = setTimeout(() => setShowDetailsPanel(false), delay + 2000);
@@ -471,12 +481,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     return () => window.removeEventListener('keydown', onKeyActivity);
   }, [isDesktop, isVideoType]);
 
-  const HIDE_DELAY_BASE = 4000;
-  const HIDE_DELAY_INCREMENT = 1000;
-  const HIDE_DELAY_MAX = 8000;
-  const HIDE_DELAY_MOBILE_BASE = 6000;
-  const HIDE_DELAY_MOBILE_INCREMENT = 1000;
-  const HIDE_DELAY_MOBILE_MAX = 10000;
+  const HIDE_DELAY_BASE = 6000;
+  const HIDE_DELAY_INCREMENT = 2000;
+  const HIDE_DELAY_MAX = 15000;
+  const HIDE_DELAY_MOBILE_BASE = 8000;
+  const HIDE_DELAY_MOBILE_INCREMENT = 2000;
+  const HIDE_DELAY_MOBILE_MAX = 20000;
 
   const handleMouseMove = () => {
     const now = Date.now();
@@ -1100,6 +1110,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               controls={false}
               muted={false}
               loop={isPortraitMoment || isStory}
+              onPlay={() => { setShowControls(true); if (isVideoType) setShowDetailsPanel(true); }}
             />
           ) : (
             <div className="absolute inset-0 w-full h-full flex items-center justify-center" style={{ zIndex: 1, pointerEvents: 'none' }}>

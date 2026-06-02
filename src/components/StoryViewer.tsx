@@ -14,6 +14,7 @@ import SaveButton from '@/components/SaveButton';
 import ShareButton from '@/components/ShareButton';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAudio } from '../contexts/AudioContext';
+import { useMediaSession } from '@/hooks/use-media-session';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -147,12 +148,18 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         case 'j':
         case 'J':
           e.preventDefault();
-          if (video) video.currentTime = Math.max(0, video.currentTime - 10);
+          if (video) {
+            video.currentTime = Math.max(0, video.currentTime - 10);
+            setProgress(Math.min((video.currentTime / (video.duration || 6)) * 100, 100));
+          }
           break;
         case 'l':
         case 'L':
           e.preventDefault();
-          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+          if (video) {
+            video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
+            setProgress(Math.min((video.currentTime / (video.duration || 6)) * 100, 100));
+          }
           break;
         case 'm':
         case 'M':
@@ -165,11 +172,17 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           break;
         case ',':
           e.preventDefault();
-          if (video) video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+          if (video) {
+            video.currentTime = Math.max(0, video.currentTime - 1 / 30);
+            setProgress(Math.min((video.currentTime / (video.duration || 6)) * 100, 100));
+          }
           break;
         case '.':
           e.preventDefault();
-          if (video) video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+          if (video) {
+            video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 1 / 30);
+            setProgress(Math.min((video.currentTime / (video.duration || 6)) * 100, 100));
+          }
           break;
       }
 
@@ -178,6 +191,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         if (video) {
           const pct = parseInt(e.key) / 10;
           video.currentTime = (video.duration || 0) * pct;
+          setProgress(Math.min(pct * 100, 100));
         }
       }
     };
@@ -185,6 +199,16 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     document.addEventListener('keydown', handleKeyDown);
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [currentIndex, stories.length, onNext, onPrevious, onClose, currentStory, togglePlayPause, toggleMute]);
+
+  useMediaSession({
+    videoRef,
+    isPlaying,
+    setIsPlaying,
+    title: currentStory?.content || currentStory?.user || 'Story',
+    artist: currentStory?.user || 'Equyvo',
+    onNext: currentIndex < stories.length - 1 ? onNext : undefined,
+    onPrevious: currentIndex > 0 ? onPrevious : undefined,
+  });
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -470,6 +494,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                       togglePlayPause();
                     }}
                     onLoadedData={() => setVideoLoaded(true)}
+                    onPlay={() => setShowControls(true)}
                     onError={() => setVideoError(true)}
                   />
                 </>
