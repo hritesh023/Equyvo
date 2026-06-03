@@ -351,10 +351,10 @@ const DiscoverPage = () => {
   };
 
   // Generate and filter data for each section
-  const gridData = filterData(generateMockData('grid', 12));
-  const trendingData = filterData(generateMockData('trending', 6));
-  const liveData = filterData(generateMockData('live', 3));
-  const longformData = filterData(generateMockData('longform', 3));
+  const gridData = import.meta.env.DEV ? filterData(generateMockData('grid', 12)) : [];
+  const trendingData = import.meta.env.DEV ? filterData(generateMockData('trending', 6)) : [];
+  const liveData = import.meta.env.DEV ? filterData(generateMockData('live', 3)) : [];
+  const longformData = import.meta.env.DEV ? filterData(generateMockData('longform', 3)) : [];
 
   // Initialize postLikes map with initial like counts
   React.useEffect(() => {

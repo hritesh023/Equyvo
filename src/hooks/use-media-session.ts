@@ -43,7 +43,7 @@ export function useMediaSession({
     navigator.mediaSession.setActionHandler('play', () => {
       const video = videoRef.current;
       if (video && video.paused) {
-        video.play();
+        video.play().catch(() => {});
         setIsPlaying(true);
       }
     });

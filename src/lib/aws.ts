@@ -18,18 +18,22 @@ export const getCurrentUser = () => {
 export const getCurrentSession = () => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      const mockSession = {
-        getIdToken: () => ({
-          decodePayload: () => ({
-            sub: 'mock-user-id',
-            email: 'mock@example.com',
-            'cognito:username': 'mockuser',
-            name: 'Mock User'
-          })
-        }),
-        isValid: () => true
-      };
-      resolve(mockSession);
+      if (import.meta.env.DEV) {
+        const mockSession = {
+          getIdToken: () => ({
+            decodePayload: () => ({
+              sub: 'mock-user-id',
+              email: 'mock@example.com',
+              'cognito:username': 'mockuser',
+              name: 'Mock User'
+            })
+          }),
+          isValid: () => true
+        };
+        resolve(mockSession);
+        return;
+      }
+      resolve(null);
       return;
     }
 
@@ -52,13 +56,17 @@ export const getCurrentSession = () => {
 export const signUp = (email: string, password: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      resolve({
-        user: {
-          getUsername: () => email,
-          attributes: []
-        },
-        userConfirmed: false
-      });
+      if (import.meta.env.DEV) {
+        resolve({
+          user: {
+            getUsername: () => email,
+            attributes: []
+          },
+          userConfirmed: false
+        });
+        return;
+      }
+      reject(new Error('AWS Cognito not configured'));
       return;
     }
 
@@ -82,18 +90,22 @@ export const signUp = (email: string, password: string) => {
 export const signIn = (email: string, password: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      const mockSession = {
-        getIdToken: () => ({
-          decodePayload: () => ({
-            sub: 'mock-user-id',
-            email: email,
-            'cognito:username': email.split('@')[0],
-            name: email.split('@')[0]
-          })
-        }),
-        isValid: () => true
-      };
-      resolve(mockSession);
+      if (import.meta.env.DEV) {
+        const mockSession = {
+          getIdToken: () => ({
+            decodePayload: () => ({
+              sub: 'mock-user-id',
+              email: email,
+              'cognito:username': email.split('@')[0],
+              name: email.split('@')[0]
+            })
+          }),
+          isValid: () => true
+        };
+        resolve(mockSession);
+        return;
+      }
+      reject(new Error('AWS Cognito not configured'));
       return;
     }
 
@@ -133,7 +145,11 @@ export const signOut = () => {
 export const confirmRegistration = (email: string, code: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      resolve('SUCCESS');
+      if (import.meta.env.DEV) {
+        resolve('SUCCESS');
+        return;
+      }
+      reject(new Error('AWS Cognito not configured'));
       return;
     }
 
@@ -157,7 +173,11 @@ export const confirmRegistration = (email: string, code: string) => {
 export const resendConfirmationCode = (email: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
-      resolve('SUCCESS');
+      if (import.meta.env.DEV) {
+        resolve('SUCCESS');
+        return;
+      }
+      reject(new Error('AWS Cognito not configured'));
       return;
     }
 

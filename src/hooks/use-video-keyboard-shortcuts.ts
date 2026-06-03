@@ -27,7 +27,7 @@ export function useVideoKeyboardShortcuts({
 }: UseVideoKeyboardShortcutsOptions) {
   const togglePlay = useCallback((video: HTMLVideoElement) => {
     if (video.paused) {
-      video.play();
+      video.play().catch(() => {});
       setIsPlaying(true);
     } else {
       video.pause();

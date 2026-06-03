@@ -37,6 +37,7 @@ const MomentsPage = () => {
   const [isActiveVideoPlaying, setIsActiveVideoPlaying] = useState(false);
   const lastTapRef = useRef<{ time: number; index: number }>({ time: 0, index: -1 });
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [likeAnimIndex, setLikeAnimIndex] = useState<number | null>(null);
 
   // Track play state of the active video for media session
   useEffect(() => {
@@ -57,8 +58,8 @@ const MomentsPage = () => {
     };
   }, [activeVideoIndex]);
 
-  // Mock moments data with working video URLs
-  const moments = [
+  // Mock moments data (development only)
+  const moments = import.meta.env.DEV ? [
     {
       id: 'm1',
       user: 'alex_adventures',
@@ -111,7 +112,7 @@ const MomentsPage = () => {
       isLiked: true,
       isSaved: true
     }
-  ];
+  ] : [];
 
   useMediaSession({
     videoRef: {
@@ -121,7 +122,7 @@ const MomentsPage = () => {
     setIsPlaying: (val: boolean) => {
       const video = videoRefs.current[activeVideoIndex];
       if (!video) return;
-      if (val) video.play();
+      if (val) video.play().catch(() => {});
       else video.pause();
     },
     title: moments[activeVideoIndex]?.description || moments[activeVideoIndex]?.user || 'Moment',
@@ -232,18 +233,8 @@ const MomentsPage = () => {
           // Play current video with enhanced logic
           if (video) {
             video.currentTime = 0;
-            video.muted = true; // Start muted for reliable auto-play
-            video.play().then(() => {
-              // Auto-unmute immediately after successful play
-              setTimeout(() => {
-                video.muted = false;
-                if (index === activeVideoIndex) {
-                  setIsMuted(false);
-                  setAutoUnmuted(true);
-
-                }
-              }, 200); // Very short delay for reliable unmute
-            }).catch(() => {});
+            video.muted = true;
+            video.play().catch(() => {});
           }
         } else if (!entry.isIntersecting) {
           // Pause video when not visible
@@ -277,14 +268,6 @@ const MomentsPage = () => {
           }
           
           firstVideo.play()
-            .then(() => {
-              // Immediately auto-unmute on visit
-              setTimeout(() => {
-                firstVideo.muted = false;
-                setIsMuted(false);
-                setAutoUnmuted(true);
-              }, 200); // Very short delay for reliable unmute
-            })
             .catch(() => {
               setTimeout(() => attemptPlay(attempts + 1), 100 * (attempts + 1));
             });
@@ -385,34 +368,7 @@ const MomentsPage = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Auto-unmute portrait videos after user engagement
-  useEffect(() => {
-    if (hasEngaged && !autoUnmuted) {
-      const currentVideo = videoRefs.current[activeVideoIndex];
-      if (currentVideo) {
-        // Check if video metadata is loaded
-        if (currentVideo.videoHeight > 0 && currentVideo.videoWidth > 0) {
-          if (currentVideo.videoHeight > currentVideo.videoWidth) {
-            // Check if video is portrait (height > width)
-            currentVideo.muted = false;
-            setIsMuted(false);
-            setAutoUnmuted(true);
-          }
-        } else {
-          // Wait for metadata to load
-          const handleLoadedMetadata = () => {
-            if (currentVideo.videoHeight > currentVideo.videoWidth) {
-              currentVideo.muted = false;
-              setIsMuted(false);
-              setAutoUnmuted(true);
-            }
-            currentVideo.removeEventListener('loadedmetadata', handleLoadedMetadata);
-          };
-          currentVideo.addEventListener('loadedmetadata', handleLoadedMetadata);
-        }
-      }
-    }
-  }, [hasEngaged, activeVideoIndex, autoUnmuted]);
+  // Auto-unmute removed - user must tap to unmute
 
   // Reset time/duration when active video changes
   useEffect(() => {
@@ -444,7 +400,7 @@ const MomentsPage = () => {
     const video = videoRefs.current[index];
     if (video) {
       if (video.paused) {
-        video.play();
+        video.play().catch(() => {});
       } else {
         video.pause();
       }
@@ -557,7 +513,7 @@ const MomentsPage = () => {
     <div
       ref={containerRef}
       className={`w-full bg-black snap-y snap-mandatory overflow-y-scroll overflow-x-hidden no-scrollbar ${
-        isMobile ? 'h-[calc(100vh-3.5rem)]' : 'h-[calc(100vh-4rem)]'
+        isMobile ? 'h-[calc(100vh-7rem)]' : 'h-[calc(100vh-4rem)]'
       }`}
       style={{ 
         scrollBehavior: 'smooth',
@@ -571,18 +527,19 @@ const MomentsPage = () => {
           key={moment.id}
           data-index={index}
           className={`moment-slide relative w-full snap-start snap-always bg-black overflow-hidden ${
-            isMobile ? 'h-[calc(100vh-3.5rem)]' : 'h-[calc(100vh-4rem)]'
+            isMobile ? 'h-[calc(100vh-7rem)]' : 'h-[calc(100vh-4rem)]'
           }`}
         >
           {/* Video Player - Full Page Portrait */}
           <div className="absolute inset-0 flex items-center justify-center bg-black">
+            {moment.videoUrl ? (
             <video
               ref={el => videoRefs.current[index] = el}
               src={moment.videoUrl}
               className="h-full w-auto object-contain"
               style={{
                 aspectRatio: '9/16',
-                maxHeight: isMobile ? 'calc(100vh - 3.5rem)' : 'calc(100vh - 4rem)',
+                maxHeight: isMobile ? 'calc(100vh - 7rem)' : 'calc(100vh - 4rem)',
                 maxWidth: '100vw',
                 objectFit: 'contain',
                 backgroundColor: 'black'
@@ -601,23 +558,29 @@ const MomentsPage = () => {
 
                 if (isDbl) {
                   if (tapTimerRef.current) clearTimeout(tapTimerRef.current);
-                  const v = videoRefs.current[index];
-                  if (v) {
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    if (e.clientX - rect.left > rect.width / 2) {
-                      v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 10);
-                    } else {
-                      v.currentTime = Math.max(0, v.currentTime - 10);
-                    }
+                  const isCurrentlyLiked = likedMoments.has(moment.id);
+                  toggleLike(moment.id);
+                  if (!isCurrentlyLiked) {
+                    setLikeAnimIndex(index);
+                    setTimeout(() => setLikeAnimIndex(null), 800);
                   }
                   return;
                 }
 
                 tapTimerRef.current = setTimeout(() => {
-                  togglePlay(index);
+                  if (isMuted) {
+                    toggleMuteVideo();
+                  } else {
+                    togglePlay(index);
+                  }
                 }, 400);
               }}
-            />
+            />)}
+            {likeAnimIndex === index && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+                <ThumbsUp className="h-20 w-20 text-blue-500 fill-blue-500 animate-like-float drop-shadow-2xl" />
+              </div>
+            )}
           </div>
 
           {/* Overlay Content - Optimized for Portrait */}
@@ -730,8 +693,8 @@ const MomentsPage = () => {
               <div className="flex items-center gap-2 bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-sm animate-pulse cursor-pointer hover:bg-white/30 transition-colors">
                 <Music2 className="h-3 w-3" />
                 <p className="text-xs font-medium truncate max-w-[150px]">{moment.song}</p>
-                {autoUnmuted && index === activeVideoIndex && !videoRefs.current[activeVideoIndex]?.muted && (
-                  <span className="text-xs text-green-400 ml-2 animate-pulse">🔊 Auto-unmuted</span>
+                {!isMuted && index === activeVideoIndex && (
+                  <span className="text-xs text-green-400 ml-2 animate-pulse">🔊 Unmuted</span>
                 )}
               </div>
             </div>

@@ -51,6 +51,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   const { getVideoProps, getTouchHandlers, debounce, deviceCapabilities } = usePlatformOptimizations();
   const lastTapRef = useRef<{ [key: string]: number }>({});
   const tapTimerRef = useRef<{ [key: string]: ReturnType<typeof setTimeout> }>({});
+  const [likeAnimMomentId, setLikeAnimMomentId] = useState<string | null>(null);
 
   const stopAllVideos = () => {
     // Stop all videos and reset states
@@ -229,15 +230,11 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     onFullscreen(momentContent);
   };
 
-  const handleMomentDoubleClick = (momentId: string, e: React.MouseEvent) => {
-    const video = videoRefs.current[momentId];
-    if (!video) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    if (x > rect.width / 2) {
-      video.currentTime = Math.min(video.duration || Infinity, video.currentTime + 10);
-    } else {
-      video.currentTime = Math.max(0, video.currentTime - 10);
+  const handleMomentDoubleClick = (momentId: string) => {
+    onLike?.(momentId);
+    if (!likedMoments.has(momentId)) {
+      setLikeAnimMomentId(momentId);
+      setTimeout(() => setLikeAnimMomentId(null), 800);
     }
   };
 
@@ -574,12 +571,12 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
             {displayMoments.map((moment) => (
               <Card 
                 key={moment.id} 
-                className="flex-shrink-0 overflow-hidden group cursor-pointer bg-black"
-                onClick={() => handleVideoClick(moment)}
-                onDoubleClick={(e) => handleMomentDoubleClick(moment.id, e)}
-                style={{ aspectRatio: '9/16', width: '180px', height: '320px' }}
-              >
-                <div className="relative w-full h-full bg-black" style={{ aspectRatio: '9/16' }}>
+                className="flex-shrink-0 overflow-hidden group cursor-pointer bg-black relative"
+                  onClick={() => handleVideoClick(moment)}
+                  onDoubleClick={() => handleMomentDoubleClick(moment.id)}
+                  style={{ aspectRatio: '9/16', width: '180px', height: '320px' }}
+                >
+                  <div className="relative w-full h-full bg-black" style={{ aspectRatio: '9/16' }}>
                   {moment.mediaType === 'video' ? (
                     <div className="relative w-full h-full">
                       {/* Show thumbnail for video moments */}
@@ -855,8 +852,13 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       </div>
                     </div>
                   </div>
-                </div>
-              </Card>
+                  </div>
+                  {likeAnimMomentId === moment.id && (
+                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+                      <ThumbsUp className="h-12 w-12 text-blue-500 fill-blue-500 animate-like-float drop-shadow-2xl" />
+                    </div>
+                  )}
+                </Card>
             ))}
           </div>
         </div>
@@ -886,14 +888,14 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
         {moments.map((moment) => (
           <Card 
             key={moment.id} 
-            className={`${isMomentsPage ? '' : 'flex-shrink-0'} overflow-hidden group cursor-pointer bg-black`} 
+            className={`${isMomentsPage ? '' : 'flex-shrink-0'} overflow-hidden group cursor-pointer bg-black relative`} 
             style={{ 
               aspectRatio: '9/16',
               width: isMomentsPage ? '180px' : '200px', 
               height: isMomentsPage ? '320px' : '356px'
             }}
             onClick={() => handleVideoClick(moment)}
-            onDoubleClick={(e) => handleMomentDoubleClick(moment.id, e)}
+            onDoubleClick={() => handleMomentDoubleClick(moment.id)}
           >
             <div className="relative w-full h-full bg-black" style={{ aspectRatio: '9/16' }}>
               {moment.mediaType === 'video' ? (
@@ -1178,6 +1180,11 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                 </div>
               </div>
             </div>
+            {likeAnimMomentId === moment.id && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
+                <ThumbsUp className="h-12 w-12 text-blue-500 fill-blue-500 animate-like-float drop-shadow-2xl" />
+              </div>
+            )}
           </Card>
         ))}
       </div>

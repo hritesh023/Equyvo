@@ -59,70 +59,6 @@ const HomePage = () => {
   const [enhancedPosts, setEnhancedPosts] = useState<Post[]>([]);
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
 
-  // Bot content fallback for when there are no real posts
-  const botPosts: Post[] = [
-    {
-      id: 'p1',
-      user: 'Equyvo Official',
-      avatar: 'https://github.com/shadcn.png',
-      time: '2 hours ago',
-      content: 'Welcome to Equyvo! We are excited to build this community with you. Share your first thought!',
-      image: null,
-      likes: 120,
-      reacts: 15,
-      comments: 15,
-      shares: 5,
-      type: 'post' as const,
-      tags: ['community', 'welcome', 'social'],
-      categories: ['announcement']
-    },
-    {
-      id: 'p2',
-      user: 'Jane Doe',
-      avatar: 'https://github.com/shadcn.png',
-      time: '5 hours ago',
-      content: 'Just posted a new moment! Check it out on my profile.',
-      image: 'https://images.unsplash.com/photo-1611162617474-5b21e879e113?w=800&fit=crop',
-      likes: 85,
-      reacts: 8,
-      comments: 8,
-      shares: 2,
-      type: 'post' as const,
-      tags: ['moment', 'profile', 'update'],
-      categories: ['personal']
-    },
-    {
-      id: 'p3',
-      user: 'Tech Enthusiast',
-      avatar: 'https://github.com/shadcn.png',
-      time: '1 hour ago',
-      content: 'The future of AI is here! What are your thoughts on the latest developments?',
-      image: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=800&fit=crop',
-      likes: 245,
-      reacts: 32,
-      comments: 67,
-      shares: 23,
-      type: 'thought' as const,
-      tags: ['AI', 'technology', 'future'],
-      categories: ['tech']
-    },
-    {
-      id: 'p4',
-      user: 'Emma Thompson',
-      avatar: 'https://github.com/shadcn.png',
-      time: '3 hours ago',
-      content: 'Beautiful sunset at the beach today. Nature never fails to amaze! 🌅',
-      image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&fit=crop',
-      likes: 189,
-      reacts: 21,
-      comments: 34,
-      shares: 12,
-      type: 'post' as const,
-      tags: ['nature', 'sunset', 'beach'],
-      categories: ['lifestyle']
-    }
-  ];
-
   // Fetch posts using mock data
   useEffect(() => {
     const loadPosts = async () => {
@@ -130,12 +66,9 @@ const HomePage = () => {
         setIsLoadingPosts(true);
         const user = await getAuthenticatedUser();
         const posts = await fetchPosts(user?.id);
-        
-        // Combine with bot content for better demo experience
-        const combinedPosts = [...posts, ...botPosts];
-        setEnhancedPosts(combinedPosts);
+        setEnhancedPosts(posts);
       } catch {
-        setEnhancedPosts(botPosts);
+        setEnhancedPosts([]);
       } finally {
         setIsLoadingPosts(false);
       }
@@ -175,23 +108,15 @@ const HomePage = () => {
   const [stories, setStories] = useState<Story[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(true);
 
-  const botStories: Story[] = [
-    { id: '1', user: 'Alice', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1544005313-94ddf0286df2?w=300&h=500&fit=crop', time: '2 hours ago', type: 'image', isBotContent: true },
-    { id: '2', user: 'Bob', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=300&h=500&fit=crop', time: '4 hours ago', type: 'image', isBotContent: true },
-    { id: '3', user: 'Charlie', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=300&h=500&fit=crop', time: '6 hours ago', type: 'video', video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', isBotContent: true },
-    { id: '4', user: 'Diana', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=300&h=500&fit=crop', time: '8 hours ago', type: 'image', isBotContent: true },
-    { id: '5', user: 'Eve', avatar: 'https://github.com/shadcn.png', image: 'https://images.unsplash.com/photo-1529626455594-4ff0802cfb7e?w=300&h=500&fit=crop', time: '12 hours ago', type: 'video', video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', isBotContent: true },
-  ];
-
   // Fetch stories using mock data
   useEffect(() => {
     const loadStories = async () => {
       try {
         setIsLoadingStories(true);
         const stories = await fetchStories();
-        setStories(stories.length > 0 ? stories : botStories);
+        setStories(stories);
       } catch {
-        setStories(botStories);
+        setStories([]);
       } finally {
         setIsLoadingStories(false);
       }
@@ -204,71 +129,15 @@ const HomePage = () => {
   const [moments, setMoments] = useState<any[]>([]);
   const [isLoadingMoments, setIsLoadingMoments] = useState(true);
 
-  // Bot moments fallback for when there are no real moments
-  const botMoments = [
-    { 
-      id: 'm1', 
-      user: 'alex_adventures', 
-      content: 'The view from the top is absolutely breathtaking! 🏔️ #hiking #nature #sunset',
-      media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-      thumbnail: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=700&fit=crop&auto=format&dpr=2',
-      mediaType: 'video' as const,
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-      likes: 15400,
-      comments: 892,
-      views: 23000,
-      time: '2 hours ago'
-    },
-    { 
-      id: 'm2', 
-      user: 'culinary_wizard', 
-      content: 'Secret pasta recipe revealed! 🍝 You have to try this. #cooking #foodie #recipe',
-      media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-      thumbnail: 'https://images.unsplash.com/photo-1563379091339-03246963d278?w=400&h=700&fit=crop&auto=format&dpr=2',
-      mediaType: 'video' as const,
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-      likes: 8900,
-      comments: 567,
-      views: 12000,
-      time: '4 hours ago'
-    },
-    { 
-      id: 'm3', 
-      user: 'fitness_pro', 
-      content: 'No excuses. Get it done. 💪 #fitness #gym #motivation',
-      media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-      thumbnail: 'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=400&h=700&fit=crop&auto=format&dpr=2',
-      mediaType: 'video' as const,
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-      likes: 22100,
-      comments: 1200,
-      views: 45000,
-      time: '6 hours ago'
-    },
-    { 
-      id: 'm4', 
-      user: 'urban_dancer', 
-      content: 'Vibing in the city 🌃 #dance #street #vibes',
-      media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
-      thumbnail: 'https://images.unsplash.com/photo-1516373363238-71c1eee6e0c5?w=400&h=700&fit=crop&auto=format&dpr=2',
-      mediaType: 'video' as const,
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
-      likes: 45600,
-      comments: 2300,
-      views: 78000,
-      time: '8 hours ago'
-    },
-  ];
-
   // Fetch moments using mock data
   useEffect(() => {
     const loadMoments = async () => {
       try {
         setIsLoadingMoments(true);
         const moments = await fetchMoments();
-        setMoments(moments.length > 0 ? moments : botMoments);
+        setMoments(moments);
       } catch {
-        setMoments(botMoments);
+        setMoments([]);
       } finally {
         setIsLoadingMoments(false);
       }

@@ -99,14 +99,13 @@ const mockThoughts: Thought[] = [
 
 // Thoughts API
 export const getThoughts = async (limit = 20, offset = 0) => {
+  if (!import.meta.env.DEV) return { data: [], error: null };
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 300));
     
     const user = await getAuthenticatedUser();
     const thoughts = mockThoughts.slice(offset, offset + limit);
     
-    // Get vote counts (mock)
     const thoughtsWithVotes = thoughts.map(thought => ({
       ...thought,
       upvotes_count: Math.floor(Math.random() * 20),
@@ -115,15 +114,15 @@ export const getThoughts = async (limit = 20, offset = 0) => {
       user_liked: user ? Math.random() > 0.7 : false
     }));
     
-    return thoughtsWithVotes;
+    return { data: thoughtsWithVotes, error: null };
   } catch (error) {
-    return [];
+    return { data: [], error };
   }
 };
 
 export const createThought = async (thoughtData: CreateThoughtData) => {
+  if (!import.meta.env.DEV) throw new Error('Not available in production');
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 500));
     
     const user = await getAuthenticatedUser();
@@ -132,7 +131,6 @@ export const createThought = async (thoughtData: CreateThoughtData) => {
       throw new Error('User not authenticated');
     }
 
-    // Validate media (mock validation)
     if (thoughtData.media && thoughtData.media.length > 0) {
       const validTypes = ['image', 'video', 'gif'];
       const isValidMedia = thoughtData.media.every(media => 
@@ -161,9 +159,7 @@ platform: 'equyvo',
       user_has_liked: false
     };
 
-    // Add to mock thoughts
     mockThoughts.unshift(newThought);
-
     return newThought;
   } catch (error) {
     throw error;
@@ -171,8 +167,8 @@ platform: 'equyvo',
 };
 
 export const deleteThought = async (thoughtId: string) => {
+  if (!import.meta.env.DEV) throw new Error('Not available in production');
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 300));
     
     const user = await getAuthenticatedUser();
@@ -181,13 +177,11 @@ export const deleteThought = async (thoughtId: string) => {
       throw new Error('User not authenticated');
     }
 
-    // Find and remove thought from mock data
     const index = mockThoughts.findIndex(t => t.id === thoughtId);
     if (index === -1) {
       throw new Error('Thought not found');
     }
 
-    // Check if user owns the thought
     if (mockThoughts[index].user_id !== user.id) {
       throw new Error('Not authorized to delete this thought');
     }
@@ -201,8 +195,8 @@ export const deleteThought = async (thoughtId: string) => {
 
 // Votes API
 export const voteOnThought = async (voteData: VoteData) => {
+  if (!import.meta.env.DEV) throw new Error('Not available in production');
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 200));
     
     const user = await getAuthenticatedUser();
@@ -211,13 +205,10 @@ export const voteOnThought = async (voteData: VoteData) => {
       throw new Error('User not authenticated');
     }
 
-    // Find thought
     const thought = mockThoughts.find(t => t.id === voteData.thought_id);
     if (!thought) {
       throw new Error('Thought not found');
     }
-
-    // Mock vote processing
     
     return {
       success: true,
@@ -231,13 +222,12 @@ export const voteOnThought = async (voteData: VoteData) => {
 };
 
 export const getThoughtVotes = async (thoughtId: string) => {
+  if (!import.meta.env.DEV) return { upvotes_count: 0, downvotes_count: 0, user_vote: null };
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 200));
     
     const user = await getAuthenticatedUser();
     
-    // Mock vote data
     const upvotes_count = Math.floor(Math.random() * 20);
     const downvotes_count = Math.floor(Math.random() * 5);
     
@@ -257,8 +247,8 @@ export const getThoughtVotes = async (thoughtId: string) => {
 
 // Likes API
 export const likeThought = async (likeData: LikeData) => {
+  if (!import.meta.env.DEV) throw new Error('Not available in production');
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 200));
     
     const user = await getAuthenticatedUser();
@@ -267,13 +257,11 @@ export const likeThought = async (likeData: LikeData) => {
       throw new Error('User not authenticated');
     }
 
-    // Find thought
     const thought = mockThoughts.find(t => t.id === likeData.thought_id);
     if (!thought) {
       throw new Error('Thought not found');
     }
 
-    // Mock like processing
     const liked = Math.random() > 0.5;
     
     if (liked) {
@@ -292,13 +280,12 @@ export const likeThought = async (likeData: LikeData) => {
 };
 
 export const getThoughtLikes = async (thoughtId: string) => {
+  if (!import.meta.env.DEV) return { likes_count: 0, user_has_liked: false };
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 200));
     
     const user = await getAuthenticatedUser();
     
-    // Find thought
     const thought = mockThoughts.find(t => t.id === thoughtId);
     if (!thought) {
       throw new Error('Thought not found');

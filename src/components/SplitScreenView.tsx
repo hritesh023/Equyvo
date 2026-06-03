@@ -135,12 +135,14 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                         }
                       }}
                     >
+                      {selectedItem.videoUrl ? (
                       <video
                         src={selectedItem.videoUrl}
                         className="w-full h-full object-contain"
                         controls={true}
                         poster={selectedItem.thumbnail}
                       />
+                      ) : null}
                       {/* Play button overlay */}
                       <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
                         <div className="bg-white/90 rounded-full p-4 shadow-lg">

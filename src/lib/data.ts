@@ -120,43 +120,40 @@ const mockStories: Story[] = [
   },
 ];
 
-// Fetch posts (using mock data for now)
+// Fetch posts (using mock data for development only)
 export const fetchPosts = async (userId?: string, limit = 50): Promise<Post[]> => {
+  if (!import.meta.env.DEV) return [];
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 500));
-    
     return mockPosts.slice(0, limit);
   } catch {
     return [];
   }
 };
 
-// Fetch moments (using mock data for now)
+// Fetch moments (using mock data for development only)
 export const fetchMoments = async (limit = 20): Promise<Moment[]> => {
+  if (!import.meta.env.DEV) return [];
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 300));
-    
     return mockMoments.slice(0, limit);
   } catch {
     return [];
   }
 };
 
-// Fetch stories (using mock data for now)
+// Fetch stories (using mock data for development only)
 export const fetchStories = async (limit = 20): Promise<Story[]> => {
+  if (!import.meta.env.DEV) return [];
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 200));
-    
     return mockStories.slice(0, limit);
   } catch {
     return [];
   }
 };
 
-// Create a new post (mock implementation)
+// Create a new post (mock implementation for development only)
 export const createPost = async (postData: {
   content: string;
   image_url?: string;
@@ -164,10 +161,9 @@ export const createPost = async (postData: {
   tags?: string[];
   categories?: string[];
 }): Promise<{ success: boolean; post?: Post; error?: string }> => {
+  if (!import.meta.env.DEV) return { success: false, error: 'Not available in production' };
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 1000));
-    
     const newPost: Post = {
       id: Date.now().toString(),
       user: 'current_user',
@@ -186,22 +182,18 @@ export const createPost = async (postData: {
       createdAt: new Date().toISOString()
     };
 
-    // Add to mock posts (in real app, this would be saved to database)
     mockPosts.unshift(newPost);
-
     return { success: true, post: newPost };
   } catch {
     return { success: false, error: 'Failed to create post' };
   }
 };
 
-// Get user profile data (mock implementation)
+// Get user profile data (mock implementation for development only)
 export const getUserProfile = async (userId: string) => {
+  if (!import.meta.env.DEV) return null;
   try {
-    // Simulate API delay
     await new Promise(resolve => setTimeout(resolve, 300));
-    
-    // Mock user profile
     const mockProfile = {
       id: userId,
       username: `user_${userId}`,
@@ -210,7 +202,6 @@ export const getUserProfile = async (userId: string) => {
       bio: 'This is a demo user profile',
       created_at: new Date().toISOString()
     };
-
     return mockProfile;
   } catch {
     return null;

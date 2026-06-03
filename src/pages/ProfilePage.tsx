@@ -149,6 +149,9 @@ const ProfilePage = () => {
 
   // Load profile from localStorage on mount
   const [userProfile, setUserProfile] = useState(() => {
+    if (!import.meta.env.DEV) {
+      return { name: '', username: '', avatar: '', bio: '', followers: '0', following: '0', posts: [] as Post[] };
+    }
     // Determine which profile to show based on URL parameters
     if (userId || username) {
       const profileKey = userId || username?.replace('@', '');
@@ -919,6 +922,7 @@ const ProfilePage = () => {
                         content: post.content || '',
                         image: post.thumbnail || post.media || '',
                         video: post.videoUrl,
+                        videoUrl: post.videoUrl,
                         thumbnail: post.thumbnail || post.media,
                         likes: post.likes,
                         comments: post.comments,
@@ -926,7 +930,7 @@ const ProfilePage = () => {
                         time: post.time,
                         avatar: post.avatar,
                         fallbackImage: post.thumbnail || post.media,
-                        media: post.media || post.thumbnail || '',
+                        media: post.videoUrl || post.media || post.thumbnail || '',
                         mediaType: (post.mediaType === 'video' || post.mediaType === 'image') ? post.mediaType : 'video',
                         views: post.views || 0
                       }))}
@@ -1121,6 +1125,7 @@ const ProfilePage = () => {
               content: post.content || '',
               image: post.thumbnail || post.media || '',
               video: post.videoUrl,
+              videoUrl: post.videoUrl,
               thumbnail: post.thumbnail || post.media,
               likes: post.likes,
               comments: post.comments,
@@ -1128,7 +1133,7 @@ const ProfilePage = () => {
               time: post.time,
               avatar: post.avatar,
               fallbackImage: post.thumbnail || post.media,
-              media: post.media || post.thumbnail || '',
+              media: post.videoUrl || post.media || post.thumbnail || '',
               mediaType: (post.mediaType === 'video' || post.mediaType === 'image') ? post.mediaType : 'video',
               views: post.views || 0
             }))}
@@ -1214,6 +1219,7 @@ const ProfilePage = () => {
                               target.src = `https://picsum.photos/seed/fallback-video-${post.id}/400/300.jpg`;
                             }}
                           />
+                          {post.videoUrl ? (
                           <video
                             ref={(el) => { if (el) videoRefs.current[post.id] = el; }}
                             src={post.videoUrl}
@@ -1235,6 +1241,7 @@ const ProfilePage = () => {
                               video.pause();
                             }}
                           />
+                          ) : null}
                           {isLoading[post.id] && (
                             <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
                               <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
@@ -1398,7 +1405,7 @@ const ProfilePage = () => {
                     </div>
                     {(post.media || post.thumbnail || post.image) && (
                       <div className="mb-3">
-                        {post.mediaType === 'video' || post.type === 'video' ? (
+                        {(post.mediaType === 'video' || post.type === 'video') && (post.videoUrl || post.video) ? (
                           <video
                             src={post.videoUrl || post.video}
                             className="w-full rounded-lg object-cover max-h-40 cursor-pointer"
@@ -1406,7 +1413,7 @@ const ProfilePage = () => {
                             loop
                             playsInline
                             onClick={() => handleFullscreen(post)}
-                            onMouseEnter={(e) => e.currentTarget.play()}
+                            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                             onMouseLeave={(e) => e.currentTarget.pause()}
                           />
                         ) : (

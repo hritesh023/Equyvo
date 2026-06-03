@@ -180,7 +180,7 @@ const MediaRenderer: React.FC<{
     );
   }
 
-  if (media.type === 'video') {
+  if (media.type === 'video' && media.url) {
     return (
       <div className="mt-3 rounded-lg overflow-hidden bg-black relative">
         <video
@@ -303,14 +303,12 @@ const ThoughtsPage = memo(() => {
       setLoading(true);
       const { data, error } = await getThoughts();
       if (error || !data || data.length === 0) {
-        // Fallback to mock data for demo
-        setThoughts(getMockThoughts());
+        setThoughts(import.meta.env.DEV ? getMockThoughts() : []);
       } else {
         setThoughts(data);
       }
     } catch {
-      // Fallback to mock data for demo
-      setThoughts(getMockThoughts());
+      setThoughts(import.meta.env.DEV ? getMockThoughts() : []);
     } finally {
       setLoading(false);
     }

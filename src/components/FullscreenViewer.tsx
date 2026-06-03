@@ -476,7 +476,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     artist: actualContent?.user || actualContent?.creator || (actualContent as any)?.username || 'Equyvo',
   });
 
-  const { handleClick: handleVideoTap, handleDoubleClick: handleVideoDblTap } = useVideoGestures({
+  const { handleClick: handleVideoTap } = useVideoGestures({
     videoRef,
     seekTime: 10,
     onSingleTap: () => {
@@ -519,7 +519,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     if (isPlaying) {
       video.pause();
     } else {
-      video.play();
+      video.play().catch(() => {});
     }
   };
 
@@ -735,7 +735,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       minimizedVideo.controls = true;
       minimizedVideo.currentTime = currentTime; // Preserve current time
       if (!isPaused) {
-        minimizedVideo.play(); // Resume playback if it was playing
+        minimizedVideo.play().catch(() => {});
       }
       
       minimizedViewer.appendChild(minimizedVideo);
@@ -1038,13 +1038,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               setShowDetailsPanel(true);
             }
           }}
-          onDoubleClick={(e) => {
-            handleVideoDblTap(e);
-          }}
           onClick={(e) => {
             const target = e.target as HTMLElement | null;
             
-            // Allow top bar buttons (close/minimize/split) to work without interference
             if (target?.closest('.top-controls-bar')) return;
             
             if (isSplitView) {
@@ -1057,18 +1053,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               return;
             }
             
-            // If overlay is visible, hide it immediately regardless of what was clicked
-            if (showControls || showDetailsPanel) {
-              if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-              if (detailsPanelTimeoutRef.current) clearTimeout(detailsPanelTimeoutRef.current);
-              setShowControls(false);
-              if (isVideoType) setShowDetailsPanel(false);
-              return;
-            }
-            
-            // If overlay is hidden, toggle play/pause and show overlay (YouTube behavior)
-            togglePlay();
             scheduleHide();
+            handleVideoTap(e);
           }}
         >
           {fallbackVideoSrc ? (
