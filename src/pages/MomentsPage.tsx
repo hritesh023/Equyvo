@@ -575,7 +575,7 @@ const MomentsPage = () => {
                   }
                 }, 400);
               }}
-            />)}
+            />) : null}
             {likeAnimIndex === index && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
                 <ThumbsUp className="h-20 w-20 text-blue-500 fill-blue-500 animate-like-float drop-shadow-2xl" />
