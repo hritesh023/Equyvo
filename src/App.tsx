@@ -9,7 +9,7 @@ import SplashScreen from './components/SplashScreen';
 import ErrorBoundary from './components/ErrorBoundary'; 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
-import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, User } from './lib/auth';
+import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, getToken, setToken, clearToken, User } from './lib/auth';
 import { Button } from './components/ui/button';
 import HomePage from './pages/HomePage';
 import AuthPage from './pages/AuthPage';
@@ -25,6 +25,26 @@ import type { User as AppUser } from './lib/auth';
 import { useIsMobile } from './hooks/use-mobile';
 import { useIsTablet } from './hooks/use-tablet';
 
+const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'https://auth.acronous.com';
+
+function extractTokenFromUrl(): string | null {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token');
+  if (token) {
+    setToken(token);
+    // Clean URL without reload
+    const cleanUrl = window.location.origin + window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+    return token;
+  }
+  return null;
+}
+
+function redirectToAuth() {
+  const currentUrl = window.location.href;
+  window.location.href = `${AUTH_URL}/login?redirect=${encodeURIComponent(currentUrl)}`;
+}
+
 const AppContent = () => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,9 +57,9 @@ const AppContent = () => {
   // Set sidebar initial state based on device
   useEffect(() => {
     if (isTablet) {
-      setIsSidebarOpen(false); // Closed by default on tablet
+      setIsSidebarOpen(false);
     } else {
-      setIsSidebarOpen(true); // Open by default on desktop
+      setIsSidebarOpen(true);
     }
   }, [isTablet]);
 
@@ -49,43 +69,63 @@ const AppContent = () => {
   }, [location.pathname]);
 
   useEffect(() => {
-    const checkAuth = async () => {
+    const initAuth = async () => {
+      // Check for token in URL (OAuth callback)
+      extractTokenFromUrl();
+
+      const token = getToken();
+      if (!token) {
+        const storedUser = getStoredUser();
+        if (storedUser) {
+          setUser(storedUser);
+          setIsLoading(false);
+        } else {
+          setIsLoading(false);
+        }
+        return;
+      }
+
       try {
         const authStatus = await checkAuthStatus();
         if (authStatus.isAuthenticated && authStatus.user) {
           setUser(authStatus.user);
-          setIsLoading(false);
         } else {
           const storedUser = getStoredUser();
           if (storedUser) {
             setUser(storedUser);
           }
-          setIsLoading(false);
         }
       } catch {
-        setIsLoading(false);
+        const storedUser = getStoredUser();
+        if (storedUser) {
+          setUser(storedUser);
+        }
       }
+      setIsLoading(false);
     };
-    checkAuth();
+    initAuth();
   }, []);
+
   const toggleSidebar = () => {
     setIsSidebarOpen(!isSidebarOpen);
   };
 
   const isAuthPage = location.pathname === '/auth';
   const shouldShowNavbar = (user && !isAuthPage) || (!user && !isAuthPage && import.meta.env.DEV);
+
   const handleSignOut = async () => {
     try {
       const result = await signOutUser();
       if (result.success) {
         clearStoredUser();
         setUser(null);
-        window.location.href = '/auth';
+        redirectToAuth();
       }
     } catch {
       // Sign out failed silently
     }
   };
+
   if (isLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -96,34 +136,19 @@ const AppContent = () => {
       </div>
     );
   }
-  if (!import.meta.env.VITE_AWS_USER_POOL_ID || !import.meta.env.VITE_AWS_APP_CLIENT_ID) {
+
+  if (!user && !isAuthPage) {
+    redirectToAuth();
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-4 max-w-md mx-auto p-6">
-          <div className="text-blue-500 text-6xl mb-4">🔧</div>
-          <h1 className="text-2xl font-bold text-foreground">AWS Cognito Setup</h1>
-          <p className="text-muted-foreground">
-            Equyvo uses AWS Cognito for authentication. The app is running with mock data for development.
-          </p>
-          <div className="bg-muted p-4 rounded-lg text-left">
-            <code className="text-sm">
-              VITE_AWS_USER_POOL_ID=your_user_pool_id<br/>
-              VITE_AWS_APP_CLIENT_ID=your_app_client_id
-            </code>
-          </div>
-          <p className="text-sm text-muted-foreground">
-            Configure AWS Cognito in your .env file for full functionality.
-          </p>
-          <Button 
-            onClick={() => window.location.href = '/app/home'}
-            className="mt-4"
-          >
-            Continue with Mock Data
-          </Button>
+        <div className="text-center space-y-4">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <p className="text-muted-foreground">Redirecting to sign in...</p>
         </div>
       </div>
     );
   }
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
       {/* Sidebar - Desktop Only */}
@@ -173,12 +198,13 @@ const AppContent = () => {
   </div>
   );
 };
+
 const App = () => {
   const [showApp, setShowApp] = useState(false);
   React.useEffect(() => {
     const timer = setTimeout(() => {
       setShowApp(true);
-    }, 1500); // Shorter duration to match splash screen
+    }, 1500);
     return () => clearTimeout(timer);
   }, []);
   if (!showApp) {
