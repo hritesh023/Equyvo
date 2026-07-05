@@ -5,7 +5,7 @@ const mockPosts: Post[] = [
   {
     id: '1',
     user: 'john_doe',
-    avatar: 'https://github.com/shadcn.png',
+    avatar: '',
     time: '2 hours ago',
     content: 'Just launched my new app! Check it out and let me know what you think. #development #react',
     image: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&h=400&fit=crop',
@@ -22,7 +22,7 @@ const mockPosts: Post[] = [
   {
     id: '2',
     user: 'jane_smith',
-    avatar: 'https://github.com/vercel.png',
+    avatar: '',
     time: '5 hours ago',
     content: 'Beautiful sunset today! Sometimes you need to pause and appreciate the little things. 🌅',
     image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&h=600&fit=crop',
@@ -90,7 +90,7 @@ const mockStories: Story[] = [
   {
     id: '1',
     user: 'alex_jones',
-    avatar: 'https://github.com/tailwindlabs.png',
+    avatar: 'https://picsum.photos/seed/alex/200/200',
     image: 'https://images.unsplash.com/photo-1559526324-59b1a3440d8b?w=400&h=600&fit=crop',
     time: '30 minutes ago',
     type: 'image',
@@ -100,7 +100,7 @@ const mockStories: Story[] = [
   {
     id: '2',
     user: 'sarah_creative',
-    avatar: 'https://github.com/vercel.png',
+    avatar: 'https://picsum.photos/seed/sarah/200/200',
     image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=600&fit=crop',
     video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
     time: '1 hour ago',
@@ -111,7 +111,7 @@ const mockStories: Story[] = [
   {
     id: '3',
     user: 'mike_adventures',
-    avatar: 'https://github.com/reactjs.png',
+    avatar: 'https://picsum.photos/seed/mike/200/200',
     image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=600&fit=crop',
     time: '2 hours ago',
     type: 'image',
@@ -167,7 +167,7 @@ export const createPost = async (postData: {
     const newPost: Post = {
       id: Date.now().toString(),
       user: 'current_user',
-      avatar: 'https://github.com/shadcn.png',
+      avatar: '',
       time: 'just now',
       content: postData.content,
       image: postData.image_url,
@@ -198,7 +198,7 @@ export const getUserProfile = async (userId: string) => {
       id: userId,
       username: `user_${userId}`,
       full_name: 'Demo User',
-      avatar_url: 'https://github.com/shadcn.png',
+      avatar_url: '',
       bio: 'This is a demo user profile',
       created_at: new Date().toISOString()
     };

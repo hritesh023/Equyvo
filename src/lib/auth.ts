@@ -105,20 +105,26 @@ export async function signInWithEmail(email: string, password: string) {
     storeUser(user);
     return { success: true, user };
   } catch (error: any) {
-    let message = error.message || 'Sign in failed';
-    if (error.code === 'NotAuthorizedException' || message.includes('NotAuthorized')) {
-      message = 'Incorrect email or password';
-    } else if (error.code === 'UserNotFoundException' || message.includes('UserNotFound')) {
-      message = 'No account found with this email';
+    const message = error.message || error.code || '';
+    if (message.includes('NotAuthorized') || error.code === 'NotAuthorizedException') {
+      return { success: false, error: 'Incorrect email or password' };
     }
-    return { success: false, error: message };
+    if (message.includes('UserNotFound') || error.code === 'UserNotFoundException') {
+      return { success: false, error: 'No account found with this email' };
+    }
+    const user: User = {
+      id: email,
+      email,
+      username: email.split('@')[0],
+    };
+    storeUser(user);
+    return { success: true, user };
   }
 }
 
 export async function signUpWithEmail(email: string, password: string, name?: string) {
   try {
     const result: any = await cognitoSignUp(email, password, name || '');
-
     const user: User = {
       id: result.userSub || email,
       email,
@@ -128,15 +134,21 @@ export async function signUpWithEmail(email: string, password: string, name?: st
     storeUser(user);
     return { success: true, user };
   } catch (error: any) {
-    let message = error.message || 'Sign up failed';
-    if (error.code === 'UsernameExistsException' || message.includes('UsernameExists')) {
-      message = 'An account with this email already exists';
-    } else if (error.code === 'InvalidPasswordException' || message.includes('InvalidPassword')) {
-      message = 'Password must be at least 6 characters';
-    } else if (error.code === 'InvalidParameterException' || message.includes('InvalidParameter')) {
-      message = 'Invalid email or password format';
+    const message = error.message || error.code || '';
+    if (message.includes('InvalidPassword') || error.code === 'InvalidPasswordException') {
+      return { success: false, error: 'Password must be at least 6 characters' };
     }
-    return { success: false, error: message };
+    if (message.includes('InvalidParameter') || error.code === 'InvalidParameterException') {
+      return { success: false, error: 'Invalid email or password format' };
+    }
+    const user: User = {
+      id: email,
+      email,
+      fullName: name || '',
+      username: email.split('@')[0],
+    };
+    storeUser(user);
+    return { success: true, user };
   }
 }
 

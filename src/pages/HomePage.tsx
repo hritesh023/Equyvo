@@ -48,6 +48,21 @@ const HomePage = () => {
   const [activeTab, setActiveTab] = useState<'foryou' | 'following' | 'chats'>('foryou');
   const [followingAccounts, setFollowingAccounts] = useState<string[]>(['Equyvo Official', 'Emma Thompson', 'Tech Enthusiast']);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
+  const [userAvatar, setUserAvatar] = useState<string>('');
+
+  useEffect(() => {
+    const savedProfile = localStorage.getItem('userProfile');
+    if (savedProfile) {
+      const parsed = JSON.parse(savedProfile);
+      if (parsed.avatar) setUserAvatar(parsed.avatar);
+    }
+    const handleProfileUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.avatar) setUserAvatar(detail.avatar);
+    };
+    window.addEventListener('profileUpdated', handleProfileUpdate);
+    return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
+  }, []);
 
   useEffect(() => {
     if (!showChatsTab && activeTab === 'chats') {
@@ -394,7 +409,7 @@ const HomePage = () => {
                 <div className="absolute inset-0 bg-secondary rounded-xl overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
                   <div className="h-2/3 bg-primary/20 flex items-center justify-center">
                     <Avatar className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-background">
-                      <AvatarImage src="https://github.com/shadcn.png" />
+                      <AvatarImage src={userAvatar || ''} />
                       <AvatarFallback className="text-xs lg:text-sm">ME</AvatarFallback>
                     </Avatar>
                   </div>

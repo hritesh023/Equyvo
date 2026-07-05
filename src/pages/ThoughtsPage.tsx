@@ -353,7 +353,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-1',
           username: '@techguy',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -377,7 +377,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-2',
           username: '@devcomm',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -408,7 +408,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-3',
           username: '@startuplife',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -432,7 +432,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-4',
           username: '@gamingnews',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -465,7 +465,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-5',
           username: '@filmmaker',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -496,7 +496,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-6',
           username: '@photographer',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -527,7 +527,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-7',
           username: '@developer',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false
@@ -560,7 +560,7 @@ const ThoughtsPage = memo(() => {
         user: {
           id: 'mock-user-8',
           username: '@techeducator',
-          avatar_url: 'https://github.com/shadcn.png'
+          avatar_url: ''
         },
         user_vote: null,
         user_has_liked: false

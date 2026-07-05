@@ -15,6 +15,7 @@ interface AuthPageProps {
 
 const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const navigate = useNavigate();
+  const [activeTab, setActiveTab] = useState('login');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -25,6 +26,11 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
+  const goHome = (user: User) => {
+    onAuthSuccess?.(user);
+    navigate('/app/home');
+  };
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -32,8 +38,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     const result = await signInWithEmail(loginEmail, loginPassword);
     setLoading(false);
     if (result.success) {
-      onAuthSuccess?.(result.user);
-      navigate('/app/home');
+      goHome(result.user);
     } else {
       setError(result.error || 'Sign in failed');
     }
@@ -46,11 +51,23 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     const result = await signUpWithEmail(signupEmail, signupPassword, signupName);
     setLoading(false);
     if (result.success) {
-      onAuthSuccess?.(result.user);
-      navigate('/app/home');
+      goHome(result.user);
     } else {
       setError(result.error || 'Sign up failed');
     }
+  };
+
+  const handleTabChange = (value: string) => {
+    if (value === 'login' && activeTab === 'signup' && signupEmail) {
+      setLoginEmail(signupEmail);
+      setLoginPassword(signupPassword);
+    }
+    if (value === 'signup' && activeTab === 'login' && loginEmail) {
+      setSignupEmail(loginEmail);
+      setSignupPassword(loginPassword);
+    }
+    setActiveTab(value);
+    setError('');
   };
 
   return (
@@ -65,7 +82,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="login" className="w-full">
+        <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className="w-full mb-6">
             <TabsTrigger value="login" className="flex-1">Sign In</TabsTrigger>
             <TabsTrigger value="signup" className="flex-1">Sign Up</TabsTrigger>

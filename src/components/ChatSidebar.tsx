@@ -45,7 +45,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     { 
       id: '1', 
       name: 'Alice Chen', 
-      avatar: 'https://github.com/shadcn.png', 
+      avatar: 'https://picsum.photos/seed/alice/200/200', 
       lastMessage: 'Hey! Did you see the new moment?', 
       timestamp: '10:30 AM', 
       online: true,
@@ -58,7 +58,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     { 
       id: '2', 
       name: 'Bob Smith', 
-      avatar: 'https://github.com/shadcn.png', 
+      avatar: 'https://picsum.photos/seed/bob/200/200', 
       lastMessage: 'The design looks great!', 
       timestamp: 'Yesterday', 
       online: false,
@@ -70,7 +70,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     { 
       id: '3', 
       name: 'Emma Wilson', 
-      avatar: 'https://github.com/shadcn.png', 
+      avatar: 'https://picsum.photos/seed/emma/200/200', 
       lastMessage: 'Can we call later?', 
       timestamp: 'Mon', 
       online: true,
@@ -82,12 +82,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     { 
       id: '4', 
       name: 'David Park', 
-      avatar: 'https://github.com/shadcn.png', 
+      avatar: 'https://picsum.photos/seed/david/200/200', 
       lastMessage: 'Sent a photo', 
       timestamp: 'Sun', 
       online: false,
       messages: [
-        { id: '1', text: 'Check out this photo!', sender: 'other', timestamp: 'Sun', type: 'image', fileUrl: 'https://github.com/shadcn.png' },
+        { id: '1', text: 'Check out this photo!', sender: 'other', timestamp: 'Sun', type: 'image', fileUrl: 'https://picsum.photos/seed/david-photo/400/300' },
         { id: '2', text: 'Sent a photo', sender: 'user', timestamp: 'Sun' },
       ]
     },

@@ -63,7 +63,7 @@ const MomentsPage = () => {
     {
       id: 'm1',
       user: 'alex_adventures',
-      avatar: 'https://github.com/shadcn.png',
+      avatar: '',
       description: 'The view from the top is absolutely breathtaking! 🏔️ #hiking #nature #sunset',
       videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
       song: 'Original Sound - Alex Chen',
@@ -76,7 +76,7 @@ const MomentsPage = () => {
     {
       id: 'm2',
       user: 'culinary_wizard',
-      avatar: 'https://github.com/shadcn.png',
+      avatar: '',
       description: 'Secret pasta recipe revealed! 🍝 You have to try this. #cooking #foodie #recipe',
       videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
       song: 'Italian Dinner Jazz - Foodie Beats',
@@ -89,7 +89,7 @@ const MomentsPage = () => {
     {
       id: 'm3',
       user: 'fitness_pro',
-      avatar: 'https://github.com/shadcn.png',
+      avatar: '',
       description: 'No excuses. Get it done. 💪 #fitness #gym #motivation',
       videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
       song: 'High Energy Workout - Gym Tunes',
@@ -102,7 +102,7 @@ const MomentsPage = () => {
     {
       id: 'm4',
       user: 'urban_dancer',
-      avatar: 'https://github.com/shadcn.png',
+      avatar: '',
       description: 'Vibing in the city 🌃 #dance #street #vibes',
       videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
       song: 'City Lights - Dance Mix',

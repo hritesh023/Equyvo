@@ -886,7 +886,7 @@ const DiscoverPage = () => {
                       }}
                       title={`${item.creator}'s Profile`}
                     >
-                      <AvatarImage src={`https://github.com/shadcn.png`} />
+                      <AvatarImage src="" />
                       <AvatarFallback>U</AvatarFallback>
                     </Avatar>
                     <div>
@@ -986,7 +986,7 @@ const DiscoverPage = () => {
                       }}
                       title={`${item.creator}'s Profile`}
                     >
-                      <AvatarImage src="https://github.com/shadcn.png" />
+                      <AvatarImage src="" />
                       <AvatarFallback>STR</AvatarFallback>
                     </Avatar>
                     <div>
@@ -1091,7 +1091,7 @@ const DiscoverPage = () => {
                   }}
                   title={`${item.creator}'s Profile`}
                 >
-                  <AvatarImage src="https://github.com/shadcn.png" />
+                  <AvatarImage src="" />
                   <AvatarFallback>STR</AvatarFallback>
                 </Avatar>
                 <div>
