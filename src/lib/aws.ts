@@ -53,7 +53,7 @@ export const getCurrentSession = () => {
   });
 };
 
-export const signUp = (email: string, password: string) => {
+export const signUp = (email: string, password: string, name?: string) => {
   return new Promise((resolve, reject) => {
     if (!userPool) {
       if (import.meta.env.DEV) {
@@ -62,7 +62,8 @@ export const signUp = (email: string, password: string) => {
             getUsername: () => email,
             attributes: []
           },
-          userConfirmed: false
+          userConfirmed: false,
+          userSub: 'mock-user-id'
         });
         return;
       }
@@ -71,11 +72,11 @@ export const signUp = (email: string, password: string) => {
     }
 
     const attributeList = [
-      new CognitoUserAttribute({
-        Name: 'email',
-        Value: email,
-      }),
+      new CognitoUserAttribute({ Name: 'email', Value: email }),
     ];
+    if (name) {
+      attributeList.push(new CognitoUserAttribute({ Name: 'name', Value: name }));
+    }
 
     userPool.signUp(email, password, attributeList, [], (err, result) => {
       if (err) {

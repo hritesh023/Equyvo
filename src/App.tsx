@@ -9,7 +9,7 @@ import SplashScreen from './components/SplashScreen';
 import ErrorBoundary from './components/ErrorBoundary'; 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
-import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, getToken, setToken, clearToken, User } from './lib/auth';
+import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, setToken, User } from './lib/auth';
 import HomePage from './pages/HomePage';
 import AuthPage from './pages/AuthPage';
 import CreatePage from './pages/CreatePage';
@@ -61,32 +61,11 @@ const AppContent = () => {
 
   useEffect(() => {
     const initAuth = async () => {
-      // Check for token in URL (OAuth callback)
       extractTokenFromUrl();
-
-      const token = getToken();
-      if (!token) {
-        const storedUser = getStoredUser();
-        if (storedUser) {
-          setUser(storedUser);
-          setIsLoading(false);
-        } else {
-          setIsLoading(false);
-        }
-        return;
-      }
-
-      try {
-        const authStatus = await checkAuthStatus();
-        if (authStatus.isAuthenticated && authStatus.user) {
-          setUser(authStatus.user);
-        } else {
-          const storedUser = getStoredUser();
-          if (storedUser) {
-            setUser(storedUser);
-          }
-        }
-      } catch {
+      const authStatus = await checkAuthStatus();
+      if (authStatus.isAuthenticated && authStatus.user) {
+        setUser(authStatus.user);
+      } else {
         const storedUser = getStoredUser();
         if (storedUser) {
           setUser(storedUser);

@@ -1,3 +1,14 @@
+import {
+  signUp as cognitoSignUp,
+  signIn as cognitoSignIn,
+  signOut as cognitoSignOut,
+  getCurrentSession,
+  getCurrentUser,
+  confirmRegistration,
+  resendConfirmationCode as cognitoResendCode,
+  userPool,
+} from './aws';
+
 export interface User {
   id: string;
   email: string;
@@ -12,27 +23,20 @@ export interface AuthState {
   isAuthenticated: boolean;
 }
 
-const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'https://auth.acronous.com';
-const TOKEN_KEY = 'acronous_token';
-const USER_KEY = 'acronous_user';
+const USER_KEY = 'equyvo_cognito_user';
 
-function getCookie(name: string): string | null {
-  const match = document.cookie.match(new RegExp(`(^| )${name}=([^;]+)`));
-  return match ? decodeURIComponent(match[2]) : null;
-}
-
-export function getToken(): string | null {
-  return localStorage.getItem(TOKEN_KEY) || getCookie(TOKEN_KEY);
-}
-
-export function setToken(token: string): void {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken(): void {
-  localStorage.removeItem(TOKEN_KEY);
-  localStorage.removeItem(USER_KEY);
-  document.cookie = `${TOKEN_KEY}=; Domain=.acronous.com; Path=/; Max-Age=0`;
+function decodeUserFromSession(session: any): User | null {
+  try {
+    const payload = session.getIdToken().decodePayload();
+    return {
+      id: payload.sub,
+      email: payload.email,
+      fullName: payload.name || payload['cognito:username'] || '',
+      username: payload['cognito:username'] || payload.email.split('@')[0],
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function getStoredUser(): User | null {
@@ -52,102 +56,140 @@ export function clearStoredUser(): void {
   localStorage.removeItem(USER_KEY);
 }
 
-function redirectToLogin() {
-  const currentUrl = window.location.href;
-  window.location.href = `${AUTH_URL}/login?redirect=${encodeURIComponent(currentUrl)}`;
+export function getToken(): string | null {
+  try {
+    const user = getCurrentUser();
+    if (!user) return null;
+    let session: any = null;
+    user.getSession((err: any, s: any) => {
+      if (!err && s) session = s;
+    });
+    return session ? session.getIdToken().getJwtToken() : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(_token: string): void {
+  // No-op: Cognito SDK manages its own token storage
+}
+
+export function clearToken(): void {
+  clearStoredUser();
 }
 
 export async function checkAuthStatus(): Promise<AuthState> {
-  const token = getToken();
-  if (!token) {
-    return { user: null, isLoading: false, isAuthenticated: false };
+  try {
+    const session: any = await getCurrentSession();
+    if (session && session.isValid()) {
+      const user = decodeUserFromSession(session);
+      if (user) {
+        storeUser(user);
+        return { user, isLoading: false, isAuthenticated: true };
+      }
+    }
+  } catch {
+    // Fall through to stored user
   }
 
-  try {
-    const res = await fetch(`${AUTH_URL}/api/auth/verify`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await res.json();
-    if (data.valid && data.user) {
-      const user: User = {
-        id: data.user.id,
-        email: data.user.email,
-        fullName: data.user.name,
-        username: data.user.email.split('@')[0],
-      };
-      storeUser(user);
-      return { user, isLoading: false, isAuthenticated: true };
-    }
-    clearToken();
-    return { user: null, isLoading: false, isAuthenticated: false };
-  } catch {
-    const stored = getStoredUser();
-    if (stored) {
-      return { user: stored, isLoading: false, isAuthenticated: true };
-    }
-    return { user: null, isLoading: false, isAuthenticated: false };
+  const stored = getStoredUser();
+  if (stored) {
+    return { user: stored, isLoading: false, isAuthenticated: true };
   }
+
+  return { user: null, isLoading: false, isAuthenticated: false };
 }
 
 export async function signInWithEmail(email: string, password: string) {
   try {
-    const res = await fetch(`${AUTH_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
-      credentials: 'include',
-    });
-    const data = await res.json();
-    if (data.success) {
-      setToken(data.token);
-      const user: User = {
-        id: data.user.id,
-        email: data.user.email,
-        fullName: data.user.name,
-        username: data.user.email.split('@')[0],
-      };
-      storeUser(user);
-      return { success: true, user };
+    const session: any = await cognitoSignIn(email, password);
+    const user = decodeUserFromSession(session);
+    if (!user) {
+      return { success: false, error: 'Unable to decode user session' };
     }
-    return { success: false, error: data.error || 'Sign in failed' };
+    storeUser(user);
+    return { success: true, user };
   } catch (error: any) {
-    return { success: false, error: error.message || 'Network error' };
+    let message = error.message || 'Sign in failed';
+    if (error.code === 'UserNotConfirmedException' || message.includes('UserNotConfirmed')) {
+      message = 'Please confirm your email before signing in';
+    } else if (error.code === 'NotAuthorizedException' || message.includes('NotAuthorized')) {
+      message = 'Incorrect email or password';
+    } else if (error.code === 'UserNotFoundException' || message.includes('UserNotFound')) {
+      message = 'No account found with this email';
+    }
+    return { success: false, error: message };
   }
 }
 
 export async function signUpWithEmail(email: string, password: string, name?: string) {
   try {
-    const res = await fetch(`${AUTH_URL}/api/auth/signup`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password, name }),
-      credentials: 'include',
-    });
-    const data = await res.json();
-    if (data.success) {
-      setToken(data.token);
-      const user: User = {
-        id: data.user.id,
-        email: data.user.email,
-        fullName: data.user.name,
-        username: data.user.email.split('@')[0],
+    const result: any = await cognitoSignUp(email, password, name || '');
+    if (result.userConfirmed === false) {
+      return {
+        success: true,
+        userConfirmed: false,
+        user: {
+          id: result.userSub || email,
+          email,
+          fullName: name || '',
+          username: email.split('@')[0],
+        },
       };
-      storeUser(user);
-      return { success: true, user };
     }
-    return { success: false, error: data.error || 'Sign up failed' };
+
+    const user: User = {
+      id: result.userSub || email,
+      email,
+      fullName: name || '',
+      username: email.split('@')[0],
+    };
+    storeUser(user);
+    return { success: true, user, userConfirmed: true };
   } catch (error: any) {
-    return { success: false, error: error.message || 'Network error' };
+    let message = error.message || 'Sign up failed';
+    if (error.code === 'UsernameExistsException' || message.includes('UsernameExists')) {
+      message = 'An account with this email already exists';
+    } else if (error.code === 'InvalidPasswordException' || message.includes('InvalidPassword')) {
+      message = 'Password must be at least 8 characters with numbers and special characters';
+    } else if (error.code === 'InvalidParameterException' || message.includes('InvalidParameter')) {
+      message = 'Invalid email or password format';
+    }
+    return { success: false, error: message };
+  }
+}
+
+export async function confirmEmail(email: string, code: string) {
+  try {
+    await confirmRegistration(email, code);
+    return { success: true };
+  } catch (error: any) {
+    let message = error.message || 'Confirmation failed';
+    if (error.code === 'CodeMismatchException' || message.includes('CodeMismatch')) {
+      message = 'Invalid confirmation code';
+    } else if (error.code === 'ExpiredCodeException' || message.includes('ExpiredCode')) {
+      message = 'Confirmation code has expired. Request a new one';
+    }
+    return { success: false, error: message };
+  }
+}
+
+export async function resendConfirmation(email: string) {
+  try {
+    await cognitoResendCode(email);
+    return { success: true };
+  } catch (error: any) {
+    return { success: false, error: error.message || 'Failed to resend code' };
   }
 }
 
 export async function signOutUser() {
   try {
-    await fetch(`${AUTH_URL}/api/auth/logout`, { method: 'POST' });
-    clearToken();
+    cognitoSignOut();
+    clearStoredUser();
     return { success: true };
   } catch {
-    clearToken();
+    clearStoredUser();
     return { success: true };
   }
 }
@@ -155,12 +197,4 @@ export async function signOutUser() {
 export async function getAuthenticatedUser(): Promise<User | null> {
   const status = await checkAuthStatus();
   return status.user;
-}
-
-export async function confirmEmail(_email: string, _code: string) {
-  return { success: false, error: 'Email confirmation is not required with centralized auth' };
-}
-
-export async function resendConfirmation(_email: string) {
-  return { success: false, error: 'Not applicable' };
 }
