@@ -121,6 +121,7 @@ export const signIn = (email: string, password: string) => {
     };
 
     const cognitoUser = new CognitoUser(userData);
+    cognitoUser.setAuthenticationFlowType('USER_PASSWORD_AUTH');
 
     cognitoUser.authenticateUser(authenticationDetails, {
       onSuccess: (session) => {

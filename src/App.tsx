@@ -113,12 +113,19 @@ const AppContent = () => {
     );
   }
 
+  if (isAuthPage) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
+        <AuthPage onAuthSuccess={(u) => setUser(u)} />
+        <Toaster />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-background text-foreground flex flex-col">
-      {/* Sidebar - Desktop Only */}
       {shouldShowNavbar && <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />}
       
-      {/* Main Content Area */}
       <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${
         isSidebarOpen && !isMobile ? 'lg:ml-64' : 'lg:ml-0'
       }`}>
@@ -131,10 +138,7 @@ const AppContent = () => {
             : 'w-full'
         }`}>
         <Routes>
-          {}
           <Route path="/" element={<HomePage />} />
-          <Route path="/auth" element={<AuthPage onAuthSuccess={(u) => setUser(u)} />} />
-          {}
           <Route path="/app/home" element={<HomePage />} />
           <Route path="/app/discover" element={<DiscoverPage />} />
           <Route path="/app/create" element={<CreatePage />} />
@@ -143,7 +147,6 @@ const AppContent = () => {
           <Route path="/app/profile" element={<ProfilePage />} />
           <Route path="/app/settings" element={<SettingsPage />} />
           <Route path="/app/search" element={<SearchPage />} />
-          {}
           <Route path="/discover" element={<DiscoverPage />} />
           <Route path="/create" element={<CreatePage />} />
           <Route path="/moments" element={<MomentsPage />} />
@@ -153,7 +156,6 @@ const AppContent = () => {
           <Route path="/profile/@:username" element={<ProfilePage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />
-          {}
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
