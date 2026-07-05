@@ -10,7 +10,6 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
 import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, getToken, setToken, clearToken, User } from './lib/auth';
-import { Button } from './components/ui/button';
 import HomePage from './pages/HomePage';
 import AuthPage from './pages/AuthPage';
 import CreatePage from './pages/CreatePage';
@@ -25,24 +24,16 @@ import type { User as AppUser } from './lib/auth';
 import { useIsMobile } from './hooks/use-mobile';
 import { useIsTablet } from './hooks/use-tablet';
 
-const AUTH_URL = import.meta.env.VITE_AUTH_URL || 'https://auth.acronous.com';
-
 function extractTokenFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
   const token = params.get('token');
   if (token) {
     setToken(token);
-    // Clean URL without reload
     const cleanUrl = window.location.origin + window.location.pathname;
     window.history.replaceState({}, document.title, cleanUrl);
     return token;
   }
   return null;
-}
-
-function redirectToAuth() {
-  const currentUrl = window.location.href;
-  window.location.href = `${AUTH_URL}/login?redirect=${encodeURIComponent(currentUrl)}`;
 }
 
 const AppContent = () => {
@@ -111,7 +102,7 @@ const AppContent = () => {
   };
 
   const isAuthPage = location.pathname === '/auth';
-  const shouldShowNavbar = (user && !isAuthPage) || (!user && !isAuthPage && import.meta.env.DEV);
+  const shouldShowNavbar = user && !isAuthPage;
 
   const handleSignOut = async () => {
     try {
@@ -119,12 +110,18 @@ const AppContent = () => {
       if (result.success) {
         clearStoredUser();
         setUser(null);
-        redirectToAuth();
+        navigate('/auth');
       }
     } catch {
       // Sign out failed silently
     }
   };
+
+  useEffect(() => {
+    if (!isLoading && !user && !isAuthPage) {
+      navigate('/auth');
+    }
+  }, [isLoading, user, isAuthPage, navigate]);
 
   if (isLoading) {
     return (
@@ -132,18 +129,6 @@ const AppContent = () => {
         <div className="text-center space-y-4">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
           <p className="text-muted-foreground">Loading Equyvo...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!user && !isAuthPage) {
-    redirectToAuth();
-    return (
-      <div className="min-h-screen bg-background flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
-          <p className="text-muted-foreground">Redirecting to sign in...</p>
         </div>
       </div>
     );
@@ -169,7 +154,7 @@ const AppContent = () => {
         <Routes>
           {}
           <Route path="/" element={<HomePage />} />
-          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/auth" element={<AuthPage onAuthSuccess={(u) => setUser(u)} />} />
           {}
           <Route path="/app/home" element={<HomePage />} />
           <Route path="/app/discover" element={<DiscoverPage />} />
