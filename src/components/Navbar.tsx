@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { Home, Compass, PlusCircle, Video, MessageSquare, User, Search, Bell, LogOut, Settings, Globe, Camera } from 'lucide-react';
 import { Button } from "@/components/ui/button";
@@ -33,10 +33,10 @@ interface NavbarProps {
 }
 
 const Navbar = ({ user, onSignOut }: NavbarProps) => {
+  const location = useLocation();
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const [currentPath, setCurrentPath] = useState('/');
 
   // Handle null user gracefully: check stored user as fallback
   const effectiveUser = user || getStoredUser() || { email: 'dev@equyvo.app', user_metadata: { avatar_url: null } };
@@ -73,11 +73,6 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
     }
   }, [user]);
 
-
-  useEffect(() => {
-    // Set current path after mount to avoid SSR issues
-    setCurrentPath(window.location.pathname);
-  }, []);
 
   const handleSearch = useCallback((query: string) => {
     showSuccess(`Searching for "${query}"...`);
@@ -163,7 +158,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                   <Link
                     key={item.name}
                     to={item.path}
-                    className={`flex items-center gap-1 text-sm font-medium transition-colors hover:text-primary ${currentPath === item.path ? 'text-primary' : 'text-muted-foreground'
+                    className={`flex items-center gap-1 text-sm font-medium transition-colors hover:text-primary ${location.pathname === item.path ? 'text-primary' : 'text-muted-foreground'
                       }`}
                   >
                     <item.icon className="h-4 w-4" />
@@ -227,7 +222,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             <Link
               key={item.name}
               to={item.path}
-              className={`flex flex-col items-center gap-1 text-xs transition-all duration-200 hover:scale-105 py-2 px-2 rounded-lg touch-target mobile-nav-item ${currentPath === item.path
+              className={`flex flex-col items-center gap-1 text-xs transition-all duration-200 hover:scale-105 py-2 px-2 rounded-lg touch-target mobile-nav-item ${location.pathname === item.path
                 ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
                 }`}
@@ -240,7 +235,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
           {/* More options button */}
           <Link
             to="/app/settings"
-            className={`flex flex-col items-center gap-1 text-xs transition-all duration-200 hover:scale-105 py-2 px-2 rounded-lg touch-target mobile-nav-item ${currentPath === '/app/settings'
+            className={`flex flex-col items-center gap-1 text-xs transition-all duration-200 hover:scale-105 py-2 px-2 rounded-lg touch-target mobile-nav-item ${location.pathname === '/app/settings'
               ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
               : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
               }`}

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Home, Compass, PlusCircle, Video, MessageSquare, User, Settings, Globe, Camera, Menu, X } from 'lucide-react';
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -21,13 +21,9 @@ interface SidebarProps {
 }
 
 const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
+  const location = useLocation();
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
-  const [currentPath, setCurrentPath] = useState('/');
-
-  useEffect(() => {
-    setCurrentPath(window.location.pathname);
-  }, []);
 
   // Don't render sidebar on mobile
   if (isMobile) {
@@ -55,7 +51,7 @@ const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
         {/* Navigation Items */}
         <nav className="flex-1 p-4 space-y-2 pt-6">
           {navItems.map((item) => {
-            const isActive = currentPath === item.path;
+            const isActive = location.pathname === item.path;
             return (
               <Link
                 key={item.name}
