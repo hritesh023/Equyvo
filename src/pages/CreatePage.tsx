@@ -786,6 +786,47 @@ const CreatePage = () => {
     }
   };
 
+  const handlePostLive = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    switch (action) {
+      case 'post':
+        if (!liveTitle.trim()) {
+          showError('Please enter a title for your live stream');
+          return;
+        }
+        await handleStartLive();
+        break;
+      case 'schedule':
+        if (!scheduleDateTime) {
+          showError('Please select a date and time for scheduling');
+          return;
+        }
+        const newScheduledLive: ScheduledPost = {
+          id: Date.now().toString(),
+          type: 'live',
+          content: { title: liveTitle, description: liveDescription },
+          scheduledTime: new Date(scheduleDateTime),
+          status: 'scheduled'
+        };
+        setScheduledPosts(prev => [...prev, newScheduledLive]);
+        showSuccess('Live stream scheduled successfully!');
+        setLiveTitle('');
+        setLiveDescription('');
+        setShowScheduleModal(false);
+        setScheduleDateTime('');
+        break;
+      case 'draft':
+        const newDraftLive: DraftPost = {
+          id: Date.now().toString(),
+          type: 'live',
+          content: { title: liveTitle, description: liveDescription },
+          createdAt: new Date()
+        };
+        setDraftPosts(prev => [...prev, newDraftLive]);
+        showSuccess('Live stream saved as draft!');
+        break;
+    }
+  };
+
   const handlePostMoment = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     if (momentFiles.length === 0) {
       showError('Please select at least one photo or video');
@@ -2325,10 +2366,30 @@ const CreatePage = () => {
               )}
 
               {!isRecording ? (
-                <Button onClick={handleStartLive} className="w-full bg-red-500 hover:bg-red-600">
-                  <Zap className="h-4 w-4 mr-2" />
-                  Go Live Now
-                </Button>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button onClick={() => handlePostLive('post')} className="w-full sm:flex-1 bg-red-500 hover:bg-red-600">
+                    <Zap className="h-4 w-4 mr-2" />
+                    Go Live Now
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      setCurrentContentType('live');
+                      setShowScheduleModal(true);
+                    }}
+                    variant="outline"
+                    className="w-full sm:flex-1"
+                  >
+                    <Calendar className="h-4 w-4 mr-2" />
+                    Schedule
+                  </Button>
+                  <Button
+                    onClick={() => handlePostLive('draft')}
+                    variant="secondary"
+                    className="w-full sm:flex-1"
+                  >
+                    Save Draft
+                  </Button>
+                </div>
               ) : (
                 <Button onClick={handleEndLive} className="w-full bg-gray-800 hover:bg-gray-900">
                   <Square className="h-4 w-4 mr-2" />
@@ -2405,8 +2466,8 @@ const CreatePage = () => {
                   ))}
                 </div>
               )}
-              <div className="flex gap-2">
-                <Button onClick={() => handlePostMoment('post')} disabled={isUploading || momentFiles.length === 0} className="flex-1">
+              <div className="flex flex-col sm:flex-row gap-2">
+                <Button onClick={() => handlePostMoment('post')} disabled={isUploading || momentFiles.length === 0} className="w-full sm:flex-1">
                   {isUploading ? (
                     <>
                       <Loader2 className="h-4 w-4 mr-2 animate-spin" />
@@ -2416,7 +2477,24 @@ const CreatePage = () => {
                     'Post Moments'
                   )}
                 </Button>
-                <Button variant="outline" onClick={() => handlePostMoment('draft')} disabled={momentFiles.length === 0}>
+                <Button
+                  onClick={() => {
+                    setCurrentContentType('moments');
+                    setShowScheduleModal(true);
+                  }}
+                  variant="outline"
+                  className="w-full sm:flex-1"
+                  disabled={momentFiles.length === 0}
+                >
+                  <Calendar className="h-4 w-4 mr-2" />
+                  Schedule
+                </Button>
+                <Button
+                  onClick={() => handlePostMoment('draft')}
+                  variant="secondary"
+                  className="w-full sm:flex-1"
+                  disabled={momentFiles.length === 0}
+                >
                   Save Draft
                 </Button>
               </div>
@@ -2563,6 +2641,12 @@ const CreatePage = () => {
                         break;
                       case 'videos':
                         handlePostVideos('schedule');
+                        break;
+                      case 'moments':
+                        handlePostMoment('schedule');
+                        break;
+                      case 'live':
+                        handlePostLive('schedule');
                         break;
                     }
                   }}
