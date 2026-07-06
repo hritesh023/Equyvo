@@ -8,7 +8,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
-import { uploadToCloudinary, isCloudinaryConfigured, getOptimizedVideoUrl } from '@/lib/cloudinary';
+import { compressImage } from '@/lib/utils';
+import { markHasRealContent } from '@/lib/data';
 import api from '@/lib/api';
 
 // Helper to get current user info from localStorage
@@ -187,6 +188,7 @@ const CreatePage = () => {
       else if (type === 'thought') await api.createThought(postData);
       else if (type === 'moment') await api.createMoment(postData);
       else await api.createPost(postData);
+      markHasRealContent();
     } catch (err) { console.error('Failed to persist to API:', err); }
     try {
       await api.indexContent({
@@ -399,10 +401,10 @@ const CreatePage = () => {
         const uploadedStoryResults = await Promise.all(
           storyFiles.map(async (file) => {
             try {
-              if (isCloudinaryConfigured()) {
-                const result = await uploadToCloudinary(file, { folder: 'equyvo/stories' });
-                return { file, result };
-              }
+              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/stories');
+              if (error) throw new Error(error);
+              return { file, result: data };
             } catch (err) {
               showError(`Upload failed for ${file.name}`);
             }
@@ -554,10 +556,12 @@ const CreatePage = () => {
       case 'post':
         setIsUploading(true);
         let cloudinaryUrl: string | undefined;
-        if (thoughtVideo && isCloudinaryConfigured()) {
+        if (thoughtVideo) {
           try {
-            const result = await uploadToCloudinary(thoughtVideo, { folder: 'equyvo/thoughts' });
-            cloudinaryUrl = result.secureUrl;
+            const uploadFile = thoughtVideo.type.startsWith('image/') ? await compressImage(thoughtVideo) : thoughtVideo;
+            const { data, error } = await api.uploadFile(uploadFile, 'equyvo/thoughts');
+            if (error) throw new Error(error);
+            cloudinaryUrl = data!.secureUrl;
           } catch (err) {
             showError('Upload failed for thought media');
           }
@@ -634,10 +638,10 @@ const CreatePage = () => {
         const uploadedPhotoResults = await Promise.all(
           photoFiles.map(async (file) => {
             try {
-              if (isCloudinaryConfigured()) {
-                const result = await uploadToCloudinary(file, { folder: 'equyvo/photos' });
-                return { file, result };
-              }
+              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/photos');
+              if (error) throw new Error(error);
+              return { file, result: data };
             } catch (err) {
               showError(`Upload failed for ${file.name}`);
             }
@@ -717,10 +721,10 @@ const CreatePage = () => {
         const uploadedVideoResults = await Promise.all(
           videoFiles.map(async (file) => {
             try {
-              if (isCloudinaryConfigured()) {
-                const result = await uploadToCloudinary(file, { folder: 'equyvo/videos' });
-                return { file, result };
-              }
+              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/videos');
+              if (error) throw new Error(error);
+              return { file, result: data };
             } catch (err) {
               showError(`Upload failed for ${file.name}`);
             }
@@ -841,10 +845,10 @@ const CreatePage = () => {
         const uploadedResults = await Promise.all(
           momentFiles.map(async (file) => {
             try {
-              if (isCloudinaryConfigured()) {
-                const result = await uploadToCloudinary(file, { folder: 'equyvo/moments' });
-                return { file, result };
-              }
+              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/moments');
+              if (error) throw new Error(error);
+              return { file, result: data };
             } catch (err) {
               showError(`Upload failed for ${file.name}`);
             }
@@ -992,12 +996,12 @@ const CreatePage = () => {
 
     setIsUploading(true);
     let cloudinaryResult: { secureUrl: string; publicId: string; duration?: number } | null = null;
-    if (isCloudinaryConfigured()) {
-      try {
-        cloudinaryResult = await uploadToCloudinary(file, { folder: 'equyvo/live' });
-      } catch (err) {
-        showError('Upload failed for live recording');
-      }
+    try {
+      const { data, error } = await api.uploadFile(file, 'equyvo/live');
+      if (error) throw new Error(error);
+      cloudinaryResult = data!;
+    } catch (err) {
+      showError('Upload failed for live recording');
     }
     setIsUploading(false);
 
@@ -1044,28 +1048,33 @@ const CreatePage = () => {
   };
 
   // Content management functions
-  const handleDeleteVideo = (id: string) => {
+  const handleDeleteVideo = async (id: string) => {
+    try { await api.deletePost(id); } catch {}
     setUploadedVideos(prev => prev.filter(video => video.id !== id));
     showSuccess('Video deleted successfully!');
   };
 
-  const handleDeleteStory = (id: string) => {
+  const handleDeleteStory = async (id: string) => {
+    try { await api.deleteStory(id); } catch {}
     setUploadedStories(prev => prev.filter(story => story.id !== id));
     showSuccess('Story deleted successfully!');
   };
 
-  const handleDeleteThought = (id: string) => {
+  const handleDeleteThought = async (id: string) => {
+    try { await api.deleteThought(id); } catch {}
     setUploadedThoughts(prev => prev.filter(thought => thought.id !== id));
     showSuccess('Thought deleted successfully!');
   };
 
 
-  const handleDeletePhoto = (id: string) => {
+  const handleDeletePhoto = async (id: string) => {
+    try { await api.deletePost(id); } catch {}
     setUploadedPhotos(prev => prev.filter(photo => photo.id !== id));
     showSuccess('Photo deleted successfully!');
   };
 
-  const handleDeleteTextStory = (id: string) => {
+  const handleDeleteTextStory = async (id: string) => {
+    try { await api.deleteStory(id); } catch {}
     setUploadedTextStories(prev => prev.filter(textStory => textStory.id !== id));
     showSuccess('Text story deleted successfully!');
   };
@@ -2598,7 +2607,7 @@ const CreatePage = () => {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <Card className="p-8 text-center">
             <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-primary" />
-            <p className="text-lg font-semibold">Uploading your media to Cloudinary...</p>
+            <p className="text-lg font-semibold">Uploading your media...</p>
             <p className="text-sm text-muted-foreground mt-2">This may take a moment depending on file size</p>
           </Card>
         </div>

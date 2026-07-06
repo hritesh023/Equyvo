@@ -18,6 +18,7 @@ const seedPosts: Post[] = [
     tags: ['development', 'react'],
     categories: ['tech'],
     userId: 'user1',
+    isSeed: true,
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
   },
   {
@@ -35,6 +36,7 @@ const seedPosts: Post[] = [
     tags: ['nature', 'sunset'],
     categories: ['lifestyle'],
     userId: 'user2',
+    isSeed: true,
     createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
   }
 ];
@@ -55,6 +57,7 @@ const seedThoughts: Thought[] = [
       thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=300&fit=crop',
       duration: 60,
     }],
+    isSeed: true,
     likes_count: 15,
     created_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
@@ -76,6 +79,7 @@ const seedThoughts: Thought[] = [
       thumbnail: 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=400&h=300&fit=crop',
       duration: 45,
     }],
+    isSeed: true,
     likes_count: 42,
     created_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
     updated_at: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
@@ -93,6 +97,7 @@ const seedStories: Story[] = [
     time: '30 minutes ago',
     type: 'image',
     userId: 'user4',
+    isSeed: true,
     createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString()
   },
   {
@@ -104,6 +109,7 @@ const seedStories: Story[] = [
     time: '1 hour ago',
     type: 'video',
     userId: 'user5',
+    isSeed: true,
     createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString()
   },
   {
@@ -114,6 +120,7 @@ const seedStories: Story[] = [
     time: '2 hours ago',
     type: 'image',
     userId: 'user6',
+    isSeed: true,
     createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
   }
 ];
@@ -132,6 +139,7 @@ const seedMoments: Moment[] = [
     views: 342,
     time: '1 hour ago',
     userId: 'user3',
+    isSeed: true,
     createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
   },
   {
@@ -147,6 +155,7 @@ const seedMoments: Moment[] = [
     views: 1024,
     time: '3 hours ago',
     userId: 'user4',
+    isSeed: true,
     createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
   },
   {
@@ -162,6 +171,7 @@ const seedMoments: Moment[] = [
     views: 2341,
     time: '5 hours ago',
     userId: 'user5',
+    isSeed: true,
     createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
   }
 ];

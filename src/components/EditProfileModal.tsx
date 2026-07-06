@@ -10,7 +10,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { X, Upload, Camera, Loader2 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
-import { uploadToCloudinary, isCloudinaryConfigured, getAvatarUrl } from '@/lib/cloudinary';
+import { compressImage } from '@/lib/utils';
+import api from '@/lib/api';
+
+async function uploadFile(file: File, folder: string) {
+  const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+  const { data, error } = await api.uploadFile(uploadFile, folder);
+  if (error) throw new Error(error);
+  return data!;
+}
 
 interface EditProfileModalProps {
   isOpen: boolean;
@@ -72,11 +80,11 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
 
     let avatarUrl = avatarPreview;
-    if (avatarFile && isCloudinaryConfigured()) {
+    if (avatarFile) {
       setIsUploading(true);
       try {
-        const result = await uploadToCloudinary(avatarFile, { folder: 'equyvo/avatars' });
-        avatarUrl = getAvatarUrl(result.publicId);
+        const result = await uploadFile(avatarFile, 'equyvo/avatars');
+        avatarUrl = result.secureUrl;
       } catch {
         showError('Failed to upload avatar. Using local preview.');
       }

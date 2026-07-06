@@ -205,7 +205,7 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
 
     // === 404 ===
-    return respondError(Not found:  , 404);
+    return respondError('Not found: ' + path, 404);
   } catch (err: any) {
     return respondError(err.message || 'Internal server error', 500);
   }

@@ -9,7 +9,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { X, Upload, Image, FileVideo, Trash2, Loader2 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
-import { uploadToCloudinary, isCloudinaryConfigured, getOptimizedImageUrl } from '@/lib/cloudinary';
+import { compressImage } from '@/lib/utils';
+import api from '@/lib/api';
+
+async function uploadFile(file: File, folder: string) {
+  const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
+  const { data, error } = await api.uploadFile(uploadFile, folder);
+  if (error) throw new Error(error);
+  return data!;
+}
 
 interface EditPostModalProps {
   isOpen: boolean;
@@ -81,10 +89,10 @@ const EditPostModal: React.FC<EditPostModalProps> = ({
     setIsLoading(true);
 
     let mediaUrl = mediaPreview;
-    if (mediaFile && isCloudinaryConfigured()) {
+    if (mediaFile) {
       try {
-        const result = await uploadToCloudinary(mediaFile, { folder: 'equyvo/posts' });
-        mediaUrl = result.secureUrl || getOptimizedImageUrl(result.publicId);
+        const result = await uploadFile(mediaFile, 'equyvo/posts');
+        mediaUrl = result.secureUrl;
       } catch {
         showError('Failed to upload media. Using local preview.');
       }

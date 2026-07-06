@@ -22,6 +22,7 @@ import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getAuthenticatedUser } from '@/lib/auth';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
+import api from '@/lib/api';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile } from '@/utils/profile-navigation';
 
@@ -369,7 +370,14 @@ const HomePage = () => {
     setReportModalOpen(postId);
   };
 
-  const handleDeletePost = (postId: string) => {
+  const handleDeletePost = async (postId: string) => {
+    const post = enhancedPosts.find(p => p.id === postId);
+    try {
+      if (post?.type === 'thought') await api.deleteThought(postId);
+      else if (post?.type === 'moment') await api.deleteMoment(postId);
+      else if (post?.type === 'story') await api.deleteStory(postId);
+      else await api.deletePost(postId);
+    } catch {}
     setEnhancedPosts(prev => prev.filter(post => post.id !== postId));
     showSuccess('🗑️ Post deleted successfully.');
   };
