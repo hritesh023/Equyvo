@@ -3,7 +3,7 @@ import { useParams, useLocation } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Play, Camera, Volume2, VolumeX, Trash } from 'lucide-react';
+import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Play, Camera, Volume2, VolumeX, Trash, AlertTriangle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -38,6 +38,7 @@ import WatchHistorySection from '@/components/WatchHistorySection';
 import Moments from '@/components/Moments';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
 import { getStoredUser } from '@/lib/auth';
+import api from '@/lib/api';
 
 const createDefaultProfile = (user?: { email?: string; fullName?: string; username?: string; id?: string }) => {
   const displayName = user?.fullName || (user?.email ? user.email.split('@')[0] : '');
@@ -94,9 +95,6 @@ const ProfilePage = () => {
 
   // Load profile from localStorage on mount
   const [userProfile, setUserProfile] = useState(() => {
-    if (!import.meta.env.DEV) {
-      return { name: '', username: '', avatar: '', bio: '', followers: '0', following: '0', posts: [] as Post[] };
-    }
     // Try loading saved profile from localStorage first
     const savedProfile = typeof window !== 'undefined' ? localStorage.getItem('userProfile') : null;
     if (savedProfile) {
@@ -135,6 +133,18 @@ const ProfilePage = () => {
         const fresh = createDefaultProfile(currentUser);
         setUserProfile(fresh);
         localStorage.setItem('userProfile', JSON.stringify(fresh));
+      }
+
+      // Also try to fetch profile from the API for latest data
+      if (currentUser?.id) {
+        api.getProfile(currentUser.id).then(serverProfile => {
+          if (serverProfile) {
+            const merged = { ...createDefaultProfile(currentUser), ...serverProfile };
+            merged.posts = userProfile.posts || [];
+            setUserProfile(prev => ({ ...prev, ...merged }));
+            localStorage.setItem('userProfile', JSON.stringify(merged));
+          }
+        }).catch(() => {});
       }
 
       // Load saved posts, saved stories, and watch history
@@ -267,16 +277,25 @@ const ProfilePage = () => {
       setUserReactedPosts(prev => prev.filter(p => (p as any).originalThoughtId !== thoughtId));
     };
 
+    const handleUserPostCreated = (_event: CustomEvent) => {
+      try {
+        const saved = localStorage.getItem('userProfile');
+        if (saved) setUserProfile(JSON.parse(saved));
+      } catch {}
+    };
+
     window.addEventListener('contentSaved', handleContentSaved as EventListener);
     window.addEventListener('contentUnsaved', handleContentUnsaved as EventListener);
     window.addEventListener('thoughtReacted', handleThoughtReacted as EventListener);
     window.addEventListener('thoughtUnreacted', handleThoughtUnreacted as EventListener);
+    window.addEventListener('userPostCreated', handleUserPostCreated as EventListener);
     
     return () => {
       window.removeEventListener('contentSaved', handleContentSaved as EventListener);
       window.removeEventListener('contentUnsaved', handleContentUnsaved as EventListener);
       window.removeEventListener('thoughtReacted', handleThoughtReacted as EventListener);
       window.removeEventListener('thoughtUnreacted', handleThoughtUnreacted as EventListener);
+      window.removeEventListener('userPostCreated', handleUserPostCreated as EventListener);
     };
   }, [savedPosts, userProfile.posts, watchHistory]); // Add missing dependencies
 
@@ -579,13 +598,31 @@ const ProfilePage = () => {
     setShowEditProfileModal(true);
   };
 
-  const handleSaveProfile = (updatedProfile: Partial<UserProfile>) => {
+  const handleSaveProfile = async (updatedProfile: Partial<UserProfile>) => {
     const currentUser = getStoredUser();
     setUserProfile(prev => ({
       ...prev,
       ...updatedProfile,
       _userEmail: currentUser?.email || prev._userEmail,
     } as unknown as typeof prev));
+    const merged = { ...userProfile, ...updatedProfile, _userEmail: currentUser?.email || userProfile._userEmail };
+    try {
+      await api.updateProfile(merged);
+      await api.indexContent({
+        id: merged.id || currentUser?.id || 'profile',
+        title: merged.name || merged.username || 'User',
+        description: merged.bio || '',
+        type: 'post',
+        creator: merged.name || merged.username || 'user',
+        creatorAvatar: merged.avatar || '',
+        views: '0',
+        thumbnail: merged.avatar || '',
+        category: 'profile',
+        tags: ['profile', merged.name?.toLowerCase() || '', merged.username?.toLowerCase() || ''],
+        publishedAt: new Date().toISOString(),
+        content: merged.bio || '',
+      });
+    } catch {}
     if (typeof window !== 'undefined') {
       window.dispatchEvent(new CustomEvent('profileUpdated', { detail: { ...updatedProfile, _userEmail: currentUser?.email } }));
     }
@@ -605,12 +642,58 @@ const ProfilePage = () => {
     } as typeof prev));
   };
 
-  const handleDeletePost = (postId: string) => {
+  const handleDeletePost = async (postId: string) => {
     setUserProfile(prev => ({
       ...prev,
       posts: prev.posts.filter(post => post.id !== postId)
     }));
+    // Also delete from server
+    try {
+      await api.deletePost(postId);
+    } catch {}
     showSuccess('Post deleted successfully');
+  };
+
+  // Delete all user data
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+
+  const handleDeleteAllData = () => {
+    setShowDeleteConfirm(true);
+  };
+
+  const confirmDeleteAllData = async () => {
+    const currentUser = getStoredUser();
+    const userId = currentUser?.id || userProfile.id || userProfile._userEmail;
+    if (!userId) {
+      showError('Cannot identify user to delete');
+      setShowDeleteConfirm(false);
+      return;
+    }
+    try {
+      const { error } = await api.deleteUserData(userId);
+      if (error) {
+        showError('Failed to delete data: ' + error);
+      } else {
+        // Clear all local data
+        localStorage.removeItem('userProfile');
+        localStorage.removeItem('savedPosts');
+        localStorage.removeItem('savedStories');
+        localStorage.removeItem('watchHistory');
+        localStorage.removeItem('savedContentData');
+        localStorage.removeItem('userReactedThoughts');
+        localStorage.removeItem('equyvo_search_history');
+        setUserProfile(createDefaultProfile(currentUser));
+        setSavedPosts(new Set());
+        setSavedStories(new Set());
+        setWatchHistory([]);
+        setAllSavedContent([]);
+        setUserReactedPosts([]);
+        showSuccess('All your data has been deleted successfully');
+      }
+    } catch (err: any) {
+      showError('Failed to delete data: ' + (err.message || 'Unknown error'));
+    }
+    setShowDeleteConfirm(false);
   };
 
   // Menu handlers for standardized menu
@@ -792,8 +875,12 @@ const ProfilePage = () => {
       <Card className="p-4 md:p-6">
         <div className="flex flex-col items-center text-center">
           <Avatar className="h-20 w-20 md:h-24 md:w-24 mb-3 md:mb-4">
-            <AvatarImage src={userProfile.avatar} />
-            <AvatarFallback className="text-lg md:text-xl">{userProfile.name?.substring(0, 2) || 'JD'}</AvatarFallback>
+            {userProfile.avatar ? (
+              <AvatarImage src={userProfile.avatar} />
+            ) : null}
+            <AvatarFallback className="text-lg md:text-xl">
+              {userProfile.name?.substring(0, 2) || ''}
+            </AvatarFallback>
           </Avatar>
           <h1 className="text-xl md:text-3xl font-bold">{userProfile.name}</h1>
           <p className="text-muted-foreground mb-2 text-sm md:text-base">{userProfile.username}</p>
@@ -818,6 +905,9 @@ const ProfilePage = () => {
               }
             }}>
               <Settings className="h-3 w-3 md:h-4 md:w-4" />
+            </Button>
+            <Button variant="destructive" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleDeleteAllData}>
+              <Trash className="h-3 w-3 md:h-4 md:w-4" /> <span className="hidden xs:inline">Delete My Data</span><span className="xs:hidden">Delete</span>
             </Button>
           </div>
         </div>
@@ -919,15 +1009,15 @@ const ProfilePage = () => {
                   <CardContent className="p-0">
                     <p className="mb-3 md:mb-4 text-sm md:text-base">{post.content}</p>
 
-                    {post.media && (
+                    {(post.media || post.image || post.thumbnail) && (
                       <img 
-                        src={post.media} 
+                        src={post.media || post.image || post.thumbnail}
                         alt="Post media" 
                         className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer" 
                         onClick={() => handleFullscreen(post)}
                         onError={(e) => {
                           const target = e.target as HTMLImageElement;
-                          target.src = `https://picsum.photos/seed/fallback-${post.id}/400/300.jpg`;
+                          target.style.display = 'none';
                         }}
                       />
                     )}
@@ -1448,6 +1538,40 @@ const ProfilePage = () => {
           onComment={(videoId, creator) => handleComment(videoId, creator)}
           onShare={handleShare}
         />
+      )}
+
+      {/* Delete All Data Confirmation Dialog */}
+      {showDeleteConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <Card className="w-full max-w-md mx-4 p-6">
+            <CardHeader className="p-0 mb-4">
+              <div className="flex items-center gap-3">
+                <div className="p-2 bg-red-100 dark:bg-red-900/30 rounded-full">
+                  <AlertTriangle className="h-6 w-6 text-red-600" />
+                </div>
+                <div>
+                  <CardTitle className="text-lg">Delete All Your Data</CardTitle>
+                  <p className="text-sm text-muted-foreground mt-1">This action cannot be undone</p>
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0">
+              <p className="text-sm mb-4">
+                This will permanently delete all your posts, thoughts, stories, moments, profile data, 
+                and saved content from Equyvo. Your account will remain active but all your content will be removed.
+              </p>
+              <div className="flex gap-3 justify-end">
+                <Button variant="outline" onClick={() => setShowDeleteConfirm(false)}>
+                  Cancel
+                </Button>
+                <Button variant="destructive" onClick={confirmDeleteAllData}>
+                  <Trash className="h-4 w-4 mr-2" />
+                  Delete Everything
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       )}
     </div>
   );

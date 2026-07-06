@@ -26,6 +26,7 @@ import {
 import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
+import api from '@/lib/api';
 
 const SettingsPage = () => {
   const navigate = useNavigate();
@@ -112,13 +113,26 @@ const SettingsPage = () => {
   };
 
   const handleDeleteAccount = async () => {
-    if (confirm("Are you sure you want to delete your account? This action cannot be undone.")) {
+    if (confirm("Are you sure you want to delete your account? All your data will be permanently removed. This action cannot be undone.")) {
       try {
-        // For AWS Cognito, account deletion would require admin API calls
-        // For now, we'll just sign out and show a message
+        // Delete user data from the server
+        const userId = user?.id || localStorage.getItem('equyvo_cognito_user') || '';
+        if (userId) {
+          const { error } = await api.deleteUserData(userId);
+          if (error) console.error('Failed to delete user data:', error);
+        }
+        // Clear all local data
+        localStorage.removeItem('userProfile');
+        localStorage.removeItem('savedPosts');
+        localStorage.removeItem('savedStories');
+        localStorage.removeItem('watchHistory');
+        localStorage.removeItem('savedContentData');
+        localStorage.removeItem('userReactedThoughts');
+        localStorage.removeItem('equyvo_search_history');
+        // Sign out
         const result = await signOutUser();
         if (result.success) {
-          showSuccess("Account deletion requested. You'll be contacted for verification.");
+          showSuccess("Your account and all data have been deleted.");
           navigate('/auth');
         } else {
           showError(result.error || "Failed to process account deletion");

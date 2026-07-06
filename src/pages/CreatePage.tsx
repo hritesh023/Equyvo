@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+﻿import React, { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2 } from 'lucide-react';
@@ -8,7 +8,23 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
-import { uploadToCloudinary, isCloudinaryConfigured, getThumbnailUrl, getOptimizedImageUrl, getOptimizedVideoUrl } from '@/lib/cloudinary';
+import { uploadToCloudinary, isCloudinaryConfigured, getOptimizedVideoUrl } from '@/lib/cloudinary';
+import api from '@/lib/api';
+
+// Helper to get current user info from localStorage
+function getCurrentUserInfo(): { userId: string; username: string } {
+  try {
+    const stored = localStorage.getItem('equyvo_cognito_user');
+    if (stored) {
+      const user = JSON.parse(stored);
+      return {
+        userId: user.id || user.email || 'anonymous',
+        username: user.username || user.email?.split('@')[0] || 'anonymous',
+      };
+    }
+  } catch {}
+  return { userId: 'anonymous', username: 'anonymous' };
+}
 
 const CreatePage = () => {
   const [activeTab, setActiveTab] = useState('story');
@@ -136,6 +152,73 @@ const CreatePage = () => {
     comments: number;
     shares: number;
     expiresAt: Date;
+  }
+
+  // Shared helper: persist content to API, index for search, update localStorage, notify other pages
+  async function persistContent(content: Record<string, unknown>) {
+    const userInfo = getCurrentUserInfo();
+    const postData = {
+      ...content,
+      userId: userInfo.userId,
+      user: (content.user as string) || userInfo.username,
+      time: 'just now',
+      createdAt: new Date().toISOString(),
+    };
+    const type = (content.type as string) || 'post';
+    try {
+      if (type === 'story' || type === 'text-story') await api.createStory(postData);
+      else if (type === 'thought') await api.createThought(postData);
+      else if (type === 'moment') await api.createMoment(postData);
+      else await api.createPost(postData);
+    } catch (err) { console.error('Failed to persist to API:', err); }
+    try {
+      await api.indexContent({
+        id: content.id as string,
+        title: ((content.content as string)?.slice(0, 60) || type) as string,
+        description: (content.content as string)?.slice(0, 120) || '',
+        type: type === 'text-story' ? 'story' : (type as any),
+        creator: postData.user,
+        creatorAvatar: (content.avatar as string) || '',
+        views: '0',
+        thumbnail: (content.thumbnail || content.image || content.media || '') as string,
+        category: (content.category as string) || 'general',
+        tags: (content.tags as string[]) || [],
+        publishedAt: new Date().toISOString(),
+        content: (content.content as string) || '',
+      });
+      // Also index the user profile for search discoverability
+      const savedProfile = localStorage.getItem('userProfile');
+      if (savedProfile) {
+        const profile = JSON.parse(savedProfile);
+        if (profile.name || profile.username) {
+          await api.indexContent({
+            id: 'profile-' + (profile.id || userInfo.userId),
+            title: profile.name || profile.username || postData.user,
+            description: profile.bio || '',
+            type: 'post',
+            creator: profile.name || profile.username || postData.user,
+            creatorAvatar: profile.avatar || '',
+            views: '0',
+            thumbnail: profile.avatar || '',
+            category: 'profile',
+            tags: ['profile', (profile.name || '').toLowerCase(), (profile.username || '').toLowerCase(), postData.user.toLowerCase()],
+            publishedAt: new Date().toISOString(),
+            content: profile.bio || '',
+          });
+        }
+      }
+    } catch (err) { console.error('Failed to index content:', err); }
+    try {
+      const savedProfile = localStorage.getItem('userProfile');
+      if (savedProfile) {
+        const profile = JSON.parse(savedProfile);
+        const mediaUrl = content.media || content.image || content.thumbnail || '';
+        profile.posts = [{ id: content.id, user: postData.user, avatar: '', time: 'just now', content: content.content || '', image: mediaUrl, media: mediaUrl, likes: 0, comments: 0, shares: 0, type, createdAt: new Date().toISOString() }, ...(profile.posts || [])];
+        localStorage.setItem('userProfile', JSON.stringify(profile));
+      }
+    } catch (err) { console.error('Failed to update localStorage profile:', err); }
+    // Invalidate search cache so new content appears immediately
+    window.dispatchEvent(new CustomEvent('userPostCreated', { detail: { post: postData, type } }));
   }
 
   const handleFileUpload = async (files: FileList | null, type: string) => {
@@ -293,7 +376,7 @@ const CreatePage = () => {
           fileName: file.name,
           fileSize: file.size,
           duration: file.type.startsWith('video/') ? '0:15' : undefined,
-          thumbnail: result?.secureUrl || getThumbnailUrl(result?.publicId || '', { width: 300, height: 400 }) || 'https://picsum.photos/seed/' + file.name + '/300/400',
+          thumbnail: result?.secureUrl || '',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 500),
@@ -304,6 +387,9 @@ const CreatePage = () => {
         }));
 
         setUploadedStories(prev => [...prev, ...newUploadedStories]);
+        for (const s of newUploadedStories) {
+          await persistContent({ id: s.id, type: 'story', content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '', image: s.thumbnail, thumbnail: s.thumbnail, user: getCurrentUserInfo().username });
+        }
         setIsUploading(false);
         showSuccess('Story posted successfully! It will be available for 24 hours.');
         setStoryFiles([]);
@@ -341,7 +427,7 @@ const CreatePage = () => {
     }
   };
 
-  const handlePostTextStory = (action: 'post' | 'schedule' | 'draft' = 'post') => {
+  const handlePostTextStory = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     if (!textStoryContent.trim()) {
       showError('Please enter some text for your story');
       return;
@@ -371,6 +457,7 @@ const CreatePage = () => {
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
+        await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '' });
         showSuccess('Text story posted successfully! It will be available for 24 hours.');
         setTextStoryContent('');
         setTextStoryBackground('#000000');
@@ -441,7 +528,7 @@ const CreatePage = () => {
           content: thoughtContent,
           hasMedia: !!thoughtVideo,
           mediaType: thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined,
-          mediaUrl: cloudinaryUrl || (thoughtVideo ? 'https://picsum.photos/seed/' + thoughtVideo.name + '/300/200' : undefined),
+          mediaUrl: cloudinaryUrl || (thoughtVideo ? '' : undefined),
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 200),
@@ -452,6 +539,7 @@ const CreatePage = () => {
         };
 
         setUploadedThoughts(prev => [...prev, newUploadedThought]);
+        await persistContent({ id: newUploadedThought.id, type: 'thought', content: newUploadedThought.content, image: newUploadedThought.mediaUrl, thumbnail: newUploadedThought.mediaUrl });
         setIsUploading(false);
         showSuccess('Thought posted successfully!');
         setThoughtContent('');
@@ -521,7 +609,7 @@ const CreatePage = () => {
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: result?.secureUrl || getOptimizedImageUrl(result?.publicId || '') || 'https://picsum.photos/seed/' + file.name + '/300/400',
+          thumbnail: result?.secureUrl || '',
           caption: photoCaption,
           uploadDate: new Date(),
           isPrivate: false,
@@ -532,6 +620,9 @@ const CreatePage = () => {
         }));
 
         setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
+        for (const p of newUploadedPhotos) {
+          await persistContent({ id: p.id, type: 'photo', content: p.caption, image: p.thumbnail, thumbnail: p.thumbnail });
+        }
         setIsUploading(false);
         showSuccess(`${photoFiles.length} photo(s) posted successfully!`);
         setPhotoFiles([]);
@@ -603,7 +694,7 @@ const CreatePage = () => {
           fileName: file.name,
           fileSize: file.size,
           duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
-          thumbnail: result?.secureUrl || getThumbnailUrl(result?.publicId || '', { width: 300, height: 180 }) || 'https://picsum.photos/seed/' + file.name + '/300/180',
+          thumbnail: result?.secureUrl || '',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 1000),
@@ -615,6 +706,9 @@ const CreatePage = () => {
         }));
 
         setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
+        for (const v of newUploadedVideos) {
+          await persistContent({ id: v.id, type: 'video', content: v.title, image: v.thumbnail, thumbnail: v.thumbnail });
+        }
         setIsUploading(false);
         showSuccess(`${videoFiles.length} video(s) posted successfully!`);
         setVideoFiles([]);
@@ -747,7 +841,7 @@ const CreatePage = () => {
       duration: cloudinaryResult?.duration
         ? `${Math.floor(cloudinaryResult.duration / 60)}:${String(Math.floor(cloudinaryResult.duration % 60)).padStart(2, '0')}`
         : '0:00',
-      thumbnail: cloudinaryResult?.secureUrl || 'https://picsum.photos/seed/' + file.name + '/300/180',
+      thumbnail: cloudinaryResult?.secureUrl || '',
       uploadDate: new Date(),
       isPrivate: false,
       views: 0,
@@ -759,6 +853,7 @@ const CreatePage = () => {
     };
 
     setUploadedVideos(prev => [...prev, newUploadedVideo]);
+    await persistContent({ id: newUploadedVideo.id, type: 'video', content: newUploadedVideo.title, image: newUploadedVideo.thumbnail, thumbnail: newUploadedVideo.thumbnail });
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');

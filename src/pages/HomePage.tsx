@@ -90,6 +90,10 @@ const HomePage = () => {
     };
     
     loadPosts();
+
+    const handlePostCreated = () => { loadPosts(); };
+    window.addEventListener('userPostCreated', handlePostCreated);
+    return () => window.removeEventListener('userPostCreated', handlePostCreated);
   }, []);
 
   // Check if user has uploaded stories (simulated for demo)

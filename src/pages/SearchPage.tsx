@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { Search, Filter, Grid, List, TrendingUp, Clock, Sparkles, Eye, Monitor, MessageCircle, Share2, Bookmark, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,7 +20,7 @@ import FullscreenViewer from '@/components/FullscreenViewer';
 import { cn } from '@/lib/utils';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
-import { searchContent, ContentIndexItem, getTrendingContent, getAllContent } from '@/lib/content-index';
+import { searchContentAsync, ContentIndexItem, getTrendingContent, getAllContent } from '@/lib/content-index';
 
 type SearchItem = ContentIndexItem;
 
@@ -122,23 +122,34 @@ const SearchPage: React.FC = () => {
     showSuccess('🔗 Link copied to clipboard!');
   };
 
-  // Search using content index
-  const filterResults = useCallback((searchQuery: string) => {
-    const { results, isAiRecommended: aiRec } = searchContent(searchQuery);
+  // Search using content index (sync + async refresh)
+  const filterResults = useCallback(async (searchQuery: string) => {
+    // 1. Try sync search with cached data first
+    const { results: syncResults, isAiRecommended: aiRec } = searchContent(searchQuery);
     setIsAiRecommended(aiRec);
-    return results;
+    if (syncResults.length > 0) return syncResults;
+
+    // 2. Fall back to async search (waits for API)
+    try {
+      const { results, isAiRecommended: aiRec2 } = await searchContentAsync(searchQuery);
+      setIsAiRecommended(aiRec2);
+      return results;
+    } catch {
+      return [];
+    }
   }, []);
 
   // Perform search when query changes
   useEffect(() => {
     if (query) {
       setIsLoading(true);
-      setTimeout(() => {
-        const filteredResults = filterResults(query);
+      const timer = setTimeout(async () => {
+        const filteredResults = await filterResults(query);
         setResults(filteredResults);
         setIsLoading(false);
         setIsInitialLoad(false);
       }, 400);
+      return () => clearTimeout(timer);
     } else {
       setResults(getAllContent().slice(0, 12));
       setIsAiRecommended(false);

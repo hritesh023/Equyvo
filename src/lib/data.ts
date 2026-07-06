@@ -1,159 +1,68 @@
 import { Post, Moment, Story } from '@/types';
+import api from './api';
 
-// Mock data for development when AWS is not configured
-const mockPosts: Post[] = [
-  {
-    id: '1',
-    user: 'john_doe',
-    avatar: '',
-    time: '2 hours ago',
-    content: 'Just launched my new app! Check it out and let me know what you think. #development #react',
-    image: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&h=400&fit=crop',
-    likes: 42,
-    reacts: 8,
-    comments: 12,
-    shares: 3,
-    type: 'post',
-    tags: ['development', 'react'],
-    categories: ['tech'],
-    userId: 'user1',
-    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-  },
-  {
-    id: '2',
-    user: 'jane_smith',
-    avatar: '',
-    time: '5 hours ago',
-    content: 'Beautiful sunset today! Sometimes you need to pause and appreciate the little things. 🌅',
-    image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&h=600&fit=crop',
-    likes: 128,
-    reacts: 24,
-    comments: 18,
-    shares: 7,
-    type: 'post',
-    tags: ['nature', 'sunset'],
-    categories: ['lifestyle'],
-    userId: 'user2',
-    createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
-  }
-];
+let hasRealContent = false;
+try {
+  const val = localStorage.getItem('equyvo_has_real_content');
+  if (val === 'true') hasRealContent = true;
+} catch {}
 
-const mockMoments: Moment[] = [
-  {
-    id: '1',
-    user: 'mike_wilson',
-    content: 'Quick coding session update',
-    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=700&fit=crop&auto=format&dpr=2',
-    mediaType: 'video',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    likes: 89,
-    comments: 15,
-    views: 342,
-    time: '1 hour ago',
-    userId: 'user3',
-    createdAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString()
-  },
-  {
-    id: '2',
-    user: 'sarah_creative',
-    content: 'Morning inspiration!',
-    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1490730141103-6cac27aaab94?w=400&h=700&fit=crop&auto=format&dpr=2',
-    mediaType: 'video',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    likes: 234,
-    comments: 42,
-    views: 1024,
-    time: '3 hours ago',
-    userId: 'user4',
-    createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString()
-  },
-  {
-    id: '3',
-    user: 'alex_adventures',
-    content: 'City vibes!',
-    media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    thumbnail: 'https://images.unsplash.com/photo-1516373363238-71c1eee6e0c5?w=400&h=700&fit=crop&auto=format&dpr=2',
-    mediaType: 'video',
-    videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    likes: 567,
-    comments: 89,
-    views: 2341,
-    time: '5 hours ago',
-    userId: 'user5',
-    createdAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString()
-  }
-];
+export function markHasRealContent() {
+  hasRealContent = true;
+  try { localStorage.setItem('equyvo_has_real_content', 'true'); } catch {}
+}
 
-const mockStories: Story[] = [
-  {
-    id: '1',
-    user: 'alex_jones',
-    avatar: 'https://picsum.photos/seed/alex/200/200',
-    image: 'https://images.unsplash.com/photo-1559526324-59b1a3440d8b?w=400&h=600&fit=crop',
-    time: '30 minutes ago',
-    type: 'image',
-    userId: 'user4',
-    createdAt: new Date(Date.now() - 30 * 60 * 1000).toISOString()
-  },
-  {
-    id: '2',
-    user: 'sarah_creative',
-    avatar: 'https://picsum.photos/seed/sarah/200/200',
-    image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=600&fit=crop',
-    video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    time: '1 hour ago',
-    type: 'video',
-    userId: 'user5',
-    createdAt: new Date(Date.now() - 60 * 60 * 1000).toISOString()
-  },
-  {
-    id: '3',
-    user: 'mike_adventures',
-    avatar: 'https://picsum.photos/seed/mike/200/200',
-    image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=600&fit=crop',
-    time: '2 hours ago',
-    type: 'image',
-    userId: 'user6',
-    createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString()
-  },
-];
+function filterSeed<T extends { isSeed?: boolean }>(items: T[]): T[] {
+  if (hasRealContent) return items.filter(i => !i.isSeed);
+  return items;
+}
 
-// Fetch posts (using mock data for development only)
+// Fetch posts from the API
 export const fetchPosts = async (userId?: string, limit = 50): Promise<Post[]> => {
-  if (!import.meta.env.DEV) return [];
   try {
-    await new Promise(resolve => setTimeout(resolve, 500));
-    return mockPosts.slice(0, limit);
-  } catch {
+    const { data, error } = await api.getPosts(limit);
+    if (error) {
+      console.warn('Failed to fetch posts:', error);
+      return [];
+    }
+    return filterSeed(data || []);
+  } catch (err) {
+    console.error('Error fetching posts:', err);
     return [];
   }
 };
 
-// Fetch moments (using mock data for development only)
+// Fetch moments from the API
 export const fetchMoments = async (limit = 20): Promise<Moment[]> => {
-  if (!import.meta.env.DEV) return [];
   try {
-    await new Promise(resolve => setTimeout(resolve, 300));
-    return mockMoments.slice(0, limit);
-  } catch {
+    const { data, error } = await api.getMoments(limit);
+    if (error) {
+      console.warn('Failed to fetch moments:', error);
+      return [];
+    }
+    return filterSeed(data || []);
+  } catch (err) {
+    console.error('Error fetching moments:', err);
     return [];
   }
 };
 
-// Fetch stories (using mock data for development only)
+// Fetch stories from the API
 export const fetchStories = async (limit = 20): Promise<Story[]> => {
-  if (!import.meta.env.DEV) return [];
   try {
-    await new Promise(resolve => setTimeout(resolve, 200));
-    return mockStories.slice(0, limit);
-  } catch {
+    const { data, error } = await api.getStories(limit);
+    if (error) {
+      console.warn('Failed to fetch stories:', error);
+      return [];
+    }
+    return filterSeed(data || []);
+  } catch (err) {
+    console.error('Error fetching stories:', err);
     return [];
   }
 };
 
-// Create a new post (mock implementation for development only)
+// Create a new post via the API
 export const createPost = async (postData: {
   content: string;
   image_url?: string;
@@ -161,16 +70,25 @@ export const createPost = async (postData: {
   tags?: string[];
   categories?: string[];
 }): Promise<{ success: boolean; post?: Post; error?: string }> => {
-  if (!import.meta.env.DEV) return { success: false, error: 'Not available in production' };
   try {
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    const newPost: Post = {
-      id: Date.now().toString(),
-      user: 'current_user',
+    // Get user info from localStorage
+    let userId = 'anonymous';
+    let username = 'anonymous';
+    try {
+      const stored = localStorage.getItem('equyvo_cognito_user');
+      if (stored) {
+        const user = JSON.parse(stored);
+        userId = user.id || user.email || 'anonymous';
+        username = user.username || user.email?.split('@')[0] || 'anonymous';
+      }
+    } catch {}
+
+    const { data, error } = await api.createPost({
+      userId,
+      user: username,
       avatar: '',
-      time: 'just now',
       content: postData.content,
-      image: postData.image_url,
+      image: postData.image_url || '',
       likes: 0,
       reacts: 0,
       comments: 0,
@@ -178,31 +96,22 @@ export const createPost = async (postData: {
       type: postData.type || 'post',
       tags: postData.tags || [],
       categories: postData.categories || [],
-      userId: 'current_user_id',
-      createdAt: new Date().toISOString()
-    };
+    });
 
-    mockPosts.unshift(newPost);
-    return { success: true, post: newPost };
-  } catch {
-    return { success: false, error: 'Failed to create post' };
+    if (error) return { success: false, error };
+    markHasRealContent();
+    return { success: true, post: data };
+  } catch (err: any) {
+    return { success: false, error: err.message || 'Failed to create post' };
   }
 };
 
-// Get user profile data (mock implementation for development only)
+// Get user profile data from the API
 export const getUserProfile = async (userId: string) => {
-  if (!import.meta.env.DEV) return null;
   try {
-    await new Promise(resolve => setTimeout(resolve, 300));
-    const mockProfile = {
-      id: userId,
-      username: `user_${userId}`,
-      full_name: 'Demo User',
-      avatar_url: '',
-      bio: 'This is a demo user profile',
-      created_at: new Date().toISOString()
-    };
-    return mockProfile;
+    const { data, error } = await api.getProfile(userId);
+    if (error) return null;
+    return data;
   } catch {
     return null;
   }

@@ -2,5 +2,9 @@ name = "equyvo"
 compatibility_date = "2026-07-05"
 pages_build_output_dir = "dist"
 
-[env.production]
-vars = { ENVIRONMENT = "production" }
+# KV namespace for data persistence
+# Create using: npx wrangler kv:namespace create EQUYVO_KV
+[[kv_namespaces]]
+binding = "EQUYVO_KV"
+id = "6822c0d9813e4bc68724dec1b69593c6"
+preview_id = "6822c0d9813e4bc68724dec1b69593c6"

@@ -1,7 +1,8 @@
-const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME as string | undefined;
-const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET as string | undefined;
-const BASE_URL = `https://res.cloudinary.com/${CLOUD_NAME}`;
-const API_URL = `https://api.cloudinary.com/v1_1/${CLOUD_NAME}`;
+import api from './api';
+
+export function isCloudinaryConfigured(): boolean {
+  return true; // Backend handles Cloudinary upload with server env vars
+}
 
 export interface CloudinaryUploadResult {
   publicId: string;
@@ -15,14 +16,10 @@ export interface CloudinaryUploadResult {
   duration?: number;
 }
 
-export function isCloudinaryConfigured(): boolean {
-  return !!(CLOUD_NAME && UPLOAD_PRESET);
-}
-
 export function compressImage(
   file: File,
-  maxWidth = 1200,
-  quality = 0.6
+  maxWidth = 600,
+  quality = 0.2
 ): Promise<Blob> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -65,12 +62,6 @@ export async function uploadToCloudinary(
     skipCompression?: boolean;
   }
 ): Promise<CloudinaryUploadResult> {
-  if (!isCloudinaryConfigured()) {
-    throw new Error(
-      'Cloudinary not configured. Set VITE_CLOUDINARY_CLOUD_NAME and VITE_CLOUDINARY_UPLOAD_PRESET in .env'
-    );
-  }
-
   const isImage = file instanceof File && file.type.startsWith('image/');
 
   let uploadFile = file;
@@ -82,43 +73,21 @@ export async function uploadToCloudinary(
     }
   }
 
-  const formData = new FormData();
-  formData.append('file', uploadFile);
-  formData.append('upload_preset', UPLOAD_PRESET!);
+  const { data, error } = await api.uploadFile(uploadFile, options?.folder || 'equyvo/uploads');
 
-  if (options?.folder) formData.append('folder', options.folder);
-  if (options?.publicId) formData.append('public_id', options.publicId);
-  if (options?.tags) formData.append('tags', options.tags.join(','));
-
-  const resourceType = isImage ? 'image' : 'video';
-
-  const compression = resourceType === 'image'
-    ? 'q_auto:low,f_auto,c_limit,w_1080'
-    : 'q_20,w_720';
-
-  formData.append('transformation', compression);
-
-  const response = await fetch(`${API_URL}/${resourceType}/upload`, {
-    method: 'POST',
-    body: formData,
-  });
-
-  if (!response.ok) {
-    const errorData = await response.json().catch(() => ({}));
-    throw new Error(errorData.error?.message || `Upload failed: ${response.statusText}`);
+  if (error || !data) {
+    throw new Error(error || 'Upload failed');
   }
 
-  const data = await response.json();
-
   return {
-    publicId: data.public_id,
-    secureUrl: data.secure_url,
-    resourceType: data.resource_type,
+    publicId: data.publicId,
+    secureUrl: data.secureUrl,
+    resourceType: data.resourceType as 'image' | 'video',
     format: data.format,
     bytes: data.bytes,
     width: data.width,
     height: data.height,
-    createdAt: data.created_at,
+    createdAt: data.createdAt,
     duration: data.duration,
   };
 }
@@ -135,21 +104,8 @@ export function getCloudinaryUrl(
     effects?: string[];
   }
 ): string {
-  if (!CLOUD_NAME) return '';
-
-  const transformations: string[] = [];
-
-  if (options?.width) transformations.push(`w_${options.width}`);
-  if (options?.height) transformations.push(`h_${options.height}`);
-  if (options?.crop) transformations.push(`c_${options.crop}`);
-  if (options?.quality) transformations.push(`q_${options.quality}`);
-  if (options?.format) transformations.push(`f_${options.format}`);
-  if (options?.effects?.length) transformations.push(...options.effects);
-
-  const transformStr = transformations.length > 0 ? transformations.join(',') + '/' : '';
-  const rt = options?.resourceType || 'image';
-
-  return `${BASE_URL}/${rt}/upload/${transformStr}${publicId}`;
+  if (!publicId) return '';
+  return ''; // URLs are constructed server-side; just return the secureUrl from upload result
 }
 
 export function getOptimizedImageUrl(
@@ -160,44 +116,20 @@ export function getOptimizedImageUrl(
     crop?: string;
   }
 ): string {
-  return getCloudinaryUrl(publicId, {
-    ...options,
-    quality: 'auto:good',
-    format: 'auto',
-    crop: options?.crop || 'fill',
-    effects: ['e_improve'],
-  });
+  return ''; // Use secureUrl from upload result directly
 }
 
 export function getOptimizedVideoUrl(publicId: string, options?: { width?: number; height?: number }): string {
-  return getCloudinaryUrl(publicId, {
-    ...options,
-    quality: 'auto:good',
-    format: 'auto',
-    resourceType: 'video',
-  });
+  return ''; // Use secureUrl from upload result directly
 }
 
 export function getThumbnailUrl(
   publicId: string,
   options?: { width?: number; height?: number }
 ): string {
-  return getCloudinaryUrl(publicId, {
-    width: options?.width || 300,
-    height: options?.height || 400,
-    quality: 'auto:good',
-    crop: 'fill',
-    format: 'auto',
-  });
+  return ''; // Use secureUrl from upload result directly
 }
 
 export function getAvatarUrl(publicId: string, size?: number): string {
-  return getCloudinaryUrl(publicId, {
-    width: size || 150,
-    height: size || 150,
-    quality: 'auto:good',
-    crop: 'fill',
-    format: 'auto',
-    effects: ['g_face', 'r_max'],
-  });
+  return ''; // Use secureUrl from upload result directly
 }
