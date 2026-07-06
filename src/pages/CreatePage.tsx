@@ -43,6 +43,8 @@ const CreatePage = () => {
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [videoFiles, setVideoFiles] = useState<File[]>([]);
   const [photoCaption, setPhotoCaption] = useState('');
+  const [momentFiles, setMomentFiles] = useState<File[]>([]);
+  const [momentContent, setMomentContent] = useState('');
   const [videoCaption, setVideoCaption] = useState('');
 
   // New states for scheduling and content management
@@ -57,6 +59,7 @@ const CreatePage = () => {
   const [uploadedStories, setUploadedStories] = useState<UploadedStory[]>([]);
   const [uploadedThoughts, setUploadedThoughts] = useState<UploadedThought[]>([]);
   const [uploadedPhotos, setUploadedPhotos] = useState<UploadedPhoto[]>([]);
+  const [uploadedMoments, setUploadedMoments] = useState<UploadedMoment[]>([]);
   const [uploadedTextStories, setUploadedTextStories] = useState<UploadedTextStory[]>([]);
   const [showContentManagement, setShowContentManagement] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'text-stories'>('all');
@@ -138,6 +141,20 @@ const CreatePage = () => {
     likes: number;
     comments: number;
     shares: number;
+  }
+
+  interface UploadedMoment {
+    id: string;
+    fileName: string;
+    fileSize: number;
+    thumbnail: string;
+    mediaType?: 'image' | 'video';
+    content: string;
+    uploadDate: Date;
+    isPrivate: boolean;
+    views: number;
+    likes: number;
+    comments: number;
   }
 
   interface UploadedTextStory {
@@ -320,6 +337,25 @@ const CreatePage = () => {
           showError('Please select videos only');
         }
         break;
+
+      case 'moment':
+        if (files.length > 0) {
+          const validFiles = Array.from(files).filter(file => {
+            const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
+            const isValidSize = file.size <= 100 * 1024 * 1024;
+            if (!isValidType) {
+              showError('Please select only images or videos');
+              return false;
+            }
+            if (!isValidSize) {
+              showError('File size must be less than 100MB');
+              return false;
+            }
+            return true;
+          });
+          setMomentFiles(validFiles);
+        }
+        break;
     }
   };
 
@@ -338,6 +374,10 @@ const CreatePage = () => {
 
       case 'video':
         setVideoFiles(prev => prev.filter((_, i) => i !== index));
+        break;
+
+      case 'moment':
+        setMomentFiles(prev => prev.filter((_, i) => i !== index));
         break;
     }
   };
@@ -742,6 +782,93 @@ const CreatePage = () => {
         };
         setDraftPosts(prev => [...prev, newDraftVideos]);
         showSuccess(`${videoFiles.length} video(s) saved as draft!`);
+        break;
+    }
+  };
+
+  const handlePostMoment = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (momentFiles.length === 0) {
+      showError('Please select at least one photo or video');
+      return;
+    }
+
+    const momentsData = { files: momentFiles, content: momentContent };
+
+    switch (action) {
+      case 'post':
+        setIsUploading(true);
+        const uploadedResults = await Promise.all(
+          momentFiles.map(async (file) => {
+            try {
+              if (isCloudinaryConfigured()) {
+                const result = await uploadToCloudinary(file, { folder: 'equyvo/moments' });
+                return { file, result };
+              }
+            } catch (err) {
+              showError(`Upload failed for ${file.name}`);
+            }
+            return { file, result: null };
+          })
+        );
+
+        const newUploadedMoments: UploadedMoment[] = uploadedResults.map(({ file, result }, index) => ({
+          id: Date.now().toString() + index,
+          fileName: file.name,
+          fileSize: file.size,
+          thumbnail: result?.secureUrl || '',
+          mediaType: file.type.startsWith('image/') ? 'image' : 'video',
+          content: momentContent,
+          uploadDate: new Date(),
+          isPrivate: false,
+          views: Math.floor(Math.random() * 200),
+          likes: Math.floor(Math.random() * 30),
+          comments: Math.floor(Math.random() * 10),
+        }));
+
+        setUploadedMoments(prev => [...prev, ...newUploadedMoments]);
+        for (const m of newUploadedMoments) {
+          await persistContent({
+            id: m.id,
+            type: 'moment',
+            content: m.content,
+            media: m.thumbnail,
+            thumbnail: m.thumbnail,
+            mediaType: m.mediaType,
+          });
+        }
+        setIsUploading(false);
+        showSuccess(`${momentFiles.length} moment(s) posted successfully!`);
+        setMomentFiles([]);
+        setMomentContent('');
+        break;
+      case 'schedule':
+        if (!scheduleDateTime) {
+          showError('Please select a date and time for scheduling');
+          return;
+        }
+        const newScheduledMoments: ScheduledPost = {
+          id: Date.now().toString(),
+          type: 'moments',
+          content: momentsData,
+          scheduledTime: new Date(scheduleDateTime),
+          status: 'scheduled'
+        };
+        setScheduledPosts(prev => [...prev, newScheduledMoments]);
+        showSuccess(`${momentFiles.length} moment(s) scheduled successfully!`);
+        setMomentFiles([]);
+        setMomentContent('');
+        setShowScheduleModal(false);
+        setScheduleDateTime('');
+        break;
+      case 'draft':
+        const newDraftMoments: DraftPost = {
+          id: Date.now().toString(),
+          type: 'moments',
+          content: momentsData,
+          createdAt: new Date()
+        };
+        setDraftPosts(prev => [...prev, newDraftMoments]);
+        showSuccess(`${momentFiles.length} moment(s) saved as draft!`);
         break;
     }
   };
@@ -1530,7 +1657,7 @@ const CreatePage = () => {
         <CardHeader>
           <CardTitle>What would you like to create?</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <CardContent className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
           <Button
             variant={activeTab === 'story' ? 'default' : 'outline'}
             className="flex flex-col h-28 items-center justify-center gap-2 hover:scale-105 transition-transform duration-200"
@@ -1585,18 +1712,28 @@ const CreatePage = () => {
             <span>Go Live!</span>
             <span className="text-xs text-muted-foreground">Stream</span>
           </Button>
+          <Button
+            variant={activeTab === 'moment' ? 'default' : 'outline'}
+            className="flex flex-col h-28 items-center justify-center gap-2 hover:scale-105 transition-transform duration-200"
+            onClick={() => setActiveTab('moment')}
+          >
+            <Video className="h-8 w-8 text-orange-500" />
+            <span>Moments</span>
+            <span className="text-xs text-muted-foreground">Clips</span>
+          </Button>
         </CardContent>
       </Card>
 
       {/* Create Content Tabs */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-6">
+        <TabsList className="grid w-full grid-cols-7">
           <TabsTrigger value="story">Story</TabsTrigger>
           <TabsTrigger value="text-story">Text Story</TabsTrigger>
           <TabsTrigger value="thought">Thought</TabsTrigger>
           <TabsTrigger value="photo">Photos</TabsTrigger>
           <TabsTrigger value="video">Videos</TabsTrigger>
           <TabsTrigger value="live">Live</TabsTrigger>
+          <TabsTrigger value="moment">Moments</TabsTrigger>
         </TabsList>
 
         {/* Story Upload */}
@@ -2198,6 +2335,91 @@ const CreatePage = () => {
                   End Live Stream
                 </Button>
               )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Moments Upload */}
+        <TabsContent value="moment" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Video className="h-5 w-5 text-orange-500" />
+                Create Moments
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Share short moments — photos or video clips
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div>
+                <Label htmlFor="moment-content">Caption</Label>
+                <Textarea
+                  id="moment-content"
+                  placeholder="What's happening?"
+                  value={momentContent}
+                  onChange={(e) => setMomentContent(e.target.value)}
+                  className="mt-1"
+                />
+              </div>
+              <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
+                <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
+                <p className="text-lg font-semibold mb-2">Upload Moment Media</p>
+                <p className="text-sm text-muted-foreground mb-4">
+                  Photos or Videos
+                </p>
+                <Input
+                  type="file"
+                  accept="image/*,video/*"
+                  multiple
+                  onChange={(e) => handleFileUpload(e.target.files, 'moment')}
+                  className="max-w-xs mx-auto"
+                />
+              </div>
+              {momentFiles.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="font-semibold">Selected Files:</h4>
+                  {momentFiles.map((file, index) => (
+                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
+                      <div className="flex items-center gap-3">
+                        {file.type.startsWith('image/') ? (
+                          <Image className="h-8 w-8 text-blue-500" />
+                        ) : (
+                          <Video className="h-8 w-8 text-orange-500" />
+                        )}
+                        <div>
+                          <p className="font-medium truncate max-w-[200px]">{file.name}</p>
+                          <p className="text-sm text-muted-foreground">
+                            {(file.size / (1024 * 1024)).toFixed(1)} MB
+                          </p>
+                        </div>
+                      </div>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={() => handleRemoveFile(index, 'moment')}
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              )}
+              <div className="flex gap-2">
+                <Button onClick={() => handlePostMoment('post')} disabled={isUploading || momentFiles.length === 0} className="flex-1">
+                  {isUploading ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Uploading...
+                    </>
+                  ) : (
+                    'Post Moments'
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => handlePostMoment('draft')} disabled={momentFiles.length === 0}>
+                  Save Draft
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </TabsContent>
