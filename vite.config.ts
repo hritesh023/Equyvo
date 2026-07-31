@@ -96,11 +96,6 @@ export default defineConfig(({ mode }) => ({
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || mode),
     global: 'globalThis',
-    ...(mode === 'production' && {
-      'console.log': 'undefined',
-      'console.warn': 'undefined',
-      'console.error': 'undefined',
-    }),
   },
   experimental: {
     renderBuiltUrl(filename, { hostType }) {

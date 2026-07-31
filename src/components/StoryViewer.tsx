@@ -291,14 +291,17 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   }, [currentIndex]);
 
-  const handleDelete = () => {
-    if (onDeleteStory) {
-      onDeleteStory(currentStory.id);
+  const handleDelete = async () => {
+    try {
+      const { default: api } = await import('@/lib/api');
+      await api.deleteStory(currentStory.id);
+      if (onDeleteStory) {
+        onDeleteStory(currentStory.id);
+      }
       showSuccess('Story deleted successfully.');
       onClose();
-    } else {
-      showSuccess('Story deleted successfully.');
-      onClose();
+    } catch {
+      showError('Failed to delete story. Please try again.');
     }
   };
 

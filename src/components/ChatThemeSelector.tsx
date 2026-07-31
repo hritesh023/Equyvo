@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useCallback } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -18,6 +18,8 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
   const [selectedColor, setSelectedColor] = useState(chatTheme.value || '#3b82f6');
   const [opacity, setOpacity] = useState(chatTheme.opacity || 1);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const chatThemeRef = useRef(chatTheme);
+  chatThemeRef.current = chatTheme;
 
   const handleColorChange = (color: string) => {
     setSelectedColor(color);
@@ -28,15 +30,16 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
     });
   };
 
-  const handleOpacityChange = (newOpacity: number[]) => {
+  const handleOpacityChange = useCallback((newOpacity: number[]) => {
     const newOpacityValue = newOpacity[0];
     setOpacity(newOpacityValue);
+    const current = chatThemeRef.current;
     setChatTheme({
-      type: chatTheme.type,
-      value: chatTheme.value,
+      type: current.type,
+      value: current.value,
       opacity: newOpacityValue
     });
-  };
+  }, [setChatTheme]);
 
   const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

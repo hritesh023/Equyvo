@@ -3,12 +3,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageCircle, Search, Send, Paperclip, X, Palette } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { showSuccess } from '@/utils/toast';
 import { ChatThemeSelector } from './ChatThemeSelector';
 import { useChatTheme } from '@/contexts/ChatThemeContext';
-import { navigateToProfile, getUserId, getUsername } from '@/utils/profile-navigation';
+import { navigateToProfile } from '@/utils/profile-navigation';
+import { getStoredUser } from '@/lib/auth';
 
 interface Message {
   id: string;
@@ -33,82 +34,79 @@ interface Contact {
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [activeChat, setActiveChat] = useState<Contact | null>(null);
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<{ [key: string]: Message[] }>({});
   const [searchQuery, setSearchQuery] = useState('');
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const fileInputRef = React.useRef<HTMLInputElement>(null);
   const { chatTheme } = useChatTheme();
   const navigate = useNavigate();
 
-  // Mock Data with messages
-  const contacts: Contact[] = [
-    { 
-      id: '1', 
-      name: 'Alice Chen', 
-      avatar: 'https://picsum.photos/seed/alice/200/200', 
-      lastMessage: 'Hey! Did you see the new moment?', 
-      timestamp: '10:30 AM', 
-      online: true,
-      messages: [
-        { id: '1', text: 'Hey! How are you?', sender: 'other', timestamp: '10:00 AM' },
-        { id: '2', text: "I'm doing great, thanks for asking!", sender: 'user', timestamp: '10:05 AM' },
-        { id: '3', text: 'Hey! Did you see the new moment?', sender: 'other', timestamp: '10:30 AM' },
-      ]
-    },
-    { 
-      id: '2', 
-      name: 'Bob Smith', 
-      avatar: 'https://picsum.photos/seed/bob/200/200', 
-      lastMessage: 'The design looks great!', 
-      timestamp: 'Yesterday', 
-      online: false,
-      messages: [
-        { id: '1', text: 'Can you review my design?', sender: 'other', timestamp: 'Yesterday' },
-        { id: '2', text: 'The design looks great!', sender: 'user', timestamp: 'Yesterday' },
-      ]
-    },
-    { 
-      id: '3', 
-      name: 'Emma Wilson', 
-      avatar: 'https://picsum.photos/seed/emma/200/200', 
-      lastMessage: 'Can we call later?', 
-      timestamp: 'Mon', 
-      online: true,
-      messages: [
-        { id: '1', text: 'Are you free for a call?', sender: 'other', timestamp: 'Mon' },
-        { id: '2', text: 'Can we call later?', sender: 'user', timestamp: 'Mon' },
-      ]
-    },
-    { 
-      id: '4', 
-      name: 'David Park', 
-      avatar: 'https://picsum.photos/seed/david/200/200', 
-      lastMessage: 'Sent a photo', 
-      timestamp: 'Sun', 
-      online: false,
-      messages: [
-        { id: '1', text: 'Check out this photo!', sender: 'other', timestamp: 'Sun', type: 'image', fileUrl: 'https://picsum.photos/seed/david-photo/400/300' },
-        { id: '2', text: 'Sent a photo', sender: 'user', timestamp: 'Sun' },
-      ]
-    },
-  ];
+  // Purge self-chat data synchronously (runs during render, not deferred).
+  // A self-chat is any contact whose messages all have sender === 'user'
+  // (no replies from 'other' — impossible in a real two-person conversation).
+  const initData = (() => {
+    const rawContacts = localStorage.getItem('equyvo_chat_contacts');
+    const rawMessages = localStorage.getItem('equyvo_chat_messages');
+    const allContacts: Contact[] = rawContacts ? JSON.parse(rawContacts) : [];
+    const allMessages: { [key: string]: Message[] } = rawMessages ? JSON.parse(rawMessages) : {};
+    const stored = getStoredUser();
+
+    const selfIds = stored
+      ? [stored.id, stored.username, stored.fullName, stored.email, stored.email?.split('@')[0]]
+          .filter(Boolean).map(s => s?.toLowerCase())
+      : [];
+
+    const isSelfChat = (contact: Contact) => {
+      const msgs = allMessages[contact.id];
+      // If all messages are from 'user', this is a self-chat
+      if (msgs && msgs.length > 0) {
+        return msgs.every(m => m.sender === 'user');
+      }
+      // No messages — check identity fields
+      if (selfIds.length === 0) return true; // can't verify, remove it
+      const cName = contact.name.toLowerCase();
+      const cId = contact.id.toLowerCase();
+      return selfIds.some(id => cId === id || cName === id);
+    };
+
+    const keptContacts = allContacts.filter(c => !isSelfChat(c));
+    const keptContactIds = new Set(keptContacts.map(c => c.id));
+    const keptMessages: { [key: string]: Message[] } = {};
+    for (const [key, msgs] of Object.entries(allMessages)) {
+      if (keptContactIds.has(key)) {
+        keptMessages[key] = msgs;
+      }
+    }
+
+    if (keptContacts.length !== allContacts.length || Object.keys(keptMessages).length !== Object.keys(allMessages).length) {
+      localStorage.setItem('equyvo_chat_contacts', JSON.stringify(keptContacts));
+      localStorage.setItem('equyvo_chat_messages', JSON.stringify(keptMessages));
+    }
+
+    return { contacts: keptContacts, messages: keptMessages };
+  })();
+
+  const [contacts, setContacts] = useState<Contact[]>(initData.contacts);
+  const [messages, setMessages] = useState<{ [key: string]: Message[] }>(initData.messages);
+
+  // Save contacts to localStorage whenever they change
+  useEffect(() => {
+    if (contacts.length > 0) {
+      localStorage.setItem('equyvo_chat_contacts', JSON.stringify(contacts));
+    }
+  }, [contacts]);
+
+  // Persist messages to localStorage
+  useEffect(() => {
+    if (Object.keys(messages).length > 0) {
+      localStorage.setItem('equyvo_chat_messages', JSON.stringify(messages));
+    }
+  }, [messages]);
 
   // Filter contacts based on search query
   const filteredContacts = contacts.filter(contact => 
     contact.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
     contact.lastMessage.toLowerCase().includes(searchQuery.toLowerCase())
   );
-
-  // Initialize messages from contacts data
-  useEffect(() => {
-    const initialMessages: { [key: string]: Message[] } = {};
-    contacts.forEach(contact => {
-      if (contact.messages) {
-        initialMessages[contact.id] = contact.messages;
-      }
-    });
-    setMessages(initialMessages);
-  }, []);
 
   // Get chat background style
   const getChatBackgroundStyle = () => {
@@ -131,6 +129,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   // Handle sending messages
   const handleSendMessage = () => {
     if ((!message.trim() && !attachedFile) || !activeChat) return;
+    // Block sending messages to self-chats
+    if (!contacts.some(c => c.id === activeChat.id)) return;
 
     const newMessage: Message = {
       id: Date.now().toString(),
@@ -178,7 +178,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   };
 
   // Handle Enter key to send message
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendMessage();
@@ -225,7 +225,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         
       {/* Search bar */}
       <div className="relative p-4">
-        <Search className="absolute left-6.5 top-6.5 h-4 w-4 text-muted-foreground" />
+        <Search className="absolute left-6 top-[26px] h-4 w-4 text-muted-foreground" />
         <Input 
           placeholder="Search chats..." 
           className="pl-8 bg-background/50" 
@@ -252,7 +252,6 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   <Avatar 
                     className="cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                     onClick={() => {
-                      // Navigate to user profile when avatar is clicked
                       navigateToProfile(navigate, contact.id, contact.name);
                     }}
                     title={`${contact.name}'s Profile`}
@@ -276,8 +275,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           ) : (
             <div className="p-8 text-center text-muted-foreground">
               <MessageCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
-              <p className="text-sm font-medium">No chats found</p>
-              <p className="text-xs mt-1">Try adjusting your search</p>
+              <p className="text-sm font-medium">No conversations yet</p>
             </div>
           )}
         </div>
@@ -383,7 +381,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <Input
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
+                onKeyDown={handleKeyDown}
                 placeholder="Type a message..."
                 className="bg-secondary/50"
               />

@@ -198,7 +198,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
       {/* Mobile Search Dialog */}
       {isMobile && (
         <Dialog open={mobileSearchOpen} onOpenChange={setMobileSearchOpen}>
-          <DialogContent className="sm:max-w-md bg-background/95 backdrop-blur-lg border-border/50">
+          <DialogContent className="sm:max-w-md bg-background/95 backdrop-blur-lg border-border/50" aria-describedby={undefined}>
             <DialogHeader>
               <DialogTitle>Search Equyvo</DialogTitle>
             </DialogHeader>

@@ -14,7 +14,7 @@ import StandardPostMenu from './StandardPostMenu';
 import ReportModal from './ReportModal';
 import EditProfileContentModal from './EditProfileContentModal';
 import { showSuccess, showError } from '@/utils/toast';
-import { deleteContent, confirmDelete } from '@/utils/delete';
+import { deleteContent } from '@/utils/delete';
 import { Post } from '@/types';
 
 interface FollowingFeedProps {
@@ -84,10 +84,10 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
   };
 
   const handleDelete = async (postId: string) => {
-    if (!confirmDelete('post')) return;
-    
+    const post = followingPosts.find(p => p.id === postId);
+    const contentType = post?.type === 'thought' ? 'thought' : post?.type === 'moment' ? 'moment' : post?.type === 'story' ? 'story' : 'post';
     try {
-      await deleteContent({ postId, onDeleteComplete: onDelete });
+      await deleteContent({ postId, contentType, onDeleteComplete: onDelete });
     } catch {
     }
   };

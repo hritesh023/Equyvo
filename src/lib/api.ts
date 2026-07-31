@@ -9,7 +9,10 @@ async function request<T = any>(
   options?: RequestInit
 ): Promise<{ data?: T; error?: string }> {
   try {
-    const url = `${API_BASE}${path}`;
+    // Add cache-busting timestamp to GET requests
+    const isGet = !options || !options.method || options.method === 'GET';
+    const separator = path.includes('?') ? '&' : '?';
+    const url = isGet ? `${API_BASE}${path}${separator}_t=${Date.now()}` : `${API_BASE}${path}`;
     const headers: Record<string, string> = {};
     const isFormData = options?.body instanceof FormData;
     if (!isFormData) {

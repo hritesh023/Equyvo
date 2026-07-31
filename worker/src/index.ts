@@ -5,13 +5,14 @@ import {
   getProfile, upsertProfile, searchContent, likePost, unlikePost, voteThought,
   indexContent, deletePost, deleteThought, deleteStory, deleteMoment, deleteUserData, KEYS
 } from './kv';
-import { seedKV } from './seed';
-
 export { Env };
 
 function jsonResponse(data: any, status = 200, env?: Env): Response {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+    'Pragma': 'no-cache',
+    'Expires': '0',
   };
   if (env) {
     // We'll get origin from the request instead
@@ -38,12 +39,8 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return new Response(null, { status: 204, headers: cors });
   }
 
-  // Auto-seed on first request if empty
-  try {
-    await seedKV(env);
-  } catch (e) {
-    // Ignore seed errors if already seeded
-  }
+  // Ensure seed data is always filtered out - real users are now the only content
+  await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
 
   // Helper to wrap responses with CORS
   const respond = (data: any, status = 200): Response => {
@@ -156,7 +153,23 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     // === SEARCH ===
     if (path === '/api/search' && method === 'GET') {
       const query = url.searchParams.get('q') || '';
-      const { results, totalCount } = await searchContent(env, query);
+      let { results, totalCount } = await searchContent(env, query);
+      const hasReal = await env.EQUYVO_KV.get('has_real_users');
+      if (hasReal === 'true') {
+        results = results.filter(i => !(i.isSeed || (i.id && typeof i.id === 'string' && i.id.startsWith('seed-'))));
+        totalCount = results.length;
+      }
+      results = results.map(i => {
+        if (i.publishedAt) {
+          const diffMs = Date.now() - new Date(i.publishedAt).getTime();
+          const sec = Math.floor(diffMs / 1000);
+          if (sec < 60) i.description = 'just now';
+          else if (sec < 3600) i.description = `${Math.floor(sec / 60)}m ago`;
+          else if (sec < 86400) i.description = `${Math.floor(sec / 3600)}h ago`;
+          else i.description = `${Math.floor(sec / 86400)}d ago`;
+        }
+        return i;
+      });
       return respond({ data: { results, totalCount, isAiRecommended: results.length === 0 } });
     }
 

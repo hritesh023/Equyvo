@@ -38,6 +38,7 @@ import WatchHistorySection from '@/components/WatchHistorySection';
 import Moments from '@/components/Moments';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
 import { getStoredUser } from '@/lib/auth';
+import { deleteContent } from '@/utils/delete';
 import api from '@/lib/api';
 
 const createDefaultProfile = (user?: { email?: string; fullName?: string; username?: string; id?: string }) => {
@@ -284,11 +285,19 @@ const ProfilePage = () => {
       } catch {}
     };
 
+    const handleUserPostDeleted = (_event: CustomEvent) => {
+      try {
+        const saved = localStorage.getItem('userProfile');
+        if (saved) setUserProfile(JSON.parse(saved));
+      } catch {}
+    };
+
     window.addEventListener('contentSaved', handleContentSaved as EventListener);
     window.addEventListener('contentUnsaved', handleContentUnsaved as EventListener);
     window.addEventListener('thoughtReacted', handleThoughtReacted as EventListener);
     window.addEventListener('thoughtUnreacted', handleThoughtUnreacted as EventListener);
     window.addEventListener('userPostCreated', handleUserPostCreated as EventListener);
+    window.addEventListener('userPostDeleted', handleUserPostDeleted as EventListener);
     
     return () => {
       window.removeEventListener('contentSaved', handleContentSaved as EventListener);
@@ -296,6 +305,7 @@ const ProfilePage = () => {
       window.removeEventListener('thoughtReacted', handleThoughtReacted as EventListener);
       window.removeEventListener('thoughtUnreacted', handleThoughtUnreacted as EventListener);
       window.removeEventListener('userPostCreated', handleUserPostCreated as EventListener);
+      window.removeEventListener('userPostDeleted', handleUserPostDeleted as EventListener);
     };
   }, [savedPosts, userProfile.posts, watchHistory]); // Add missing dependencies
 
@@ -643,15 +653,19 @@ const ProfilePage = () => {
   };
 
   const handleDeletePost = async (postId: string) => {
-    setUserProfile(prev => ({
-      ...prev,
-      posts: prev.posts.filter(post => post.id !== postId)
-    }));
-    // Also delete from server
+    const post = userProfile.posts.find(p => p.id === postId);
     try {
-      await api.deletePost(postId);
+      await deleteContent({
+        postId,
+        contentType: (post?.type as any) || 'post',
+        onDeleteComplete: (id) => {
+          setUserProfile(prev => ({
+            ...prev,
+            posts: prev.posts.filter(p => p.id !== id)
+          }));
+        }
+      });
     } catch {}
-    showSuccess('Post deleted successfully');
   };
 
   // Delete all user data
@@ -996,7 +1010,7 @@ const ProfilePage = () => {
                     <StandardPostMenu
                       postId={post.id}
                       postUserId={post.user}
-                      currentUserId={userProfile.name} // Assuming current user is the profile owner
+                      currentUserId={(() => { const u = getStoredUser(); return u?.username || u?.email?.split('@')[0] || ''; })()}
                       isProfilePage={true}
                       onReport={handleReport}
                       onDelete={() => handleDeletePost(post.id)}

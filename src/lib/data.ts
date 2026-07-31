@@ -1,20 +1,10 @@
 import { Post, Moment, Story } from '@/types';
 import api from './api';
 
-let hasRealContent = false;
-try {
-  const val = localStorage.getItem('equyvo_has_real_content');
-  if (val === 'true') hasRealContent = true;
-} catch {}
-
+// Server handles seed content filtering via HAS_REAL_USERS KV flag
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 export function markHasRealContent() {
-  hasRealContent = true;
-  try { localStorage.setItem('equyvo_has_real_content', 'true'); } catch {}
-}
-
-function filterSeed<T extends { isSeed?: boolean }>(items: T[]): T[] {
-  if (hasRealContent) return items.filter(i => !i.isSeed);
-  return items;
+  // Server-side flag is set automatically when content is created via API
 }
 
 // Fetch posts from the API
@@ -25,7 +15,7 @@ export const fetchPosts = async (userId?: string, limit = 50): Promise<Post[]> =
       console.warn('Failed to fetch posts:', error);
       return [];
     }
-    return filterSeed(data || []);
+    return data || [];
   } catch (err) {
     console.error('Error fetching posts:', err);
     return [];
@@ -40,7 +30,7 @@ export const fetchMoments = async (limit = 20): Promise<Moment[]> => {
       console.warn('Failed to fetch moments:', error);
       return [];
     }
-    return filterSeed(data || []);
+    return data || [];
   } catch (err) {
     console.error('Error fetching moments:', err);
     return [];
@@ -55,7 +45,7 @@ export const fetchStories = async (limit = 20): Promise<Story[]> => {
       console.warn('Failed to fetch stories:', error);
       return [];
     }
-    return filterSeed(data || []);
+    return data || [];
   } catch (err) {
     console.error('Error fetching stories:', err);
     return [];
@@ -99,7 +89,6 @@ export const createPost = async (postData: {
     });
 
     if (error) return { success: false, error };
-    markHasRealContent();
     return { success: true, post: data };
   } catch (err: any) {
     return { success: false, error: err.message || 'Failed to create post' };

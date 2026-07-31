@@ -26,10 +26,17 @@ const CORS_HEADERS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
+// Prevent Cloudflare edge caching of API responses
+const NO_CACHE_HEADERS = {
+  'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+  'Pragma': 'no-cache',
+  'Expires': '0',
+};
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS },
+    headers: { 'Content-Type': 'application/json', ...CORS_HEADERS, ...NO_CACHE_HEADERS },
   });
 }
 
@@ -37,59 +44,62 @@ function generateId() {
   return Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
 }
 
-async function ensureSeeded(env) {
-  const existing = await env.EQUYVO_KV.get(KEYS.POSTS);
-  if (existing) return;
-
-  const posts = [
-    { id: 'seed-1', user: 'john_doe', avatar: '', time: '2 hours ago', content: 'Just launched my new app! Check it out! #development #react', image: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=800&h=400&fit=crop', likes: 42, reacts: 8, comments: 12, shares: 3, type: 'post', tags: ['development', 'react'], categories: ['tech'], userId: 'user1', createdAt: new Date(Date.now() - 7200000).toISOString(), isSeed: true },
-    { id: 'seed-2', user: 'jane_smith', avatar: '', time: '5 hours ago', content: 'Beautiful sunset today!', image: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=800&h=600&fit=crop', likes: 128, reacts: 24, comments: 18, shares: 7, type: 'post', tags: ['nature', 'sunset'], categories: ['lifestyle'], userId: 'user2', createdAt: new Date(Date.now() - 18000000).toISOString(), isSeed: true },
-  ];
-  const stories = [
-    { id: 'seed-s1', user: 'alex_jones', avatar: '', image: 'https://images.unsplash.com/photo-1559526324-59b1a3440d8b?w=400&h=600&fit=crop', time: '30 minutes ago', type: 'image', userId: 'user4', createdAt: new Date(Date.now() - 1800000).toISOString(), isSeed: true },
-    { id: 'seed-s2', user: 'sarah_creative', avatar: '', image: 'https://images.unsplash.com/photo-1517841905240-472988babdf9?w=400&h=600&fit=crop', video: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', time: '1 hour ago', type: 'video', userId: 'user5', createdAt: new Date(Date.now() - 3600000).toISOString(), isSeed: true },
-    { id: 'seed-s3', user: 'mike_adventures', avatar: '', image: 'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=400&h=600&fit=crop', time: '2 hours ago', type: 'image', userId: 'user6', createdAt: new Date(Date.now() - 7200000).toISOString(), isSeed: true },
-  ];
-  const moments = [
-    { id: 'seed-m1', user: 'mike_wilson', content: 'Quick coding session update', media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', thumbnail: 'https://images.unsplash.com/photo-1516321318423-f06f85e504b3?w=400&h=700&fit=crop', mediaType: 'video', videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', likes: 89, comments: 15, views: 342, time: '1 hour ago', userId: 'user3', createdAt: new Date(Date.now() - 3600000).toISOString(), isSeed: true },
-    { id: 'seed-m2', user: 'sarah_creative', content: 'Morning inspiration!', media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', thumbnail: 'https://images.unsplash.com/photo-1490730141103-6cac27aaab94?w=400&h=700&fit=crop', mediaType: 'video', videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4', likes: 234, comments: 42, views: 1024, time: '3 hours ago', userId: 'user4', createdAt: new Date(Date.now() - 10800000).toISOString(), isSeed: true },
-    { id: 'seed-m3', user: 'alex_adventures', content: 'City vibes!', media: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', thumbnail: 'https://images.unsplash.com/photo-1516373363238-71c1eee6e0c5?w=400&h=700&fit=crop', mediaType: 'video', videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4', likes: 567, comments: 89, views: 2341, time: '5 hours ago', userId: 'user5', createdAt: new Date(Date.now() - 18000000).toISOString(), isSeed: true },
-  ];
-  const profiles = [
-    { id: 'user1', name: 'John Doe', username: '@john_doe', avatar: '', bio: 'Developer & creator.', followers: 1200, following: 340 },
-    { id: 'user2', name: 'Jane Smith', username: '@jane_smith', avatar: '', bio: 'Photography enthusiast.', followers: 3400, following: 520 },
-  ];
-  const contentIndex = [
-    { id: 'c1', title: 'Amazing Sunset Photography Tips', description: 'Learn how to capture stunning sunset photos.', type: 'video', creator: 'PhotoPro', creatorAvatar: '', views: '125K', thumbnail: 'https://picsum.photos/seed/sunset1/300/200', videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4', category: 'Photography', tags: ['photography', 'sunset', 'tips', 'camera', 'golden hour', 'landscape', 'nature'], duration: '10:24', publishedAt: '2 days ago', content: 'Learn how to capture stunning sunset photos.', likes: 12500, comments: 890 },
-    { id: 'c2', title: 'Quick & Easy Dinner Recipes', description: 'Delicious recipes in under 30 minutes.', type: 'photo', creator: 'FoodieLife', creatorAvatar: '', views: '89K', thumbnail: 'https://picsum.photos/seed/food1/300/200', imageUrl: 'https://picsum.photos/seed/food1/800/600', category: 'Food', tags: ['food', 'recipes', 'dinner', 'cooking', 'quick', 'easy'], publishedAt: '1 day ago', content: 'Delicious recipes you can make in under 30 minutes.', likes: 8900, comments: 670 },
-    { id: 'c3', title: 'Latest AI Trends and Developments', description: 'Newest breakthroughs in AI.', type: 'thought', creator: 'Tech Enthusiast', creatorAvatar: '', views: '245K', thumbnail: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=300&h=200&fit=crop', imageUrl: 'https://images.unsplash.com/photo-1677442136019-21780ecad995?w=800&fit=crop', category: 'Technology', tags: ['AI', 'technology', 'machine learning', 'future', 'innovation', 'artificial intelligence', 'tech'], publishedAt: '1 hour ago', content: 'The future of AI is here! What are your thoughts?', likes: 245, comments: 67 },
-    { id: 'c4', title: 'Morning Yoga Flow for Beginners', description: 'Gentle yoga sequence for beginners.', type: 'video', creator: 'YogaGuru', creatorAvatar: '', views: '234K', thumbnail: 'https://picsum.photos/seed/yoga1/300/200', videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4', category: 'Fitness', tags: ['yoga', 'fitness', 'morning', 'wellness', 'meditation', 'stretching', 'beginner'], duration: '15:30', publishedAt: '3 days ago', content: 'Start your day with this gentle yoga sequence.', likes: 34000, comments: 2100 },
-    { id: 'c5', title: 'Hidden Gems Around the World', description: 'Beautiful hidden travel spots.', type: 'video', creator: 'alex_adventures', creatorAvatar: '', views: '230K', thumbnail: 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=700&fit=crop', videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4', category: 'Travel', tags: ['travel', 'hidden gems', 'adventure', 'explore', 'nature', 'destination'], duration: '12:15', publishedAt: '2 hours ago', content: 'The view from the top is absolutely breathtaking!', likes: 15400, comments: 892 },
-    { id: 'c6', title: 'Welcome to Equyvo Community', description: 'Join our growing community.', type: 'post', creator: 'Equyvo Official', creatorAvatar: '', views: '120K', thumbnail: 'https://picsum.photos/seed/welcome1/300/200', imageUrl: 'https://picsum.photos/seed/welcome1/800/600', category: 'Lifestyle', tags: ['community', 'welcome', 'social', 'equyvo', 'connect', 'share'], publishedAt: '2 hours ago', content: 'Welcome to Equyvo! Share your first thought and connect with others.', likes: 120, comments: 15 },
-  ];
-
-  const postIds = [];
-  for (const p of posts) { await env.EQUYVO_KV.put(KEYS.POST(p.id), JSON.stringify(p)); postIds.push(p.id); }
-  await env.EQUYVO_KV.put(KEYS.POSTS, JSON.stringify(postIds));
-
-  const storyIds = [];
-  for (const s of stories) { await env.EQUYVO_KV.put(KEYS.STORY(s.id), JSON.stringify(s)); storyIds.push(s.id); }
-  await env.EQUYVO_KV.put(KEYS.STORIES, JSON.stringify(storyIds));
-
-  const momentIds = [];
-  for (const m of moments) { await env.EQUYVO_KV.put(KEYS.MOMENT(m.id), JSON.stringify(m)); momentIds.push(m.id); }
-  await env.EQUYVO_KV.put(KEYS.MOMENTS, JSON.stringify(momentIds));
-
-  for (const p of profiles) { await env.EQUYVO_KV.put(KEYS.PROFILE(p.id), JSON.stringify(p)); }
-  await env.EQUYVO_KV.put(KEYS.CONTENT_INDEX, JSON.stringify(contentIndex));
-  await env.EQUYVO_KV.put(KEYS.NEXT_ID, '100');
+function computeRelativeTime(createdAt) {
+  if (!createdAt) return 'just now';
+  const diffMs = Date.now() - new Date(createdAt).getTime();
+  if (diffMs < 0) return 'just now';
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  if (day < 30) return `${Math.floor(day / 7)}w ago`;
+  if (day < 365) return `${Math.floor(day / 30)}mo ago`;
+  return `${Math.floor(day / 365)}y ago`;
 }
 
-// Filter out seed content when real users exist
+// Apply computed time and other transformations to items before returning
+function transformItem(item) {
+  if (!item) return item;
+  if (item.createdAt) {
+    item.time = computeRelativeTime(item.createdAt);
+  }
+  return item;
+}
+
+// Clean orphaned IDs from a list (IDs whose KV entries no longer exist)
+async function cleanOrphans(env, listKey, getKey) {
+  const listJson = await env.EQUYVO_KV.get(listKey);
+  if (!listJson) return [];
+  const ids = JSON.parse(listJson);
+  const valid = [];
+  for (const id of ids) {
+    const data = await env.EQUYVO_KV.get(getKey(id));
+    if (data) valid.push(id);
+  }
+  if (valid.length !== ids.length) {
+    await env.EQUYVO_KV.put(listKey, JSON.stringify(valid));
+  }
+  return valid;
+}
+
+
+
+// Filter out seed/bot content when real users exist
+// Checks both isSeed flag and seed-* ID prefix to handle legacy seeded data
+function isSeedItem(item) {
+  if (item.isSeed) return true;
+  if (item.id && item.id.startsWith('seed-')) return true;
+  return false;
+}
+
 async function filterSeed(env, items) {
   const hasReal = await env.EQUYVO_KV.get(KEYS.HAS_REAL_USERS);
   if (hasReal === 'true') {
-    return items.filter(i => !i.isSeed);
+    return items.filter(i => !isSeedItem(i));
   }
   return items;
 }
@@ -105,16 +115,16 @@ export const onRequest = async (context) => {
   }
 
   try {
-    await ensureSeeded(env);
+    // Ensure seed data is always filtered out
+    await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
     // POSTS
     if (path === '/api/posts' && method === 'GET') {
       const limit = parseInt(url.searchParams.get('limit') || '50');
-      const listJson = await env.EQUYVO_KV.get(KEYS.POSTS);
-      if (!listJson) return json({ data: [], error: null });
-      const ids = JSON.parse(listJson).slice(0, limit);
-      const posts = (await Promise.all(ids.map(async (id) => {
+      const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
+      const recent = ids.slice(0, limit);
+      const posts = (await Promise.all(recent.map(async (id) => {
         const p = await env.EQUYVO_KV.get(KEYS.POST(id));
-        return p ? JSON.parse(p) : null;
+        return p ? transformItem(JSON.parse(p)) : null;
       }))).filter(Boolean);
       return json({ data: await filterSeed(env, posts), error: null });
     }
@@ -123,26 +133,25 @@ export const onRequest = async (context) => {
       const body = await request.json();
       const id = generateId();
       const now = new Date().toISOString();
-      const post = { id, time: 'just now', createdAt: now, ...body };
+      const post = { id, createdAt: now, ...body };
       await env.EQUYVO_KV.put(KEYS.POST(id), JSON.stringify(post));
       const listJson = await env.EQUYVO_KV.get(KEYS.POSTS);
       const ids = listJson ? JSON.parse(listJson) : [];
       ids.unshift(id);
       await env.EQUYVO_KV.put(KEYS.POSTS, JSON.stringify(ids.slice(0, 500)));
       await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
-      return json({ data: post, error: null }, 201);
+      return json({ data: transformItem(post), error: null }, 201);
     }
 
     // THOUGHTS
     if (path === '/api/thoughts' && method === 'GET') {
       const limit = parseInt(url.searchParams.get('limit') || '20');
       const offset = parseInt(url.searchParams.get('offset') || '0');
-      const listJson = await env.EQUYVO_KV.get(KEYS.THOUGHTS);
-      if (!listJson) return json({ data: [], error: null });
-      const ids = JSON.parse(listJson).slice(offset, offset + limit);
-      const thoughts = (await Promise.all(ids.map(async (id) => {
+      const ids = await cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT);
+      const page = ids.slice(offset, offset + limit);
+      const thoughts = (await Promise.all(page.map(async (id) => {
         const t = await env.EQUYVO_KV.get(KEYS.THOUGHT(id));
-        return t ? JSON.parse(t) : null;
+        return t ? transformItem(JSON.parse(t)) : null;
       }))).filter(Boolean);
       return json({ data: await filterSeed(env, thoughts), error: null });
     }
@@ -158,18 +167,17 @@ export const onRequest = async (context) => {
       ids.unshift(id);
       await env.EQUYVO_KV.put(KEYS.THOUGHTS, JSON.stringify(ids.slice(0, 500)));
       await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
-      return json({ data: thought, error: null }, 201);
+      return json({ data: transformItem(thought), error: null }, 201);
     }
 
     // STORIES
     if (path === '/api/stories' && method === 'GET') {
       const limit = parseInt(url.searchParams.get('limit') || '20');
-      const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
-      if (!listJson) return json({ data: [], error: null });
-      const ids = JSON.parse(listJson).slice(0, limit);
-      const stories = (await Promise.all(ids.map(async (id) => {
+      const ids = await cleanOrphans(env, KEYS.STORIES, KEYS.STORY);
+      const recent = ids.slice(0, limit);
+      const stories = (await Promise.all(recent.map(async (id) => {
         const s = await env.EQUYVO_KV.get(KEYS.STORY(id));
-        return s ? JSON.parse(s) : null;
+        return s ? transformItem(JSON.parse(s)) : null;
       }))).filter(Boolean);
       return json({ data: await filterSeed(env, stories), error: null });
     }
@@ -177,25 +185,24 @@ export const onRequest = async (context) => {
     if (path === '/api/stories' && method === 'POST') {
       const body = await request.json();
       const id = generateId();
-      const story = { id, time: 'just now', createdAt: new Date().toISOString(), ...body };
+      const story = { id, createdAt: new Date().toISOString(), ...body };
       await env.EQUYVO_KV.put(KEYS.STORY(id), JSON.stringify(story));
       const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
       const ids = listJson ? JSON.parse(listJson) : [];
       ids.unshift(id);
       await env.EQUYVO_KV.put(KEYS.STORIES, JSON.stringify(ids.slice(0, 200)));
       await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
-      return json({ data: story, error: null }, 201);
+      return json({ data: transformItem(story), error: null }, 201);
     }
 
     // MOMENTS
     if (path === '/api/moments' && method === 'GET') {
       const limit = parseInt(url.searchParams.get('limit') || '20');
-      const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);
-      if (!listJson) return json({ data: [], error: null });
-      const ids = JSON.parse(listJson).slice(0, limit);
-      const moments = (await Promise.all(ids.map(async (id) => {
+      const ids = await cleanOrphans(env, KEYS.MOMENTS, KEYS.MOMENT);
+      const recent = ids.slice(0, limit);
+      const moments = (await Promise.all(recent.map(async (id) => {
         const m = await env.EQUYVO_KV.get(KEYS.MOMENT(id));
-        return m ? JSON.parse(m) : null;
+        return m ? transformItem(JSON.parse(m)) : null;
       }))).filter(Boolean);
       return json({ data: await filterSeed(env, moments), error: null });
     }
@@ -203,14 +210,14 @@ export const onRequest = async (context) => {
     if (path === '/api/moments' && method === 'POST') {
       const body = await request.json();
       const id = generateId();
-      const moment = { id, time: 'just now', createdAt: new Date().toISOString(), ...body };
+      const moment = { id, createdAt: new Date().toISOString(), ...body };
       await env.EQUYVO_KV.put(KEYS.MOMENT(id), JSON.stringify(moment));
       const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);
       const ids = listJson ? JSON.parse(listJson) : [];
       ids.unshift(id);
       await env.EQUYVO_KV.put(KEYS.MOMENTS, JSON.stringify(ids.slice(0, 500)));
       await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
-      return json({ data: moment, error: null }, 201);
+      return json({ data: transformItem(moment), error: null }, 201);
     }
 
     // PROFILE
@@ -233,15 +240,18 @@ export const onRequest = async (context) => {
       const indexJson = await env.EQUYVO_KV.get(KEYS.CONTENT_INDEX);
       if (!indexJson) return json({ data: { results: [], totalCount: 0, isAiRecommended: false } });
       const index = JSON.parse(indexJson);
+      // Filter out seed content from search when real users exist
+      const hasReal = await env.EQUYVO_KV.get(KEYS.HAS_REAL_USERS);
+      const filtered = hasReal === 'true' ? index.filter(i => !isSeedItem(i)) : index;
       if (!query.trim()) {
-        return json({ data: { results: index.slice(0, 20), totalCount: index.length, isAiRecommended: false } });
+        return json({ data: { results: filtered.slice(0, 20).map(transformItem), totalCount: filtered.length, isAiRecommended: false } });
       }
       const q = query.toLowerCase();
-      const matches = index.filter((item) => 
+      const matches = filtered.filter((item) => 
         [item.title, item.description, item.content, item.category, item.creator, ...(item.tags || [])]
           .filter(Boolean).some((text) => text.toLowerCase().includes(q))
       );
-      return json({ data: { results: matches.slice(0, 20), totalCount: matches.length, isAiRecommended: matches.length === 0 } });
+      return json({ data: { results: matches.slice(0, 20).map(transformItem), totalCount: matches.length, isAiRecommended: matches.length === 0 } });
     }
 
     // DELETE ENDPOINTS
@@ -405,18 +415,15 @@ export const onRequest = async (context) => {
     // USER POSTS
     if (path.match(/^\/api\/users\//) && path.endsWith('/posts') && method === 'GET') {
       const userId = path.split('/api/users/')[1].replace('/posts', '');
-      const limit = parseInt(url.searchParams.get('limit') || '50');
-      const listJson = await env.EQUYVO_KV.get(KEYS.POSTS);
-      if (!listJson) return json({ data: [], error: null });
-      const ids = JSON.parse(listJson).slice(0, limit);
+      const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
       const posts = (await Promise.all(ids.map(async (id) => {
         const p = await env.EQUYVO_KV.get(KEYS.POST(id));
-        return p ? JSON.parse(p) : null;
+        return p ? transformItem(JSON.parse(p)) : null;
       }))).filter(Boolean);
       const userPosts = posts.filter(p =>
         p.userId === userId || p.id === userId
       );
-      return json({ data: userPosts, error: null });
+      return json({ data: await filterSeed(env, userPosts), error: null });
     }
 
     // CONTENT INDEX

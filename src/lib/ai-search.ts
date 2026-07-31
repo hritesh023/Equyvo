@@ -18,6 +18,9 @@ export interface SearchHistoryItem {
   resultCount?: number;
 }
 
+// Backend API URL for AI suggestions (set via env or fallback)
+const AI_SUGGESTION_API = import.meta.env.VITE_AI_API_URL || 'https://ai.acronous.com';
+
 // AI-powered search service
 class AISearchService {
   private static instance: AISearchService;
@@ -64,6 +67,42 @@ class AISearchService {
     }
   }
 
+  // Fetch AI-powered suggestions from backend (Acronous AI brain)
+  private async fetchAISuggestions(query: string): Promise<SearchSuggestion[]> {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3000);
+      const resp = await fetch(`${AI_SUGGESTION_API}/v1/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: `Generate 5-8 search suggestions for "${query}" on a social media platform. Return ONLY a JSON array of objects with "label" (search term), "category" (one of: Photography, Video, Music, Food, Fitness, Travel, Technology, Fashion, Art, Gaming, Education, Lifestyle, Entertainment, Reviews), and "description" (1-sentence description). No markdown, no explanation. Just the JSON array.`,
+          messages: [],
+          session_id: `equyvo-search-${Date.now()}`
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (!resp.ok) return [];
+      const data = await resp.json();
+      const text = (data.response || '').trim();
+      // Extract JSON array from response
+      const jsonMatch = text.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) return [];
+      const parsed = JSON.parse(jsonMatch[0]);
+      return parsed.slice(0, 8).map((s: any, i: number) => ({
+        id: `ai-backend-${Date.now()}-${i}`,
+        label: s.label || s.title || '',
+        category: s.category || 'General',
+        description: s.description || '',
+        type: 'ai-generated' as const,
+        confidence: 0.9,
+      }));
+    } catch {
+      return [];
+    }
+  }
+
   // Generate AI-powered suggestions based on input
   async generateSuggestions(query: string): Promise<SearchSuggestion[]> {
     const queryLower = query.toLowerCase().trim();
@@ -74,24 +113,39 @@ class AISearchService {
 
     const suggestions: SearchSuggestion[] = [];
 
-    // 1. AI-generated contextual suggestions (always generate for any input)
-    const aiSuggestions = this.generateContextualSuggestions(queryLower);
-    suggestions.push(...aiSuggestions);
+    // 1. Try backend AI suggestions first (highest quality)
+    const backendSuggestions = await this.fetchAISuggestions(queryLower);
+    if (backendSuggestions.length > 0) {
+      suggestions.push(...backendSuggestions);
+    }
 
-    // 2. Recent searches that match
+    // 2. Local contextual suggestions (always generate as supplement/fallback)
+    const localSuggestions = this.generateContextualSuggestions(queryLower);
+    suggestions.push(...localSuggestions);
+
+    // 3. Recent searches that match
     const recentSuggestions = this.getRecentSearchSuggestions(queryLower);
     suggestions.push(...recentSuggestions);
 
-    // 3. Trending suggestions that match
+    // 4. Trending suggestions that match
     const trendingSuggestions = this.getTrendingSuggestions(queryLower);
     suggestions.push(...trendingSuggestions);
 
-    // 4. SEO-optimized autocomplete suggestions
+    // 5. SEO-optimized autocomplete suggestions
     const seoSuggestions = this.generateSEOSuggestions(queryLower);
     suggestions.push(...seoSuggestions);
 
+    // Deduplicate by label
+    const seen = new Set<string>();
+    const unique = suggestions.filter(s => {
+      const key = s.label.toLowerCase();
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+
     // Sort by relevance and limit results
-    return suggestions
+    return unique
       .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
       .slice(0, 8);
   }

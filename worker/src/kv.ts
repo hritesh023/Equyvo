@@ -61,24 +61,71 @@ export async function markHasRealUsers(env: Env): Promise<void> {
   await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
 }
 
-function filterSeed<T extends { isSeed?: boolean }>(items: T[], hasReal: boolean): T[] {
-  if (hasReal) return items.filter(i => !i.isSeed);
+function computeRelativeTime(createdAt: string | undefined): string {
+  if (!createdAt) return 'just now';
+  const diffMs = Date.now() - new Date(createdAt).getTime();
+  if (diffMs < 0) return 'just now';
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 60) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  if (day < 30) return `${Math.floor(day / 7)}w ago`;
+  if (day < 365) return `${Math.floor(day / 30)}mo ago`;
+  return `${Math.floor(day / 365)}y ago`;
+}
+
+function transformItem<T extends Record<string, any>>(item: T): T {
+  if (!item) return item;
+  if (item.createdAt) {
+    item.time = computeRelativeTime(item.createdAt);
+  }
+  if (item.created_at) {
+    item.time = computeRelativeTime(item.created_at);
+  }
+  return item;
+}
+
+function isSeedItem(item: any): boolean {
+  if (item.isSeed) return true;
+  if (item.id && typeof item.id === 'string' && item.id.startsWith('seed-')) return true;
+  return false;
+}
+
+function filterSeed<T>(items: T[], hasReal: boolean): T[] {
+  if (hasReal) return items.filter(i => !isSeedItem(i));
   return items;
 }
 
-export async function getPosts(env: Env, limit = 50): Promise<Post[]> {
-  const listJson = await env.EQUYVO_KV.get(KEYS.POSTS);
+async function cleanOrphans(env: Env, listKey: string, getKey: (id: string) => string): Promise<string[]> {
+  const listJson = await env.EQUYVO_KV.get(listKey);
   if (!listJson) return [];
   const ids: string[] = JSON.parse(listJson);
+  const valid: string[] = [];
+  for (const id of ids) {
+    const data = await env.EQUYVO_KV.get(getKey(id));
+    if (data) valid.push(id);
+  }
+  if (valid.length !== ids.length) {
+    await env.EQUYVO_KV.put(listKey, JSON.stringify(valid));
+  }
+  return valid;
+}
+
+export async function getPosts(env: Env, limit = 50): Promise<Post[]> {
+  const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
   const recent = ids.slice(0, limit);
-  const posts = await Promise.all(
+  const posts = (await Promise.all(
     recent.map(async (id) => {
       const json = await env.EQUYVO_KV.get(KEYS.POST(id));
-      return json ? (JSON.parse(json) as Post) : null;
+      return json ? transformItem(JSON.parse(json) as Post) : null;
     })
-  );
+  )).filter(Boolean) as Post[];
   const hasReal = await hasRealUsers(env);
-  return filterSeed(posts.filter(Boolean) as Post[], hasReal);
+  return filterSeed(posts, hasReal);
 }
 
 export async function createPost(env: Env, post: Omit<Post, 'id' | 'time' | 'createdAt'>): Promise<Post> {
@@ -87,7 +134,6 @@ export async function createPost(env: Env, post: Omit<Post, 'id' | 'time' | 'cre
   const newPost: Post = {
     ...post,
     id,
-    time: 'just now',
     createdAt: now,
   };
   await env.EQUYVO_KV.put(KEYS.POST(id), JSON.stringify(newPost));
@@ -142,18 +188,16 @@ export interface Thought {
 }
 
 export async function getThoughts(env: Env, limit = 20, offset = 0): Promise<Thought[]> {
-  const listJson = await env.EQUYVO_KV.get(KEYS.THOUGHTS);
-  if (!listJson) return [];
-  const ids: string[] = JSON.parse(listJson);
+  const ids = await cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT);
   const page = ids.slice(offset, offset + limit);
-  const thoughts = await Promise.all(
+  const thoughts = (await Promise.all(
     page.map(async (id) => {
       const json = await env.EQUYVO_KV.get(KEYS.THOUGHT(id));
-      return json ? (JSON.parse(json) as Thought) : null;
+      return json ? transformItem(JSON.parse(json) as Thought) : null;
     })
-  );
+  )).filter(Boolean) as Thought[];
   const hasReal = await hasRealUsers(env);
-  return filterSeed(thoughts.filter(Boolean) as Thought[], hasReal);
+  return filterSeed(thoughts, hasReal);
 }
 
 export async function createThought(env: Env, thought: Omit<Thought, 'id' | 'created_at' | 'updated_at'>): Promise<Thought> {
@@ -191,18 +235,16 @@ export interface Story {
 }
 
 export async function getStories(env: Env, limit = 20): Promise<Story[]> {
-  const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
-  if (!listJson) return [];
-  const ids: string[] = JSON.parse(listJson);
+  const ids = await cleanOrphans(env, KEYS.STORIES, KEYS.STORY);
   const recent = ids.slice(0, limit);
-  const stories = await Promise.all(
+  const stories = (await Promise.all(
     recent.map(async (id) => {
       const json = await env.EQUYVO_KV.get(KEYS.STORY(id));
-      return json ? (JSON.parse(json) as Story) : null;
+      return json ? transformItem(JSON.parse(json) as Story) : null;
     })
-  );
+  )).filter(Boolean) as Story[];
   const hasReal = await hasRealUsers(env);
-  return filterSeed(stories.filter(Boolean) as Story[], hasReal);
+  return filterSeed(stories, hasReal);
 }
 
 export async function createStory(env: Env, story: Omit<Story, 'id'>): Promise<Story> {
@@ -210,7 +252,6 @@ export async function createStory(env: Env, story: Omit<Story, 'id'>): Promise<S
   const newStory: Story = {
     ...story,
     id,
-    time: 'just now',
     createdAt: new Date().toISOString(),
   };
   await env.EQUYVO_KV.put(KEYS.STORY(id), JSON.stringify(newStory));
@@ -243,18 +284,16 @@ export interface Moment {
 }
 
 export async function getMoments(env: Env, limit = 20): Promise<Moment[]> {
-  const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);
-  if (!listJson) return [];
-  const ids: string[] = JSON.parse(listJson);
+  const ids = await cleanOrphans(env, KEYS.MOMENTS, KEYS.MOMENT);
   const recent = ids.slice(0, limit);
-  const moments = await Promise.all(
+  const moments = (await Promise.all(
     recent.map(async (id) => {
       const json = await env.EQUYVO_KV.get(KEYS.MOMENT(id));
-      return json ? (JSON.parse(json) as Moment) : null;
+      return json ? transformItem(JSON.parse(json) as Moment) : null;
     })
-  );
+  )).filter(Boolean) as Moment[];
   const hasReal = await hasRealUsers(env);
-  return filterSeed(moments.filter(Boolean) as Moment[], hasReal);
+  return filterSeed(moments, hasReal);
 }
 
 export async function createMoment(env: Env, moment: Omit<Moment, 'id'>): Promise<Moment> {
@@ -262,7 +301,6 @@ export async function createMoment(env: Env, moment: Omit<Moment, 'id'>): Promis
   const newMoment: Moment = {
     ...moment,
     id,
-    time: 'just now',
     createdAt: new Date().toISOString(),
   };
   await env.EQUYVO_KV.put(KEYS.MOMENT(id), JSON.stringify(newMoment));

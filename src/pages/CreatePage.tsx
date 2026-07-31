@@ -34,6 +34,8 @@ const CreatePage = () => {
   const [thoughtVideo, setThoughtVideo] = useState<File | null>(null);
   const [liveTitle, setLiveTitle] = useState('');
   const [liveDescription, setLiveDescription] = useState('');
+  const [liveThumbnailFile, setLiveThumbnailFile] = useState<File | null>(null);
+  const [liveThumbnailPreview, setLiveThumbnailPreview] = useState<string>('');
   const [isRecording, setIsRecording] = useState(false);
   const [mediaRecorder, setMediaRecorder] = useState<MediaRecorder | null>(null);
   const [recordedChunks, setRecordedChunks] = useState<Blob[]>([]);
@@ -172,7 +174,13 @@ const CreatePage = () => {
     expiresAt: Date;
   }
 
-  // Shared helper: persist content to API, index for search, update localStorage, notify other pages
+  function getThumbnailFromUpload(result: { secureUrl: string; resourceType: string } | null | undefined): string {
+  if (!result?.secureUrl) return '';
+  if (result.resourceType === 'image') return result.secureUrl;
+  return result.secureUrl.replace('/video/upload/', '/video/upload/w_400,f_auto/').replace(/\.[^.]+$/, '.jpg');
+}
+
+// Shared helper: persist content to API, index for search, update localStorage, notify other pages
   async function persistContent(content: Record<string, unknown>) {
     const userInfo = getCurrentUserInfo();
     const postData = {
@@ -418,7 +426,7 @@ const CreatePage = () => {
           fileName: file.name,
           fileSize: file.size,
           duration: file.type.startsWith('video/') ? '0:15' : undefined,
-          thumbnail: result?.secureUrl || '',
+          thumbnail: getThumbnailFromUpload(result),
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 500),
@@ -555,24 +563,25 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
-        let cloudinaryUrl: string | undefined;
+        let thoughtUploadResult: { secureUrl: string; resourceType: string } | null = null;
         if (thoughtVideo) {
           try {
             const uploadFile = thoughtVideo.type.startsWith('image/') ? await compressImage(thoughtVideo) : thoughtVideo;
             const { data, error } = await api.uploadFile(uploadFile, 'equyvo/thoughts');
             if (error) throw new Error(error);
-            cloudinaryUrl = data!.secureUrl;
+            thoughtUploadResult = { secureUrl: data!.secureUrl, resourceType: data!.resourceType };
           } catch (err) {
             showError('Upload failed for thought media');
           }
         }
 
+        const thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
         const newUploadedThought: UploadedThought = {
           id: Date.now().toString(),
           content: thoughtContent,
           hasMedia: !!thoughtVideo,
           mediaType: thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined,
-          mediaUrl: cloudinaryUrl || (thoughtVideo ? '' : undefined),
+          mediaUrl: thoughtUploadResult?.secureUrl || (thoughtVideo ? '' : undefined),
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 200),
@@ -583,7 +592,7 @@ const CreatePage = () => {
         };
 
         setUploadedThoughts(prev => [...prev, newUploadedThought]);
-        await persistContent({ id: newUploadedThought.id, type: 'thought', content: newUploadedThought.content, image: newUploadedThought.mediaUrl, thumbnail: newUploadedThought.mediaUrl });
+        await persistContent({ id: newUploadedThought.id, type: 'thought', content: newUploadedThought.content, image: thoughtThumbnail, thumbnail: thoughtThumbnail });
         setIsUploading(false);
         showSuccess('Thought posted successfully!');
         setThoughtContent('');
@@ -653,7 +662,7 @@ const CreatePage = () => {
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: result?.secureUrl || '',
+          thumbnail: getThumbnailFromUpload(result),
           caption: photoCaption,
           uploadDate: new Date(),
           isPrivate: false,
@@ -738,7 +747,7 @@ const CreatePage = () => {
           fileName: file.name,
           fileSize: file.size,
           duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
-          thumbnail: result?.secureUrl || '',
+          thumbnail: getThumbnailFromUpload(result),
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 1000),
@@ -860,7 +869,7 @@ const CreatePage = () => {
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: result?.secureUrl || '',
+          thumbnail: getThumbnailFromUpload(result),
           mediaType: file.type.startsWith('image/') ? 'image' : 'video',
           content: momentContent,
           uploadDate: new Date(),
@@ -925,6 +934,65 @@ const CreatePage = () => {
     }
 
     try {
+      setIsUploading(true);
+
+      // Upload thumbnail if provided
+      let liveThumbnailUrl = '';
+      if (liveThumbnailFile) {
+        try {
+          const { data, error } = await api.uploadFile(liveThumbnailFile, 'equyvo/live/thumbnails');
+          if (!error && data) {
+            liveThumbnailUrl = data.secureUrl;
+          }
+        } catch {
+          showError('Failed to upload thumbnail');
+        }
+      }
+
+      const userInfo = getCurrentUserInfo();
+
+      // Create live content entry
+      const liveId = Date.now().toString();
+      const liveContent = {
+        id: liveId,
+        type: 'live',
+        contentType: 'live',
+        title: liveTitle,
+        description: liveDescription,
+        thumbnail: liveThumbnailUrl,
+        user: userInfo.username,
+        userId: userInfo.userId,
+        isLive: true,
+        live: true,
+        time: 'just now',
+        createdAt: new Date().toISOString(),
+        views: 0,
+        likes: 0,
+        comments: 0,
+      };
+
+      // Persist the live content
+      await persistContent(liveContent);
+
+      // Store active live stream info in localStorage for other pages
+      localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent));
+
+      // Dispatch live notification event for followers
+      window.dispatchEvent(new CustomEvent('userWentLive', {
+        detail: liveContent
+      }));
+
+      // Store notification for followers to see
+      const existingNotifs = JSON.parse(localStorage.getItem('equyvo_live_notifications') || '[]');
+      existingNotifs.unshift({
+        id: liveId,
+        title: liveTitle,
+        user: userInfo.username,
+        thumbnail: liveThumbnailUrl || '',
+        startedAt: new Date().toISOString(),
+      });
+      localStorage.setItem('equyvo_live_notifications', JSON.stringify(existingNotifs.slice(0, 20)));
+
       // Request camera and microphone permissions
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: true,
@@ -957,10 +1025,12 @@ const CreatePage = () => {
       // Start recording
       recorder.start();
       setIsRecording(true);
+      setIsUploading(false);
 
-      showSuccess('Live stream started and recording has begun!');
+      showSuccess('Live stream started! Followers have been notified.');
 
     } catch (error) {
+      setIsUploading(false);
       if (error instanceof Error) {
         if (error.name === 'NotAllowedError') {
           showError('Camera and microphone access denied. Please allow access to go live.');
@@ -986,34 +1056,45 @@ const CreatePage = () => {
     setMediaRecorder(null);
     setStream(null);
 
+    // Clear active live stream
+    localStorage.removeItem('equyvo_active_live');
+
+    // Dispatch end live event
+    window.dispatchEvent(new CustomEvent('userWentOffline', {
+      detail: { title: liveTitle }
+    }));
+
     showSuccess('Live stream ended and recording saved!');
     setLiveTitle('');
     setLiveDescription('');
+    setLiveThumbnailFile(null);
+    setLiveThumbnailPreview('');
   };
 
   const handleSaveRecording = async (blob: Blob) => {
     const file = new File([blob], `live-stream-${Date.now()}.webm`, { type: 'video/webm' });
 
     setIsUploading(true);
-    let cloudinaryResult: { secureUrl: string; publicId: string; duration?: number } | null = null;
+    let liveUploadResult: { secureUrl: string; publicId: string; resourceType: string; duration?: number } | null = null;
     try {
       const { data, error } = await api.uploadFile(file, 'equyvo/live');
       if (error) throw new Error(error);
-      cloudinaryResult = data!;
+      liveUploadResult = data!;
     } catch (err) {
       showError('Upload failed for live recording');
     }
     setIsUploading(false);
 
+    const liveThumbnail = getThumbnailFromUpload(liveUploadResult);
     const newUploadedVideo: UploadedVideo = {
       id: Date.now().toString(),
       title: liveTitle || `Live Stream ${new Date().toLocaleString()}`,
       fileName: file.name,
       fileSize: file.size,
-      duration: cloudinaryResult?.duration
-        ? `${Math.floor(cloudinaryResult.duration / 60)}:${String(Math.floor(cloudinaryResult.duration % 60)).padStart(2, '0')}`
+      duration: liveUploadResult?.duration
+        ? `${Math.floor(liveUploadResult.duration / 60)}:${String(Math.floor(liveUploadResult.duration % 60)).padStart(2, '0')}`
         : '0:00',
-      thumbnail: cloudinaryResult?.secureUrl || '',
+      thumbnail: liveThumbnail,
       uploadDate: new Date(),
       isPrivate: false,
       views: 0,
@@ -1025,7 +1106,7 @@ const CreatePage = () => {
     };
 
     setUploadedVideos(prev => [...prev, newUploadedVideo]);
-    await persistContent({ id: newUploadedVideo.id, type: 'video', content: newUploadedVideo.title, image: newUploadedVideo.thumbnail, thumbnail: newUploadedVideo.thumbnail });
+    await persistContent({ id: newUploadedVideo.id, type: 'video', content: newUploadedVideo.title, image: liveThumbnail, thumbnail: liveThumbnail });
 
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2352,6 +2433,52 @@ const CreatePage = () => {
                 />
               </div>
 
+              <div>
+                <Label>Stream Thumbnail</Label>
+                <div className="mt-1 flex items-center gap-4">
+                  {liveThumbnailPreview ? (
+                    <div className="relative w-32 h-20 rounded-lg overflow-hidden border">
+                      <img src={liveThumbnailPreview} alt="Thumbnail preview" className="w-full h-full object-cover" />
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
+                        onClick={() => { setLiveThumbnailFile(null); setLiveThumbnailPreview(''); }}
+                      >
+                        <X className="h-3 w-3" />
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => document.getElementById('live-thumbnail-upload')?.click()}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Thumbnail
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Recommended: 1280x720</span>
+                    </div>
+                  )}
+                  <Input
+                    id="live-thumbnail-upload"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (file) {
+                        setLiveThumbnailFile(file);
+                        setLiveThumbnailPreview(URL.createObjectURL(file));
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+
               <div className="bg-muted/50 rounded-lg p-4">
                 <h4 className="font-semibold mb-2">Before you go live:</h4>
                 <ul className="text-sm text-muted-foreground space-y-1">
@@ -2684,4 +2811,5 @@ const CreatePage = () => {
   );
 };
 
+// DEBUG_MARKER_CREATE_PAGE_12345
 export default CreatePage;

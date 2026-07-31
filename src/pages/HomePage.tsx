@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -19,7 +19,7 @@ import FollowingFeed from '@/components/FollowingFeed';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
-import { getAuthenticatedUser } from '@/lib/auth';
+import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import api from '@/lib/api';
@@ -47,10 +47,15 @@ const HomePage = () => {
   const [followedCreators, setFollowedCreators] = useState<Set<string>>(new Set());
   const [userHasStories, setUserHasStories] = useState(false);
   const [activeTab, setActiveTab] = useState<'foryou' | 'following' | 'chats'>('foryou');
+  useEffect(() => {
+    if (!showChatsTab && activeTab === 'chats') {
+      setActiveTab('foryou');
+    }
+  }, [showChatsTab, activeTab]);
   const [followingAccounts, setFollowingAccounts] = useState<string[]>(['Equyvo Official', 'Emma Thompson', 'Tech Enthusiast']);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
-
+  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string } | null>(null);
   useEffect(() => {
     const savedProfile = localStorage.getItem('userProfile');
     if (savedProfile) {
@@ -65,24 +70,26 @@ const HomePage = () => {
     return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
   }, []);
 
-  useEffect(() => {
-    if (!showChatsTab && activeTab === 'chats') {
-      setActiveTab('foryou');
-    }
-  }, [showChatsTab, activeTab]);
+
   
   // Real posts data from Supabase with bot content fallback
   const [enhancedPosts, setEnhancedPosts] = useState<Post[]>([]);
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
+  const deletedPostIds = useRef<Set<string>>(new Set());
 
-  // Fetch posts using mock data
+  const currentUserId = (() => {
+    const u = getStoredUser();
+    return u?.username || u?.email?.split('@')[0] || '';
+  })();
+
+  // Fetch posts from API
   useEffect(() => {
     const loadPosts = async () => {
       try {
         setIsLoadingPosts(true);
         const user = await getAuthenticatedUser();
         const posts = await fetchPosts(user?.id);
-        setEnhancedPosts(posts);
+        setEnhancedPosts(posts.filter(post => !deletedPostIds.current.has(post.id)));
       } catch {
         setEnhancedPosts([]);
       } finally {
@@ -94,7 +101,9 @@ const HomePage = () => {
 
     const handlePostCreated = () => { loadPosts(); };
     window.addEventListener('userPostCreated', handlePostCreated);
-    return () => window.removeEventListener('userPostCreated', handlePostCreated);
+    return () => {
+      window.removeEventListener('userPostCreated', handlePostCreated);
+    };
   }, []);
 
   // Check if user has uploaded stories (simulated for demo)
@@ -166,6 +175,32 @@ const HomePage = () => {
     loadMoments();
   }, []);
 
+  // Check for active live stream and listen for live notifications
+  useEffect(() => {
+    const activeLive = localStorage.getItem('equyvo_active_live');
+    if (activeLive) {
+      try {
+        const liveData = JSON.parse(activeLive);
+        setLiveNotification({ title: liveData.title, user: liveData.user, thumbnail: liveData.thumbnail || '' });
+      } catch {}
+    }
+
+    const handleUserWentLive = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setLiveNotification({ title: detail.title, user: detail.user, thumbnail: detail.thumbnail || '' });
+    };
+    const handleUserWentOffline = () => {
+      setLiveNotification(null);
+    };
+
+    window.addEventListener('userWentLive', handleUserWentLive);
+    window.addEventListener('userWentOffline', handleUserWentOffline);
+    return () => {
+      window.removeEventListener('userWentLive', handleUserWentLive);
+      window.removeEventListener('userWentOffline', handleUserWentOffline);
+    };
+  }, []);
+
   // Story handlers
   const handleStoryClick = (index: number) => {
     setCurrentStoryIndex(index);
@@ -204,8 +239,15 @@ const HomePage = () => {
     });
   };
 
-  const handleDeleteStory = (storyId: string) => {
-    showSuccess('🗑️ Story deleted successfully.');
+  const handleDeleteStory = async (storyId: string) => {
+    try {
+      await api.deleteStory(storyId);
+      setStories(prev => prev.filter(s => s.id !== storyId));
+      window.dispatchEvent(new CustomEvent('userPostDeleted', { detail: { postId: storyId, contentType: 'story' } }));
+      showSuccess('Story deleted successfully.');
+    } catch {
+      showError('Failed to delete story');
+    }
   };
 
   // Handle create story button click
@@ -370,16 +412,9 @@ const HomePage = () => {
     setReportModalOpen(postId);
   };
 
-  const handleDeletePost = async (postId: string) => {
-    const post = enhancedPosts.find(p => p.id === postId);
-    try {
-      if (post?.type === 'thought') await api.deleteThought(postId);
-      else if (post?.type === 'moment') await api.deleteMoment(postId);
-      else if (post?.type === 'story') await api.deleteStory(postId);
-      else await api.deletePost(postId);
-    } catch {}
+  const handleDeletePost = (postId: string) => {
+    deletedPostIds.current.add(postId);
     setEnhancedPosts(prev => prev.filter(post => post.id !== postId));
-    showSuccess('🗑️ Post deleted successfully.');
   };
 
   const handleAddToHistory = (post: Post) => {
@@ -408,6 +443,31 @@ const HomePage = () => {
     <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 relative w-full">
       {/* Main Content Feed */}
       <div className="flex-1 space-y-4 lg:space-y-8 w-full lg:max-w-2xl lg:mx-0 px-4 sm:px-6 lg:px-0">
+
+        {/* Live Notification Banner */}
+        {liveNotification && (
+          <div className="bg-red-600 rounded-xl p-4 flex items-center gap-3 shadow-lg">
+            <div className="w-3 h-3 bg-white rounded-full animate-pulse flex-shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-white font-semibold text-sm truncate">
+                {liveNotification.user} is live!
+              </p>
+              <p className="text-white/80 text-xs truncate">
+                {liveNotification.title}
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="secondary"
+              className="flex-shrink-0"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent('viewLiveStream', { detail: liveNotification }));
+              }}
+            >
+              <Play className="h-3 w-3 mr-1" /> Watch
+            </Button>
+          </div>
+        )}
 
         {/* Story Panel (Facebook Style but Unique) */}
         <div className="relative">
@@ -508,7 +568,7 @@ const HomePage = () => {
 
         {/* Main Feed with For You, Following, and optionally Chats tabs */}
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foryou' | 'following' | 'chats')} className="w-full">
-          <TabsList className={`grid w-full mb-4 lg:mb-6 max-w-sm sm:max-w-md mx-auto bg-muted/50 backdrop-blur-sm ${showChatsTab ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          <TabsList className={`grid w-full mb-4 lg:mb-6 max-w-sm sm:max-w-md mx-auto bg-muted/50 backdrop-blur-sm ${showChatsTab ? 'grid-cols-3' : 'grid-cols-2'}`}>         
             <TabsTrigger value="foryou" className="flex items-center justify-center gap-1 lg:gap-2 text-xs sm:text-sm lg:text-sm w-full data-[state=active]:bg-background data-[state=active]:shadow-sm">
               <Sparkles className="w-3 h-3 lg:w-4 lg:h-4 flex-shrink-0" />
               <span className="truncate font-medium">For You</span>
@@ -552,6 +612,7 @@ const HomePage = () => {
                 onVote={handleVote}
                 likedPosts={likedPosts}
                 reactedPosts={commentedPosts}
+                currentUserId={currentUserId}
                 postLikes={Object.fromEntries(enhancedPosts.map(p => [p.id, p.likes]))}
                 postReacts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.reacts]))}
                 postCommentCounts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.comments]))}
@@ -585,6 +646,7 @@ const HomePage = () => {
                 onVote={handleVote}
                 likedPosts={likedPosts}
                 reactedPosts={commentedPosts}
+                currentUserId={currentUserId}
                 postLikes={Object.fromEntries(enhancedPosts.map(p => [p.id, p.likes]))}
                 postReacts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.reacts]))}
                 postCommentCounts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.comments]))}

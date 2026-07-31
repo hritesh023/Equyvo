@@ -118,6 +118,20 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
               <Flag className="h-4 w-4 mr-2" />
               Report
             </DropdownMenuItem>
+            {isOwnPost && onDelete && (
+              <div className="p-1">
+                <DeleteButton
+                  onDelete={() => onDelete(postId)}
+                  variant="ghost"
+                  size="sm"
+                  className="w-full justify-start h-8 px-2 text-sm"
+                  confirmationTitle="Delete this post?"
+                  confirmationDescription="This action cannot be undone. This will permanently delete your post and remove it from the feed."
+                  confirmButtonText="Delete Post"
+                  showIcon={true}
+                />
+              </div>
+            )}
             <DropdownMenuItem onClick={handleHide} className="text-red-600 focus:text-red-600">
               <EyeOff className="h-4 w-4 mr-2" />
               Hide

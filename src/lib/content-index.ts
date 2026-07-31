@@ -25,12 +25,15 @@ let cachedIndex: ContentIndexItem[] | null = null;
 let lastFetch = 0;
 const CACHE_TTL = 60000; // 1 minute
 
+function invalidateCache() {
+  cachedIndex = null;
+  lastFetch = 0;
+}
+
 // Invalidate cache when new content is created
 if (typeof window !== 'undefined') {
-  window.addEventListener('userPostCreated', () => {
-    cachedIndex = null;
-    lastFetch = 0;
-  });
+  window.addEventListener('userPostCreated', () => invalidateCache());
+  window.addEventListener('userPostDeleted', () => invalidateCache());
 }
 
 async function getIndex(): Promise<ContentIndexItem[]> {
