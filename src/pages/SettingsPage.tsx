@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
-import { 
+import {
   Bell, 
   Shield, 
   Palette, 
@@ -21,7 +21,8 @@ import {
   Trash2,
   Download,
   User,
-  Mail
+  Mail,
+  Megaphone
 } from 'lucide-react';
 import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
@@ -52,6 +53,9 @@ const SettingsPage = () => {
   });
   const [compactView, setCompactView] = useState(() => {
     return localStorage.getItem('compactView') === 'true';
+  });
+  const [personalizedAds, setPersonalizedAds] = useState(() => {
+    return localStorage.getItem('equyvo_ads_personalized') !== 'false';
   });
 
   useEffect(() => {
@@ -90,6 +94,10 @@ const SettingsPage = () => {
   useEffect(() => {
     localStorage.setItem('compactView', compactView.toString());
   }, [compactView]);
+
+  useEffect(() => {
+    localStorage.setItem('equyvo_ads_personalized', personalizedAds.toString());
+  }, [personalizedAds]);
 
   useEffect(() => {
     const root = window.document.documentElement;
@@ -324,6 +332,48 @@ const SettingsPage = () => {
               checked={compactView}
               onCheckedChange={setCompactView}
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Ads & Privacy */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Megaphone className="h-5 w-5" />
+            Ads & Privacy
+          </CardTitle>
+          <CardDescription>
+            Equyvo shows only quiet sponsored cards in feeds — never before or
+            in the middle of a video. Here is your control.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Personalized ads</Label>
+              <p className="text-sm text-muted-foreground">
+                More relevant sponsored cards. Off = generic ads only.
+              </p>
+            </div>
+            <Switch
+              checked={personalizedAds}
+              onCheckedChange={setPersonalizedAds}
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <Label>Go ad-free</Label>
+              <p className="text-sm text-muted-foreground">
+                Premium and Creator plans remove all sponsored cards.
+              </p>
+            </div>
+            <Button variant="outline" size="sm" onClick={() => navigate('/pricing')}>
+              See plans
+            </Button>
           </div>
         </CardContent>
       </Card>

@@ -51,6 +51,14 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
 
+  // Signal fullscreen takeover so the feed banner stays hidden over stories.
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('storyViewerOpened'));
+    return () => {
+      window.dispatchEvent(new CustomEvent('storyViewerClosed'));
+    };
+  }, []);
+
   const togglePlayPause = () => {
     const video = videoRef.current;
     const audio = audioRef.current;

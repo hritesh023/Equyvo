@@ -18,6 +18,11 @@ import { showSuccess, showError } from '@/utils/toast';
 import { deleteContent } from '@/utils/delete';
 import { Post } from '@/types';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { useMemo } from 'react';
+import { withInFeedAds } from '@/lib/feed-ads';
+import { shouldShowAds } from '@/lib/ads-config';
+import { useAdPlan } from '@/hooks/use-ad-plan';
+import InFeedAdGate from './ads/InFeedAdGate';
 
 interface ExtendedPost extends Post {
   type: 'post' | 'thought' | 'reacted';
@@ -91,6 +96,24 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
   const [editingPostId, setEditingPostId] = useState<string>('');
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
+
+  // ── UX-friendly native ads: in-feed slots only, never on video ──
+  const adPlan = useAdPlan();
+  const feedRows = useMemo(
+    () =>
+      shouldShowAds(adPlan)
+        ? withInFeedAds(recommendedPosts, {
+            placement: 'home-foryou',
+            plan: adPlan,
+            keyOf: (p) => (p as Post).id,
+          })
+        : recommendedPosts.map((value) => ({
+            kind: 'content' as const,
+            value,
+            key: value.id,
+          })),
+    [recommendedPosts, adPlan],
+  );
 
   // Content recommendation algorithm
   const calculateRelevanceScore = (post: Post): number => {
@@ -199,13 +222,16 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     
     // Enhanced content structure for fullscreen viewer
     const isMomentPost = post.type === 'moment';
+    const vid = post.videoUrl || post.video || '';
+    const img = post.image || post.thumbnail || post.media || post.fallbackImage || '';
+    const hasVideo = Boolean(vid) && vid !== img;
     const fullscreenContent = {
       ...post,
-      type: isMomentPost ? 'moment' : (post.image ? ('image' as any) : post.type), // Keep original type for non-image posts
-      videoUrl: post.videoUrl,
-      media: post.image || post.media,
-      thumbnail: post.image || post.thumbnail || post.media,
-      mediaType: post.image ? 'image' : 'text',
+      type: isMomentPost ? 'moment' : (hasVideo ? ('video' as any) : (img ? ('image' as any) : post.type)), // Keep original type when no media
+      videoUrl: vid,
+      media: vid || img,
+      thumbnail: img || post.thumbnail || post.media,
+      mediaType: hasVideo ? 'video' : (img ? 'image' : 'text'),
       creator: post.user,
       content: post.content,
       likes: post.likes,
@@ -218,9 +244,9 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
       creatorId: post.user,
       verified: Math.random() > 0.7,
       subscribers: Math.floor(Math.random() * 100000),
-      fallbackImage: post.image || post.thumbnail || post.media,
+      fallbackImage: img,
       // Ensure proper aspect ratio for images
-      aspectRatio: isMomentPost ? '9/16' : (post.image ? '16/9' : undefined),
+      aspectRatio: isMomentPost ? '9/16' : (img ? '16/9' : undefined),
       forcePortrait: isMomentPost
     };
     
@@ -248,7 +274,12 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
           </div>
         ) : (
           <div className="space-y-4">
-            {recommendedPosts.map((post) => (
+            {feedRows.map((row) => {
+              if (row.kind === 'ad') {
+                return <InFeedAdGate key={row.key} placement="home-foryou" />;
+              }
+              const post = row.value;
+              return (
               <Card key={post.id} className="p-4 slide-up border-l-4 border-l-yellow-400">
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
@@ -304,14 +335,35 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     {post.content}
                   </p>
                   
-                  {post.image && (
-                    <img 
-                      src={post.image} 
-                      alt="Post content" 
-                      className="w-full rounded-lg mb-4 object-cover max-h-80 cursor-pointer" 
-                      onClick={() => handleContentClick(post)} 
-                    />
-                  )}
+                  {(() => {
+                    const vid = post.videoUrl || post.video || '';
+                    const img = post.image || post.thumbnail || post.media || post.fallbackImage || '';
+                    const isVideo = Boolean(vid) && vid !== img;
+                    if (isVideo) {
+                      return (
+                        <video
+                          src={vid}
+                          poster={img || undefined}
+                          controls
+                          preload="metadata"
+                          playsInline
+                          className="w-full rounded-lg mb-4 aspect-video bg-black cursor-pointer object-contain"
+                          onClick={() => handleContentClick(post)}
+                        />
+                      );
+                    }
+                    if (img) {
+                      return (
+                        <img
+                          src={img}
+                          alt="Post content"
+                          className="w-full rounded-lg mb-4 object-cover max-h-80 cursor-pointer bg-secondary"
+                          onClick={() => handleContentClick(post)}
+                        />
+                      );
+                    }
+                    return null;
+                  })()}
                   
                   <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                     {post.type === 'thought' ? (
@@ -388,7 +440,8 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                   </div>
                 </CardContent>
               </Card>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>

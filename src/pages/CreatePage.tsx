@@ -91,6 +91,9 @@ const CreatePage = () => {
     fileSize: number;
     duration: string;
     thumbnail: string;
+    videoUrl?: string;
+    publicId?: string;
+    resourceType?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -108,6 +111,8 @@ const CreatePage = () => {
     fileSize: number;
     duration?: string;
     thumbnail: string;
+    publicId?: string;
+    resourceType?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -123,6 +128,8 @@ const CreatePage = () => {
     hasMedia: boolean;
     mediaType?: 'image' | 'video';
     mediaUrl?: string;
+    publicId?: string;
+    resourceType?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -138,6 +145,11 @@ const CreatePage = () => {
     fileSize: number;
     thumbnail: string;
     caption: string;
+    mediaType?: 'image' | 'video';
+    videoUrl?: string;
+    duration?: number;
+    publicId?: string;
+    resourceType?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -152,6 +164,9 @@ const CreatePage = () => {
     fileSize: number;
     thumbnail: string;
     mediaType?: 'image' | 'video';
+    videoUrl?: string;
+    publicId?: string;
+    resourceType?: string;
     content: string;
     uploadDate: Date;
     isPrivate: boolean;
@@ -174,10 +189,17 @@ const CreatePage = () => {
     expiresAt: Date;
   }
 
-  function getThumbnailFromUpload(result: { secureUrl: string; resourceType: string } | null | undefined): string {
+  function getThumbnailFromUpload(result: { secureUrl: string; resourceType: string; variants?: { thumbnail?: string } | null } | null | undefined): string {
   if (!result?.secureUrl) return '';
+  // Server-computed thumbnail wins (Cloudinary variant when available).
+  if (result.variants?.thumbnail) return result.variants.thumbnail;
   if (result.resourceType === 'image') return result.secureUrl;
-  return result.secureUrl.replace('/video/upload/', '/video/upload/w_400,f_auto/').replace(/\.[^.]+$/, '.jpg');
+  // Cloudinary-hosted video: derive a lightweight poster. R2-hosted video has
+  // no server poster yet — return '' so UI falls back to <video> element.
+  if (result.secureUrl.includes('res.cloudinary.com/')) {
+    return result.secureUrl.replace('/video/upload/', '/video/upload/w_400,f_auto/').replace(/\.[^.]+$/, '.jpg');
+  }
+  return '';
 }
 
 // Shared helper: persist content to API, index for search, update localStorage, notify other pages
@@ -237,12 +259,42 @@ const CreatePage = () => {
     } catch (err) { console.error('Failed to index content:', err); }
     try {
       const savedProfile = localStorage.getItem('userProfile');
-      if (savedProfile) {
-        const profile = JSON.parse(savedProfile);
-        const mediaUrl = content.media || content.image || content.thumbnail || '';
-        profile.posts = [{ id: content.id, user: postData.user, avatar: '', time: 'just now', content: content.content || '', image: mediaUrl, media: mediaUrl, likes: 0, comments: 0, shares: 0, type, createdAt: new Date().toISOString() }, ...(profile.posts || [])];
-        localStorage.setItem('userProfile', JSON.stringify(profile));
-      }
+      const profile = savedProfile
+        ? JSON.parse(savedProfile)
+        : {
+            _userEmail: userInfo.userId,
+            id: userInfo.userId,
+            name: userInfo.username,
+            username: userInfo.username,
+            avatar: '',
+            bio: '',
+            followers: 0,
+            following: 0,
+            posts: [],
+          };
+      const mediaUrl = content.media || content.image || content.thumbnail || '';
+      const isVideo = content.mediaType === 'video' || type === 'video' || !!content.videoUrl;
+      profile.posts = [{
+        id: content.id,
+        user: postData.user,
+        avatar: (content.avatar as string) || '',
+        time: 'just now',
+        content: (content.content as string) || '',
+        image: mediaUrl,
+        media: (content.videoUrl as string) || content.media || mediaUrl,
+        thumbnail: (content.thumbnail as string) || (content.image as string) || mediaUrl,
+        videoUrl: (content.videoUrl as string) || '',
+        mediaType: (content.mediaType as string) || (isVideo ? 'video' : 'image'),
+        duration: (content.duration as number) || 0,
+        publicId: (content.publicId as string) || '',
+        resourceType: (content.resourceType as string) || '',
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        type,
+        createdAt: new Date().toISOString(),
+      }, ...(profile.posts || [])];
+      localStorage.setItem('userProfile', JSON.stringify(profile));
     } catch (err) { console.error('Failed to update localStorage profile:', err); }
     // Invalidate search cache so new content appears immediately
     window.dispatchEvent(new CustomEvent('userPostCreated', { detail: { post: postData, type } }));
@@ -427,6 +479,8 @@ const CreatePage = () => {
           fileSize: file.size,
           duration: file.type.startsWith('video/') ? '0:15' : undefined,
           thumbnail: getThumbnailFromUpload(result),
+          publicId: result?.publicId || '',
+          resourceType: result?.resourceType || '',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 500),
@@ -438,7 +492,7 @@ const CreatePage = () => {
 
         setUploadedStories(prev => [...prev, ...newUploadedStories]);
         for (const s of newUploadedStories) {
-          await persistContent({ id: s.id, type: 'story', content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '', image: s.thumbnail, thumbnail: s.thumbnail, user: getCurrentUserInfo().username });
+          await persistContent({ id: s.id, type: 'story', content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '', image: s.thumbnail, thumbnail: s.thumbnail, publicId: s.publicId, resourceType: s.resourceType, user: getCurrentUserInfo().username });
         }
         setIsUploading(false);
         showSuccess('Story posted successfully! It will be available for 24 hours.');
@@ -563,13 +617,13 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
-        let thoughtUploadResult: { secureUrl: string; resourceType: string } | null = null;
+        let thoughtUploadResult: { secureUrl: string; resourceType: string; publicId?: string; variants?: { thumbnail?: string } | null } | null = null;
         if (thoughtVideo) {
           try {
             const uploadFile = thoughtVideo.type.startsWith('image/') ? await compressImage(thoughtVideo) : thoughtVideo;
             const { data, error } = await api.uploadFile(uploadFile, 'equyvo/thoughts');
             if (error) throw new Error(error);
-            thoughtUploadResult = { secureUrl: data!.secureUrl, resourceType: data!.resourceType };
+            thoughtUploadResult = { secureUrl: data!.secureUrl, resourceType: data!.resourceType, publicId: data!.publicId || undefined, variants: data!.variants };
           } catch (err) {
             showError('Upload failed for thought media');
           }
@@ -582,6 +636,8 @@ const CreatePage = () => {
           hasMedia: !!thoughtVideo,
           mediaType: thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined,
           mediaUrl: thoughtUploadResult?.secureUrl || (thoughtVideo ? '' : undefined),
+          publicId: thoughtUploadResult?.publicId || '',
+          resourceType: thoughtUploadResult?.resourceType || '',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 200),
@@ -592,7 +648,7 @@ const CreatePage = () => {
         };
 
         setUploadedThoughts(prev => [...prev, newUploadedThought]);
-        await persistContent({ id: newUploadedThought.id, type: 'thought', content: newUploadedThought.content, image: thoughtThumbnail, thumbnail: thoughtThumbnail });
+        await persistContent({ id: newUploadedThought.id, type: 'thought', content: newUploadedThought.content, image: thoughtThumbnail, thumbnail: thoughtThumbnail, publicId: newUploadedThought.publicId, resourceType: newUploadedThought.resourceType });
         setIsUploading(false);
         showSuccess('Thought posted successfully!');
         setThoughtContent('');
@@ -664,6 +720,11 @@ const CreatePage = () => {
           fileSize: file.size,
           thumbnail: getThumbnailFromUpload(result),
           caption: photoCaption,
+          mediaType: file.type.startsWith('video/') ? 'video' : 'image',
+          videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
+          duration: result?.duration,
+          publicId: result?.publicId || '',
+          resourceType: result?.resourceType || '',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 600),
@@ -674,7 +735,7 @@ const CreatePage = () => {
 
         setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
         for (const p of newUploadedPhotos) {
-          await persistContent({ id: p.id, type: 'photo', content: p.caption, image: p.thumbnail, thumbnail: p.thumbnail });
+          await persistContent({ id: p.id, type: p.mediaType === 'video' ? 'video' : 'photo', content: p.caption, image: p.thumbnail, thumbnail: p.thumbnail, videoUrl: p.videoUrl, mediaType: p.mediaType, duration: p.duration, publicId: p.publicId, resourceType: p.resourceType });
         }
         setIsUploading(false);
         showSuccess(`${photoFiles.length} photo(s) posted successfully!`);
@@ -748,6 +809,9 @@ const CreatePage = () => {
           fileSize: file.size,
           duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
           thumbnail: getThumbnailFromUpload(result),
+          videoUrl: result?.secureUrl || '',
+          publicId: result?.publicId || '',
+          resourceType: result?.resourceType || '',
           uploadDate: new Date(),
           isPrivate: false,
           views: Math.floor(Math.random() * 1000),
@@ -760,7 +824,7 @@ const CreatePage = () => {
 
         setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
         for (const v of newUploadedVideos) {
-          await persistContent({ id: v.id, type: 'video', content: v.title, image: v.thumbnail, thumbnail: v.thumbnail });
+          await persistContent({ id: v.id, type: 'video', content: v.title, image: v.thumbnail, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', publicId: v.publicId, resourceType: v.resourceType });
         }
         setIsUploading(false);
         showSuccess(`${videoFiles.length} video(s) posted successfully!`);
@@ -871,6 +935,9 @@ const CreatePage = () => {
           fileSize: file.size,
           thumbnail: getThumbnailFromUpload(result),
           mediaType: file.type.startsWith('image/') ? 'image' : 'video',
+          videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
+          publicId: result?.publicId || '',
+          resourceType: result?.resourceType || '',
           content: momentContent,
           uploadDate: new Date(),
           isPrivate: false,
@@ -888,6 +955,9 @@ const CreatePage = () => {
             media: m.thumbnail,
             thumbnail: m.thumbnail,
             mediaType: m.mediaType,
+            videoUrl: m.videoUrl,
+            publicId: m.publicId,
+            resourceType: m.resourceType,
           });
         }
         setIsUploading(false);
@@ -938,11 +1008,15 @@ const CreatePage = () => {
 
       // Upload thumbnail if provided
       let liveThumbnailUrl = '';
+      let liveThumbnailPublicId = '';
+      let liveThumbnailResourceType = '';
       if (liveThumbnailFile) {
         try {
           const { data, error } = await api.uploadFile(liveThumbnailFile, 'equyvo/live/thumbnails');
           if (!error && data) {
             liveThumbnailUrl = data.secureUrl;
+            liveThumbnailPublicId = data.publicId;
+            liveThumbnailResourceType = data.resourceType;
           }
         } catch {
           showError('Failed to upload thumbnail');
@@ -960,6 +1034,8 @@ const CreatePage = () => {
         title: liveTitle,
         description: liveDescription,
         thumbnail: liveThumbnailUrl,
+        publicId: liveThumbnailPublicId,
+        resourceType: liveThumbnailResourceType,
         user: userInfo.username,
         userId: userInfo.userId,
         isLive: true,

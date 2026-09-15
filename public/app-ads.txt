@@ -1,0 +1,4 @@
+# AdMob app-ads.txt — verifies Equyvo as an authorized seller for your ad inventory.
+# Keep this file at the root of every domain that serves Equyvo web traffic
+# (e.g. https://equyvo.com/app-ads.txt). AdMob crawls it before full approval.
+google.com, pub-8929153950560106, DIRECT, f08c47fec0942fa0

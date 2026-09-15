@@ -58,61 +58,8 @@ const MomentsPage = () => {
     };
   }, [activeVideoIndex]);
 
-  // Mock moments data (development only)
-  const moments = import.meta.env.DEV ? [
-    {
-      id: 'm1',
-      user: 'alex_adventures',
-      avatar: '',
-      description: 'The view from the top is absolutely breathtaking! 🏔️ #hiking #nature #sunset',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      song: 'Original Sound - Alex Chen',
-      likes: '15.4K',
-      comments: '892',
-      shares: '2.3K',
-      isLiked: false,
-      isSaved: false
-    },
-    {
-      id: 'm2',
-      user: 'culinary_wizard',
-      avatar: '',
-      description: 'Secret pasta recipe revealed! 🍝 You have to try this. #cooking #foodie #recipe',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-      song: 'Italian Dinner Jazz - Foodie Beats',
-      likes: '8.9K',
-      comments: '567',
-      shares: '123',
-      isLiked: true,
-      isSaved: false
-    },
-    {
-      id: 'm3',
-      user: 'fitness_pro',
-      avatar: '',
-      description: 'No excuses. Get it done. 💪 #fitness #gym #motivation',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-      song: 'High Energy Workout - Gym Tunes',
-      likes: '22.1K',
-      comments: '1.2K',
-      shares: '456',
-      isLiked: false,
-      isSaved: true
-    },
-    {
-      id: 'm4',
-      user: 'urban_dancer',
-      avatar: '',
-      description: 'Vibing in the city 🌃 #dance #street #vibes',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-      song: 'City Lights - Dance Mix',
-      likes: '45.6K',
-      comments: '2.3K',
-      shares: '7.8K',
-      isLiked: true,
-      isSaved: true
-    }
-  ] : [];
+  // Real moments data comes from the API feed
+  const moments: any[] = [];
 
   useMediaSession({
     videoRef: {

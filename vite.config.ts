@@ -49,19 +49,15 @@ export default defineConfig(({ mode }) => ({
   build: {
     rollupOptions: {
       output: {
-        manualChunks: (id) => {
-          if (id.includes('node_modules')) {
-            if (id.includes('react-router')) return 'router';
-            if (id.includes('@radix-ui')) return 'radix-ui';
-            if (id.includes('lucide')) return 'icons';
-            if (id.includes('date-fns')) return 'date-utils';
-            return 'vendor';
-          }
-          if (id.includes('src/pages/')) return 'pages';
-          if (id.includes('src/components/')) return 'components';
-          if (id.includes('src/hooks/')) return 'hooks';
-          if (id.includes('src/lib/')) return 'utils';
-        },
+        // NOTE: no custom manualChunks. A previous function-form manualChunks
+        // (vendor/router/components/hooks/utils/pages) created STATIC import
+        // cycles between chunks (vendor -> components -> router -> vendor,
+        // via the shared dynamic-import preload helper). With cycles, chunk
+        // evaluation order is no longer topological, so react-router's
+        // module-level `React.createContext()` ran while React was still
+        // undefined -> "Cannot read properties of undefined (reading
+        // 'createContext')" in production. Letting Rollup/Vite choose the
+        // splitting keeps the graph acyclic and evaluation order safe.
         chunkFileNames: (chunkInfo) => {
           const facadeModuleId = chunkInfo.facadeModuleId ? chunkInfo.facadeModuleId.split('/').pop()?.replace(/\.[^.]*$/, '') : 'chunk';
           return 'js/[name]-[hash].js';

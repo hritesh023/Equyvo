@@ -3,6 +3,28 @@
 // In production, same origin (Pages serves both frontend and functions)
 
 const API_BASE = '/api';
+const USER_KEY = 'equyvo_cognito_user';
+const TOKEN_KEY = 'equyvo_cognito_token';
+
+// Attach caller identity headers so the backend can enforce ownership
+// and rate limits on write operations. A real Cognito JWT is sent as a
+// Bearer token when available; otherwise the stored user id is sent.
+function authHeaders(): Record<string, string> {
+  const headers: Record<string, string> = {};
+  try {
+    const stored = localStorage.getItem(USER_KEY);
+    if (stored) {
+      const user = JSON.parse(stored);
+      const id = user?.id || user?.email || '';
+      if (id) headers['X-User-Id'] = String(id);
+    }
+    const token = localStorage.getItem(TOKEN_KEY);
+    if (token) headers['Authorization'] = 'Bearer ' + token;
+  } catch {
+    // ignore storage errors
+  }
+  return headers;
+}
 
 async function request<T = any>(
   path: string,
@@ -13,7 +35,7 @@ async function request<T = any>(
     const isGet = !options || !options.method || options.method === 'GET';
     const separator = path.includes('?') ? '&' : '?';
     const url = isGet ? `${API_BASE}${path}${separator}_t=${Date.now()}` : `${API_BASE}${path}`;
-    const headers: Record<string, string> = {};
+    const headers: Record<string, string> = authHeaders();
     const isFormData = options?.body instanceof FormData;
     if (!isFormData) {
       headers['Content-Type'] = 'application/json';
@@ -112,19 +134,28 @@ export const api = {
   deleteUserData: (userId: string) =>
     request<{ data: { success: boolean }; error: null }>(`/user/${userId}/data`, { method: 'DELETE' }),
 
-  // Upload file via backend proxy (keeps Cloudinary creds server-side)
+  // Upload file via backend (R2 warehouse primary, Cloudinary selective).
+  // secureUrl is always the best delivery URL (R2 when bound) — render it
+  // directly. No backend secrets ever reach the browser.
   uploadFile: (file: File | Blob, folder?: string) => {
     const formData = new FormData();
     formData.append('file', file);
     if (folder) formData.append('folder', folder);
     return request<{
-      publicId: string;
+      publicId: string | null;
       secureUrl: string;
+      originalUrl: string;
+      delivery: 'r2' | 'cloudinary';
+      store: 'r2+cloudinary' | 'r2' | 'cloudinary';
+      r2Key: string | null;
+      variants: { thumbnail: string; optimized?: string; sd?: string; hd?: string } | null;
+      deduped?: boolean;
+      planId?: string;
       resourceType: string;
       format: string;
       bytes: number;
-      width: number;
-      height: number;
+      width?: number;
+      height?: number;
       createdAt: string;
       duration?: number;
     }>('/upload', {
@@ -136,6 +167,47 @@ export const api = {
   // Get user's own posts
   getUserPosts: (userId: string, limit = 50) =>
     request<{ data: any[]; error: null }>(`/users/${userId}/posts?limit=${limit}`),
+
+  // Plans (public catalog — quotas only, no secrets) + usage (authenticated)
+  getPlans: () =>
+    request<{ data: { plans: any[]; platformFeeBps: number }; error: null }>('/plans'),
+
+  getUsage: () =>
+    request<{
+      data: {
+        planId: string; planLabel: string; source: string;
+        usedBytes: number; quotaBytes: number; usedPct: number;
+        files: number; monthlyUploads: number; monthlyCap: number;
+        maxUploadMB: number; maxVideoSec: number;
+      };
+      error: null;
+    }>('/me/usage'),
+
+  // Creator economy MVP (money moves via Razorpay verify on api.acronous.com;
+  // these endpoints only record verified intents server-side)
+  creatorSetup: (data: { displayName?: string; bio?: string; tipEnabled?: boolean; subPriceInr?: number }) =>
+    request<{ data: any; error: null }>('/creator/setup', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  getCreator: (userId: string) =>
+    request<{ data: any; error: null }>(`/creator/${encodeURIComponent(userId)}`),
+
+  sendTip: (data: { to: string; amountInr: number; paymentId?: string }) =>
+    request<{ data: any; error: null }>('/tips', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  subscribe: (data: { creator: string; plan?: string; amountInr: number; paymentId?: string }) =>
+    request<{ data: any; error: null }>('/subscriptions', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  adsEligibility: () =>
+    request<{ data: { planId: string; ads: string; showAds: boolean }; error: null }>('/ads/eligibility'),
 
   // Health check
   health: () => request<{ status: string }>('/health'),

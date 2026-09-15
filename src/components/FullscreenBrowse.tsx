@@ -24,63 +24,9 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
 
   if (!isOpen) return null;
 
-  // Sample content from different parts of Equyvo app
-  const featuredContent = [
-    {
-      id: 'featured-1',
-      type: 'video',
-      title: 'Amazing Sunset Timelapse',
-      creator: 'NaturePhotographer',
-      thumbnail: 'https://picsum.photos/seed/sunset1/400/225',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-      views: 125000,
-      likes: 8900,
-      comments: 234,
-      duration: '3:45',
-      verified: true,
-      subscribers: 45000
-    },
-    {
-      id: 'featured-2',
-      type: 'image',
-      title: 'Urban Architecture',
-      creator: 'CityExplorer',
-      thumbnail: 'https://picsum.photos/seed/city1/400/400',
-      image: 'https://picsum.photos/seed/city1/400/400',
-      views: 89000,
-      likes: 5600,
-      comments: 123,
-      verified: false,
-      subscribers: 12000
-    },
-    {
-      id: 'featured-3',
-      type: 'live',
-      title: 'Live Gaming Session',
-      creator: 'ProGamer',
-      thumbnail: 'https://picsum.photos/seed/gaming1/400/225',
-      videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-      isLive: true,
-      viewers: 3500,
-      likes: 2100,
-      verified: true,
-      subscribers: 89000
-    }
-  ];
-
-  const trendingContent = Array.from({ length: 8 }, (_, i) => ({
-    id: `trending-${i}`,
-    type: i % 2 === 0 ? 'video' : 'image',
-    title: `Trending Content ${i + 1}`,
-    creator: `Creator ${i + 1}`,
-    thumbnail: `https://picsum.photos/seed/trend${i}/200/200`,
-    videoUrl: i % 2 === 0 ? 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4' : null,
-    views: Math.floor(Math.random() * 50000) + 10000,
-    likes: Math.floor(Math.random() * 5000) + 500,
-    comments: Math.floor(Math.random() * 200) + 50,
-    duration: i % 2 === 0 ? `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}` : null,
-    verified: Math.random() > 0.5
-  }));
+  // Content comes from the API feed (no hardcoded sample content)
+  const featuredContent: any[] = [];
+  const trendingContent: any[] = [];
 
   const handleLike = (itemId: string) => {
     setLikedItems(prev => {

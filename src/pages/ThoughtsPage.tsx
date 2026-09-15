@@ -48,6 +48,11 @@ import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { useMemo } from 'react';
+import { withInFeedAds } from '@/lib/feed-ads';
+import { shouldShowAds } from '@/lib/ads-config';
+import { useAdPlan } from '@/hooks/use-ad-plan';
+import InFeedAdGate from '@/components/ads/InFeedAdGate';
 
 // MediaRenderer component to handle different media types
 const MediaRenderer: React.FC<{ 
@@ -297,6 +302,24 @@ const ThoughtsPage = memo(() => {
     { name: '#TechNews', posts: '4.5K', trend: 'up' },
     { name: '#Coding', posts: '3.8K', trend: 'stable' }
   ]);
+
+  // ── UX-friendly native ads: in-feed slots only, never on video ──
+  const adPlan = useAdPlan();
+  const thoughtRows = useMemo(
+    () =>
+      shouldShowAds(adPlan)
+        ? withInFeedAds(thoughts, {
+            placement: 'thoughts-feed',
+            plan: adPlan,
+            keyOf: (t) => (t as Thought).id,
+          })
+        : thoughts.map((value) => ({
+            kind: 'content' as const,
+            value,
+            key: value.id,
+          })),
+    [thoughts, adPlan],
+  );
 
   const fetchThoughts = useCallback(async () => {
     try {
@@ -854,7 +877,12 @@ const ThoughtsPage = memo(() => {
             ))}
           </div>
         ) : (
-            thoughts.map((thought) => (
+            thoughtRows.map((row) => {
+            if (row.kind === 'ad') {
+              return <InFeedAdGate key={row.key} placement="thoughts-feed" />;
+            }
+            const thought = row.value;
+            return (
             <Card key={thought.id} className="overflow-hidden hover:shadow-lg transition-shadow">
               <CardContent className="p-0">
                 {/* Header */}
@@ -1054,7 +1082,8 @@ const ThoughtsPage = memo(() => {
                 </div>
               </CardContent>
             </Card>
-          ))
+            );
+          })
         )}
       </div>
 

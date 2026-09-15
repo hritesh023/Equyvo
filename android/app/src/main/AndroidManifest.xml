@@ -33,9 +33,18 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
+
+        <!-- AdMob App ID (ca-app-pub-8929153950560106~6452994138).
+             Required before the Mobile Ads SDK initializes. -->
+        <meta-data
+            android:name="com.google.android.gms.ads.APPLICATION_ID"
+            android:value="ca-app-pub-8929153950560106~6452994138" />
     </application>
 
     <!-- Permissions -->
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Required on Android 13+ for the advertising ID (personalized ads). -->
+    <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 </manifest>

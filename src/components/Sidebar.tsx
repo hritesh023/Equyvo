@@ -1,6 +1,6 @@
 import React from 'react';
 import { Link, useLocation } from 'react-router-dom';
-import { Home, Compass, PlusCircle, Video, MessageSquare, User, Settings, Globe, Camera, Menu, X } from 'lucide-react';
+import { Home, Compass, PlusCircle, Video, MessageSquare, User, Settings, Globe, Camera, Menu, X, Crown } from 'lucide-react';
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useIsTablet } from "@/hooks/use-tablet";
 import { Button } from "@/components/ui/button";
@@ -12,6 +12,7 @@ const navItems = [
   { name: 'Moments', icon: Camera, path: '/app/moments' },
   { name: 'Thoughts', icon: MessageSquare, path: '/app/thoughts' },
   { name: 'Profile', icon: User, path: '/app/profile' },
+  { name: 'Go Premium', icon: Crown, path: '/app/pricing' },
   { name: 'Settings', icon: Settings, path: '/app/settings' },
 ];
 

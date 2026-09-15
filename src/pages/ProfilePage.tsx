@@ -139,12 +139,26 @@ const ProfilePage = () => {
       // Also try to fetch profile from the API for latest data
       if (currentUser?.id) {
         api.getProfile(currentUser.id).then(serverProfile => {
-          if (serverProfile) {
-            const merged = { ...createDefaultProfile(currentUser), ...serverProfile };
-            merged.posts = userProfile.posts || [];
-            setUserProfile(prev => ({ ...prev, ...merged }));
-            localStorage.setItem('userProfile', JSON.stringify(merged));
+          if (serverProfile?.data) {
+            setUserProfile(prev => ({
+              ...prev,
+              ...serverProfile.data,
+              _userEmail: currentUser?.email || prev._userEmail,
+              posts: prev.posts || [],
+            }));
           }
+        }).catch(() => {});
+
+        // Fetch the user's posts from the server and merge with the local cache,
+        // so uploaded posts always appear in the profile even after storage is cleared
+        api.getUserPosts(currentUser.id).then(({ data, error }) => {
+          if (error || !Array.isArray(data)) return;
+          setUserProfile(prev => {
+            const existing = prev.posts || [];
+            const serverById = new Map(data.map(p => [p.id, p]));
+            const posts = [...data, ...existing.filter(p => !serverById.has(p.id))];
+            return { ...prev, posts };
+          });
         }).catch(() => {});
       }
 
@@ -1024,16 +1038,44 @@ const ProfilePage = () => {
                     <p className="mb-3 md:mb-4 text-sm md:text-base">{post.content}</p>
 
                     {(post.media || post.image || post.thumbnail) && (
-                      <img 
-                        src={post.media || post.image || post.thumbnail}
-                        alt="Post media" 
-                        className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer" 
-                        onClick={() => handleFullscreen(post)}
-                        onError={(e) => {
-                          const target = e.target as HTMLImageElement;
-                          target.style.display = 'none';
-                        }}
-                      />
+                      post.mediaType === 'video' || post.type === 'video' ? (
+                        post.videoUrl || post.video ? (
+                          <video
+                            src={post.videoUrl || post.video}
+                            poster={post.thumbnail || post.image || post.media}
+                            className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer"
+                            muted
+                            loop
+                            playsInline
+                            preload="none"
+                            onClick={() => handleFullscreen(post)}
+                            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
+                            onMouseLeave={(e) => e.currentTarget.pause()}
+                          />
+                        ) : (
+                          <img
+                            src={post.thumbnail || post.image || post.media}
+                            alt="Post media"
+                            className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer"
+                            onClick={() => handleFullscreen(post)}
+                            onError={(e) => {
+                              const target = e.target as HTMLImageElement;
+                              target.style.display = 'none';
+                            }}
+                          />
+                        )
+                      ) : (
+                        <img
+                          src={post.thumbnail || post.image || post.media}
+                          alt="Post media"
+                          className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer"
+                          onClick={() => handleFullscreen(post)}
+                          onError={(e) => {
+                            const target = e.target as HTMLImageElement;
+                            target.style.display = 'none';
+                          }}
+                        />
+                      )
                     )}
                     <div className="flex items-center gap-1 md:gap-2 flex-wrap">
                       {post.isReacted ? (

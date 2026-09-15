@@ -28,41 +28,7 @@ interface CommentSectionProps {
 }
 
 const CommentSection: React.FC<CommentSectionProps> = ({ isOpen, onClose, postId, postUser, onCommentCountChange, showPinOptions = false }) => {
-  const [comments, setComments] = useState<Comment[]>([
-    {
-      id: 'c1',
-      user: 'Alice Chen',
-      avatar: 'https://picsum.photos/seed/alice/100/100',
-      content: 'This is amazing! Love the content you\'re sharing 🎉',
-      time: '2 hours ago',
-      likes: 12,
-      reacts: 3,
-      isPinned: false,
-      isOwn: false
-    },
-    {
-      id: 'c2',
-      user: 'Bob Smith',
-      avatar: 'https://picsum.photos/seed/bob/100/100',
-      content: 'Great post! Really inspiring stuff. Keep it up! 💪',
-      time: '3 hours ago',
-      likes: 8,
-      reacts: 2,
-      isPinned: false,
-      isOwn: false
-    },
-    {
-      id: 'c3',
-      user: 'Charlie Davis',
-      avatar: 'https://picsum.photos/seed/charlie/100/100',
-      content: 'This made my day! Thanks for sharing this perspective 🌟',
-      time: '5 hours ago',
-      likes: 15,
-      reacts: 4,
-      isPinned: false,
-      isOwn: false
-    }
-  ]);
+  const [comments, setComments] = useState<Comment[]>([]);
   
   const [newComment, setNewComment] = useState('');
   const [likedComments, setLikedComments] = useState<Set<string>>(new Set());
@@ -129,7 +95,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ isOpen, onClose, postId
     const comment: Comment = {
       id: `c${Date.now()}`,
       user: 'You',
-      avatar: 'https://picsum.photos/seed/you/100/100',
+      avatar: '',
       content: newComment,
       time: 'Just now',
       likes: 0,
@@ -301,7 +267,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ isOpen, onClose, postId
           <div className="border-t p-4">
             <div className="flex gap-2">
               <Avatar className="h-8 w-8 flex-shrink-0">
-                <AvatarImage src="https://picsum.photos/seed/you/100/100" />
+                <AvatarImage src="" />
                 <AvatarFallback>YU</AvatarFallback>
               </Avatar>
               <div className="flex-1 flex gap-2">

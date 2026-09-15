@@ -13,6 +13,14 @@ dist-ssr
 *.local
 .wrangler
 
+# Secrets — never commit. Use .env.example as the template.
+# Cognito Pool/Client IDs are public, but .env may also hold local overrides;
+# all real secrets (Cloudinary secret, R2 keys, billing keys) live ONLY in
+# Cloudflare Pages/Workers secrets + server Env, never with VITE_ prefix.
+.env
+.env.*.local
+.dev.vars
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

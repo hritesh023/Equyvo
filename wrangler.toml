@@ -8,3 +8,29 @@ pages_build_output_dir = "dist"
 binding = "EQUYVO_KV"
 id = "6822c0d9813e4bc68724dec1b69593c6"
 preview_id = "6822c0d9813e4bc68724dec1b69593c6"
+
+# --- Media warehouse (R2, zero egress) ---
+# CONNECTED 2026-09-14: bucket `equyvo-media` exists on account
+# 8cd98b62a6dfc48e53191ab641d580d6. R2 is the PRIMARY store for originals
+# (see functions/api/[[path]].ts); Cloudinary stays for derived variants.
+# Delivery needs no DNS: uploads hand out same-origin /api/media/<key> URLs
+# served by the range-aware proxy. Optionally set R2_PUBLIC_BASE to a custom
+# domain / R2.dev URL to bypass the proxy for even cheaper delivery.
+[[r2_buckets]]
+binding = "EQUYVO_R2"
+bucket_name = "equyvo-media"
+
+# --- Production vars (set secrets via dashboard / `wrangler pages secret put`) ---
+# REQUIRED secrets (never commit, never expose with VITE_ prefix):
+#   CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET,
+#   CLOUDINARY_API_KEY, CLOUDINARY_API_SECRET
+# Recommended vars:
+#   REQUIRE_VERIFIED_WRITES=true   # reject unverified X-User-Id writes (prod)
+#   BILLING_BASE_URL=https://api.acronous.com
+#   R2_PUBLIC_BASE=https://cdn.equyvo.com
+#   APP_VERSION=1.0.0
+#   MAX_UPLOAD_MB= (optional global cap; per-plan caps always apply)
+#   ALLOWED_ORIGINS=https://equyvo.com,https://www.equyvo.com
+[vars]
+APP_VERSION = "1.1.0"
+BILLING_BASE_URL = "https://api.acronous.com"

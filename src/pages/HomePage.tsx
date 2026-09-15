@@ -25,6 +25,8 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import api from '@/lib/api';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { brainFeedSuggest, brainLearn } from '@/lib/brain';
+import InFeedAdGate from '@/components/ads/InFeedAdGate';
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -52,7 +54,7 @@ const HomePage = () => {
       setActiveTab('foryou');
     }
   }, [showChatsTab, activeTab]);
-  const [followingAccounts, setFollowingAccounts] = useState<string[]>(['Equyvo Official', 'Emma Thompson', 'Tech Enthusiast']);
+  const [followingAccounts, setFollowingAccounts] = useState<string[]>([]);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string } | null>(null);
@@ -72,7 +74,7 @@ const HomePage = () => {
 
 
   
-  // Real posts data from Supabase with bot content fallback
+  // Real posts data from the API
   const [enhancedPosts, setEnhancedPosts] = useState<Post[]>([]);
   const [isLoadingPosts, setIsLoadingPosts] = useState(true);
   const deletedPostIds = useRef<Set<string>>(new Set());
@@ -81,6 +83,35 @@ const HomePage = () => {
     const u = getStoredUser();
     return u?.username || u?.email?.split('@')[0] || '';
   })();
+
+  // Brain-powered personalised feed suggestions (learned from engagement).
+  const [brainInterests, setBrainInterests] = useState<string[]>(['technology', 'nature', 'lifestyle', 'AI']);
+  const [engagementLog, setEngagementLog] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    const taught = engagementLog;
+    brainFeedSuggest(currentUserId || 'anonymous', taught.slice(-12)).then((suggestions) => {
+      if (cancelled) return;
+      if (suggestions.length > 0) {
+        setBrainInterests(prev => Array.from(new Set([...prev, ...suggestions])).slice(0, 10));
+      }
+    });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [engagementLog.length]);
+
+  const teachBrain = (label: string, opts?: { feedback?: number; response?: string }) => {
+    if (!label) return;
+    setEngagementLog(prev => [...prev.slice(-15), label]);
+    brainLearn({
+      query: label,
+      response: opts?.response,
+      feedback: opts?.feedback,
+      sessionId: currentUserId || 'anonymous',
+      source: 'equivo-feed',
+      routeType: 'general_chat',
+    });
+  };
 
   // Fetch posts from API
   useEffect(() => {
@@ -280,6 +311,7 @@ const HomePage = () => {
       } else {
         newSet.add(momentId);
         showSuccess('❤️ Moment liked!');
+        teachBrain(`moment:${momentId}`);
       }
       return newSet;
     });
@@ -299,6 +331,8 @@ const HomePage = () => {
       } else {
         newSet.add(postId);
         showSuccess('❤️ Post liked!');
+        const p = enhancedPosts.find(x => x.id === postId);
+        teachBrain(p?.content?.slice(0, 120) || p?.type || postId);
       }
       return newSet;
     });
@@ -332,6 +366,8 @@ const HomePage = () => {
       } else {
         newSet.add(postId);
         showSuccess('🔄 Post reacted!');
+        const p = enhancedPosts.find(x => x.id === postId);
+        teachBrain(p?.content?.slice(0, 120) || p?.type || postId);
       }
       return newSet;
     });
@@ -350,6 +386,7 @@ const HomePage = () => {
       newSet.add(post.id);
       return newSet;
     });
+    teachBrain(post?.content?.slice(0, 120) || post?.type || post.id);
     if (navigator.share) {
       navigator.share({
         title: 'Check out this post!',
@@ -381,6 +418,7 @@ const HomePage = () => {
       } else {
         newSet.add(postId);
         showSuccess('📌 Post saved successfully!');
+        teachBrain(post?.content?.slice(0, 120) || post?.type || postId, { feedback: 0.9 });
         
         // Store full content data when saving
         if (post) {
@@ -552,7 +590,6 @@ const HomePage = () => {
         ) : moments.length === 0 ? (
           <div className="text-center py-12">
             <p className="text-muted-foreground">No moments available yet</p>
-            <p className="text-sm text-muted-foreground mt-2">Showing sample moments to inspire you! Create your own moments to see real content.</p>
           </div>
         ) : (
           <Moments 
@@ -565,6 +602,10 @@ const HomePage = () => {
             isMomentsPage={false}
           />
         )}
+
+        {/* Sponsored — one calm native slot between sections. Never on video,
+            never auto-playing: just a dismissible card that keeps the feed free. */}
+        <InFeedAdGate placement="home-between" />
 
         {/* Main Feed with For You, Following, and optionally Chats tabs */}
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foryou' | 'following' | 'chats')} className="w-full">
@@ -594,12 +635,11 @@ const HomePage = () => {
             ) : enhancedPosts.length === 0 ? (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">No posts available yet</p>
-                <p className="text-sm text-muted-foreground mt-2">Showing sample content to inspire you! Create your first post to see real content.</p>
               </div>
             ) : (
               <ForYouFeed
                 posts={enhancedPosts}
-                userInterests={['technology', 'nature', 'lifestyle', 'AI']}
+                userInterests={brainInterests}
                 userCategories={['tech', 'lifestyle']}
                 onLike={handleLikePost}
                 onReact={handleReactPost}
@@ -629,7 +669,6 @@ const HomePage = () => {
             ) : enhancedPosts.length === 0 ? (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">No posts from people you follow</p>
-                <p className="text-sm text-muted-foreground mt-2">Showing sample content for now! Start following people to see their posts here.</p>
               </div>
             ) : (
               <FollowingFeed

@@ -19,10 +19,14 @@ import SettingsPage from './pages/SettingsPage';
 import SearchPage from './pages/SearchPage';
 import MomentsPage from './pages/MomentsPage';
 import ThoughtsPage from './pages/ThoughtsPage';
+import PricingPage from './pages/PricingPage';
 import NotFound from './pages/NotFound';
 import type { User as AppUser } from './lib/auth';
 import { useIsMobile } from './hooks/use-mobile';
 import { useIsTablet } from './hooks/use-tablet';
+import { initializeAds } from './lib/admob-service';
+import { useAdPlan } from './hooks/use-ad-plan';
+import { useFeedBanner } from './hooks/use-feed-banner';
 
 function extractTokenFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
@@ -44,6 +48,10 @@ const AppContent = () => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
+
+  // Adaptive feed banner (Free tier, feed routes only — never on video).
+  const adPlan = useAdPlan();
+  useFeedBanner({ pathname: location.pathname, plan: adPlan });
 
   // Set sidebar initial state based on device
   useEffect(() => {
@@ -154,6 +162,8 @@ const AppContent = () => {
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/profile/:userId" element={<ProfilePage />} />
           <Route path="/profile/@:username" element={<ProfilePage />} />
+          <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/app/pricing" element={<PricingPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="*" element={<NotFound />} />
@@ -172,6 +182,10 @@ const App = () => {
       setShowApp(true);
     }, 1500);
     return () => clearTimeout(timer);
+  }, []);
+  // Initialize Mobile Ads SDK once (no-op on web; real fill on native shell).
+  React.useEffect(() => {
+    initializeAds();
   }, []);
   if (!showApp) {
     return <SplashScreen onFinish={() => setShowApp(true)} />;

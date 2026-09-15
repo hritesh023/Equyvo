@@ -3,7 +3,6 @@ import {
   signIn as cognitoSignIn,
   signOut as cognitoSignOut,
   getCurrentSession,
-  getCurrentUser,
 } from './aws';
 
 export interface User {
@@ -21,6 +20,7 @@ export interface AuthState {
 }
 
 const USER_KEY = 'equyvo_cognito_user';
+const TOKEN_KEY = 'equyvo_cognito_token';
 
 function decodeUserFromSession(session: any): User | null {
   try {
@@ -34,6 +34,44 @@ function decodeUserFromSession(session: any): User | null {
   } catch {
     return null;
   }
+}
+
+function sessionToken(session: any): string | null {
+  try {
+    const idToken = session?.getIdToken?.();
+    if (idToken && typeof idToken.getJwtToken === 'function') {
+      return idToken.getJwtToken();
+    }
+  } catch {
+    // mock sessions may not expose a real JWT
+  }
+  return null;
+}
+
+function storeToken(token: string | null): void {
+  try {
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // ignore storage errors
+  }
+}
+
+export function getToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function setToken(token: string): void {
+  storeToken(token);
+}
+
+export function clearToken(): void {
+  clearStoredUser();
+  storeToken(null);
 }
 
 export function getStoredUser(): User | null {
@@ -53,27 +91,6 @@ export function clearStoredUser(): void {
   localStorage.removeItem(USER_KEY);
 }
 
-export function getToken(): string | null {
-  try {
-    const user = getCurrentUser();
-    if (!user) return null;
-    let session: any = null;
-    user.getSession((err: any, s: any) => {
-      if (!err && s) session = s;
-    });
-    return session ? session.getIdToken().getJwtToken() : null;
-  } catch {
-    return null;
-  }
-}
-
-export function setToken(_token: string): void {
-}
-
-export function clearToken(): void {
-  clearStoredUser();
-}
-
 export async function checkAuthStatus(): Promise<AuthState> {
   try {
     const session: any = await getCurrentSession();
@@ -81,6 +98,7 @@ export async function checkAuthStatus(): Promise<AuthState> {
       const user = decodeUserFromSession(session);
       if (user) {
         storeUser(user);
+        storeToken(sessionToken(session));
         return { user, isLoading: false, isAuthenticated: true };
       }
     }
@@ -103,6 +121,7 @@ export async function signInWithEmail(email: string, password: string) {
       return { success: false, error: 'Unable to decode user session' };
     }
     storeUser(user);
+    storeToken(sessionToken(session));
     return { success: true, user };
   } catch (error: any) {
     const message = error.message || error.code || '';
@@ -112,13 +131,12 @@ export async function signInWithEmail(email: string, password: string) {
     if (message.includes('UserNotFound') || error.code === 'UserNotFoundException') {
       return { success: false, error: 'No account found with this email' };
     }
-    const user: User = {
-      id: email,
-      email,
-      username: email.split('@')[0],
-    };
-    storeUser(user);
-    return { success: true, user };
+    if (message.includes('UserNotConfirmed') || error.code === 'UserNotConfirmedException') {
+      return { success: false, error: 'Please confirm your email with the code we sent' };
+    }
+    // Production safety: NEVER silently create a local session when auth fails.
+    // A fake local user would bypass server-side ownership + quota checks.
+    return { success: false, error: message || 'Sign in failed. Please try again.' };
   }
 }
 
@@ -141,14 +159,11 @@ export async function signUpWithEmail(email: string, password: string, name?: st
     if (message.includes('InvalidParameter') || error.code === 'InvalidParameterException') {
       return { success: false, error: 'Invalid email or password format' };
     }
-    const user: User = {
-      id: email,
-      email,
-      fullName: name || '',
-      username: email.split('@')[0],
-    };
-    storeUser(user);
-    return { success: true, user };
+    if (message.includes('UsernameExists') || error.code === 'UsernameExistsException') {
+      return { success: false, error: 'An account with this email already exists. Try signing in.' };
+    }
+    // Production safety: do not create a fake session on signup failure.
+    return { success: false, error: message || 'Sign up failed. Please try again.' };
   }
 }
 
@@ -156,9 +171,11 @@ export async function signOutUser() {
   try {
     cognitoSignOut();
     clearStoredUser();
+    storeToken(null);
     return { success: true };
   } catch {
     clearStoredUser();
+    storeToken(null);
     return { success: true };
   }
 }

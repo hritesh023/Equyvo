@@ -20,6 +20,7 @@ import ReportModal from '@/components/ReportModal';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import type { FullscreenContent, ContentType } from '@/types';
+import InFeedAdGate from '@/components/ads/InFeedAdGate';
 
 const DiscoverPage = () => {
   const [activeTab, setActiveTab] = useState('grid');
@@ -209,152 +210,11 @@ const DiscoverPage = () => {
 
   const currentTags = sectionTags[activeTab as keyof typeof sectionTags] || [];
 
-  // Sample video URLs for video and live content
-  const sampleVideoUrls = [
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
-    'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4',
-  ];
-
-  // Mock data with proper categories and content types
-  const generateMockData = (section: string, count: number) => {
-    return Array.from({ length: count }, (_, i) => {
-      const categoryContentTypeMap: { [key: string]: string[] } = {
-        'photography': ['image'],
-        'video': ['video'],
-        'music': ['video', 'live'],
-        'live': ['live'],
-        'art': ['image'],
-        'gaming': ['video', 'live'],
-        'education': ['video', 'live']
-      };
-      
-      const categoryOptions = ['photography', 'video', 'music', 'live', 'art', 'gaming', 'education'];
-      
-      let allowedCategories;
-      if (section === 'live') {
-        allowedCategories = ['live', 'music', 'gaming', 'education'];
-      } else {
-        allowedCategories = categoryOptions;
-      }
-      
-      const randomCategory = allowedCategories[i % allowedCategories.length];
-      const allowedContentTypes = categoryContentTypeMap[randomCategory];
-      
-      let randomContentType;
-      if (section === 'live') {
-        randomContentType = 'live';
-      } else {
-        randomContentType = allowedContentTypes[i % allowedContentTypes.length];
-      }
-      
-      const now = new Date();
-      const timestamps = [
-        now,
-        new Date(now.getTime() - 3 * 24 * 60 * 60 * 1000),
-        new Date(now.getTime() - 15 * 24 * 60 * 60 * 1000),
-        new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000),
-      ];
-      const randomTimestamp = timestamps[i % timestamps.length];
-
-      const isVideo = randomContentType === 'video';
-      const isLive = randomContentType === 'live';
-      const videoUrl = isVideo || isLive ? sampleVideoUrls[i % sampleVideoUrls.length] : undefined;
-
-      return {
-        id: `${section}-${i}`,
-        category: randomCategory,
-        contentType: randomContentType,
-        timestamp: randomTimestamp,
-        likes: 100 + i * 20,
-        views: 1000 + i * 100,
-        comments: 10 + i,
-        title: `${section.charAt(0).toUpperCase() + section.slice(1)} Item ${i + 1}`,
-        creator: 'User',
-        image: `https://picsum.photos/seed/${section}${i}/500/500`,
-        thumbnail: `https://picsum.photos/seed/${section}${i}/500/500`,
-        videoUrl,
-        isLive,
-        live: isLive,
-        duration: isVideo ? `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}` : undefined,
-      };
-    });
-  };
-
-  // Filter data based on current filters
-  const filterData = (data: any[]) => {
-    return data.filter(item => {
-      // Category filter
-      if (selectedCategory !== 'all' && item.category !== selectedCategory) {
-        return false;
-      }
-      
-      // Content type filter - if selected, only show content of that type
-      if (contentTypeFilter !== 'all' && item.contentType !== contentTypeFilter) {
-        return false;
-      }
-      
-      // Smart filtering: when category is photography, only show images
-      // when category is video, only show videos
-      // when category is live, only show live streams (no images or videos)
-      if (selectedCategory === 'photography' && item.contentType !== 'image') {
-        return false;
-      }
-      if (selectedCategory === 'video' && item.contentType !== 'video') {
-        return false;
-      }
-      if (selectedCategory === 'live' && item.contentType !== 'live') {
-        return false;
-      }
-      
-      // Time filter
-      if (timeFilter !== 'all') {
-        const now = new Date();
-        const itemTime = new Date(item.timestamp);
-        
-        switch (timeFilter) {
-          case 'today':
-            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-            if (itemTime < today) return false;
-            break;
-          case 'week':
-            const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-            if (itemTime < weekAgo) return false;
-            break;
-          case 'month':
-            const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-            if (itemTime < monthAgo) return false;
-            break;
-        }
-      }
-      
-      return true;
-    }).sort((a, b) => {
-      // Sort by selected criteria
-      switch (sortBy) {
-        case 'trending':
-          return b.likes - a.likes;
-        case 'newest':
-          return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
-        case 'popular':
-          return b.views - a.views;
-        case 'relevance':
-        default:
-          return 0; // Keep original order for relevance
-      }
-    });
-  };
-
-  // Generate and filter data for each section
-  const gridData = import.meta.env.DEV ? filterData(generateMockData('grid', 12)) : [];
-  const trendingData = import.meta.env.DEV ? filterData(generateMockData('trending', 6)) : [];
-  const liveData = import.meta.env.DEV ? filterData(generateMockData('live', 3)) : [];
-  const longformData = import.meta.env.DEV ? filterData(generateMockData('longform', 3)) : [];
+  // Data for each section comes from the API feed (no generated sample content)
+  const gridData: any[] = [];
+  const trendingData: any[] = [];
+  const liveData: any[] = [];
+  const longformData: any[] = [];
 
   // Initialize postLikes map with initial like counts
   React.useEffect(() => {
@@ -845,8 +705,6 @@ const DiscoverPage = () => {
                 title: item.title,
                 creator: item.creator,
                 creatorId: `user-${item.creator}`,
-                videoUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                mediaUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                 thumbnail: item.thumbnail,
                 image: item.image,
                 likes: postLikes.get(item.id) || item.likes,
@@ -948,8 +806,6 @@ const DiscoverPage = () => {
                 title: item.title,
                 creator: item.creator,
                 creatorId: `user-${item.creator}`,
-                videoUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                mediaUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                 thumbnail: item.thumbnail,
                 image: item.image,
                 isLive: true,
@@ -1050,8 +906,6 @@ const DiscoverPage = () => {
                 title: item.title || 'Comprehensive Guide to building Social Media Apps in 2026 - Full Course',
                 creator: item.creator,
                 creatorId: `user-${item.creator}`,
-                videoUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
-                mediaUrl: item.videoUrl || 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                 thumbnail: item.thumbnail,
                 image: item.image,
                 likes: postLikes.get(item.id) || item.likes,
@@ -1174,6 +1028,12 @@ const DiscoverPage = () => {
           <LongformSection />
         </TabsContent>
       </Tabs>
+
+      {/* Sponsored — single calm native slot below discovery content.
+          Never overlays video, never auto-plays. */}
+      <div className="mt-8 max-w-2xl mx-auto">
+        <InFeedAdGate placement="discover-bottom" />
+      </div>
       
       {/* Fullscreen Viewer */}
       {fullscreenContent && (

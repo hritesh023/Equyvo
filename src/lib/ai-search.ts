@@ -1,5 +1,6 @@
 import { useState, useCallback, useMemo } from 'react';
 import { searchContent, getTrendingContent, getAllContent } from './content-index';
+import { brainSearchSuggest, brainLearn } from './brain';
 
 // Types for search suggestions
 export interface SearchSuggestion {
@@ -17,9 +18,6 @@ export interface SearchHistoryItem {
   timestamp: number;
   resultCount?: number;
 }
-
-// Backend API URL for AI suggestions (set via env or fallback)
-const AI_SUGGESTION_API = import.meta.env.VITE_AI_API_URL || 'https://ai.acronous.com';
 
 // AI-powered search service
 class AISearchService {
@@ -67,34 +65,17 @@ class AISearchService {
     }
   }
 
-  // Fetch AI-powered suggestions from backend (Acronous AI brain)
+  // Fetch AI-powered suggestions from the shared Acronous brain. The brain
+  // learns from every search query it receives.
   private async fetchAISuggestions(query: string): Promise<SearchSuggestion[]> {
     try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3000);
-      const resp = await fetch(`${AI_SUGGESTION_API}/v1/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          message: `Generate 5-8 search suggestions for "${query}" on a social media platform. Return ONLY a JSON array of objects with "label" (search term), "category" (one of: Photography, Video, Music, Food, Fitness, Travel, Technology, Fashion, Art, Gaming, Education, Lifestyle, Entertainment, Reviews), and "description" (1-sentence description). No markdown, no explanation. Just the JSON array.`,
-          messages: [],
-          session_id: `equyvo-search-${Date.now()}`
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (!resp.ok) return [];
-      const data = await resp.json();
-      const text = (data.response || '').trim();
-      // Extract JSON array from response
-      const jsonMatch = text.match(/\[[\s\S]*\]/);
-      if (!jsonMatch) return [];
-      const parsed = JSON.parse(jsonMatch[0]);
-      return parsed.slice(0, 8).map((s: any, i: number) => ({
-        id: `ai-backend-${Date.now()}-${i}`,
-        label: s.label || s.title || '',
-        category: s.category || 'General',
-        description: s.description || '',
+      const sessionId = `equyvo-search-${Date.now()}`;
+      const labels = await brainSearchSuggest(query, sessionId);
+      return labels.map((label, i) => ({
+        id: `ai-brain-${Date.now()}-${i}`,
+        label,
+        category: 'AI',
+        description: 'Suggested by Acronous AI',
         type: 'ai-generated' as const,
         confidence: 0.9,
       }));
@@ -522,6 +503,17 @@ export function useAISearch() {
 
   const saveSearch = useCallback((query: string, resultCount?: number) => {
     searchService.saveSearch(query, resultCount);
+    if (query && query.trim()) {
+      const sessionId = `equyvo-search-${Date.now()}`;
+      brainLearn({
+        query: query.trim(),
+        response: undefined,
+        feedback: resultCount && resultCount > 0 ? 0.8 : 0.4,
+        sessionId,
+        source: 'equivo-search',
+        routeType: 'web_search',
+      });
+    }
   }, [searchService]);
 
   const getSearchHistory = useCallback(() => {
