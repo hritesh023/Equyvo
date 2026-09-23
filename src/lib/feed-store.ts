@@ -113,10 +113,10 @@ export function imageUrlOf(item: UnifiedItem): string {
   const candidates = [item.image, item.thumbnail, typeof item.media === 'string' ? item.media : '', item.fallbackImage as string];
   for (const c of candidates) {
     if (typeof c === 'string' && c && !c.endsWith('.mp4') && !c.includes('/video/upload/')) return c;
-    // Cloudinary video delivery URLs are the exception — skip them here.
+    // Hosted video delivery URLs are the exception — skip them here.
     if (typeof c === 'string' && c && c.includes('res.cloudinary.com/') && c.includes('/video/')) continue;
     if (typeof c === 'string' && c && (c.startsWith('http') || c.startsWith('/') || c.startsWith('blob:') || c.startsWith('data:'))) {
-      // R2 video proxy URLs end with .mp4/.webm/.mov — skip those too.
+      // Direct video file URLs end with .mp4/.webm/.mov — skip those too.
       if (/\.(mp4|webm|mov)(\?|$)/i.test(c)) continue;
       return c;
     }
@@ -138,7 +138,72 @@ export function timeOf(item: UnifiedItem): number {
   return Number.isFinite(idNum) ? idNum : 0;
 }
 
+// ── Per-viewer hide list ───────────────────────────────────────────────────
+// Hiding is strictly personal: it removes the item from THIS account's view
+// only (all devices via server fetch + local filter). It never deletes
+// anything from Equyvo — only the owning account can delete its content.
+const HIDDEN_KEY = 'equyvo_hidden_ids';
+
+export function getHiddenIds(): string[] {
+  try {
+    const raw = localStorage.getItem(HIDDEN_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch {
+    return [];
+  }
+}
+
+export function isHidden(id: string): boolean {
+  if (!id) return false;
+  try {
+    return getHiddenIds().includes(String(id));
+  } catch {
+    return false;
+  }
+}
+
+export function hideFromMyView(id: string): string[] {
+  const cur = getHiddenIds();
+  const sid = String(id);
+  const next = cur.includes(sid) ? cur : [...cur, sid].slice(-2000);
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(next));
+  } catch { /* ignore */ }
+  try {
+    window.dispatchEvent(new CustomEvent('contentHidden', { detail: { id: sid } }));
+    window.dispatchEvent(new CustomEvent('feedRefresh'));
+  } catch { /* ignore */ }
+  return next;
+}
+
+export function unhideFromMyView(id: string): string[] {
+  const next = getHiddenIds().filter((x) => x !== String(id));
+  try {
+    localStorage.setItem(HIDDEN_KEY, JSON.stringify(next));
+  } catch { /* ignore */ }
+  try {
+    window.dispatchEvent(new CustomEvent('feedRefresh'));
+  } catch { /* ignore */ }
+  return next;
+}
+
+/** Drop per-viewer-hidden items from any feed list. */
+export function withoutHidden<T extends { id?: string }>(items: T[]): T[] {
+  let hidden: Set<string>;
+  try {
+    hidden = new Set(getHiddenIds());
+  } catch {
+    return items;
+  }
+  if (!hidden.size) return items;
+  return items.filter((i) => !hidden.has(String((i as { id?: string }).id)));
+}
+
 // ── Follow graph (local, instant, cross-tab) ───────────────────────────────
+// Local mirror of the server-side follow graph (see api.follow/unfollow).
+// The server is the source of truth across devices; this keeps the UI instant.
 
 const FOLLOW_KEY = 'equyvo_following';
 
@@ -210,7 +275,9 @@ export async function fetchUnifiedFeed(): Promise<UnifiedItem[]> {
     ...thoughts.map((t) => ({ ...t, type: 'thought' as const })),
   ];
   // Newest first — uploads appear instantly at the top.
-  return norm.sort((a, b) => timeOf(b) - timeOf(a));
+  // Per-viewer hides apply everywhere (hidden ≠ deleted: only the owner can
+  // delete; everyone else only hides from their own view).
+  return withoutHidden(norm.sort((a, b) => timeOf(b) - timeOf(a)));
 }
 
 export async function fetchSurfaceFeed(
@@ -246,7 +313,7 @@ export function broadcastPostCreated(post: Record<string, unknown>, type: string
   } catch { /* ignore */ }
 }
 
-/** Generate a client-side poster for R2 videos (no server thumbnail yet).
+/** Generate a client-side poster for videos that arrived without a thumbnail.
  * Returns '' for non-video files. Never throws. */
 export function captureVideoPoster(file: File | Blob): Promise<string> {
   return new Promise((resolve) => {

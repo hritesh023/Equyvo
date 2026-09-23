@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw } from 'lucide-react';
+import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,9 @@ import ShareButton from '@/components/ShareButton';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAudio } from '../contexts/AudioContext';
 import { useMediaSession } from '@/hooks/use-media-session';
+import { isOwnContent } from '@/utils/ownership';
+import { deleteContent } from '@/utils/delete';
+import { hideFromMyView } from '@/lib/feed-store';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -24,6 +27,7 @@ interface StoryViewerProps {
   onNext: () => void;
   onPrevious: () => void;
   onDeleteStory?: (storyId: string) => void;
+  onHideStory?: (storyId: string) => void;
 }
 
 const StoryViewer: React.FC<StoryViewerProps> = ({
@@ -33,6 +37,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   onNext,
   onPrevious,
   onDeleteStory,
+  onHideStory,
 }) => {
   const { isGloballyMuted, setGlobalMute } = useAudio();
   const [progress, setProgress] = useState(0);
@@ -299,18 +304,44 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   }, [currentIndex]);
 
+  const isOwnStory = isOwnContent(currentStory as unknown as Record<string, unknown>);
+  const [isDeletingStory, setIsDeletingStory] = useState(false);
+
   const handleDelete = async () => {
+    if (!currentStory) return;
+    if (!isOwnStory) {
+      showSuccess("This isn't yours — you can hide it from your view instead.");
+      return;
+    }
+    if (isDeletingStory) return;
+    setIsDeletingStory(true);
     try {
-      const { default: api } = await import('@/lib/api');
-      await api.deleteStory(currentStory.id);
-      if (onDeleteStory) {
-        onDeleteStory(currentStory.id);
-      }
-      showSuccess('Story deleted successfully.');
+      await deleteContent({
+        postId: currentStory.id,
+        contentType: 'story',
+        onDeleteComplete: (id) => {
+          onDeleteStory?.(id);
+        },
+      });
       onClose();
     } catch {
-      showError('Failed to delete story. Please try again.');
+      // deleteContent already explained what happened.
+    } finally {
+      setIsDeletingStory(false);
     }
+  };
+
+  const handleHideStory = () => {
+    if (!currentStory) return;
+    if (isOwnStory) {
+      showSuccess('This is yours — you can delete it, or use Hide from the story options.');
+      return;
+    }
+    hideFromMyView(currentStory.id);
+    (onHideStory || onDeleteStory)?.(currentStory.id);
+    showSuccess("Hidden from your view. You won't see it again.");
+    if (currentIndex < stories.length - 1) onNext();
+    else onClose();
   };
 
   const handleShare = () => {
@@ -423,7 +454,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                 </Button>
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" className="min-w-[150px] z-[1000000]" onClick={(e) => e.stopPropagation()}>
-                <DropdownMenuItem 
+                <DropdownMenuItem
                   onClick={(e) => {
                     e.stopPropagation();
                     handleShareAction();
@@ -433,24 +464,40 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                   <Share2 className="h-4 w-4 mr-2" />
                   Share Story
                 </DropdownMenuItem>
-                <ReportButton
+                {!isOwnStory && (
+                  <ReportButton
                     contentId={currentStory.id}
-                    contentType="moment"
+                    contentType="story"
                     variant="button"
                     size="sm"
                     showLabel={true}
                     className="w-full justify-start text-red-600 hover:text-red-700 hover:bg-red-50"
                   />
-                <DropdownMenuItem 
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleDelete();
-                  }}
-                  className="cursor-pointer text-red-600"
-                >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete Story
-                </DropdownMenuItem>
+                )}
+                {isOwnStory ? (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleDelete();
+                    }}
+                    disabled={isDeletingStory}
+                    className="cursor-pointer text-red-600"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    {isDeletingStory ? 'Deleting...' : 'Delete Story'}
+                  </DropdownMenuItem>
+                ) : (
+                  <DropdownMenuItem
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleHideStory();
+                    }}
+                    className="cursor-pointer text-red-600"
+                  >
+                    <EyeOff className="h-4 w-4 mr-2" />
+                    Hide
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
             

@@ -74,6 +74,15 @@ const KEYS = {
   INTERESTS: (userId) => 'interests:' + userId,
   POP: (itemId) => 'pop:' + itemId,
   ORPHAN_SWEEP_AT: 'maint:orphan_sweep_at',
+  // Privacy: server-side follow graph (source of truth for private accounts).
+  FOLLOWING: (userId) => 'following:' + userId,
+  FOLLOWERS: (userId) => 'followers:' + userId,
+  FOLLOW_REQ: (userId) => 'followreq:' + userId,
+  // Safety: reports ledger + per-item flag counters + moderation queue.
+  REPORTS_LIST: 'reports:list',
+  REPORT: (id) => 'report:' + id,
+  FLAGS: (kind, id) => 'flags:' + kind + ':' + id,
+  MOD_QUEUE: 'mod:queue',
 };
 
 // ── Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
@@ -195,6 +204,269 @@ async function aiFetchJson(url, init, timeoutMs) {
       return await r.json().catch(() => null);
     } finally { clearTimeout(t); }
   } catch { return null; }
+}
+
+// ---------------------------------------------------------------------------
+// Privacy helpers — server-side visibility enforcement. The frontend only ever
+// sends/receives the generic `visibility` field ('public' | 'followers' |
+// 'private' | 'hidden'); all graph checks happen here, never in the client.
+// ---------------------------------------------------------------------------
+
+function normalizeVisibility(v, fallback = 'public') {
+  const s = String(v || '').toLowerCase().trim();
+  if (s === 'public' || s === 'followers' || s === 'private' || s === 'hidden') return s;
+  if (s === 'friends' || s === 'followers-only') return 'followers';
+  if (s === 'only-me' || s === 'onlyme' || s === 'me') return 'private';
+  return fallback;
+}
+
+function itemOwnerId(item) {
+  if (!item || typeof item !== 'object') return '';
+  return String(item.ownerId || item.userId || item.user_id || '');
+}
+
+function itemVisibility(item, authorProfile) {
+  if (!item || typeof item !== 'object') return 'public';
+  // Explicit per-item setting wins (incl. legacy flags).
+  const raw = item.visibility || item.audience;
+  if (raw) return normalizeVisibility(raw);
+  if (item.isPrivate === true || item.hidden === true || item.hideFromPublic === true) {
+    // Owner-only unless the author scoped it to followers.
+    return 'private';
+  }
+  // Private accounts default new/legacy content to followers-only.
+  if (authorProfile && authorProfile.isPrivate === true) return 'followers';
+  return 'public';
+}
+
+function isRemovedItem(item) {
+  if (!item || typeof item !== 'object') return false;
+  const m = item.moderation;
+  if (m && (m.status === 'removed' || m.status === 'quarantined')) return true;
+  return item.removed === true;
+}
+
+async function getStoredProfile(env, userId) {
+  if (!userId) return null;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(userId));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+async function readIdList(env, key) {
+  try {
+    const raw = await env.EQUYVO_KV.get(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+async function isFollowingPair(env, viewerId, authorId) {
+  if (!viewerId || !authorId || viewerId === authorId) return viewerId === authorId;
+  try {
+    const [following, followers] = await Promise.all([
+      readIdList(env, KEYS.FOLLOWING(viewerId)),
+      readIdList(env, KEYS.FOLLOWERS(authorId)),
+    ]);
+    const vl = String(viewerId).toLowerCase();
+    if (following.some((x) => String(x).toLowerCase() === String(authorId).toLowerCase())) return true;
+    if (followers.some((x) => String(x).toLowerCase() === vl)) return true;
+    return false;
+  } catch { return false; }
+}
+
+// Light viewer resolution for PUBLIC reads: verified JWT when present,
+// otherwise the plain X-User-Id header. Never rejects — anonymous viewers
+// simply see public content only.
+async function getViewer(request, env) {
+  try {
+    const auth = request.headers.get('Authorization') || '';
+    if (auth.startsWith('Bearer ')) {
+      const token = auth.slice(7).trim();
+      if (token) {
+        const user = await verifyCognitoToken(token, env);
+        if (user) return { id: user.id, email: user.email || '' };
+      }
+    }
+  } catch { /* fall through to header */ }
+  try {
+    const h = request.headers.get('X-User-Id') || request.headers.get('X-User-Email') || '';
+    const q = new URL(request.url).searchParams;
+    const id = String(h || q.get('viewerId') || q.get('viewer') || q.get('userId') || q.get('user_id') || '').slice(0, 200);
+    if (id) return { id, email: id.includes('@') ? id : '' };
+  } catch { /* ignore */ }
+  return null;
+}
+
+async function canViewerSeeItem(env, viewer, item, profileCache) {
+  if (isRemovedItem(item)) {
+    // Owners can still see their own quarantined item (so delete works);
+    // everyone else cannot.
+    const owner = itemOwnerId(item);
+    if (viewer && owner && viewer.id === owner) return true;
+    return false;
+  }
+  const owner = itemOwnerId(item);
+  if (viewer && owner && viewer.id === owner) return true;
+  const vis = itemVisibility(item, null);
+  if (vis === 'private' || vis === 'hidden') return false; // owner-only (owner checked above)
+  let authorProfile = null;
+  if (owner) {
+    if (profileCache && profileCache.has(owner)) authorProfile = profileCache.get(owner);
+    else {
+      authorProfile = await getStoredProfile(env, owner);
+      if (profileCache) profileCache.set(owner, authorProfile);
+    }
+  }
+  // Recompute visibility with the author profile (private accounts).
+  const eff = itemVisibility(item, authorProfile);
+  if (eff === 'private' || eff === 'hidden') return false;
+  if (authorProfile && authorProfile.isPrivate === true) {
+    if (!viewer) return false;
+    return await isFollowingPair(env, viewer.id, owner);
+  }
+  if (eff === 'followers') {
+    if (!viewer || !owner) return false;
+    return await isFollowingPair(env, viewer.id, owner);
+  }
+  return true;
+}
+
+async function filterVisibleItems(env, viewer, items) {
+  if (!Array.isArray(items)) return [];
+  const cache = new Map();
+  const out = [];
+  for (const it of items) {
+    try {
+      if (await canViewerSeeItem(env, viewer, it, cache)) out.push(it);
+    } catch { /* skip undecidable items */ }
+  }
+  return out;
+}
+
+// Public-safe profile subset for strangers viewing a private account.
+// Mirrors Facebook/Instagram: avatar + basic details only, never media,
+// email, or private fields.
+function publicSafeProfile(profile) {
+  if (!profile || typeof profile !== 'object') return null;
+  return {
+    id: profile.id,
+    name: profile.name,
+    username: profile.username,
+    avatar: profile.avatar || '',
+    bio: typeof profile.bio === 'string' ? String(profile.bio).slice(0, 300) : '',
+    isPrivate: true,
+    restricted: true,
+    followers: Number(profile.followers || 0) || 0,
+    following: Number(profile.following || 0) || 0,
+    verified: !!profile.verified,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Content-safety helpers — server-only. Blocklists, heuristics, and the shared
+// Acronous brain check all run here. The client only ever receives a generic
+// "violates community guidelines" message; internals are never exposed.
+// ---------------------------------------------------------------------------
+
+// Hard-block patterns: sexual content involving minors, bestiality,
+// non-consensual / assault, terrorism / weapons of mass harm, CSAM-adjacent
+// euphemisms, and direct threats. Matched content is rejected outright.
+const SAFETY_BLOCK_PATTERNS = [
+  /(\b|_)(child|kid|toddler|infant|minor|underage|teen|schoolgirl|schoolboy|loli|shota)(\b|_)?[^.]{0,40}?(sex|nude|naked|porn|xxx|explicit|erotic|nsfw)/i,
+  /(sex|nude|naked|porn|xxx|explicit|erotic|nsfw)[^.]{0,40}?(\b|_)(child|kid|toddler|infant|minor|underage|loli|shota)/i,
+  /\b(cp|csam|child\s?porn)\b/i,
+  /\b(bestiality|zoophilia)\b/i,
+  /\b(rape|gangbang|forced\s?sex|non[\s-]?consensual)\b/i,
+  /\b(how to (make|build).{0,30}(bomb|explosive|bioweapon|chemical weapon|nuke|dirty bomb))\b/i,
+  /\b(join (isis|al-?qaeda|terror))\b/i,
+  /\b(i will kill you|i['’]m going to kill (you|them)|kill all (muslims|christians|jews|hindus|whites|blacks))\b/i,
+  /\b(sell (drugs|cocaine|heroin|meth)|buy (cocaine|heroin|meth))\b/i,
+];
+
+// Review patterns: adult/sexual, graphic gore, self-harm, hate, scams.
+// Matched content is quarantined (owner-only) pending automated re-check.
+const SAFETY_REVIEW_PATTERNS = [
+  /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic)\b/i,
+  /\b(behead|gore|dismember|mutilat)\b/i,
+  /\b(kill myself|suicide|self[\s-]?harm|cutting myself)\b/i,
+  /\b(fuck (you|off)|slut|whore|retard|kike|chink|fag(got)?)\b/i,
+  /\b(send money|wire transfer|gift card|crypto (doubling|giveaway)|you (have )?won (a|₹|\$))\b/i,
+];
+
+function moderateTextLocal(text) {
+  const s = String(text || '');
+  if (!s.trim()) return { verdict: 'allow' };
+  if (s.length > 20000) return { verdict: 'review', reason: 'length' };
+  for (const re of SAFETY_BLOCK_PATTERNS) {
+    if (re.test(s)) return { verdict: 'block', reason: 'blocked' };
+  }
+  let hits = 0;
+  for (const re of SAFETY_REVIEW_PATTERNS) {
+    re.lastIndex = 0;
+    if (re.test(s)) hits++;
+  }
+  if (hits >= 2) return { verdict: 'block', reason: 'blocked' };
+  if (hits === 1) return { verdict: 'review', reason: 'review' };
+  return { verdict: 'allow' };
+}
+
+// Best-effort shared-brain safety survey: asks the Acronous brain (which
+// continuously surveys the internet on content-safety guidance) to classify
+// the text. Fail-open on timeout/error so uploads stay fast; the local
+// blocklist above is always fail-closed.
+async function brainSafetyCheck(env, text) {
+  const s = String(text || '').slice(0, 2000);
+  if (!s.trim()) return null;
+  try {
+    const base = aiBrainBase(env);
+    const data = await aiFetchJson(base + '/v1/moderate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: s, source: 'equyvo-safety' }),
+    }, 2200);
+    if (data && typeof data === 'object') {
+      if (data.safe === false || data.block === true) return 'block';
+      if (data.review === true || data.quarantine === true) return 'review';
+      if (Array.isArray(data.categories) && data.categories.some((c) => /child|csam|terror|non-consensual|assault/i.test(String(c)))) return 'block';
+    }
+  } catch { /* fail-open */ }
+  return null;
+}
+
+// Returns 'allow' | 'review' | 'block'. Throws a generic 400 on block so the
+// API layer can surface a frontend-safe message.
+async function moderateContent(env, fields) {
+  const text = Object.values(fields || {}).filter((v) => typeof v === 'string').join('\n').slice(0, 8000);
+  const local = moderateTextLocal(text);
+  if (local.verdict === 'block') {
+    const e = new Error('Content violates community guidelines and was not published.');
+    e.status = 400; e.code = 'CONTENT_BLOCKED';
+    throw e;
+  }
+  if (local.verdict === 'review') return 'review';
+  try {
+    const brain = await brainSafetyCheck(env, text);
+    if (brain === 'block') {
+      const e = new Error('Content violates community guidelines and was not published.');
+      e.status = 400; e.code = 'CONTENT_BLOCKED';
+      throw e;
+    }
+    if (brain === 'review') return 'review';
+  } catch (e) {
+    if (e && e.code === 'CONTENT_BLOCKED') throw e;
+  }
+  return 'allow';
+}
+
+async function enqueueModeration(env, entry) {
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.MOD_QUEUE);
+    const q = raw ? JSON.parse(raw) : [];
+    q.unshift({ ...entry, at: new Date().toISOString() });
+    await env.EQUYVO_KV.put(KEYS.MOD_QUEUE, JSON.stringify(q.slice(0, 500)));
+  } catch { /* best-effort */ }
 }
 
 // ---------------------------------------------------------------------------
@@ -973,8 +1245,23 @@ async function purgeStoredMedia(env, parsed) {
 
 function owns(item, actor) {
   if (!actor) return false;
-  const owner = item && (item.userId || item.user_id || item.creator || '');
-  return !!owner && owner === actor.id;
+  const norm = (v) => String(v || '').trim().toLowerCase();
+  const owner = item && (item.ownerId || item.userId || item.user_id || '');
+  // Account ids compared case-insensitively so legit owners never get a
+  // false ownership rejection from casing differences.
+  if (owner) {
+    const o = norm(owner);
+    if (o && (o === norm(actor.id) || o === norm(actor.email) || (actor.username && o === norm(actor.username)))) return true;
+  }
+  // Legacy items keyed ownership by display name; accept a match on the
+  // human-readable creator field too so old uploads stay deletable.
+  const named = item && (item.creator || item.user || item.username || '');
+  if (named) {
+    const n = norm(named);
+    if (actor.username && n === norm(actor.username)) return true;
+    if (actor.email && (n === norm(actor.email) || n === norm(String(actor.email).split('@')[0]))) return true;
+  }
+  return false;
 }
 
 async function createItem(context, kind, listKey, itemKey, cors) {
@@ -997,7 +1284,50 @@ async function createItem(context, kind, listKey, itemKey, cors) {
 
   const clean = sanitizeBody(body);
   delete clean.id;
-  const item = { ...clean, id, createdAt: now };
+  // Ownership is authoritative server-side: the verified caller owns the
+  // item, regardless of what display-name fields the client sent. Only the
+  // owning account can ever delete this item; other accounts may only hide
+  // it from their own view (enforced in deleteItem + hide is per-viewer).
+  const displayName = String(clean.user || clean.creator || actor.username || actor.email?.split('@')[0] || 'Unknown').slice(0, 80);
+  // Per-item visibility: explicit client choice wins; otherwise inherit the
+  // author's account type (private accounts default to followers-only).
+  let visibility = 'public';
+  try {
+    const authorProfile = await getStoredProfile(env, actor.id);
+    const fallback = authorProfile && authorProfile.isPrivate === true ? 'followers' : 'public';
+    visibility = normalizeVisibility(clean.visibility || clean.audience || (clean.isPrivate === true ? 'private' : ''), fallback);
+  } catch { visibility = normalizeVisibility(clean.visibility || clean.audience || 'public'); }
+  // Content safety (server-only): illegal / child-unsafe content is rejected
+  // with a generic message; suspicious content is quarantined to owner-only.
+  let safety = 'allow';
+  try {
+    safety = await moderateContent(env, {
+      text: String(clean.content || clean.title || clean.description || ''),
+      tags: Array.isArray(clean.tags) ? clean.tags.join(' ') : String(clean.tags || ''),
+      category: String(clean.category || (clean.categories && clean.categories[0]) || ''),
+    });
+  } catch (e) {
+    const status = (e && e.status) || 400;
+    return json({ error: (e && e.message) || 'Content violates community guidelines and was not published.' }, status, cors);
+  }
+  const item = {
+    ...clean,
+    id,
+    createdAt: now,
+    ownerId: actor.id,
+    userId: actor.id,
+    user: displayName,
+    creator: String(clean.creator || displayName).slice(0, 80),
+    visibility,
+  };
+  delete item.audience;
+  if (safety === 'review') {
+    // Quarantine: owner-only until review clears. Never exposed as an error
+    // detail to the client beyond the generic visibility behavior.
+    item.visibility = 'private';
+    item.moderation = { status: 'quarantined', at: now };
+    try { await enqueueModeration(env, { kind, id, owner: actor.id, reason: 'auto-review' }); } catch {}
+  }
   if (kind === 'thoughts') {
     item.created_at = now;
     item.updated_at = now;
@@ -1020,6 +1350,8 @@ async function createItem(context, kind, listKey, itemKey, cors) {
       title: String(item.title || text.slice(0, 100) || kind),
       description: text.slice(0, 300),
       type: kind === 'posts' ? 'post' : kind.replace(/s$/, ''),
+      authorId: actor.id,
+      visibility: item.visibility || 'public',
       creator: String(item.user || item.creator || item.user_id || item.userId || ''),
       creatorAvatar: String(item.avatar || ''),
       views: String(item.views ?? '0'),
@@ -1058,9 +1390,17 @@ async function deleteItem(context, listKey, itemKey, id, cors) {
     // fall through with empty parsed
   }
 
-  const owner = parsed && (parsed.userId || parsed.user_id || parsed.creator || '');
-  const canDelete = owns(parsed, actor) || (actor.verified && (!owner || owner === 'anonymous'));
-  if (!canDelete) return json({ error: 'Forbidden' }, 403, cors);
+  // Strict owner-only delete: only the account that uploaded the content can
+  // delete it from Equyvo. Other accounts may only hide it from their own
+  // view (per-viewer hide lists live on the client; the server never deletes
+  // on their behalf). The single exception is ownerless legacy items (no
+  // account id stored at all), which a verified signer may clean up.
+  const owner = parsed && (parsed.ownerId || parsed.userId || parsed.user_id || '');
+  const namedOwner = parsed && (parsed.creator || parsed.user || '');
+  const owned = owns(parsed, actor);
+  const ownerless = !owner || owner === 'anonymous';
+  const canDelete = owned || (actor.verified && ownerless && (!namedOwner || namedOwner === 'anonymous'));
+  if (!canDelete) return json({ error: 'Only the account that posted this can delete it.' }, 403, cors);
 
   const { planId } = await resolvePlan(env, actor, bearerFrom(request));
   const rl = await rateLimit(kv, 'delete', actor.id, rateLimitFor(planId, 'delete'));
@@ -1201,18 +1541,23 @@ export const onRequest = async (context) => {
 
     // POSTS (interest-ranked when userId/sort present; plain otherwise —
     // existing frontend keeps working with zero changes).
+    // Visibility-enforced: private/followers-only items are only returned to
+    // authorized viewers; removed/quarantined items are owner-only.
     if (path === '/api/posts' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '50', 10), 1, 100);
       const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
       const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
       const sort = String(url.searchParams.get('sort') || '').toLowerCase();
+      const viewer = await getViewer(request, env);
       const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
-      const recent = ids.slice(0, Math.min(ids.length, limit + offset));
+      // Over-fetch to compensate for visibility filtering, then paginate.
+      const recent = ids.slice(0, Math.min(ids.length, (limit + offset) * 3 + 20));
       const posts = (await Promise.all(recent.map(async (id) => {
         const p = await kv.get(KEYS.POST(id));
         return p ? transformItem(JSON.parse(p)) : null;
       }))).filter(Boolean);
-      const filtered = await filterSeed(env, posts);
+      const seedFiltered = await filterSeed(env, posts);
+      const filtered = await filterVisibleItems(env, viewer, seedFiltered);
       const wantRank = sort === 'relevant' || sort === 'foryou' || !!userId || !!url.searchParams.get('interests');
       if (wantRank) {
         try {
@@ -1237,49 +1582,55 @@ export const onRequest = async (context) => {
       return await createItem(context, 'posts', KEYS.POSTS, KEYS.POST, cors);
     }
 
-    // THOUGHTS
+    // THOUGHTS (visibility-enforced; see POSTS).
     if (path === '/api/thoughts' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '20', 10), 1, 100);
       const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
+      const viewer = await getViewer(request, env);
       const ids = await cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT);
-      const page = ids.slice(offset, offset + limit);
+      const page = ids.slice(0, Math.min(ids.length, (offset + limit) * 3 + 20));
       const thoughts = (await Promise.all(page.map(async (id) => {
         const t = await kv.get(KEYS.THOUGHT(id));
         return t ? transformItem(JSON.parse(t)) : null;
       }))).filter(Boolean);
-      return json({ data: await filterSeed(env, thoughts), error: null }, 200, cors);
+      const visible = await filterVisibleItems(env, viewer, await filterSeed(env, thoughts));
+      return json({ data: visible.slice(offset, offset + limit), error: null }, 200, cors);
     }
 
     if (path === '/api/thoughts' && method === 'POST') {
       return await createItem(context, 'thoughts', KEYS.THOUGHTS, KEYS.THOUGHT, cors);
     }
 
-    // STORIES
+    // STORIES (visibility-enforced; see POSTS).
     if (path === '/api/stories' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '20', 10), 1, 100);
+      const viewer = await getViewer(request, env);
       const ids = await cleanOrphans(env, KEYS.STORIES, KEYS.STORY);
-      const recent = ids.slice(0, limit);
+      const recent = ids.slice(0, Math.min(ids.length, limit * 3 + 20));
       const stories = (await Promise.all(recent.map(async (id) => {
         const s = await kv.get(KEYS.STORY(id));
         return s ? transformItem(JSON.parse(s)) : null;
       }))).filter(Boolean);
-      return json({ data: await filterSeed(env, stories), error: null }, 200, cors);
+      const visible = await filterVisibleItems(env, viewer, await filterSeed(env, stories));
+      return json({ data: visible.slice(0, limit), error: null }, 200, cors);
     }
 
     if (path === '/api/stories' && method === 'POST') {
       return await createItem(context, 'stories', KEYS.STORIES, KEYS.STORY, cors);
     }
 
-    // MOMENTS
+    // MOMENTS (visibility-enforced; see POSTS).
     if (path === '/api/moments' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '20', 10), 1, 100);
+      const viewer = await getViewer(request, env);
       const ids = await cleanOrphans(env, KEYS.MOMENTS, KEYS.MOMENT);
-      const recent = ids.slice(0, limit);
+      const recent = ids.slice(0, Math.min(ids.length, limit * 3 + 20));
       const moments = (await Promise.all(recent.map(async (id) => {
         const m = await kv.get(KEYS.MOMENT(id));
         return m ? transformItem(JSON.parse(m)) : null;
       }))).filter(Boolean);
-      return json({ data: await filterSeed(env, moments), error: null }, 200, cors);
+      const visible = await filterVisibleItems(env, viewer, await filterSeed(env, moments));
+      return json({ data: visible.slice(0, limit), error: null }, 200, cors);
     }
 
     if (path === '/api/moments' && method === 'POST') {
@@ -1287,6 +1638,9 @@ export const onRequest = async (context) => {
     }
 
     // PROFILE
+    // Private accounts: strangers (non-followers) receive only the
+    // public-safe subset (avatar + basic details, no media/content), like
+    // Facebook/Instagram. Owners and followers receive the full profile.
     if (path.match(/^\/api\/profile\//) && method === 'GET') {
       const userId = decodeURIComponent(path.split('/api/profile/')[1] || '');
       if (SEED_PROFILE_IDS.has(userId)) {
@@ -1294,7 +1648,24 @@ export const onRequest = async (context) => {
       }
       const profile = await kv.get(KEYS.PROFILE(userId));
       if (!profile) return json({ data: null, error: 'Profile not found' }, 404, cors);
-      return json({ data: JSON.parse(profile), error: null }, 200, cors);
+      const parsed = JSON.parse(profile);
+      if (parsed && parsed.isPrivate === true) {
+        const viewer = await getViewer(request, env);
+        const isOwner = !!(viewer && viewer.id === userId);
+        const follower = isOwner ? true : viewer ? await isFollowingPair(env, viewer.id, userId) : false;
+        if (!isOwner && !follower) {
+          let pending = false;
+          try {
+            const reqs = await readIdList(env, KEYS.FOLLOW_REQ(userId));
+            pending = viewer ? reqs.some((x) => String(x).toLowerCase() === String(viewer.id).toLowerCase()) : false;
+          } catch { /* ignore */ }
+          return json({ data: { ...publicSafeProfile(parsed), followStatus: viewer ? { isFollowing: false, pending } : undefined }, error: null }, 200, cors);
+        }
+        if (viewer && !isOwner) {
+          return json({ data: { ...parsed, followStatus: { isFollowing: true, pending: false } }, error: null }, 200, cors);
+        }
+      }
+      return json({ data: parsed, error: null }, 200, cors);
     }
 
     if (path === '/api/profile' && method === 'PUT') {
@@ -1309,6 +1680,19 @@ export const onRequest = async (context) => {
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
       clean.id = id;
+      // Account type: public/private toggle (signup page + settings).
+      // Accepts isPrivate boolean and/or accountType string; stored as
+      // canonical isPrivate + accountType. Never trusts the client for
+      // anything else privileged.
+      if (typeof clean.accountType === 'string') {
+        const t = clean.accountType.toLowerCase().trim();
+        if (t === 'private') clean.isPrivate = true;
+        else if (t === 'public') clean.isPrivate = false;
+        clean.accountType = clean.isPrivate === true ? 'private' : 'public';
+      } else if (typeof clean.isPrivate === 'boolean') {
+        clean.accountType = clean.isPrivate ? 'private' : 'public';
+      }
+      if (typeof clean.bio === 'string') clean.bio = clean.bio.slice(0, 500);
       await kv.put(KEYS.PROFILE(id), JSON.stringify(clean));
       return json({ data: clean, error: null }, 200, cors);
     }
@@ -1323,7 +1707,14 @@ export const onRequest = async (context) => {
       const indexJson = await kv.get(KEYS.CONTENT_INDEX);
       const index = indexJson ? JSON.parse(indexJson) : [];
       const hasReal = await kv.get(KEYS.HAS_REAL_USERS);
-      const base = hasReal === 'true' ? index.filter(i => !isSeedItem(i)) : index;
+      const unseeded = hasReal === 'true' ? index.filter(i => !isSeedItem(i)) : index;
+      // Visibility-enforced search: drop removed items, private-account
+      // items and followers-only items the viewer may not see.
+      const searchViewer = await getViewer(request, env);
+      const base = await filterVisibleItems(env, searchViewer, unseeded.map((e) => ({
+        ...e,
+        ownerId: e.authorId || e.ownerId || e.userId,
+      })));
       if (!base.length) return json({ data: { results: [], totalCount: 0, isAiRecommended: false, personalized: false } }, 200, cors);
       const pops = {};
       await Promise.all(base.slice(0, 100).map(async (it) => {
@@ -1396,11 +1787,12 @@ export const onRequest = async (context) => {
         Promise.all(tIds.map(async (id) => { const t = await kv.get(KEYS.THOUGHT(id)); return t ? transformItem(JSON.parse(t)) : null; })).then((a) => a.filter(Boolean)).catch(() => []),
         Promise.all(mIds.map(async (id) => { const m = await kv.get(KEYS.MOMENT(id)); return m ? transformItem(JSON.parse(m)) : null; })).then((a) => a.filter(Boolean)).catch(() => []),
       ]);
-      const norm = [
+      const viewerForFeed = await getViewer(request, env);
+      const norm = await filterVisibleItems(env, viewerForFeed, [
         ...posts.map((p) => ({ kind: 'post', ...p })),
-        ...thoughts.map((t) => ({ kind: 'thought', id: t.id, content: t.content, user: t.user_id, createdAt: t.created_at, likes: t.likes_count, comments: t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
+        ...thoughts.map((t) => ({ kind: 'thought', id: t.id, content: t.content, user: t.user_id, ownerId: t.ownerId || t.userId, visibility: t.visibility, createdAt: t.created_at, likes: t.likes_count, comments: t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
         ...moments.map((m) => ({ kind: 'moment', ...m })),
-      ];
+      ]);
       const scored = norm.map((it) => ({
         it,
         s: (Number(it.likes ?? it.likes_count ?? 0) + Number(it.reacts ?? 0) * 2 + Number(it.comments ?? it.comments_count ?? 0) * 3) / 10
@@ -1472,7 +1864,262 @@ export const onRequest = async (context) => {
       return json({ data: { suggestions: fb.slice(0, 8), source: 'local', personalized: top.length > 0 } }, 200, cors);
     }
 
-    // DELETE ENDPOINTS
+    // ---- FOLLOW GRAPH (server-side source of truth) ----
+    // POST /api/follow { target } — follow a public account directly; for a
+    // private account this creates a pending request instead.
+    if (path === '/api/follow' && method === 'POST') {
+      const body = await readJson(request);
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body);
+      const target = String(clean.target || clean.userId || '').slice(0, 200);
+      if (!target || target === actor.id) return json({ error: 'Invalid target' }, 400, cors);
+      const rl = await rateLimit(kv, 'engagement', actor.id, 60);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const targetProfile = await getStoredProfile(env, target);
+      if (targetProfile && targetProfile.isPrivate === true) {
+        const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
+        if (!reqs.some((x) => x === actor.id)) {
+          reqs.unshift(actor.id);
+          await kv.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.slice(0, 1000)));
+        }
+        return json({ data: { isFollowing: false, pending: true, isPrivate: true }, error: null }, 200, cors);
+      }
+      const [following, followers] = await Promise.all([
+        readIdList(env, KEYS.FOLLOWING(actor.id)),
+        readIdList(env, KEYS.FOLLOWERS(target)),
+      ]);
+      if (!following.some((x) => x === target)) {
+        following.unshift(target);
+        await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.slice(0, 5000)));
+      }
+      if (!followers.some((x) => x === actor.id)) {
+        followers.unshift(actor.id);
+        await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.slice(0, 50000)));
+      }
+      return json({ data: { isFollowing: true, pending: false }, error: null }, 200, cors);
+    }
+
+    // DELETE /api/follow/:target — unfollow (also withdraws pending requests).
+    if (path.match(/^\/api\/follow\//) && method === 'DELETE' && !path.startsWith('/api/follow/requests')) {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const target = decodeURIComponent(path.split('/api/follow/')[1] || '').split('?')[0];
+      if (!target) return json({ error: 'Invalid target' }, 400, cors);
+      const [following, followers, reqs] = await Promise.all([
+        readIdList(env, KEYS.FOLLOWING(actor.id)),
+        readIdList(env, KEYS.FOLLOWERS(target)),
+        readIdList(env, KEYS.FOLLOW_REQ(target)),
+      ]);
+      await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.filter((x) => x !== target)));
+      await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.filter((x) => x !== actor.id)));
+      if (reqs.some((x) => x === actor.id)) {
+        await kv.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.filter((x) => x !== actor.id)));
+      }
+      return json({ data: { isFollowing: false, pending: false }, error: null }, 200, cors);
+    }
+
+    // GET /api/follow/status?target= — { isFollowing, pending } for the caller.
+    if (path === '/api/follow/status' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const target = String(url.searchParams.get('target') || '').slice(0, 200);
+      if (!target) return json({ error: 'target required' }, 400, cors);
+      const following = await readIdList(env, KEYS.FOLLOWING(actor.id));
+      const isFollowing = following.some((x) => x === target);
+      let pending = false;
+      if (!isFollowing) {
+        const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
+        pending = reqs.some((x) => x === actor.id);
+      }
+      return json({ data: { isFollowing, pending }, error: null }, 200, cors);
+    }
+
+    // GET /api/followers/:userId and GET /api/following/:userId — counts and
+    // id lists. Private accounts expose these only to owners/followers.
+    if ((path.match(/^\/api\/followers\//) || path.match(/^\/api\/following\//)) && method === 'GET') {
+      const isFollowers = path.startsWith('/api/followers/');
+      const userId = decodeURIComponent((isFollowers ? path.split('/api/followers/')[1] : path.split('/api/following/')[1] || '').split('?')[0]);
+      const viewer = await getViewer(request, env);
+      const target = await getStoredProfile(env, userId);
+      if (target && target.isPrivate === true) {
+        const isOwner = !!(viewer && viewer.id === userId);
+        const ok = isOwner || (viewer ? await isFollowingPair(env, viewer.id, userId) : false);
+        if (!ok) {
+          const c = await Promise.all([readIdList(env, KEYS.FOLLOWERS(userId)), readIdList(env, KEYS.FOLLOWING(userId))]);
+          return json({ data: { count: isFollowers ? c[0].length : c[1].length, ids: [], restricted: true }, error: null }, 200, cors);
+        }
+      }
+      const ids = await readIdList(env, isFollowers ? KEYS.FOLLOWERS(userId) : KEYS.FOLLOWING(userId));
+      return json({ data: { count: ids.length, ids: ids.slice(0, 500) }, error: null }, 200, cors);
+    }
+
+    // GET /api/follow/requests — pending follow requests for the caller
+    // (private-account owners). POST /api/follow/accept|decline { requester }.
+    if (path === '/api/follow/requests' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const reqs = await readIdList(env, KEYS.FOLLOW_REQ(actor.id));
+      return json({ data: { requests: reqs }, error: null }, 200, cors);
+    }
+
+    if ((path === '/api/follow/accept' || path === '/api/follow/decline') && method === 'POST') {
+      const body = await readJson(request);
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body);
+      const requester = String(clean.requester || clean.userId || '').slice(0, 200);
+      if (!requester) return json({ error: 'requester required' }, 400, cors);
+      const reqs = await readIdList(env, KEYS.FOLLOW_REQ(actor.id));
+      await kv.put(KEYS.FOLLOW_REQ(actor.id), JSON.stringify(reqs.filter((x) => x !== requester)));
+      if (path === '/api/follow/accept') {
+        const [following, followers] = await Promise.all([
+          readIdList(env, KEYS.FOLLOWING(requester)),
+          readIdList(env, KEYS.FOLLOWERS(actor.id)),
+        ]);
+        if (!following.some((x) => x === actor.id)) {
+          following.unshift(actor.id);
+          await kv.put(KEYS.FOLLOWING(requester), JSON.stringify(following.slice(0, 5000)));
+        }
+        if (!followers.some((x) => x === requester)) {
+          followers.unshift(requester);
+          await kv.put(KEYS.FOLLOWERS(actor.id), JSON.stringify(followers.slice(0, 50000)));
+        }
+        return json({ data: { accepted: true }, error: null }, 200, cors);
+      }
+      return json({ data: { declined: true }, error: null }, 200, cors);
+    }
+
+    // ---- CONTENT UPDATE (owner-only): edit text + visibility ----
+    // PUT /api/posts/:id | /api/thoughts/:id | /api/stories/:id |
+    //     /api/moments/:id  with { content?, title?, visibility? }
+    // Lets owners flip an item between public / followers / private
+    // ("hide from public") without deleting it.
+    const updateMatch = path.match(/^\/(api)\/(posts|thoughts|stories|moments)\/([^/]+)$/);
+    if (updateMatch && method === 'PUT') {
+      const kindPlural = updateMatch[2];
+      const id = decodeURIComponent(updateMatch[3] || '').split('?')[0];
+      const getKey = kindPlural === 'posts' ? KEYS.POST : kindPlural === 'thoughts' ? KEYS.THOUGHT : kindPlural === 'stories' ? KEYS.STORY : KEYS.MOMENT;
+      const body = await readJson(request);
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const raw = await kv.get(getKey(id));
+      if (!raw) return json({ error: 'Not found' }, 404, cors);
+      let parsed = {};
+      try { parsed = JSON.parse(raw); } catch { return json({ error: 'Not found' }, 404, cors); }
+      if (!owns(parsed, actor)) return json({ error: 'Only the account that posted this can edit it.' }, 403, cors);
+      const clean = sanitizeBody(body);
+      // Safety re-check on edited text.
+      if (typeof clean.content === 'string' || typeof clean.title === 'string' || typeof clean.description === 'string') {
+        try {
+          await moderateContent(env, {
+            text: String(clean.content ?? parsed.content ?? '') + '\n' + String(clean.title ?? parsed.title ?? ''),
+          });
+        } catch (e) {
+          return json({ error: (e && e.message) || 'Content violates community guidelines.' }, (e && e.status) || 400, cors);
+        }
+        if (typeof clean.content === 'string') parsed.content = clean.content.slice(0, 5000);
+        if (typeof clean.title === 'string') parsed.title = clean.title.slice(0, 500);
+        if (typeof clean.description === 'string') parsed.description = clean.description.slice(0, 5000);
+      }
+      if (clean.visibility !== undefined || clean.audience !== undefined || clean.isPrivate !== undefined) {
+        const next = normalizeVisibility(
+          clean.visibility || clean.audience || (clean.isPrivate === true ? 'private' : clean.isPrivate === false ? 'public' : parsed.visibility),
+          'public'
+        );
+        parsed.visibility = next;
+        delete parsed.audience;
+        if (next === 'public') { delete parsed.isPrivate; delete parsed.hidden; delete parsed.hideFromPublic; }
+      }
+      if (Array.isArray(clean.tags)) parsed.tags = clean.tags.map((t) => String(t).slice(0, 40)).slice(0, 10);
+      parsed.updatedAt = new Date().toISOString();
+      await kv.put(getKey(id), JSON.stringify(parsed));
+      // Keep the search index visibility in sync (best-effort).
+      try {
+        const idxJson = await kv.get(KEYS.CONTENT_INDEX);
+        if (idxJson) {
+          const idx = JSON.parse(idxJson);
+          const ix = idx.findIndex((i) => i && i.id === id);
+          if (ix >= 0) {
+            idx[ix] = { ...idx[ix], visibility: parsed.visibility || 'public' };
+            await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx));
+          }
+        }
+      } catch { /* ignore */ }
+      return json({ data: transformItem(parsed), error: null }, 200, cors);
+    }
+
+    // ---- REPORTS (community safety) ----
+    // POST /api/report { kind, id, reason?, details? } — any signed-in
+    // account can report. Auto-hide at 3 reports, auto-remove at 5, with an
+    // immediate brain re-check on every report. Generic responses only.
+    if (path === '/api/report' && method === 'POST') {
+      const body = await readJson(request);
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body);
+      const kind = String(clean.kind || clean.type || '').toLowerCase().replace(/s$/, '');
+      const id = String(clean.id || clean.contentId || '').slice(0, 64);
+      const reason = String(clean.reason || 'other').slice(0, 40);
+      if (!['post', 'thought', 'story', 'moment'].includes(kind) || !id) {
+        return json({ error: 'Invalid report' }, 400, cors);
+      }
+      const rl = await rateLimit(kv, 'engagement', actor.id, 30);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const getKey = kind === 'post' ? KEYS.POST : kind === 'thought' ? KEYS.THOUGHT : kind === 'story' ? KEYS.STORY : KEYS.MOMENT;
+      const raw = await kv.get(getKey(id));
+      if (!raw) return json({ data: { ok: true }, error: null }, 200, cors);
+      let parsed = {};
+      try { parsed = JSON.parse(raw); } catch { return json({ data: { ok: true }, error: null }, 200, cors); }
+      // Owners cannot report their own content into removal; they can delete it.
+      if (owns(parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
+      const report = {
+        id: generateId(), kind, contentId: id, reason,
+        details: String(clean.details || clean.additionalInfo || '').slice(0, 1000),
+        reporter: actor.id, createdAt: new Date().toISOString(),
+      };
+      await kv.put(KEYS.REPORT(report.id), JSON.stringify(report));
+      try {
+        const listJson = await kv.get(KEYS.REPORTS_LIST);
+        const ids = listJson ? JSON.parse(listJson) : [];
+        ids.unshift(report.id);
+        await kv.put(KEYS.REPORTS_LIST, JSON.stringify(ids.slice(0, 2000)));
+      } catch { /* ignore */ }
+      // Count reports against this item.
+      let count = 1;
+      try {
+        const flagRaw = await kv.get(KEYS.FLAGS(kind, id));
+        count = (flagRaw ? parseInt(flagRaw, 10) || 0 : 0) + 1;
+        await kv.put(KEYS.FLAGS(kind, id), String(count));
+      } catch { /* ignore */ }
+      // Immediate brain re-check of the reported content.
+      let brainVerdict = null;
+      try {
+        brainVerdict = await brainSafetyCheck(env, String(parsed.content || parsed.title || parsed.description || ''));
+      } catch { /* fail-open */ }
+      const now = new Date().toISOString();
+      if (brainVerdict === 'block' || count >= 5) {
+        parsed.moderation = { status: 'removed', at: now, reason: 'community' };
+        parsed.visibility = 'private';
+        await kv.put(getKey(id), JSON.stringify(parsed));
+        await enqueueModeration(env, { kind, id, owner: itemOwnerId(parsed), reason: 'removed' });
+      } else if (brainVerdict === 'review' || count >= 3) {
+        parsed.moderation = { status: 'quarantined', at: now, reason: 'community' };
+        parsed.visibility = 'private';
+        await kv.put(getKey(id), JSON.stringify(parsed));
+        await enqueueModeration(env, { kind, id, owner: itemOwnerId(parsed), reason: 'auto-review' });
+      }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    // DELETE ENDPOINTS (strictly owner-only — see deleteItem).
     if (path.match(/^\/api\/posts\//) && method === 'DELETE') {
       const id = decodeURIComponent(path.split('/api/posts/')[1] || '');
       return await deleteItem(context, KEYS.POSTS, KEYS.POST, id, cors);
@@ -1721,9 +2368,61 @@ export const onRequest = async (context) => {
       return await serveR2(request, env, key, cors, method);
     }
 
-    // USER POSTS
+    // USER CONTENT — every collection for one account (posts + thoughts +
+    // stories + moments), visibility-enforced. This is what makes an upload
+    // on one device appear on every other device and for other accounts.
+    if (path.match(/^\/api\/users\//) && path.endsWith('/content') && method === 'GET') {
+      const userId = decodeURIComponent(path.split('/api/users/')[1].replace('/content', ''));
+      const viewer = await getViewer(request, env);
+      const isOwner = !!(viewer && String(viewer.id).toLowerCase() === String(userId).toLowerCase());
+      if (!isOwner) {
+        const target = await getStoredProfile(env, userId);
+        if (target && target.isPrivate === true) {
+          const ok = viewer ? await isFollowingPair(env, viewer.id, userId) : false;
+          if (!ok) return json({ data: { posts: [], thoughts: [], stories: [], moments: [] }, error: null }, 200, cors);
+        }
+      }
+      const matchOwner = (p) => {
+        const cands = [p.ownerId, p.userId, p.user_id, p.creator, p.user, p.username, p.handle];
+        const want = String(userId).toLowerCase();
+        return cands.some((c) => typeof c === 'string' && c && (c === userId || c.toLowerCase() === want));
+      };
+      const [postIds, thoughtIds, storyIds, momentIds] = await Promise.all([
+        cleanOrphans(env, KEYS.POSTS, KEYS.POST),
+        cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT),
+        cleanOrphans(env, KEYS.STORIES, KEYS.STORY),
+        cleanOrphans(env, KEYS.MOMENTS, KEYS.MOMENT),
+      ]);
+      const [posts, thoughts, stories, moments] = await Promise.all([
+        Promise.all(postIds.map(async (id) => { const p = await kv.get(KEYS.POST(id)); return p ? transformItem(JSON.parse(p)) : null; })).then((a) => a.filter(Boolean)),
+        Promise.all(thoughtIds.map(async (id) => { const t = await kv.get(KEYS.THOUGHT(id)); return t ? transformItem(JSON.parse(t)) : null; })).then((a) => a.filter(Boolean)),
+        Promise.all(storyIds.map(async (id) => { const s = await kv.get(KEYS.STORY(id)); return s ? transformItem(JSON.parse(s)) : null; })).then((a) => a.filter(Boolean)),
+        Promise.all(momentIds.map(async (id) => { const m = await kv.get(KEYS.MOMENT(id)); return m ? transformItem(JSON.parse(m)) : null; })).then((a) => a.filter(Boolean)),
+      ]);
+      const mine = (arr) => arr.filter(matchOwner);
+      const seeded = await filterSeed(env, [...mine(posts), ...mine(thoughts), ...mine(stories), ...mine(moments)]);
+      const visible = await filterVisibleItems(env, viewer, seeded);
+      return json({ data: {
+        posts: visible.filter((x) => !['thought', 'story', 'text-story', 'moment'].includes(String(x.type || '').toLowerCase())),
+        thoughts: visible.filter((x) => String(x.type || '').toLowerCase() === 'thought'),
+        stories: visible.filter((x) => ['story', 'text-story'].includes(String(x.type || '').toLowerCase())),
+        moments: visible.filter((x) => String(x.type || '').toLowerCase() === 'moment'),
+      }, error: null }, 200, cors);
+    }
+
+    // USER POSTS (visibility-enforced; private accounts reveal content only
+    // to themselves and their followers — everyone else gets []).
     if (path.match(/^\/api\/users\//) && path.endsWith('/posts') && method === 'GET') {
       const userId = decodeURIComponent(path.split('/api/users/')[1].replace('/posts', ''));
+      const viewer = await getViewer(request, env);
+      const isOwner = !!(viewer && String(viewer.id).toLowerCase() === String(userId).toLowerCase());
+      if (!isOwner) {
+        const target = await getStoredProfile(env, userId);
+        if (target && target.isPrivate === true) {
+          const ok = viewer ? await isFollowingPair(env, viewer.id, userId) : false;
+          if (!ok) return json({ data: [], error: null }, 200, cors);
+        }
+      }
       const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
       const posts = (await Promise.all(ids.map(async (id) => {
         const p = await kv.get(KEYS.POST(id));
@@ -1731,10 +2430,12 @@ export const onRequest = async (context) => {
       }))).filter(Boolean);
       const want = String(userId || '').toLowerCase();
       const userPosts = posts.filter((p) => {
-        const candidates = [p.userId, p.user_id, p.user, p.creator, p.username, p.handle];
+        const candidates = [p.ownerId, p.userId, p.user_id, p.user, p.creator, p.username, p.handle];
         return candidates.some((c) => typeof c === 'string' && c && c.toLowerCase() === want);
       });
-      return json({ data: await filterSeed(env, userPosts), error: null }, 200, cors);
+      const visible = await filterVisibleItems(env, viewer, await filterSeed(env, userPosts));
+      const limit = clamp(parseInt(url.searchParams.get('limit') || '50', 10), 1, 100);
+      return json({ data: visible.slice(0, limit), error: null }, 200, cors);
     }
 
     // CONTENT INDEX
@@ -1748,6 +2449,17 @@ export const onRequest = async (context) => {
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
       clean.id = String(clean.id || generateId()).slice(0, 64);
+      // Authoritative ownership + visibility so search/discover filtering is
+      // per-viewer correct across devices and accounts.
+      clean.authorId = actor.id;
+      clean.ownerId = actor.id;
+      clean.visibility = normalizeVisibility(clean.visibility || 'public');
+      // Same safety gate as direct creates (generic message only).
+      try {
+        await moderateContent(env, { text: String(clean.content || clean.title || clean.description || '') });
+      } catch (e) {
+        return json({ error: (e && e.message) || 'Content violates community guidelines and was not published.' }, (e && e.status) || 400, cors);
+      }
       const indexJson = await kv.get(KEYS.CONTENT_INDEX);
       const index = indexJson ? JSON.parse(indexJson) : [];
       const existingIdx = index.findIndex((i) => i && i.id === clean.id);
@@ -1875,6 +2587,82 @@ export const onRequest = async (context) => {
       const quota = planQuota(planId);
       const ads = quota.ads === true ? 'ads' : quota.ads === 'light' ? 'ad-light' : 'ad-free';
       return json({ data: { planId, ads, showAds: ads !== 'ad-free' }, error: null }, 200, cors);
+    }
+
+    // ---- BILLING STATUS (same-origin proxy) ----
+    // Keeps the browser on first-party /api only; the central billing host
+    // is contacted server-to-server with the caller's Bearer token.
+    if (path === '/api/billing/status' && method === 'GET') {
+      const bearer = bearerFrom(request);
+      if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
+      const base = (env.BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
+      try {
+        const upstream = await fetch(base + '/v1/billing/status?product=equyvo', {
+          headers: { Authorization: 'Bearer ' + bearer },
+        });
+        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        return json(data, upstream.status, cors);
+      } catch {
+        return json({ error: 'Billing service unreachable. Please try again.' }, 502, cors);
+      }
+    }
+
+    // ---- RECOMMENDATIONS PROXY (same-origin) ----
+    // The app's suggestion/learning signals go to first-party /api routes
+    // below; this worker forwards them to the shared recommendations
+    // service server-to-server (best-effort, capped). Clients never see
+    // where the service lives or how it works.
+    const brainProxy = async (brainPath, body) => {
+      const data = await aiFetchJson(aiBrainBase(env) + brainPath, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body || {}),
+      }, 2500);
+      return data;
+    };
+
+    if ((path === '/api/learn' || path === '/api/feedback') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let raw;
+      try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+      const body = sanitizeBody(raw);
+      const brainPath = path === '/api/learn' ? '/v1/learn' : '/v1/feedback';
+      await brainProxy(brainPath, { ...body, source: 'equyvo' });
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    if ((path === '/api/generate' || path === '/api/chat') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const rl = await rateLimit(kv, 'suggest', actor.id, 30);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      let raw;
+      try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+      const body = sanitizeBody(raw);
+      const prompt = String(body.prompt || body.message || '').slice(0, 2000);
+      if (!prompt) return json({ error: 'prompt required' }, 400, cors);
+      const data = await brainProxy(path === '/api/generate' ? '/v1/generate' : '/v1/chat', {
+        prompt, message: prompt,
+        messages: Array.isArray(body.messages) ? body.messages.slice(0, 20) : [],
+        system: String(body.system || '').slice(0, 1000),
+        session_id: String(body.sessionId || body.session_id || actor.id).slice(0, 100),
+        source: 'equyvo',
+      });
+      if (!data) return json({ data: { response: '' }, error: null }, 200, cors);
+      return json({ data, error: null }, 200, cors);
+    }
+
+    if (path === '/api/trending/topics' && method === 'GET') {
+      const data = await aiFetchJson(aiBrainBase(env) + '/v1/trending', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'equyvo-trending' }),
+      }, 2500);
+      const topics = data && Array.isArray(data.topics)
+        ? data.topics.filter((t) => t && typeof t.name === 'string').slice(0, 10)
+        : [];
+      return json({ data: { topics }, error: null }, 200, cors);
     }
 
     return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);

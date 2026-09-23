@@ -14,7 +14,13 @@ import CommentSection from '@/components/CommentSection';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
-import { allowedForSurface, creatorOf, imageUrlOf, videoUrlOf } from '@/lib/feed-store';
+import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, videoUrlOf, withoutHidden } from '@/lib/feed-store';
+import { deleteContent } from '@/utils/delete';
+import { getStoredUser } from '@/lib/auth';
+import { showError } from '@/utils/toast';
+import ReportModal from '@/components/ReportModal';
+import VideoSeekBar from '@/components/VideoSeekBar';
+import api from '@/lib/api';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -79,6 +85,8 @@ const MomentsPage = () => {
             return {
               id: m.id,
               user: creatorOf(m),
+              userId: (m as any).ownerId || (m as any).userId || (m as any).user_id || '',
+              ownerId: (m as any).ownerId || (m as any).userId || '',
               description: m.content || '',
               avatar: m.avatar || '',
               videoUrl: vid,
@@ -100,7 +108,7 @@ const MomentsPage = () => {
             const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
             return tb - ta;
           });
-        if (!cancelled) setMoments(mapped);
+        if (!cancelled) setMoments(withoutHidden(mapped));
       } catch {
         if (!cancelled) setMoments([]);
       } finally {
@@ -441,16 +449,22 @@ const MomentsPage = () => {
     }
   };
 
-  const handleSeek = (e: React.MouseEvent<HTMLDivElement>) => {
+  const seekActiveVideo = (newTime: number) => {
     const video = videoRefs.current[activeVideoIndex];
-    if (!video || !video.duration) return;
-    const rect = e.currentTarget.getBoundingClientRect();
-    const clickX = e.clientX - rect.left;
-    const percentage = Math.max(0, Math.min(1, clickX / rect.width));
-    const newTime = percentage * video.duration;
-    video.currentTime = newTime;
+    if (!video || !Number.isFinite(newTime)) return;
+    try {
+      video.currentTime = Math.max(0, Math.min(newTime, video.duration || newTime));
+    } catch {
+      /* ignore */
+    }
     setCurrentTime(newTime);
   };
+
+  const activeVideoRef = {
+    get current() {
+      return videoRefs.current[activeVideoIndex] || null;
+    },
+  } as React.RefObject<HTMLVideoElement | null>;
 
   const toggleLike = (momentId: string) => {
     setLikedMoments(prev => {
@@ -501,12 +515,52 @@ const MomentsPage = () => {
   };
 
   // Menu handlers
-  const handleReport = (momentId: string) => {
-    showSuccess(`Report submitted for moment ${momentId}`);
+  // Only the owning account can delete a moment. Other accounts can only
+  // hide it from their own view or report it — never delete it.
+  const [reportMomentId, setReportMomentId] = useState<string | null>(null);
+  const currentUser = getStoredUser();
+  const isOwnMoment = (momentId: string) => {
+    const m = moments.find((x) => x.id === momentId);
+    if (!m || !currentUser) return false;
+    const owner = String((m as any).ownerId || (m as any).userId || '').toLowerCase();
+    if (owner && (owner === currentUser.id.toLowerCase() || owner === (currentUser.email || '').toLowerCase())) return true;
+    return String(m.user || '').toLowerCase() === String(currentUser.username || currentUser.email?.split('@')[0] || '').toLowerCase() && owner === '';
   };
 
-  const handleHide = (momentId: string) => {
-    showSuccess('Moment hidden from feed');
+  const handleDeleteMoment = async (momentId: string) => {
+    try {
+      await deleteContent({ postId: momentId, contentType: 'moment' });
+      setMoments((prev) => prev.filter((m) => m.id !== momentId));
+    } catch {
+      // deleteContent already toasted the failure.
+    }
+  };
+
+  const handleReport = (momentId: string) => {
+    if (isOwnMoment(momentId)) {
+      showSuccess('This is your own moment — you can delete it instead.');
+      return;
+    }
+    setReportMomentId(momentId);
+  };
+
+  const handleHide = async (momentId: string) => {
+    // Personal hide only: removes it from THIS account's view everywhere.
+    // The content stays on Equyvo for everyone else.
+    if (isOwnMoment(momentId)) {
+      try {
+        const { error } = await api.updateMoment(momentId, { visibility: 'private' });
+        if (error) throw new Error(error);
+        setMoments((prev) => prev.filter((m) => m.id !== momentId));
+        showSuccess('Moment hidden from public. Only you can see it now.');
+      } catch (e: any) {
+        showError(e?.message || 'Could not hide this moment.');
+      }
+      return;
+    }
+    hideFromMyView(momentId);
+    setMoments((prev) => prev.filter((m) => m.id !== momentId));
+    showSuccess('Moment hidden from your view');
   };
 
   const handleCopyLink = (momentId: string) => {
@@ -555,20 +609,15 @@ const MomentsPage = () => {
             isMobile ? 'h-[calc(100vh-7rem)] h-[calc(100dvh-7rem)]' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'
           }`}
         >
-          {/* Video Player - Full Page Portrait */}
-          <div className="absolute inset-0 flex items-center justify-center bg-black">
+          {/* Video Player - Full-bleed portrait: fills the slide exactly, no scroll gap */}
+          <div className="absolute inset-0 flex items-center justify-center overflow-hidden bg-black">
+            <div className="relative h-full w-full max-w-[480px] overflow-hidden bg-black">
             {moment.videoUrl ? (
             <video
               ref={el => videoRefs.current[index] = el}
               src={moment.videoUrl}
-              className="h-full w-auto object-contain"
+              className="absolute inset-0 h-full w-full object-cover"
               style={{
-                aspectRatio: '9/16',
-                // min() prefers the dynamic viewport when toolbars collapse;
-                // legacy browsers ignore it and fall back to the class height.
-                maxHeight: isMobile ? 'min(calc(100vh - 7rem), calc(100dvh - 7rem))' : 'min(calc(100vh - 4rem), calc(100dvh - 4rem))',
-                maxWidth: '100vw',
-                objectFit: 'contain',
                 backgroundColor: 'black'
               }}
               loop
@@ -606,21 +655,20 @@ const MomentsPage = () => {
               <img
                 src={moment.thumbnail || moment.image}
                 alt={moment.description || 'Moment photo'}
-                className="h-full w-auto object-contain"
+                className="absolute inset-0 h-full w-full object-cover"
                 style={{
-                  aspectRatio: '9/16',
-                  maxHeight: isMobile ? 'min(calc(100vh - 7rem), calc(100dvh - 7rem))' : 'min(calc(100vh - 4rem), calc(100dvh - 4rem))',
-                  maxWidth: '100vw',
                   backgroundColor: 'black',
                 }}
                 loading={index < 2 ? 'eager' : 'lazy'}
+                draggable={false}
               />
             )}
             {likeAnimIndex === index && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
+              <div className="absolute inset-0 z-30 flex items-center justify-center pointer-events-none">
                 <ThumbsUp className="h-20 w-20 text-blue-500 fill-blue-500 animate-like-float drop-shadow-2xl" />
               </div>
             )}
+            </div>
           </div>
 
           {/* Overlay Content - Optimized for Portrait */}
@@ -710,7 +758,10 @@ const MomentsPage = () => {
               <div className="flex flex-col items-center gap-1">
                 <StandardPostMenu
                   postId={moment.id}
+                  postUserId={String((moment as any).ownerId || (moment as any).userId || moment.user || '')}
+                  currentUserId={currentUser?.id || currentUser?.email || ''}
                   onReport={handleReport}
+                  onDelete={isOwnMoment(moment.id) ? handleDeleteMoment : undefined}
                   onHide={handleHide}
                   onCopyLink={handleCopyLink}
                   onShare={() => handleShare(moment.id)}
@@ -738,43 +789,37 @@ const MomentsPage = () => {
                 )}
               </div>
             </div>
-            {duration > 10 && (
+            {duration > 0 && index === activeVideoIndex && (
               <div className="absolute bottom-2 left-4 right-4 z-30 pointer-events-auto">
-                <div className="flex items-center gap-2">
+                <div className="relative flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       const v = videoRefs.current[activeVideoIndex];
-                      if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                      if (v) seekActiveVideo(Math.max(0, v.currentTime - 5));
                     }}
                     className="max-md:hidden text-white/70 hover:text-white p-1"
+                    aria-label="Back 5 seconds"
                   >
                     <RotateCcw className="h-3 w-3" />
                   </button>
-                  <span className="text-white/70 text-[10px] font-medium min-w-[28px] text-right tabular-nums">
-                    {formatTime(currentTime)}
-                  </span>
-                  <div 
-                    className="flex-1 h-1 bg-white/20 rounded-full cursor-pointer group hover:h-1.5 transition-all duration-200"
-                    onClick={handleSeek}
-                  >
-                    <div 
-                      className="h-full bg-white rounded-full transition-all duration-100 relative"
-                      style={{ width: `${duration ? (currentTime / duration) * 100 : 0}%` }}
-                    >
-                      <div className="absolute right-0 top-1/2 -translate-y-1/2 w-2.5 h-2.5 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity shadow-md" />
-                    </div>
+                  <div className="relative flex-1">
+                    <VideoSeekBar
+                      videoRef={activeVideoRef}
+                      currentTime={currentTime}
+                      duration={duration}
+                      onSeek={seekActiveVideo}
+                      compact
+                    />
                   </div>
-                  <span className="text-white/70 text-[10px] font-medium min-w-[28px] tabular-nums">
-                    {formatTime(duration)}
-                  </span>
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
                       const v = videoRefs.current[activeVideoIndex];
-                      if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                      if (v) seekActiveVideo(Math.min(v.duration || Infinity, v.currentTime + 5));
                     }}
                     className="max-md:hidden text-white/70 hover:text-white p-1"
+                    aria-label="Forward 5 seconds"
                   >
                     <RotateCcw className="h-3 w-3 scale-x-[-1]" />
                   </button>
@@ -796,6 +841,16 @@ const MomentsPage = () => {
           }}
           postId={selectedPostId}
           postUser={selectedPostUser}
+        />
+      )}
+
+      {/* Report Modal */}
+      {reportMomentId && (
+        <ReportModal
+          isOpen={!!reportMomentId}
+          onClose={() => setReportMomentId(null)}
+          contentId={reportMomentId}
+          contentType="moment"
         />
       )}
     </div>

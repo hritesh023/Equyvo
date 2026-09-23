@@ -11,7 +11,7 @@ import StoryViewer from '@/components/StoryViewer';
 import Moments from '@/components/Moments';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
-import { showSuccess, showError } from '@/utils/toast';
+import { showSuccess } from '@/utils/toast';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { useNavigate } from 'react-router-dom';
 import ForYouFeed from '@/components/ForYouFeed';
@@ -20,11 +20,12 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
-import { allowedForSurface, creatorOf, getFollowing } from '@/lib/feed-store';
+import { allowedForSurface, creatorOf, getFollowing, hideFromMyView } from '@/lib/feed-store';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
+import { isOwnContent } from '@/utils/ownership';
+import { deleteContent } from '@/utils/delete';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
-import api from '@/lib/api';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
@@ -362,14 +363,35 @@ const HomePage = () => {
   };
 
   const handleDeleteStory = async (storyId: string) => {
-    try {
-      await api.deleteStory(storyId);
+    const story = stories.find(s => s.id === storyId) as unknown as Record<string, unknown> | undefined;
+    if (story && !isOwnContent(story)) {
+      hideFromMyView(storyId);
       setStories(prev => prev.filter(s => s.id !== storyId));
-      window.dispatchEvent(new CustomEvent('userPostDeleted', { detail: { postId: storyId, contentType: 'story' } }));
-      showSuccess('Story deleted successfully.');
-    } catch {
-      showError('Failed to delete story');
+      showSuccess("Hidden from your view. You won't see it again.");
+      return;
     }
+    try {
+      await deleteContent({
+        postId: storyId,
+        contentType: 'story',
+        onDeleteComplete: (id) => {
+          setStories(prev => prev.filter(s => s.id !== id));
+        },
+      });
+    } catch {
+      // deleteContent already explained what happened.
+    }
+  };
+
+  const handleHideStory = (storyId: string) => {
+    const story = stories.find(s => s.id === storyId);
+    if (story && isOwnContent(story as unknown as Record<string, unknown>)) {
+      showSuccess('This is yours — you can delete it instead.');
+      return;
+    }
+    hideFromMyView(storyId);
+    setStories(prev => prev.filter(s => s.id !== storyId));
+    showSuccess("Hidden from your view. You won't see it again.");
   };
 
   // Handle create story button click
@@ -806,6 +828,7 @@ const HomePage = () => {
           onNext={handleNextStory}
           onPrevious={handlePreviousStory}
           onDeleteStory={handleDeleteStory}
+          onHideStory={handleHideStory}
         />
       )}
 

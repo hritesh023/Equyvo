@@ -1,15 +1,23 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Video, Camera, Eye, ThumbsUp, MessageCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, AlertTriangle, Maximize, Bookmark, RotateCcw } from 'lucide-react';
+import { Play, Pause, Video, Camera, Eye, EyeOff, ThumbsUp, MessageCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, AlertTriangle, Maximize, Bookmark, RotateCcw } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { handleAsyncError, createError } from '@/utils/error-handling';
 import { usePlatformOptimizations } from '@/hooks/use-platform-optimizations';
 import SaveButton from '@/components/SaveButton';
+import DeleteButton from '@/components/ui/DeleteButton';
+import { getStoredUser } from '@/lib/auth';
+import { deleteContent } from '@/utils/delete';
+import { isOwnContent } from '@/utils/ownership';
+import { hideFromMyView } from '@/lib/feed-store';
+import VideoSeekBar from '@/components/VideoSeekBar';
 
 interface Moment {
   id: string;
   user: string;
+  userId?: string;
+  ownerId?: string;
   content: string;
   media: string;
   thumbnail?: string;
@@ -28,11 +36,38 @@ interface MomentsProps {
   onComment: (momentId: string, user: string) => void;
   onLike?: (momentId: string) => void;
   likedMoments?: Set<string>;
+  onDelete?: (momentId: string) => void;
   isHomePage?: boolean; // Add prop to detect if we're on home page
   isMomentsPage?: boolean; // Add prop to detect if we're on the dedicated MomentsPage
 }
 
-const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onLike, likedMoments = new Set(), isHomePage = false, isMomentsPage = false }) => {
+const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onLike, likedMoments = new Set(), onDelete, isHomePage = false, isMomentsPage = false }) => {
+  // Only the account that posted a moment can delete it. Everyone else can
+  // only hide it from their own view. Never errors for non-owners.
+  const isOwnMoment = (moment: Moment) => {
+    try {
+      return isOwnContent(moment as unknown as Record<string, unknown>);
+    } catch {
+      return false;
+    }
+  };
+  const handleDeleteMoment = async (moment: Moment) => {
+    if (!isOwnMoment(moment)) {
+      hideFromMyView(moment.id);
+      onDelete?.(moment.id);
+      showSuccess("Hidden from your view. You won't see it again.");
+      return;
+    }
+    try {
+      await deleteContent({
+        postId: moment.id,
+        contentType: 'moment',
+        onDeleteComplete: (id) => onDelete?.(id),
+      });
+    } catch {
+      // deleteContent already explained what happened.
+    }
+  };
   const [playingVideos, setPlayingVideos] = useState<Set<string>>(new Set());
   const [isMuted, setIsMuted] = useState(false); // Start unmuted for audio
   const [videoErrors, setVideoErrors] = useState<Set<string>>(new Set());
@@ -110,10 +145,11 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   const handleVideoPlayPause = debounce(async (momentId: string, videoUrl?: string) => {
     const moment = moments.find(m => m.id === momentId);
     const actualVideoUrl = videoUrl || moment?.videoUrl || moment?.media;
-    const fallbackUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-    const finalVideoUrl = actualVideoUrl || fallbackUrl;
-    
+    const finalVideoUrl = actualVideoUrl;
+
     if (!finalVideoUrl) {
+      setVideoErrors(prev => new Set(prev).add(momentId));
+      if (!isHomePage) showError('This video is unavailable.');
       return;
     }
 
@@ -165,18 +201,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
             setIsMuted(true);
           }
         } catch (e) {
-          // Try fallback video as last resort
-          if (actualVideoUrl !== fallbackUrl) {
-            video.src = fallbackUrl;
-            try {
-              await video.play();
-              setIsLoading(prev => ({ ...prev, [momentId]: false }));
-            } catch (fallbackError) {
-              handleVideoError(momentId, fallbackError);
-            }
-          } else {
-            handleVideoError(momentId, e);
-          }
+          handleVideoError(momentId, e);
         }
       }
     }
@@ -239,38 +264,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   };
 
   const handleVideoError = (momentId: string, error?: Event | React.SyntheticEvent) => {
-    const video = videoRefs.current[momentId];
-    const moment = moments.find(m => m.id === momentId);
-    
-    if (video && moment) {
-      const fallbackUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-      const currentSrc = video.src;
-      
-      // If current source failed and it's not already the fallback, try fallback
-      if (!currentSrc.includes('BigBuckBunny.mp4')) {
-        video.src = fallbackUrl;
-        video.load();
-        
-        // Try to play the fallback video
-        setTimeout(() => {
-          video.play().then(() => {
-            setIsLoading(prev => ({ ...prev, [momentId]: false }));
-            // Clear error state since fallback is working
-            setVideoErrors(prev => {
-              const newSet = new Set(prev);
-              newSet.delete(momentId);
-              return newSet;
-            });
-          }).catch(() => {
-            setVideoErrors(prev => new Set(prev).add(momentId));
-            setIsLoading(prev => ({ ...prev, [momentId]: false }));
-          });
-        }, 200);
-        return; // Don't set error state yet, wait for fallback attempt
-      }
-    }
-    
-    // Only set error state if fallback also failed or no fallback available
+    // Mark the video as failed so the UI shows an honest error state with a
+    // retry action — never substitute unrelated demo media.
     setVideoErrors(prev => new Set(prev).add(momentId));
     setPlayingVideos(prev => {
       const newSet = new Set(prev);
@@ -305,29 +300,41 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     const moment = moments.find(m => m.id === momentId);
     
     if (video && moment) {
-      // Try to update video source with fallback URL if needed
-      const currentSrc = video.src;
-      const fallbackUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-      
-      // Reset video element
+      // Reset the element and retry the real source.
       video.currentTime = 0;
-      
-      // If current source failed, try fallback
-      if (video.error || videoErrors.has(momentId)) {
-        video.src = fallbackUrl;
-      } else {
-        video.load();
-      }
-      
+      video.load();
+
       // Try to play again after a short delay
       setTimeout(() => {
-        handleVideoPlayPause(momentId, video.src || fallbackUrl);
+        handleVideoPlayPause(momentId, moment.videoUrl || moment.media);
       }, 200);
     }
   };
 
   const handleVideoLoaded = (momentId: string) => {
     setIsLoading(prev => ({ ...prev, [momentId]: false }));
+  };
+
+  const momentVideoRef = (momentId: string) =>
+    ({
+      get current() {
+        return videoRefs.current[momentId] || null;
+      },
+    }) as React.RefObject<HTMLVideoElement | null>;
+
+  const seekMomentTo = (momentId: string, time: number) => {
+    const video = videoRefs.current[momentId];
+    if (!video || !Number.isFinite(time)) return;
+    try {
+      video.currentTime = Math.max(0, time);
+    } catch {
+      /* ignore */
+    }
+    setCurrentTime((prev) => ({ ...prev, [momentId]: time }));
+    setVideoProgress((prev) => {
+      const dur = video.duration || videoDuration[momentId] || 0;
+      return { ...prev, [momentId]: dur > 0 ? (time / dur) * 100 : 0 };
+    });
   };
 
   const handleSeek = (e: React.MouseEvent<HTMLDivElement>, momentId: string) => {
@@ -565,7 +572,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
         <div className="relative">
           <div 
             ref={scrollContainerRef}
-            className="flex gap-3 overflow-x-auto scrollbar-hide scroll-smooth pb-2"
+            className="flex gap-3 overflow-x-auto scroll-px-2 scrollbar-hide scroll-smooth pb-2 pr-4"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
             {displayMoments.map((moment) => (
@@ -592,7 +599,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                           src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
                           alt="Moment thumbnail"
                           loading="lazy"
-                          className="w-full h-full object-contain bg-black"
+                          className="w-full h-full object-cover bg-black"
                             onError={(e) => {
                             const target = e.target as HTMLImageElement;
                             // Try multiple fallback images in sequence
@@ -621,8 +628,15 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                           <div className="text-center p-4">
                             <Video className="w-8 h-8 text-white/60 mx-auto mb-2" />
-                            <p className="text-white/60 text-sm mb-2">Video loading...</p>
-                            <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white/60 mx-auto"></div>
+                            <p className="text-white/60 text-sm mb-2">Video unavailable</p>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="text-white border-white/30 hover:bg-white/10"
+                              onClick={(e) => { e.stopPropagation(); retryVideo(moment.id); }}
+                            >
+                              Retry
+                            </Button>
                           </div>
                         </div>
                       ) : (
@@ -722,7 +736,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         src={moment.thumbnail || moment.media}
                         alt="Moment"
                         loading="lazy"
-                        className="w-full h-full object-contain bg-black"
+                        className="w-full h-full object-cover bg-black"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleVideoClick(moment);
@@ -749,21 +763,18 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                             <span className="text-white text-xs font-medium min-w-[25px]">
                               {formatTime(currentTime[moment.id] || 0)}
                             </span>
-                            <div 
-                              className="flex-1 h-0.5 bg-white/30 rounded-full cursor-pointer group hover:h-1 transition-all"
-                              onClick={(e) => handleSeek(e, moment.id)}
-                              onMouseDown={handleSeekStart}
-                              onMouseUp={handleSeekEnd}
+                            <div
+                              className="relative flex-1"
+                              onClick={(e) => e.stopPropagation()}
+                              onDoubleClick={(e) => e.stopPropagation()}
                             >
-                              <div 
-                                className="h-full bg-white rounded-full transition-all relative"
-                                style={{ width: `${videoProgress[moment.id] || 0}%` }}
-                              >
-                                <div 
-                                  className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                                  style={{ transform: 'translateX(50%) translateY(-50%)' }}
-                                />
-                              </div>
+                              <VideoSeekBar
+                                videoRef={momentVideoRef(moment.id)}
+                                currentTime={currentTime[moment.id] || 0}
+                                duration={videoDuration[moment.id] || 0}
+                                onSeek={(t) => seekMomentTo(moment.id, t)}
+                                compact
+                              />
                             </div>
                             <span className="text-white text-xs font-medium min-w-[25px]">
                               {formatTime(videoDuration[moment.id] || 0)}
@@ -886,7 +897,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       </div>
       
       {/* Use horizontal scroll layout for non-MomentsPage pages */}
-      <div className={`${isMomentsPage ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2' : 'flex gap-4 overflow-x-auto scrollbar-hide pb-4'} max-w-6xl mx-auto`}>
+      <div className={`${isMomentsPage ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2' : 'flex gap-4 overflow-x-auto scroll-px-2 scrollbar-hide pb-4 pr-4'} max-w-6xl mx-auto`}>
         {moments.map((moment) => (
           <Card 
             key={moment.id} 
@@ -915,7 +926,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
                       alt="Moment thumbnail"
                       loading="lazy"
-                      className="w-full h-full object-contain bg-black"
+                      className="w-full h-full object-cover bg-black"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         if (!target.src.includes('picsum.photos/seed/')) {
@@ -944,8 +955,15 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     <div className="absolute inset-0 bg-black/60 flex items-center justify-center">
                       <div className="text-center p-4">
                         <Video className="w-8 h-8 text-white/60 mx-auto mb-2" />
-                        <p className="text-white/60 text-sm mb-2">Video loading...</p>
-                        <div className="animate-spin rounded-full h-6 w-6 border-t-2 border-b-2 border-white/60 mx-auto"></div>
+                        <p className="text-white/60 text-sm mb-2">Video unavailable</p>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="text-white border-white/30 hover:bg-white/10"
+                          onClick={(e) => { e.stopPropagation(); retryVideo(moment.id); }}
+                        >
+                          Retry
+                        </Button>
                       </div>
                     </div>
                   ) : (
@@ -1071,21 +1089,18 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <span className="text-white text-xs font-medium min-w-[25px]">
                           {formatTime(currentTime[moment.id] || 0)}
                         </span>
-                        <div 
-                          className="flex-1 h-0.5 bg-white/30 rounded-full cursor-pointer group hover:h-1 transition-all"
-                          onClick={(e) => handleSeek(e, moment.id)}
-                          onMouseDown={handleSeekStart}
-                          onMouseUp={handleSeekEnd}
+                        <div
+                          className="relative flex-1"
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
                         >
-                          <div 
-                            className="h-full bg-white rounded-full transition-all relative"
-                            style={{ width: `${videoProgress[moment.id] || 0}%` }}
-                          >
-                            <div 
-                              className="absolute right-0 top-1/2 -translate-y-1/2 w-2 h-2 bg-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
-                              style={{ transform: 'translateX(50%) translateY(-50%)' }}
-                            />
-                          </div>
+                          <VideoSeekBar
+                            videoRef={momentVideoRef(moment.id)}
+                            currentTime={currentTime[moment.id] || 0}
+                            duration={videoDuration[moment.id] || 0}
+                            onSeek={(t) => seekMomentTo(moment.id, t)}
+                            compact
+                          />
                         </div>
                         <span className="text-white text-xs font-medium min-w-[25px]">
                           {formatTime(videoDuration[moment.id] || 0)}
@@ -1118,7 +1133,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       src={moment.thumbnail || 'https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&h=700&fit=crop'}
                       alt="Moment"
                       loading="lazy"
-                      className="w-full h-full object-contain bg-black"
+                      className="w-full h-full object-cover bg-black"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         if (!target.src.includes('placeholder')) {
@@ -1179,6 +1194,35 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       >
                         <Maximize className="h-3 w-3" />
                       </Button>
+                      {isOwnMoment(moment) ? (
+                        <div onClick={(e) => e.stopPropagation()}>
+                          <DeleteButton
+                            onDelete={() => handleDeleteMoment(moment)}
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 w-6 p-0 text-white hover:bg-white/20 hover:text-red-400"
+                            confirmationTitle="Delete this moment?"
+                            confirmationDescription="This will permanently remove your moment from Equyvo. This can't be undone. Only you can delete it."
+                            confirmButtonText="Delete Moment"
+                            showIcon={true}
+                          >
+                            <span className="sr-only">Delete</span>
+                          </DeleteButton>
+                        </div>
+                      ) : (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 w-6 p-0 text-white hover:bg-white/20"
+                          title="Hide this moment from my view"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleDeleteMoment(moment);
+                          }}
+                        >
+                          <EyeOff className="h-3 w-3" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </div>

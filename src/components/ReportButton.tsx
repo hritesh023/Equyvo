@@ -13,7 +13,7 @@ import { showSuccess } from '@/utils/toast';
 
 interface ReportButtonProps {
   contentId: string;
-  contentType: 'post' | 'video' | 'thought' | 'moment' | 'comment';
+  contentType: 'post' | 'video' | 'thought' | 'moment' | 'comment' | 'story';
   variant?: 'icon' | 'button' | 'dropdown';
   size?: 'sm' | 'md' | 'lg';
   className?: string;

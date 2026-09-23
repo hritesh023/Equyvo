@@ -1,6 +1,6 @@
-// Centralized billing client for Equyvo.
-// All payments run through Razorpay orders created + verified server-side at
-// https://api.acronous.com. The app never handles card/UPI data or secrets.
+// Billing client for Equyvo.
+// All payments run through orders created + verified server-side via this
+// app's own /api routes. The app never handles card/UPI data or secrets.
 import { getAuthToken, getToken } from './auth';
 
 /** Thrown when checkout needs a fresh sign-in (never a dead-end toast). */
@@ -12,7 +12,8 @@ export class AuthRequiredError extends Error {
   }
 }
 
-const API_BASE = 'https://api.acronous.com';
+// Same-origin API only — the server talks to the payment provider.
+const API_BASE = '/api';
 
 async function authHeaders(): Promise<Record<string, string>> {
   const t = (await getAuthToken()) || getToken();
@@ -50,7 +51,7 @@ function loadRazorpay(): Promise<void> {
 }
 
 export function getBillingStatus(): Promise<BillingStatus> {
-  return req<BillingStatus>('/v1/billing/status?product=equyvo');
+  return req<BillingStatus>('/billing/status?product=equyvo');
 }
 
 /** Full checkout: create order -> Razorpay (UPI/cards/netbanking) -> verify. */
@@ -60,7 +61,7 @@ export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string
   const token = (await getAuthToken()) || getToken();
   if (!token) throw new AuthRequiredError();
   const order = await req<{ order_id: string; amount: number; currency: string; key_id: string }>(
-    '/v1/billing/order', { method: 'POST', body: JSON.stringify({ plan }) });
+    '/create-order', { method: 'POST', body: JSON.stringify({ plan }) });
   await loadRazorpay();
   const razor = await new Promise<{ razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }>((resolve, reject) => {
     const rzp = new window.Razorpay!({
@@ -77,7 +78,7 @@ export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string
     rzp.on('payment.failed', (r) => reject(new Error(r?.error?.description || 'Payment failed.')));
     rzp.open();
   });
-  return req('/v1/billing/verify', {
+  return req('/verify-payment', {
     method: 'POST',
     body: JSON.stringify({
       razorpay_order_id: razor.razorpay_order_id,

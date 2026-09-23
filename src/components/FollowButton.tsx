@@ -5,6 +5,8 @@ import { Button } from "@/components/ui/button";
 import { UserPlus, UserCheck } from 'lucide-react';
 import { showSuccess } from '@/utils/toast';
 import { isFollowing as isFollowingUser, setFollowing } from '@/lib/feed-store';
+import api from '@/lib/api';
+import { getStoredUser } from '@/lib/auth';
 
 interface FollowButtonProps {
   userId?: string;
@@ -22,9 +24,12 @@ const FollowButton: React.FC<FollowButtonProps> = ({
   className = '',
 }) => {
   const key = userName || userId || 'user';
+  // Server ids are the follow-graph truth; fall back to the display name key.
+  const serverTarget = userId || '';
   const [isFollowing, setIsFollowingState] = useState(() => {
     try { return isFollowingUser(key); } catch { return false; }
   });
+  const [isPending, setIsPending] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
 
   // Stay in sync when follow changes elsewhere (feed, profile, suggestions).
@@ -41,20 +46,62 @@ const FollowButton: React.FC<FollowButtonProps> = ({
     };
   }, [key]);
 
+  // Reconcile with the server graph (source of truth across devices).
+  useEffect(() => {
+    let cancelled = false;
+    const me = getStoredUser();
+    if (!me || !serverTarget || serverTarget === me.id) return;
+    api.followStatus(serverTarget).then(({ data, error }) => {
+      if (cancelled || error || !data) return;
+      setIsFollowingState(!!data.isFollowing);
+      setIsPending(!!data.pending);
+      try { setFollowing(key, !!data.isFollowing); } catch { /* ignore */ }
+    }).catch(() => {});
+    return () => { cancelled = true; };
+  }, [serverTarget, key]);
+
   const handleFollow = async () => {
     if (!key) return;
     setIsLoading(true);
     try {
-      const next = !isFollowing;
-      // Persisted + broadcast: Following tab updates instantly, cross-tab.
-      setFollowing(key, next);
-      if (userId && userId !== key) setFollowing(userId, next);
-      setIsFollowingState(next);
-      if (next) {
-        showSuccess(`Now following ${userName}! Their uploads will appear in Following.`);
-      } else {
-        showSuccess(`Unfollowed ${userName}`);
+      const me = getStoredUser();
+      const target = serverTarget || key;
+      // Own profile: nothing to do.
+      if (me && target && (target === me.id || target.toLowerCase() === (me.username || '').toLowerCase())) {
+        showSuccess('This is your own profile');
+        return;
       }
+      if (isFollowing) {
+        const { error } = await api.unfollow(target);
+        if (error) throw new Error(error);
+        setFollowing(key, false);
+        if (serverTarget && serverTarget !== key) setFollowing(serverTarget, false);
+        setIsFollowingState(false);
+        setIsPending(false);
+        showSuccess(`Unfollowed ${userName}`);
+      } else {
+        const { data, error } = await api.follow(target);
+        if (error) throw new Error(error);
+        if (data?.pending) {
+          // Private account: request sent, awaits owner approval.
+          setIsPending(true);
+          showSuccess(`Follow request sent to ${userName}. You'll see their posts once they approve.`);
+        } else {
+          setFollowing(key, true);
+          if (serverTarget && serverTarget !== key) setFollowing(serverTarget, true);
+          setIsFollowingState(true);
+          showSuccess(`Now following ${userName}! Their uploads will appear in Following.`);
+        }
+      }
+    } catch {
+      // Server unreachable: keep the instant local mirror so the UI still
+      // responds; it reconciles on the next load.
+      try {
+        const next = !isFollowing;
+        setFollowing(key, next);
+        setIsFollowingState(next);
+        showSuccess(next ? `Now following ${userName}!` : `Unfollowed ${userName}`);
+      } catch { /* ignore */ }
     } finally {
       setIsLoading(false);
     }
@@ -72,6 +119,11 @@ const FollowButton: React.FC<FollowButtonProps> = ({
     >
       {isLoading ? (
         <div className="animate-spin h-4 w-4 border-2 border-current border-t-transparent rounded-full" />
+      ) : !isFollowing && isPending ? (
+        <>
+          <UserCheck className="h-4 w-4 mr-1" />
+          Requested
+        </>
       ) : isFollowing ? (
         <>
           <UserCheck className="h-4 w-4 mr-1" />

@@ -65,17 +65,17 @@ class AISearchService {
     }
   }
 
-  // Fetch AI-powered suggestions from the shared Acronous brain. The brain
-  // learns from every search query it receives.
+  // Fetch smart suggestions from the app's suggestion service, which learns
+  // from every search query it receives.
   private async fetchAISuggestions(query: string): Promise<SearchSuggestion[]> {
     try {
       const sessionId = `equyvo-search-${Date.now()}`;
       const labels = await brainSearchSuggest(query, sessionId);
       return labels.map((label, i) => ({
-        id: `ai-brain-${Date.now()}-${i}`,
+        id: `suggest-${Date.now()}-${i}`,
         label,
-        category: 'AI',
-        description: 'Suggested by Acronous AI',
+        category: 'Suggested',
+        description: 'Suggested for you',
         type: 'ai-generated' as const,
         confidence: 0.9,
       }));

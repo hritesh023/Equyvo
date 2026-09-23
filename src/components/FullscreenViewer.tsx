@@ -12,6 +12,7 @@ import { navigateToProfile } from '@/utils/profile-navigation';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
+import VideoSeekBar from '@/components/VideoSeekBar';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
@@ -108,14 +109,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // Force landscape mode for mobile videos (except moments and stories)
   const shouldForceLandscape = isMobileDevice && isVideoType && !isPortraitMoment && !isStory;
   
-  // Single unified video source detection with fallbacks
-  const sampleVideoUrl = 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4';
-  const videoSrc = actualContent?.videoUrl || 
-                   actualContent?.mediaUrl || 
-                   actualContent?.media || 
+  // Single unified video source detection. Never substitutes demo media:
+  // when no playable URL exists the viewer renders an honest error state.
+  const videoSrc = actualContent?.videoUrl ||
+                   actualContent?.mediaUrl ||
+                   actualContent?.media ||
                    actualContent?.src ||
                    actualContent?.url ||
-                   (isVideoType ? sampleVideoUrl : undefined);
+                   undefined;
   
   // For live streams, use the same detection as other video content with live indicators
   const fallbackVideoSrc = isVideoType ? videoSrc : null;
@@ -548,13 +549,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setIsMuted(newVolume === 0);
   };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTime = parseFloat(e.target.value);
+  const seekTo = (newTime: number) => {
+    if (!Number.isFinite(newTime)) return;
     setCurrentTime(newTime);
     const video = videoRef.current;
     if (video) {
-      video.currentTime = newTime;
+      try {
+        video.currentTime = newTime;
+      } catch {
+        /* ignore */
+      }
     }
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement> | number) => {
+    const newTime = typeof e === 'number' ? e : parseFloat(e.target.value);
+    seekTo(newTime);
   };
 
   // Add mouse leave handler for desktop fade away
@@ -1209,8 +1219,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 display: showControls ? 'block' : 'none'
               }}
             >
-              {/* Progress Bar */}
-              <div className="mb-3">
+              {/* Progress Bar — hover/drag shows a small preview window above the bar */}
+              <div className="relative mb-3">
                 {isLiveStream ? (
                   <div className="relative">
                     <div className="flex items-center justify-between mb-1">
@@ -1223,9 +1233,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       </span>
                     </div>
                     <div className="w-full h-2 bg-red-500/30 rounded-lg overflow-hidden">
-                      <div 
+                      <div
                         className="h-full bg-gradient-to-r from-red-500 via-red-600 to-red-500 rounded-full animate-pulse"
-                        style={{ 
+                        style={{
                           width: '100%',
                           backgroundSize: '200% 100%',
                           animation: 'shimmer 2s ease-in-out infinite'
@@ -1234,20 +1244,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                     </div>
                   </div>
                 ) : (
-                  <input
-                    type="range"
-                    min="0"
-                    max={duration || 100}
-                    value={currentTime}
-                    onChange={handleSeek}
-                    className="w-full h-2 bg-white/30 rounded-lg appearance-none cursor-pointer slider pointer-events-auto"
-                    style={{
-                      background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(currentTime / (duration || 100)) * 100}%, rgba(255,255,255,0.3) ${(currentTime / (duration || 100)) * 100}%, rgba(255,255,255,0.3) 100%)`,
-                      cursor: 'pointer',
-                      height: '8px',
-                      borderRadius: '4px'
-                    }}
-                  />
+                  <div className="pointer-events-auto">
+                    <VideoSeekBar
+                      videoRef={videoRef}
+                      currentTime={currentTime}
+                      duration={duration || 0}
+                      onSeek={seekTo}
+                    />
+                  </div>
                 )}
               </div>
               

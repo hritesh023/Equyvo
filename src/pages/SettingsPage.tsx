@@ -42,6 +42,7 @@ const SettingsPage = () => {
   const [privateProfile, setPrivateProfile] = useState(() => {
     return localStorage.getItem('privateProfile') === 'true';
   });
+  const [privacySaving, setPrivacySaving] = useState(false);
   const [showEmail, setShowEmail] = useState(() => {
     return localStorage.getItem('showEmail') === 'true';
   });
@@ -63,12 +64,60 @@ const SettingsPage = () => {
       try {
         const user = await getAuthenticatedUser();
         setUser(user as any);
+        // Sync the toggle with the server account type (source of truth).
+        if (user?.id) {
+          api.getProfile(user.id).then(({ data, error }) => {
+            if (!error && data && typeof (data as any).isPrivate === 'boolean') {
+              setPrivateProfile((data as any).isPrivate);
+              try {
+                localStorage.setItem('privateProfile', String((data as any).isPrivate));
+              } catch { /* ignore */ }
+            }
+          }).catch(() => {});
+        }
       } catch {
       }
     };
-    
+
     getCurrentUser();
   }, []);
+
+  // Owner-only account-type change. The server enforces visibility for every
+  // request; the local flag is just a cache. Reverts on failure.
+  const handlePrivateProfileChange = async (next: boolean) => {
+    const prev = privateProfile;
+    setPrivateProfile(next);
+    try {
+      localStorage.setItem('privateProfile', String(next));
+    } catch { /* ignore */ }
+    const me = user;
+    if (!me?.id) {
+      showError('Please sign in to change your account type.');
+      setPrivateProfile(prev);
+      return;
+    }
+    setPrivacySaving(true);
+    try {
+      const { error } = await api.updateProfile({
+        id: me.id,
+        isPrivate: next,
+        accountType: next ? 'private' : 'public',
+      });
+      if (error) throw new Error(error);
+      showSuccess(next ? 'Your account is now private. Only approved followers see your posts.' : 'Your account is now public. Everyone can see your posts.');
+      try {
+        window.dispatchEvent(new CustomEvent('feedRefresh'));
+      } catch { /* ignore */ }
+    } catch (err: any) {
+      setPrivateProfile(prev);
+      try {
+        localStorage.setItem('privateProfile', String(prev));
+      } catch { /* ignore */ }
+      showError(err?.message || 'Could not update your account type. Please try again.');
+    } finally {
+      setPrivacySaving(false);
+    }
+  };
 
   // Save settings to localStorage whenever they change
   useEffect(() => {
@@ -214,9 +263,10 @@ const SettingsPage = () => {
                 Only approved followers can see your posts
               </p>
             </div>
-            <Switch 
+            <Switch
               checked={privateProfile}
-              onCheckedChange={setPrivateProfile}
+              disabled={privacySaving}
+              onCheckedChange={handlePrivateProfileChange}
             />
           </div>
 

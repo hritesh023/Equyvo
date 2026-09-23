@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { AlertTriangle, X } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
+import api from '@/lib/api';
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -49,11 +50,16 @@ const ReportModal: React.FC<ReportModalProps> = ({
     }
 
     setIsSubmitting(true);
-    
+
     try {
-      // Simulate API call to submit report
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      const kind = contentType === 'video' ? 'post' : contentType === 'comment' ? 'post' : contentType;
+      const { error } = await api.reportContent({
+        kind,
+        id: contentId,
+        reason: reportReason,
+        details: additionalInfo,
+      });
+      if (error) throw new Error(error);
       showSuccess('Report submitted successfully. We will review this content.');
       handleClose();
     } catch {

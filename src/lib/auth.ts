@@ -152,6 +152,52 @@ function errorCode(error: unknown): string {
   }
 }
 
+const PENDING_PRIVACY_KEY = 'equyvo_pending_account_type';
+
+function storePendingPrivacy(isPrivate: boolean): void {
+  try {
+    localStorage.setItem(PENDING_PRIVACY_KEY, isPrivate ? 'private' : 'public');
+  } catch { /* ignore */ }
+}
+
+function takePendingPrivacy(): 'private' | 'public' | null {
+  try {
+    const raw = localStorage.getItem(PENDING_PRIVACY_KEY);
+    if (raw === 'private' || raw === 'public') {
+      localStorage.removeItem(PENDING_PRIVACY_KEY);
+      return raw;
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+// Best-effort: persist the chosen account type to the server profile so it
+// applies on every device. Never blocks auth when the API is unreachable
+// (e.g. email not yet confirmed) — the choice stays queued locally.
+async function applyAccountType(user: User, isPrivate: boolean): Promise<void> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    try {
+      const token = localStorage.getItem(TOKEN_KEY);
+      if (token) headers['Authorization'] = 'Bearer ' + token;
+      const id = user?.id || user?.email || '';
+      if (id) headers['X-User-Id'] = String(id);
+    } catch { /* ignore */ }
+    await fetch('/api/profile', {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        id: user.id,
+        email: user.email,
+        name: user.fullName || user.username || '',
+        username: user.username || '',
+        isPrivate,
+        accountType: isPrivate ? 'private' : 'public',
+      }),
+    }).catch(() => null);
+  } catch { /* best-effort */ }
+}
+
 export async function signInWithEmail(email: string, password: string) {
   try {
     const session: any = await cognitoSignIn(email, password);
@@ -161,6 +207,9 @@ export async function signInWithEmail(email: string, password: string) {
     }
     storeUser(user);
     storeToken(sessionToken(session));
+    // Apply a privacy choice queued at signup (or a previous offline change).
+    const pending = takePendingPrivacy();
+    if (pending) await applyAccountType(user, pending === 'private');
     return { success: true, user };
   } catch (error: any) {
     const message = toErrorMessage(error, '');
@@ -178,11 +227,9 @@ export async function signInWithEmail(email: string, password: string) {
       return { success: false, error: 'Network error. Check your connection and try again.' };
     }
     if (message.includes('ResourceNotFound') || code === 'ResourceNotFoundException') {
-      // The configured Cognito User Pool / App Client does not exist
-      // (deleted pool, wrong region, or wrong ID in env). Retrying can't
-      // help — log the actionable cause for the developer.
+      // The configured sign-in service is unreachable. Retrying can't help.
       try {
-        console.error('[auth] Cognito ResourceNotFound: check VITE_AWS_USER_POOL_ID / VITE_AWS_APP_CLIENT_ID / VITE_AWS_REGION');
+        console.error('[auth] Sign-in service unavailable (ResourceNotFound).');
       } catch { /* ignore */ }
       return { success: false, error: 'Sign-in is temporarily unavailable. Please try again later.' };
     }
@@ -192,7 +239,12 @@ export async function signInWithEmail(email: string, password: string) {
   }
 }
 
-export async function signUpWithEmail(email: string, password: string, name?: string) {
+export async function signUpWithEmail(
+  email: string,
+  password: string,
+  name?: string,
+  opts?: { isPrivate?: boolean },
+) {
   try {
     const result: any = await cognitoSignUp(email, password, name || '');
     const user: User = {
@@ -202,6 +254,11 @@ export async function signUpWithEmail(email: string, password: string, name?: st
       username: email.split('@')[0],
     };
     storeUser(user);
+    // Account type chosen on the signup page. Queued locally first (survives
+    // email-confirmation gaps), then pushed to the server best-effort.
+    const isPrivate = opts?.isPrivate === true;
+    storePendingPrivacy(isPrivate);
+    await applyAccountType(user, isPrivate);
     return { success: true, user };
   } catch (error: any) {
     const message = toErrorMessage(error, '');
@@ -219,10 +276,9 @@ export async function signUpWithEmail(email: string, password: string, name?: st
       return { success: false, error: 'Network error. Check your connection and try again.' };
     }
     if (message.includes('ResourceNotFound') || code === 'ResourceNotFoundException') {
-      // The configured Cognito User Pool / App Client does not exist
-      // (deleted pool, wrong region, or wrong ID in env). Retrying can't help.
+      // The configured sign-up service is unreachable. Retrying can't help.
       try {
-        console.error('[auth] Cognito ResourceNotFound: check VITE_AWS_USER_POOL_ID / VITE_AWS_APP_CLIENT_ID / VITE_AWS_REGION');
+        console.error('[auth] Sign-up service unavailable (ResourceNotFound).');
       } catch { /* ignore */ }
       return { success: false, error: 'Sign-up is temporarily unavailable. Please try again later.' };
     }

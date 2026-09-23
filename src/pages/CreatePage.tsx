@@ -1,4 +1,4 @@
-﻿import React, { useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2 } from 'lucide-react';
@@ -11,6 +11,8 @@ import { validateVideoDuration } from '@/lib/thoughts';
 import { compressImage } from '@/lib/utils';
 import { markHasRealContent } from '@/lib/data';
 import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
+import { deleteContent } from '@/utils/delete';
+import { setContentVisibility } from '@/utils/visibility';
 import api from '@/lib/api';
 
 // Helper to get current user info from localStorage
@@ -66,8 +68,27 @@ const CreatePage = () => {
   const [uploadedMoments, setUploadedMoments] = useState<UploadedMoment[]>([]);
   const [uploadedTextStories, setUploadedTextStories] = useState<UploadedTextStory[]>([]);
   const [showContentManagement, setShowContentManagement] = useState(false);
-  const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'text-stories'>('all');
+  const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'moments' | 'text-stories'>('all');
   const [isUploading, setIsUploading] = useState(false);
+  // Who can see new uploads: public (everyone), followers (followers-only),
+  // private (only you). Sent to the server with every post; the server
+  // enforces it for every account on every device.
+  const [contentVisibility, setContentVisibilityState] = useState<'public' | 'followers' | 'private'>('public');
+
+  // Default the selector from the account type (private accounts default to
+  // followers-only), so uploads respect the signup/settings choice.
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem('equyvo_cognito_user');
+      const id = stored ? (JSON.parse(stored)?.id || '') : '';
+      if (!id) return;
+      api.getProfile(id).then(({ data, error }) => {
+        if (!error && data && (data as any).isPrivate === true) {
+          setContentVisibilityState('followers');
+        }
+      }).catch(() => {});
+    } catch { /* ignore */ }
+  }, []);
 
   // Type definitions for scheduled and draft posts
   interface ScheduledPost {
@@ -192,11 +213,11 @@ const CreatePage = () => {
 
   function getThumbnailFromUpload(result: { secureUrl: string; resourceType: string; variants?: { thumbnail?: string } | null } | null | undefined): string {
   if (!result?.secureUrl) return '';
-  // Server-computed thumbnail wins (Cloudinary variant when available).
+  // Server-computed thumbnail wins when available.
   if (result.variants?.thumbnail) return result.variants.thumbnail;
   if (result.resourceType === 'image') return result.secureUrl;
-  // Cloudinary-hosted video: derive a lightweight poster. R2-hosted video has
-  // no server poster yet — return '' so UI falls back to <video> element.
+  // Hosted video: derive a lightweight poster when the URL pattern allows
+  // it — otherwise return '' so UI falls back to the <video> element.
   if (result.secureUrl.includes('res.cloudinary.com/')) {
     return result.secureUrl.replace('/video/upload/', '/video/upload/w_400,f_auto/').replace(/\.[^.]+$/, '.jpg');
   }
@@ -212,6 +233,9 @@ const CreatePage = () => {
       ...content,
       userId: userInfo.userId,
       user: (content.user as string) || userInfo.username,
+      // Per-upload audience chosen in the UI; the server enforces it for
+      // every account on every device (private accounts default sensibly).
+      visibility: (content.visibility as string) || contentVisibility,
       time: 'just now',
       createdAt: new Date().toISOString(),
     };
@@ -245,7 +269,7 @@ const CreatePage = () => {
       // the playable/full-res assets separately.
       const thumbCandidate = (content.thumbnail || content.image || '') as string;
       const mediaStr = typeof content.media === 'string' ? (content.media as string) : '';
-      await api.indexContent({
+      const { error: indexError } = await api.indexContent({
         id: content.id as string,
         title: ((content.content as string)?.slice(0, 60) || (content.title as string)?.slice(0, 60) || type) as string,
         description: (content.content as string)?.slice(0, 120) || '',
@@ -258,9 +282,14 @@ const CreatePage = () => {
         imageUrl: ((content.image as string) || mediaStr || thumbCandidate || '') as string,
         category: (content.category as string) || 'general',
         tags: (content.tags as string[]) || [],
+        visibility: (postData as Record<string, unknown>).visibility as string,
         publishedAt: new Date().toISOString(),
         content: (content.content as string) || '',
       });
+      if (indexError) {
+        persistError = persistError || indexError;
+        console.error('Failed to index content:', indexError);
+      }
       // Also index the user profile for search discoverability
       const savedProfile = localStorage.getItem('userProfile');
       if (savedProfile) {
@@ -531,11 +560,12 @@ const CreatePage = () => {
         }));
 
         setUploadedStories(prev => [...prev, ...newUploadedStories]);
+        let storyPersistError: string | null = null;
         for (let i = 0; i < newUploadedStories.length; i++) {
           const s = newUploadedStories[i];
           const secureUrl = uploadedStoryResults[i]?.result?.secureUrl || s.thumbnail;
           const isVid = s.type === 'video';
-          await persistContent({
+          const err = await persistContent({
             id: s.id,
             type: 'story',
             content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '',
@@ -548,9 +578,14 @@ const CreatePage = () => {
             resourceType: s.resourceType,
             user: getCurrentUserInfo().username,
           });
+          if (err) storyPersistError = err;
         }
         setIsUploading(false);
-        showSuccess('Story posted successfully! It will be available for 24 hours.');
+        if (storyPersistError) {
+          showError('Saved locally but feed sync failed: ' + storyPersistError);
+        } else {
+          showSuccess('Story posted successfully! It will be available for 24 hours.');
+        }
         setStoryFiles([]);
 
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
@@ -616,8 +651,12 @@ const CreatePage = () => {
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
-        await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '' });
-        showSuccess('Text story posted successfully! It will be available for 24 hours.');
+        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '' });
+        if (textStoryErr) {
+          showError('Saved locally but feed sync failed: ' + textStoryErr);
+        } else {
+          showSuccess('Text story posted successfully! It will be available for 24 hours.');
+        }
         setTextStoryContent('');
         setTextStoryBackground('#000000');
         setTextStoryColor('#FFFFFF');
@@ -685,7 +724,7 @@ const CreatePage = () => {
         }
 
         let thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
-        // R2 videos have no server poster — capture one client-side so the
+        // Videos without a server poster get one captured client-side so the
         // Thoughts feed still shows a preview (never a blank card).
         if (thoughtVideo?.type.startsWith('video/') && !thoughtThumbnail) {
           try {
@@ -910,7 +949,7 @@ const CreatePage = () => {
           })
         );
 
-        // Client posters for R2 videos (server has no thumbnail yet).
+        // Client posters for videos that arrived without a thumbnail.
         const videoPosters = await Promise.all(
           videoFiles.map(async (file, i) => {
             const t = getThumbnailFromUpload(uploadedVideoResults[i]?.result);
@@ -1054,7 +1093,7 @@ const CreatePage = () => {
           })
         );
 
-        // Posters for R2 video moments + full URLs for photo moments.
+        // Posters for video moments + full URLs for photo moments.
         const momentPosters = await Promise.all(
           momentFiles.map(async (file, i) => {
             const t = getThumbnailFromUpload(uploadedResults[i]?.result);
@@ -1197,8 +1236,11 @@ const CreatePage = () => {
         comments: 0,
       };
 
-      // Persist the live content
-      await persistContent(liveContent);
+      // Persist the live content (warn, but still start locally on failure)
+      const liveErr = await persistContent(liveContent);
+      if (liveErr) {
+        showError('Live announcement sync failed (other devices may not see it): ' + liveErr);
+      }
 
       // Store active live stream info in localStorage for other pages
       localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent));
@@ -1354,67 +1396,121 @@ const CreatePage = () => {
     showSuccess('Draft deleted successfully!');
   };
 
-  // Content management functions
+  // Content management functions — every action hits the server first (the
+  // owner-only source of truth) and updates local state only on success, so
+  // deletes/privacy actually hold on every device and for every account.
   const handleDeleteVideo = async (id: string) => {
-    try { await api.deletePost(id); } catch {}
-    setUploadedVideos(prev => prev.filter(video => video.id !== id));
-    showSuccess('Video deleted successfully!');
+    try {
+      await deleteContent({ postId: id, contentType: 'post' });
+      setUploadedVideos(prev => prev.filter(video => video.id !== id));
+    } catch { /* deleteContent already reported the failure */ }
   };
 
   const handleDeleteStory = async (id: string) => {
-    try { await api.deleteStory(id); } catch {}
-    setUploadedStories(prev => prev.filter(story => story.id !== id));
-    showSuccess('Story deleted successfully!');
+    try {
+      await deleteContent({ postId: id, contentType: 'story' });
+      setUploadedStories(prev => prev.filter(story => story.id !== id));
+    } catch { /* already reported */ }
   };
 
   const handleDeleteThought = async (id: string) => {
-    try { await api.deleteThought(id); } catch {}
-    setUploadedThoughts(prev => prev.filter(thought => thought.id !== id));
-    showSuccess('Thought deleted successfully!');
+    try {
+      await deleteContent({ postId: id, contentType: 'thought' });
+      setUploadedThoughts(prev => prev.filter(thought => thought.id !== id));
+    } catch { /* already reported */ }
   };
 
-
   const handleDeletePhoto = async (id: string) => {
-    try { await api.deletePost(id); } catch {}
-    setUploadedPhotos(prev => prev.filter(photo => photo.id !== id));
-    showSuccess('Photo deleted successfully!');
+    try {
+      await deleteContent({ postId: id, contentType: 'post' });
+      setUploadedPhotos(prev => prev.filter(photo => photo.id !== id));
+    } catch { /* already reported */ }
+  };
+
+  const handleDeleteMoment = async (id: string) => {
+    try {
+      await deleteContent({ postId: id, contentType: 'moment' });
+      setUploadedMoments(prev => prev.filter(moment => moment.id !== id));
+    } catch { /* already reported */ }
   };
 
   const handleDeleteTextStory = async (id: string) => {
-    try { await api.deleteStory(id); } catch {}
-    setUploadedTextStories(prev => prev.filter(textStory => textStory.id !== id));
-    showSuccess('Text story deleted successfully!');
+    try {
+      await deleteContent({ postId: id, contentType: 'story' });
+      setUploadedTextStories(prev => prev.filter(textStory => textStory.id !== id));
+    } catch { /* already reported */ }
   };
 
-  const handleTogglePrivacy = (contentType: string, id: string) => {
+  const managementKindFor = (contentType: string): string => {
+    switch (contentType) {
+      case 'video':
+      case 'photo':
+        return 'post';
+      case 'story':
+      case 'text-story':
+        return 'story';
+      case 'thought':
+        return 'thought';
+      case 'moment':
+      case 'moments':
+        return 'moment';
+      default:
+        return 'post';
+    }
+  };
+
+  const isCurrentlyPrivate = (contentType: string, id: string): boolean => {
+    switch (contentType) {
+      case 'video': return !!uploadedVideos.find(v => v.id === id)?.isPrivate;
+      case 'story': return !!uploadedStories.find(s => s.id === id)?.isPrivate;
+      case 'thought': return !!uploadedThoughts.find(t => t.id === id)?.isPrivate;
+      case 'photo': return !!uploadedPhotos.find(p => p.id === id)?.isPrivate;
+      case 'moment':
+      case 'moments': return !!uploadedMoments.find(m => m.id === id)?.isPrivate;
+      case 'text-story': return !!uploadedTextStories.find(t => t.id === id)?.isPrivate;
+      default: return false;
+    }
+  };
+
+  // Owner-only "hide from public": flips server visibility, then mirrors
+  // locally. Reverts nothing on failure — local state only changes on success.
+  const handleTogglePrivacy = async (contentType: string, id: string) => {
+    const makePrivate = !isCurrentlyPrivate(contentType, id);
+    const ok = await setContentVisibility(id, managementKindFor(contentType), makePrivate ? 'private' : 'public');
+    if (!ok) return;
     switch (contentType) {
       case 'video':
         setUploadedVideos(prev => prev.map(video =>
-          video.id === id ? { ...video, isPrivate: !video.isPrivate } : video
+          video.id === id ? { ...video, isPrivate: makePrivate } : video
         ));
         break;
       case 'story':
         setUploadedStories(prev => prev.map(story =>
-          story.id === id ? { ...story, isPrivate: !story.isPrivate } : story
+          story.id === id ? { ...story, isPrivate: makePrivate } : story
         ));
         break;
       case 'thought':
         setUploadedThoughts(prev => prev.map(thought =>
-          thought.id === id ? { ...thought, isPrivate: !thought.isPrivate } : thought
+          thought.id === id ? { ...thought, isPrivate: makePrivate } : thought
         ));
         break;
       case 'photo':
         setUploadedPhotos(prev => prev.map(photo =>
-          photo.id === id ? { ...photo, isPrivate: !photo.isPrivate } : photo
+          photo.id === id ? { ...photo, isPrivate: makePrivate } : photo
+        ));
+        break;
+      case 'moment':
+      case 'moments':
+        setUploadedMoments(prev => prev.map(moment =>
+          moment.id === id ? { ...moment, isPrivate: makePrivate } : moment
         ));
         break;
       case 'text-story':
         setUploadedTextStories(prev => prev.map(textStory =>
-          textStory.id === id ? { ...textStory, isPrivate: !textStory.isPrivate } : textStory
+          textStory.id === id ? { ...textStory, isPrivate: makePrivate } : textStory
         ));
         break;
     }
-    showSuccess('Privacy settings updated!');
   };
 
   const handleEditDraftPost = (draft: DraftPost) => {
@@ -1480,6 +1576,7 @@ const CreatePage = () => {
         ...uploadedStories,
         ...uploadedThoughts,
         ...uploadedPhotos,
+        ...uploadedMoments,
         ...uploadedTextStories
       ].length > 0 && (
           <Card>
@@ -1493,6 +1590,7 @@ const CreatePage = () => {
                       ...uploadedStories,
                       ...uploadedThoughts,
                       ...uploadedPhotos,
+                      ...uploadedMoments,
                       ...uploadedTextStories
                     ].length})
                   </span>
@@ -1525,14 +1623,14 @@ const CreatePage = () => {
                 Your Content Analytics & Management
               </CardTitle>
               {/* Management Tabs */}
-              <div className="flex space-x-1 bg-muted rounded-lg p-1 overflow-x-auto">
-                {(['all', 'videos', 'stories', 'thoughts', 'photos', 'text-stories'] as const).map((tab) => (
+              <div className="flex gap-1 bg-muted rounded-lg p-1 overflow-x-auto scroll-px-2 pr-5 scrollbar-hide max-w-full">
+                {(['all', 'videos', 'stories', 'thoughts', 'photos', 'moments', 'text-stories'] as const).map((tab) => (
                   <Button
                     key={tab}
                     variant={activeManagementTab === tab ? 'default' : 'ghost'}
                     size="sm"
                     onClick={() => setActiveManagementTab(tab)}
-                    className="capitalize whitespace-nowrap text-xs md:text-sm"
+                    className="capitalize whitespace-nowrap shrink-0 text-xs md:text-sm"
                   >
                     {(() => {
                       switch (tab) {
@@ -1541,12 +1639,14 @@ const CreatePage = () => {
                         case 'stories': return '📱 Stories';
                         case 'thoughts': return '💭 Thoughts';
                         case 'photos': return '🖼️ Photos';
+                        case 'moments': return '⚡ Moments';
                         case 'text-stories': return '📝 Text Stories';
                         default: return tab;
                       }
                     })()}
                   </Button>
                 ))}
+                <span aria-hidden="true" className="w-1 shrink-0" />
               </div>
             </CardHeader>
             <CardContent>
@@ -1635,6 +1735,94 @@ const CreatePage = () => {
                       <span>Watch Time: {video.watchTime} minutes</span>
                       <span>Shares: {video.shares}</span>
                       <span>Duration: {video.duration}</span>
+                    </div>
+                  </div>
+                ))}
+
+                {/* Moments */}
+                {(activeManagementTab === 'all' || activeManagementTab === 'moments') && uploadedMoments.map((moment) => (
+                  <div key={moment.id} className="border rounded-lg p-3 md:p-4 space-y-3 md:space-y-4">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
+                      <div className="relative">
+                        {moment.thumbnail ? (
+                          <img
+                            src={moment.thumbnail}
+                            alt={moment.fileName}
+                            className="w-16 h-24 md:w-20 md:h-28 object-cover rounded"
+                          />
+                        ) : (
+                          <div className="w-16 h-24 md:w-20 md:h-28 rounded bg-muted flex items-center justify-center">
+                            <Film className="h-6 w-6 text-muted-foreground" />
+                          </div>
+                        )}
+                        {moment.mediaType === 'video' && <Play className="absolute bottom-1 right-1 h-3 w-3 md:h-4 md:w-4 text-white drop-shadow-md" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h3 className="font-semibold text-sm md:text-base truncate">{moment.content || moment.fileName}</h3>
+                        <p className="text-xs md:text-sm text-muted-foreground truncate">
+                          {moment.fileName} • {formatFileSize(moment.fileSize)} • {moment.mediaType === 'video' ? 'Video' : 'Photo'}
+                        </p>
+                        <p className="text-xs md:text-sm text-muted-foreground">
+                          Uploaded {formatScheduledTime(moment.uploadDate)}
+                        </p>
+                        {moment.isPrivate && (
+                          <div className="flex items-center gap-1 text-xs text-orange-600 mt-1">
+                            <Lock className="h-3 w-3" />
+                            Private
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
+                        <Button
+                          variant={moment.isPrivate ? "default" : "outline"}
+                          size="sm"
+                          onClick={() => handleTogglePrivacy('moment', moment.id)}
+                          className="flex items-center gap-1"
+                        >
+                          {moment.isPrivate ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                          {moment.isPrivate ? 'Private' : 'Public'}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDeleteMoment(moment.id)}
+                          className="text-red-500 hover:text-red-600 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-4 border-t">
+                      <div className="text-center">
+                        <div className="flex items-center justify-center gap-1 text-blue-600">
+                          <Eye className="h-4 w-4" />
+                          <span className="text-lg font-bold">{moment.views.toLocaleString()}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Views</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="flex items-center justify-center gap-1 text-red-600">
+                          <TrendingUp className="h-4 w-4" />
+                          <span className="text-lg font-bold">{moment.likes}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Likes</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="flex items-center justify-center gap-1 text-green-600">
+                          <Users className="h-4 w-4" />
+                          <span className="text-lg font-bold">{moment.comments}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Comments</p>
+                      </div>
+                      <div className="text-center">
+                        <div className="flex items-center justify-center gap-1 text-purple-600">
+                          <BarChart3 className="h-4 w-4" />
+                          <span className="text-lg font-bold">{moment.mediaType === 'video' ? 'Video' : 'Photo'}</span>
+                        </div>
+                        <p className="text-xs text-muted-foreground">Type</p>
+                      </div>
                     </div>
                   </div>
                 ))}
@@ -1982,6 +2170,7 @@ const CreatePage = () => {
                     uploadedStories.length === 0 &&
                     uploadedThoughts.length === 0 &&
                     uploadedPhotos.length === 0 &&
+                    uploadedMoments.length === 0 &&
                     uploadedTextStories.length === 0;
 
                   const shouldShowEmptyState =
@@ -1990,6 +2179,7 @@ const CreatePage = () => {
                     (activeManagementTab === 'stories' && uploadedStories.length === 0) ||
                     (activeManagementTab === 'thoughts' && uploadedThoughts.length === 0) ||
                     (activeManagementTab === 'photos' && uploadedPhotos.length === 0) ||
+                    (activeManagementTab === 'moments' && uploadedMoments.length === 0) ||
                     (activeManagementTab === 'text-stories' && uploadedTextStories.length === 0);
 
                   return shouldShowEmptyState && (
@@ -2008,6 +2198,41 @@ const CreatePage = () => {
             </CardContent>
           </Card>
         )}
+
+      {/* Upload audience */}
+      <Card>
+        <CardContent className="p-3 md:p-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 text-sm font-medium">
+              <Eye className="h-4 w-4 text-muted-foreground" />
+              Who can see your uploads
+            </div>
+            <div className="flex gap-2" role="radiogroup" aria-label="Who can see your uploads">
+              {([
+                { value: 'public', label: 'Everyone', hint: 'Shown across the app' },
+                { value: 'followers', label: 'Followers', hint: 'Followers only' },
+                { value: 'private', label: 'Only me', hint: 'Hidden from everyone else' },
+              ] as const).map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  role="radio"
+                  aria-checked={contentVisibility === opt.value}
+                  title={opt.hint}
+                  onClick={() => setContentVisibilityState(opt.value)}
+                  className={`rounded-lg border px-3 py-1.5 text-xs md:text-sm font-medium transition-colors ${
+                    contentVisibility === opt.value
+                      ? 'border-primary bg-primary/10 text-foreground'
+                      : 'border-border text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
 
       {/* Content Type Selection */}
       <Card>
@@ -2084,7 +2309,7 @@ const CreatePage = () => {
       {/* Create Content Tabs — horizontally scrollable icon pills on mobile
           so labels never squeeze/wrap ("Text Story" etc.); grid on desktop. */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="flex w-full gap-1.5 overflow-x-auto scrollbar-hide bg-transparent p-1 md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md">
+        <TabsList className="flex w-full max-w-full gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
           {[
             { value: 'story', label: 'Story', Icon: Camera },
             { value: 'text-story', label: 'Text', Icon: Text },
@@ -2103,6 +2328,7 @@ const CreatePage = () => {
               {label}
             </TabsTrigger>
           ))}
+          <span aria-hidden="true" className="w-1 shrink-0 md:hidden" />
         </TabsList>
 
         {/* Story Upload */}

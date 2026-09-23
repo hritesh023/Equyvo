@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../co
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
-import { Eye, EyeOff } from 'lucide-react';
+import { Eye, EyeOff, Globe, Lock } from 'lucide-react';
 import type { User } from '../lib/auth';
 
 interface AuthPageProps {
@@ -30,6 +30,9 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const [signupEmail, setSignupEmail] = useState('');
   const [signupPassword, setSignupPassword] = useState('');
   const [showSignupPassword, setShowSignupPassword] = useState(false);
+  // Account type chosen right at signup: public (everyone sees your posts)
+  // or private (only approved followers see them).
+  const [signupIsPrivate, setSignupIsPrivate] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -61,7 +64,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     setError('');
     setLoading(true);
     try {
-      const result = await signUpWithEmail(signupEmail, signupPassword, signupName);
+      const result = await signUpWithEmail(signupEmail, signupPassword, signupName, { isPrivate: signupIsPrivate });
       if (result.success && result.user) {
         goHome(result.user);
       } else {
@@ -208,6 +211,45 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
                     aria-label={showSignupPassword ? 'Hide password' : 'Show password'}
                   >
                     {showSignupPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Account type</Label>
+                <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Account type">
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={!signupIsPrivate}
+                    onClick={() => setSignupIsPrivate(false)}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors ${
+                      !signupIsPrivate
+                        ? 'border-primary bg-primary/10 text-foreground'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Globe className="h-4 w-4" />
+                    <span className="text-left">
+                      Public
+                      <span className="block text-xs font-normal opacity-70">Everyone sees your posts</span>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={signupIsPrivate}
+                    onClick={() => setSignupIsPrivate(true)}
+                    className={`flex items-center gap-2 rounded-lg border px-3 py-2.5 text-sm font-medium transition-colors ${
+                      signupIsPrivate
+                        ? 'border-primary bg-primary/10 text-foreground'
+                        : 'border-border text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    <Lock className="h-4 w-4" />
+                    <span className="text-left">
+                      Private
+                      <span className="block text-xs font-normal opacity-70">Followers you approve only</span>
+                    </span>
                   </button>
                 </div>
               </div>

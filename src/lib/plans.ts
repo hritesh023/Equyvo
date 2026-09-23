@@ -1,8 +1,7 @@
-// Equyvo pricing catalog — DISPLAY ONLY. Enforcement lives server-side in
-// functions/api/[[path]].ts PLAN_CATALOG (quotas, upload caps, entitlements).
-// Never trust these values for access control in the browser.
-// Checkout is centralized: orders are created + verified server-side at
-// https://api.acronous.com (Razorpay). The browser only sees key_id+order_id.
+// Equyvo pricing catalog — DISPLAY ONLY. Quotas, upload caps and
+// entitlements are enforced server-side. Never trust these values for access
+// control in the browser. Checkout orders are created + verified server-side;
+// the browser only handles the payment sheet.
 
 export interface PlanDef {
   id: string;

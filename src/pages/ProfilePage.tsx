@@ -36,10 +36,27 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import WatchHistorySection from '@/components/WatchHistorySection';
 // import UniversalMediaViewer from '@/components/UniversalMediaViewer';
 import Moments from '@/components/Moments';
+import VideoSeekBar from '@/components/VideoSeekBar';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
 import { getStoredUser } from '@/lib/auth';
 import { deleteContent } from '@/utils/delete';
+import { setContentVisibility } from '@/utils/visibility';
+import ReportModal from '@/components/ReportModal';
 import api from '@/lib/api';
+
+const ownerIdOf = (post: unknown): string => {
+  const p = (post || {}) as Record<string, unknown>;
+  return String(p.ownerId || p.userId || p.user_id || p.authorId || p.creatorId || '');
+};
+
+const myAccountId = (): string => {
+  try {
+    const u = getStoredUser();
+    return String(u?.id || u?.email || '');
+  } catch {
+    return '';
+  }
+};
 
 const createDefaultProfile = (user?: { email?: string; fullName?: string; username?: string; id?: string }) => {
   const displayName = user?.fullName || (user?.email ? user.email.split('@')[0] : '');
@@ -149,8 +166,27 @@ const ProfilePage = () => {
           }
         }).catch(() => {});
 
-        // Fetch the user's posts from the server and merge with the local cache,
-        // so uploaded posts always appear in the profile even after storage is cleared
+        // Fetch ALL of the user's server content (posts + thoughts + stories
+        // + moments) and merge with the local cache, so uploads from any
+        // device appear in the profile and stay visible to other accounts.
+        api.getUserContent(currentUser.id).then(({ data, error }) => {
+          if (error || !data || typeof data !== 'object') return;
+          const serverItems = [
+            ...((data as any).posts || []),
+            ...((data as any).thoughts || []).map((t: any) => ({ ...t, type: t.type || 'thought' })),
+            ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
+            ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
+          ];
+          if (!serverItems.length) return;
+          setUserProfile(prev => {
+            const existing = prev.posts || [];
+            const serverById = new Map(serverItems.map((p: any) => [p.id, p]));
+            // Server wins on conflicts (authoritative across devices).
+            const posts = [...serverItems, ...existing.filter(p => !serverById.has(p.id))];
+            return { ...prev, posts };
+          });
+        }).catch(() => {});
+        // Legacy fallback: posts-only endpoint.
         api.getUserPosts(currentUser.id).then(({ data, error }) => {
           if (error || !Array.isArray(data)) return;
           setUserProfile(prev => {
@@ -725,16 +761,27 @@ const ProfilePage = () => {
   };
 
   // Menu handlers for standardized menu
+  const [reportPostId, setReportPostId] = useState<string | null>(null);
+  const [reportPostType, setReportPostType] = useState<'post' | 'thought' | 'moment' | 'comment'>('post');
+
   const handleReport = (postId: string) => {
-    showSuccess(`Report submitted for post ${postId}`);
+    const post = userProfile.posts.find(p => p.id === postId);
+    const t = String(post?.type || 'post').toLowerCase();
+    setReportPostType(t === 'moment' ? 'moment' : t === 'thought' ? 'thought' : 'post');
+    setReportPostId(postId);
   };
 
-  const handleHide = (postId: string) => {
-    setUserProfile(prev => ({
-      ...prev,
-      posts: prev.posts.filter(post => post.id !== postId)
-    }));
-    showSuccess('Post hidden from public viewing');
+  // Owner-only "hide from public": flips server visibility to private so the
+  // post disappears for every other account on every device (no delete).
+  const handleHide = async (postId: string) => {
+    const post = userProfile.posts.find(p => p.id === postId);
+    const ok = await setContentVisibility(postId, (post?.type as string) || 'post', 'private');
+    if (ok) {
+      setUserProfile(prev => ({
+        ...prev,
+        posts: prev.posts.map(p => (p.id === postId ? ({ ...p, visibility: 'private' } as Post) : p)),
+      }));
+    }
   };
 
   const handleCopyLink = (postId: string) => {
@@ -943,13 +990,14 @@ const ProfilePage = () => {
 
       {/* User Content Tabs */}
       <Tabs defaultValue="posts" className="w-full">
-        <TabsList className="flex w-full gap-1.5 overflow-x-auto scrollbar-hide bg-transparent p-1 h-auto md:grid md:grid-cols-6 md:overflow-visible md:bg-muted md:rounded-md">
+        <TabsList className="flex w-full max-w-full gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid md:grid-cols-6 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
           <TabsTrigger value="posts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">All Posts</TabsTrigger>
           <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
           <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
           <TabsTrigger value="thoughts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Thoughts</TabsTrigger>
           <TabsTrigger value="history" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">History</TabsTrigger>
           <TabsTrigger value="saved" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Saved</TabsTrigger>
+          <span aria-hidden="true" className="w-1 shrink-0 md:hidden" />
         </TabsList>
         <TabsContent value="posts" className="mt-4 md:mt-6 space-y-3 md:space-y-4">
           {/* Combine user's original posts with reacted posts */}
@@ -968,6 +1016,8 @@ const ProfilePage = () => {
                       .filter(post => post.type === 'moment').map(post => ({
                         id: post.id,
                         user: post.user,
+                        userId: ownerIdOf(post) || undefined,
+                        ownerId: ownerIdOf(post) || undefined,
                         content: post.content || '',
                         image: post.thumbnail || post.media || '',
                         video: post.videoUrl,
@@ -991,6 +1041,12 @@ const ProfilePage = () => {
                     }}
                     onComment={(momentId, user) => handleComment(momentId, user)}
                     onLike={(momentId) => handleLike(momentId)}
+                    onDelete={(momentId) => {
+                      setUserProfile(prev => ({
+                        ...prev,
+                        posts: prev.posts.filter(p => p.id !== momentId),
+                      }));
+                    }}
                     likedMoments={likedPosts}
                     isHomePage={false}
                     isMomentsPage={true}
@@ -1020,16 +1076,30 @@ const ProfilePage = () => {
                       </div>
                     </div>
 
-                    {/* 3-dot menu */}
+                    {/* 3-dot menu — every item (post, video, story, thought) is manageable here */}
                     <StandardPostMenu
                       postId={post.id}
-                      postUserId={post.user}
-                      currentUserId={(() => { const u = getStoredUser(); return u?.username || u?.email?.split('@')[0] || ''; })()}
+                      postUserId={typeof post.user === 'string' ? post.user : String((post as { creator?: unknown }).creator || '')}
+                      postOwnerId={ownerIdOf(post)}
+                      currentUserId={myAccountId()}
+                      contentType={String(post.type || (post as { mediaType?: string }).mediaType || 'post')}
                       isProfilePage={true}
                       onReport={handleReport}
                       onDelete={() => handleDeletePost(post.id)}
+                      onDeleted={(id) => {
+                        setUserProfile(prev => ({
+                          ...prev,
+                          posts: prev.posts.filter(p => p.id !== id)
+                        }));
+                      }}
                       onEdit={() => handleEditPost(post)}
                       onHide={() => handleHide(post.id)}
+                      onHidden={(id) => {
+                        setUserProfile(prev => ({
+                          ...prev,
+                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                        }));
+                      }}
                       onShare={handleMenuShare}
                       onCopyLink={handleCopyLink}
                     />
@@ -1201,6 +1271,8 @@ const ProfilePage = () => {
             moments={userProfile.posts.filter(post => post.type === 'moment').map(post => ({
               id: post.id,
               user: post.user,
+              userId: ownerIdOf(post) || undefined,
+              ownerId: ownerIdOf(post) || undefined,
               content: post.content || '',
               image: post.thumbnail || post.media || '',
               video: post.videoUrl,
@@ -1246,7 +1318,39 @@ const ProfilePage = () => {
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-1 rounded">
-                    12:45
+                    {video.duration || 'Video'}
+                  </div>
+                  <div
+                    className="absolute top-2 right-2 rounded-full bg-black/60 backdrop-blur-sm"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <StandardPostMenu
+                      postId={video.id}
+                      postUserId={typeof video.user === 'string' ? video.user : ''}
+                      postOwnerId={ownerIdOf(video)}
+                      currentUserId={myAccountId()}
+                      contentType="video"
+                      isProfilePage={true}
+                      onReport={handleReport}
+                      onDelete={() => handleDeletePost(video.id)}
+                      onDeleted={(id) => {
+                        setUserProfile(prev => ({
+                          ...prev,
+                          posts: prev.posts.filter(p => p.id !== id)
+                        }));
+                      }}
+                      onEdit={() => handleEditPost(video)}
+                      onHide={() => handleHide(video.id)}
+                      onHidden={(id) => {
+                        setUserProfile(prev => ({
+                          ...prev,
+                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                        }));
+                      }}
+                      onShare={handleMenuShare}
+                      onCopyLink={handleCopyLink}
+                      className="text-white hover:text-white"
+                    />
                   </div>
                 </div>
                 <CardContent className="p-3">
@@ -1282,6 +1386,34 @@ const ProfilePage = () => {
                       </p>
                     </div>
                   </div>
+                  {!(post as { isReacted?: boolean }).isReacted && (
+                    <StandardPostMenu
+                      postId={post.id}
+                      postUserId={typeof post.user === 'string' ? post.user : ''}
+                      postOwnerId={ownerIdOf(post)}
+                      currentUserId={myAccountId()}
+                      contentType="thought"
+                      isProfilePage={true}
+                      onReport={handleReport}
+                      onDelete={() => handleDeletePost(post.id)}
+                      onDeleted={(id) => {
+                        setUserProfile(prev => ({
+                          ...prev,
+                          posts: prev.posts.filter(p => p.id !== id)
+                        }));
+                      }}
+                      onEdit={() => handleEditPost(post)}
+                      onHide={() => handleHide(post.id)}
+                      onHidden={(id) => {
+                        setUserProfile(prev => ({
+                          ...prev,
+                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                        }));
+                      }}
+                      onShare={handleMenuShare}
+                      onCopyLink={handleCopyLink}
+                    />
+                  )}
                 </CardHeader>
                 <CardContent className="p-0">
                   <p className="mb-4">{post.content}</p>
@@ -1336,23 +1468,28 @@ const ProfilePage = () => {
                           <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm rounded-full px-2 py-1">
                             <Video className="h-3 w-3 text-white" />
                           </div>
-                          {/* Progress Bar */}
+                          {/* Progress Bar — hover/drag shows a small preview window */}
                           {playingVideos.has(post.id) && (
-                            <div className="absolute bottom-2 left-2 right-2 z-20">
-                              <div className="flex items-center gap-1">
-                                <span className="text-white text-xs font-medium min-w-[25px]">
-                                  {formatTime(currentTime[post.id] || 0)}
-                                </span>
-                                <div className="flex-1 h-0.5 bg-white/30 rounded-full">
-                                  <div
-                                    className="h-full bg-white rounded-full transition-all relative"
-                                    style={{ width: `${videoProgress[post.id] || 0}%` }}
-                                  />
-                                </div>
-                                <span className="text-white text-xs font-medium min-w-[25px]">
-                                  {formatTime(videoDuration[post.id] || 0)}
-                                </span>
-                              </div>
+                            <div
+                              className="absolute bottom-2 left-2 right-2 z-20"
+                              onClick={(e) => e.stopPropagation()}
+                            >
+                              <VideoSeekBar
+                                videoRef={{ get current() { return videoRefs.current[post.id] || null; } } as React.RefObject<HTMLVideoElement | null>}
+                                currentTime={currentTime[post.id] || 0}
+                                duration={videoDuration[post.id] || 0}
+                                onSeek={(t) => {
+                                  const v = videoRefs.current[post.id];
+                                  if (!v || !Number.isFinite(t)) return;
+                                  try {
+                                    v.currentTime = Math.max(0, t);
+                                  } catch {
+                                    /* ignore */
+                                  }
+                                  setCurrentTime(prev => ({ ...prev, [post.id]: t }));
+                                }}
+                                compact
+                              />
                             </div>
                           )}
                         </div>
@@ -1588,6 +1725,16 @@ const ProfilePage = () => {
         postUser={currentPostUser}
         showPinOptions={true}
       />
+
+      {/* Report Modal */}
+      {reportPostId && (
+        <ReportModal
+          isOpen={!!reportPostId}
+          onClose={() => setReportPostId(null)}
+          contentId={reportPostId}
+          contentType={reportPostType}
+        />
+      )}
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (

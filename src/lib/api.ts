@@ -29,18 +29,18 @@ function authHeaders(): Record<string, string> {
 let localApiWarned = false;
 
 /**
- * Dev-only, once-per-session hint. In local dev, vite proxies /api to a
- * Functions server on :8788 — when it isn't running every /api call fails
- * (empty 500s / network errors) and all feeds render empty. Production
- * serves Functions alongside the app, so this never fires there.
+ * Dev-only, once-per-session hint. In local dev, /api is served by the local
+ * API server — when it isn't running every /api call fails and all feeds
+ * render empty. Production serves the API alongside the app, so this never
+ * fires there.
  */
 function warnLocalApiOnce(path: string, status: number | string): void {
   try {
     if (!import.meta.env.DEV || localApiWarned) return;
     localApiWarned = true;
     console.warn(
-      `[Equyvo] ${path} → ${status} with no backend body. ` +
-        `Local dev proxies /api to http://localhost:8788 — start it with: npm run dev:api`,
+      `[Equyvo] ${path} → ${status} with no API response body. ` +
+        `Start the local API server with: npm run dev:api`,
     );
   } catch {
     /* ignore */
@@ -138,14 +138,81 @@ export const api = {
       `/search?q=${encodeURIComponent(query)}`
     ),
 
-  // Content indexing (called after Cloudinary upload)
+  // Content indexing (called after media upload)
   indexContent: (data: any) =>
     request<{ data: { success: boolean }; error: null }>('/content-index', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  // Delete
+  // Content update (owner-only): edit text + visibility
+  // (public | followers | private). Used for "hide from public" without delete.
+  updatePost: (id: string, data: any) =>
+    request<{ data: any; error: null }>(`/posts/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  updateThought: (id: string, data: any) =>
+    request<{ data: any; error: null }>(`/thoughts/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  updateStory: (id: string, data: any) =>
+    request<{ data: any; error: null }>(`/stories/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  updateMoment: (id: string, data: any) =>
+    request<{ data: any; error: null }>(`/moments/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Reports (community safety). Any signed-in account can report any content
+  // except its own. Returns a generic acknowledgement only.
+  reportContent: (data: { kind: string; id: string; reason?: string; details?: string }) =>
+    request<{ data: { ok: boolean }; error: null }>('/report', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Follow graph (server-side source of truth; works across devices).
+  follow: (target: string) =>
+    request<{ data: { isFollowing: boolean; pending: boolean; isPrivate?: boolean }; error: null }>('/follow', {
+      method: 'POST',
+      body: JSON.stringify({ target }),
+    }),
+
+  unfollow: (target: string) =>
+    request<{ data: { isFollowing: boolean; pending: boolean }; error: null }>(
+      `/follow/${encodeURIComponent(target)}`,
+      { method: 'DELETE' },
+    ),
+
+  followStatus: (target: string) =>
+    request<{ data: { isFollowing: boolean; pending: boolean }; error: null }>(
+      `/follow/status?target=${encodeURIComponent(target)}`,
+    ),
+
+  followRequests: () =>
+    request<{ data: { requests: string[] }; error: null }>('/follow/requests'),
+
+  followAccept: (requester: string) =>
+    request<{ data: { accepted: boolean }; error: null }>('/follow/accept', {
+      method: 'POST',
+      body: JSON.stringify({ requester }),
+    }),
+
+  followDecline: (requester: string) =>
+    request<{ data: { declined: boolean }; error: null }>('/follow/decline', {
+      method: 'POST',
+      body: JSON.stringify({ requester }),
+    }),
+
+  // Delete (strictly owner-only — the server rejects non-owners).
   deletePost: (id: string) =>
     request<{ data: { success: boolean }; error: null }>(`/posts/${id}`, { method: 'DELETE' }),
 
@@ -161,9 +228,8 @@ export const api = {
   deleteUserData: (userId: string) =>
     request<{ data: { success: boolean }; error: null }>(`/user/${userId}/data`, { method: 'DELETE' }),
 
-  // Upload file via backend (R2 warehouse primary, Cloudinary selective).
-  // secureUrl is always the best delivery URL (R2 when bound) — render it
-  // directly. No backend secrets ever reach the browser.
+  // Upload a file via the app's own API. secureUrl is always the best
+  // delivery URL — render it directly.
   uploadFile: (file: File | Blob, folder?: string) => {
     const formData = new FormData();
     formData.append('file', file);
@@ -195,6 +261,14 @@ export const api = {
   getUserPosts: (userId: string, limit = 50) =>
     request<{ data: any[]; error: null }>(`/users/${userId}/posts?limit=${limit}`),
 
+  // Every collection for one account (posts + thoughts + stories + moments),
+  // visibility-enforced server-side — the cross-device / cross-account feed.
+  getUserContent: (userId: string) =>
+    request<{
+      data: { posts: any[]; thoughts: any[]; stories: any[]; moments: any[] };
+      error: null;
+    }>(`/users/${encodeURIComponent(userId)}/content`),
+
   // Plans (public catalog — quotas only, no secrets) + usage (authenticated)
   getPlans: () =>
     request<{ data: { plans: any[]; platformFeeBps: number }; error: null }>('/plans'),
@@ -210,8 +284,8 @@ export const api = {
       error: null;
     }>('/me/usage'),
 
-  // Creator economy MVP (money moves via Razorpay verify on api.acronous.com;
-  // these endpoints only record verified intents server-side)
+  // Creator economy (payments are verified server-side; these endpoints
+  // only record verified intents)
   creatorSetup: (data: { displayName?: string; bio?: string; tipEnabled?: boolean; subPriceInr?: number }) =>
     request<{ data: any; error: null }>('/creator/setup', {
       method: 'POST',

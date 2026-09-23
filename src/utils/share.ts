@@ -1,6 +1,6 @@
 export const shareContent = async (title: string, text: string, url?: string) => {
   if (typeof window === 'undefined') {
-    return { success: false, error: 'Share functionality not available on server' };
+    return { success: false, error: 'Sharing is not available right now' };
   }
 
   const shareData = {
@@ -49,7 +49,7 @@ export const sharePost = async (post: {
   image?: string;
 }) => {
   if (typeof window === 'undefined') {
-    return { success: false, error: 'Share functionality not available on server' };
+    return { success: false, error: 'Sharing is not available right now' };
   }
 
   const title = `Post by ${post.user} on Equyvo`;
@@ -65,7 +65,7 @@ export const shareProfile = async (user: {
   bio?: string;
 }) => {
   if (typeof window === 'undefined') {
-    return { success: false, error: 'Share functionality not available on server' };
+    return { success: false, error: 'Sharing is not available right now' };
   }
 
   const title = `${user.username} on Equyvo`;

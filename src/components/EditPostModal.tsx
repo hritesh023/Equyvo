@@ -98,6 +98,25 @@ const EditPostModal: React.FC<EditPostModalProps> = ({
       }
     }
 
+    // Persist server-side first (owner-only) so the edit sticks on every
+    // device and for every account. Local state updates only on success.
+    try {
+      const t = String(currentPost.type || 'post').toLowerCase();
+      const payload: Record<string, unknown> = { content };
+      const { error } = t === 'moment'
+        ? await api.updateMoment(currentPost.id, payload)
+        : t === 'thought'
+          ? await api.updateThought(currentPost.id, payload)
+          : t === 'story' || t === 'text-story'
+            ? await api.updateStory(currentPost.id, payload)
+            : await api.updatePost(currentPost.id, payload);
+      if (error) throw new Error(error);
+    } catch (err: any) {
+      showError('Couldn\u2019t save your changes. Please try again.');
+      setIsLoading(false);
+      return;
+    }
+
     const updatedPost = {
       ...currentPost,
       content,
@@ -105,6 +124,9 @@ const EditPostModal: React.FC<EditPostModalProps> = ({
     };
 
     onSave(updatedPost);
+    try {
+      window.dispatchEvent(new CustomEvent('feedRefresh'));
+    } catch { /* ignore */ }
     showSuccess('Post updated successfully!');
     onClose();
     setIsLoading(false);
