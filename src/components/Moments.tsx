@@ -591,7 +591,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <img
                           src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
                           alt="Moment thumbnail"
-                          className="w-full h-full object-cover"
+                          loading="lazy"
+                          className="w-full h-full object-contain bg-black"
                             onError={(e) => {
                             const target = e.target as HTMLImageElement;
                             // Try multiple fallback images in sequence
@@ -720,7 +721,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       <img
                         src={moment.thumbnail || moment.media}
                         alt="Moment"
-                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        className="w-full h-full object-contain bg-black"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleVideoClick(moment);
@@ -912,7 +914,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     <img
                       src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
                       alt="Moment thumbnail"
-                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      className="w-full h-full object-contain bg-black"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         if (!target.src.includes('picsum.photos/seed/')) {
@@ -1114,7 +1117,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     <img
                       src={moment.thumbnail || 'https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&h=700&fit=crop'}
                       alt="Moment"
-                      className="w-full h-full object-cover"
+                      loading="lazy"
+                      className="w-full h-full object-contain bg-black"
                       onError={(e) => {
                         const target = e.target as HTMLImageElement;
                         if (!target.src.includes('placeholder')) {

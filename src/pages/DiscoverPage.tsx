@@ -21,6 +21,9 @@ import { useNavigate } from 'react-router-dom';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
+import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
+import { fetchMoments, fetchPosts } from '@/lib/data';
+import { getThoughts } from '@/lib/thoughts';
 
 const DiscoverPage = () => {
   const [activeTab, setActiveTab] = useState('grid');
@@ -210,11 +213,161 @@ const DiscoverPage = () => {
 
   const currentTags = sectionTags[activeTab as keyof typeof sectionTags] || [];
 
-  // Data for each section comes from the API feed (no generated sample content)
-  const gridData: any[] = [];
-  const trendingData: any[] = [];
-  const liveData: any[] = [];
-  const longformData: any[] = [];
+  // Live Discover feed — was hardcoded to [] so uploads never appeared.
+  // Strict routing: only durable media (photo/video/moment/thought/live),
+  // never stories. Photos never render as videos and vice-versa.
+  const [discoverItems, setDiscoverItems] = React.useState<any[]>([]);
+  const [isLoadingDiscover, setIsLoadingDiscover] = React.useState(true);
+
+  React.useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setIsLoadingDiscover(true);
+        const [posts, moments] = await Promise.all([
+          fetchPosts(undefined, 50).catch(() => []),
+          fetchMoments(30).catch(() => []),
+        ]);
+        const thoughtsRes = await getThoughts(30, 0).catch(() => ({ data: [] as never[] }));
+        const thoughts = ((thoughtsRes as { data: any[] }).data || []).map((t: any) => {
+          const mediaArr = Array.isArray(t.media) ? t.media : [];
+          const first = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+          return {
+            id: t.id,
+            type: 'thought',
+            title: String(t.content || '').slice(0, 80) || 'Thought',
+            content: t.content || '',
+            creator: t.user?.username || t.creator || 'Unknown',
+            creatorId: t.user?.id || t.user?.username || 'unknown',
+            image: first && first.type !== 'video' ? first.url || first.thumbnail || '' : (t.image_url || ''),
+            thumbnail: first?.thumbnail || first?.url || t.image_url || '',
+            videoUrl: first?.type === 'video' ? first.url || '' : '',
+            mediaType: first?.type === 'video' ? 'video' : (first ? 'image' : 'text'),
+            likes: t.likes_count ?? 0,
+            comments: t.comments_count ?? 0,
+            views: t.views ?? 0,
+            category: (t.tags && t.tags[0]) || 'Thoughts',
+            tags: t.tags || [],
+            timestamp: t.created_at || t.createdAt || new Date().toISOString(),
+            createdAt: t.created_at || t.createdAt,
+          };
+        });
+        const mapped = [
+          ...(posts as any[]).map((p: any) => ({
+            id: p.id,
+            type: p.type || (p.videoUrl ? 'video' : 'photo'),
+            title: String(p.content || p.title || 'Post').slice(0, 80),
+            content: p.content || '',
+            creator: creatorOf(p),
+            creatorId: p.userId || p.user || 'unknown',
+            image: imageUrlOf(p),
+            thumbnail: imageUrlOf(p),
+            videoUrl: videoUrlOf(p),
+            mediaType: p.mediaType,
+            likes: p.likes ?? 0,
+            comments: p.comments ?? 0,
+            views: p.views ?? 0,
+            category: (p.categories && p.categories[0]) || p.category || 'General',
+            tags: p.tags || [],
+            timestamp: p.createdAt || p.time || new Date().toISOString(),
+            createdAt: p.createdAt,
+            isLive: p.isLive,
+            live: p.live,
+            duration: p.duration,
+          })),
+          ...(moments as any[]).map((m: any) => {
+            const vid = videoUrlOf(m);
+            const img = imageUrlOf(m);
+            return {
+              id: m.id,
+              type: 'moment',
+              title: String(m.content || 'Moment').slice(0, 80),
+              content: m.content || '',
+              creator: creatorOf(m),
+              creatorId: m.userId || m.user || 'unknown',
+              image: img,
+              thumbnail: img || m.thumbnail || '',
+              videoUrl: vid,
+              mediaType: vid ? 'video' : 'image',
+              likes: m.likes ?? 0,
+              comments: m.comments ?? 0,
+              views: m.views ?? 0,
+              category: m.category || 'Moments',
+              tags: m.tags || [],
+              timestamp: m.createdAt || m.time || new Date().toISOString(),
+              createdAt: m.createdAt,
+              duration: m.duration || '0:30',
+            };
+          }),
+          ...thoughts,
+        ].filter((i) => allowedForSurface(String(i.type || 'post'), 'discover'));
+        if (!cancelled) setDiscoverItems(mapped.sort((a, b) => timeOf(b) - timeOf(a)));
+      } catch {
+        if (!cancelled) setDiscoverItems([]);
+      } finally {
+        if (!cancelled) setIsLoadingDiscover(false);
+      }
+    };
+    load();
+    const refresh = () => load();
+    window.addEventListener('userPostCreated', refresh);
+    window.addEventListener('feedRefresh', refresh);
+    window.addEventListener('momentCreated', refresh);
+    window.addEventListener('thoughtCreated', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('userPostCreated', refresh);
+      window.removeEventListener('feedRefresh', refresh);
+      window.removeEventListener('momentCreated', refresh);
+      window.removeEventListener('thoughtCreated', refresh);
+    };
+  }, []);
+
+  const toCardType = (item: any): 'image' | 'video' | 'live' => {
+    if (item.isLive || item.live || item.type === 'live') return 'live';
+    if (item.videoUrl || item.mediaType === 'video' || item.type === 'video' || (item.type === 'moment' && item.videoUrl)) return 'video';
+    return 'image';
+  };
+
+  const applyFilters = React.useCallback(
+    (items: any[]) => {
+      let out = [...items];
+      if (selectedCategory !== 'all') {
+        out = out.filter((i) => String(i.category || '').toLowerCase() === selectedCategory.toLowerCase());
+      }
+      if (contentTypeFilter !== 'all') {
+        out = out.filter((i) => toCardType(i) === contentTypeFilter);
+      }
+      if (timeFilter !== 'all') {
+        const now = Date.now();
+        const windowMs =
+          timeFilter === 'today' ? 24 * 3600 * 1000 : timeFilter === 'week' ? 7 * 24 * 3600 * 1000 : 30 * 24 * 3600 * 1000;
+        out = out.filter((i) => {
+          const t = new Date(i.timestamp || i.createdAt || Date.now()).getTime();
+          return Number.isFinite(t) && now - t <= windowMs;
+        });
+      }
+      const num = (v: unknown) => (typeof v === 'number' ? v : parseInt(String(v || '0'), 10) || 0);
+      if (sortBy === 'newest') out.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      else if (sortBy === 'popular' || sortBy === 'trending') out.sort((a, b) => num(b.likes) + num(b.comments) * 2 - (num(a.likes) + num(a.comments) * 2));
+      return out;
+    },
+    [selectedCategory, contentTypeFilter, timeFilter, sortBy],
+  );
+
+  const gridData = React.useMemo(() => applyFilters(discoverItems), [discoverItems, applyFilters]);
+  const trendingData = React.useMemo(() => {
+    const num = (v: unknown) => (typeof v === 'number' ? v : parseInt(String(v || '0'), 10) || 0);
+    return applyFilters([...discoverItems].sort((a, b) => num(b.likes) + num(b.views) - (num(a.likes) + num(a.views)))).slice(0, 12);
+  }, [discoverItems, applyFilters]);
+  const liveData = React.useMemo(
+    () => applyFilters(discoverItems.filter((i) => i.isLive || i.live || i.type === 'live')),
+    [discoverItems, applyFilters],
+  );
+  const longformData = React.useMemo(
+    () => applyFilters(discoverItems.filter((i) => toCardType(i) === 'video')),
+    [discoverItems, applyFilters],
+  );
 
   // Initialize postLikes map with initial like counts
   React.useEffect(() => {
@@ -419,6 +572,14 @@ const DiscoverPage = () => {
 
   // Instagram Style Grid Content
   const GridContent = () => {
+    if (isLoadingDiscover) {
+      return (
+        <div className="flex justify-center items-center py-12">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+          <p className="ml-4 text-muted-foreground">Loading fresh uploads…</p>
+        </div>
+      );
+    }
     if (viewMode === 'list') {
       // List view implementation
       return (
@@ -465,11 +626,12 @@ const DiscoverPage = () => {
               >
                 <CardContent className="p-4">
                   <div className="flex gap-4">
-                    <div className="w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden">
+                    <div className="w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden bg-black">
                       <img
-                        src={item.thumbnail}
+                        src={item.thumbnail || item.image}
                         alt="Post"
-                        className="w-full h-full object-cover"
+                        loading="lazy"
+                        className="w-full h-full object-contain"
                       />
                     </div>
                     <div className="flex-1">
@@ -553,22 +715,28 @@ const DiscoverPage = () => {
       );
     }
 
-    // Grid view (original implementation)
+    // Grid view — full-image previews (object-contain, never cropped)
     return (
       <div className="grid grid-cols-3 gap-1 md:gap-2">
         {gridData.length === 0 ? (
           <div className="col-span-3 text-center py-12 text-muted-foreground">
             <Filter className="w-12 h-12 mx-auto mb-4 opacity-50" />
-            <p>No content found matching your filters</p>
-            <Button variant="outline" size="sm" className="mt-4" onClick={() => {
-              setSelectedCategory('all');
-              setContentTypeFilter('all');
-              setTimeFilter('all');
-              setSortBy('relevance');
-              showSuccess('Filters cleared');
-            }}>
-              Clear Filters
-            </Button>
+            <p>{discoverItems.length === 0 ? 'Nothing here yet — be the first to post!' : 'No content found matching your filters'}</p>
+            {discoverItems.length === 0 ? (
+              <Button variant="default" size="sm" className="mt-4" onClick={() => navigate('/app/create')}>
+                Create the first post
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" className="mt-4" onClick={() => {
+                setSelectedCategory('all');
+                setContentTypeFilter('all');
+                setTimeFilter('all');
+                setSortBy('relevance');
+                showSuccess('Filters cleared');
+              }}>
+                Clear Filters
+              </Button>
+            )}
           </div>
         ) : (
           gridData.map((item, i) => (
@@ -597,9 +765,10 @@ const DiscoverPage = () => {
               }, item.contentType === 'video' ? 'moment' : item.contentType)}
             >
               <img
-                src={item.thumbnail}
+                src={item.thumbnail || item.image}
                 alt="Post"
-                className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-110"
+                loading="lazy"
+                className="w-full h-full object-contain bg-black transition-transform duration-500 group-hover:scale-[1.02]"
               />
               <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex items-center justify-center gap-3 text-white">
                 <button 
@@ -719,8 +888,8 @@ const DiscoverPage = () => {
                 live: item.live,
               }, item.contentType === 'video' ? 'moment' : item.contentType)}
             >
-              <div className="relative aspect-video">
-                <img src={item.thumbnail} className="w-full h-full object-cover" />
+              <div className="relative aspect-video bg-black">
+                <img src={item.thumbnail || item.image} loading="lazy" alt="" className="w-full h-full object-contain" />
                 <Badge className="absolute top-2 left-2 bg-orange-500/90 hover:bg-orange-600 border-none">#{i + 1} Trending</Badge>
                 {item.contentType === 'video' && (
                   <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
@@ -819,8 +988,8 @@ const DiscoverPage = () => {
                 duration: item.duration,
               }, 'live')}
             >
-              <div className="relative aspect-video">
-                <img src={item.thumbnail} className="w-full h-full object-cover rounded-t-lg" />
+              <div className="relative aspect-video bg-black">
+                <img src={item.thumbnail || item.image} loading="lazy" alt="" className="w-full h-full object-contain rounded-t-lg" />
                 <div className="absolute top-3 left-3 bg-red-600 text-white px-2 py-0.5 rounded text-xs font-bold animate-pulse">LIVE</div>
                 <div className="absolute bottom-3 left-3 bg-black/60 text-white px-2 py-0.5 rounded text-xs backdrop-blur-sm flex items-center gap-1">
                   <Users className="w-3 h-3" /> {item.views} watching
@@ -920,8 +1089,8 @@ const DiscoverPage = () => {
                 live: item.live,
               }, 'video')}
             >
-              <div className="relative sm:w-64 md:w-80 flex-shrink-0 aspect-video rounded-xl overflow-hidden shadow-md">
-                <img src={item.thumbnail} className="w-full h-full object-cover" />
+              <div className="relative sm:w-64 md:w-80 flex-shrink-0 aspect-video rounded-xl overflow-hidden shadow-md bg-black">
+                <img src={item.thumbnail || item.image} loading="lazy" alt="" className="w-full h-full object-contain" />
                 {item.contentType === 'video' && (
                   <div className="absolute bottom-2 right-2 bg-black/90 text-white text-xs px-1.5 py-0.5 rounded font-medium">
                     12:45

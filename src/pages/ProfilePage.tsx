@@ -943,13 +943,13 @@ const ProfilePage = () => {
 
       {/* User Content Tabs */}
       <Tabs defaultValue="posts" className="w-full">
-        <TabsList className="grid w-full grid-cols-5 h-auto">
-          <TabsTrigger value="posts" className="text-xs md:text-sm py-2 px-1">All Posts</TabsTrigger>
-          <TabsTrigger value="moments" className="text-xs md:text-sm py-2 px-1">Moments</TabsTrigger>
-          <TabsTrigger value="videos" className="text-xs md:text-sm py-2 px-1">Videos</TabsTrigger>
-          <TabsTrigger value="thoughts" className="text-xs md:text-sm py-2 px-1">Thoughts</TabsTrigger>
-          <TabsTrigger value="history" className="text-xs md:text-sm py-2 px-1">History</TabsTrigger>
-          <TabsTrigger value="saved" className="text-xs md:text-sm py-2 px-1">Saved</TabsTrigger>
+        <TabsList className="flex w-full gap-1.5 overflow-x-auto scrollbar-hide bg-transparent p-1 h-auto md:grid md:grid-cols-6 md:overflow-visible md:bg-muted md:rounded-md">
+          <TabsTrigger value="posts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">All Posts</TabsTrigger>
+          <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
+          <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
+          <TabsTrigger value="thoughts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Thoughts</TabsTrigger>
+          <TabsTrigger value="history" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">History</TabsTrigger>
+          <TabsTrigger value="saved" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Saved</TabsTrigger>
         </TabsList>
         <TabsContent value="posts" className="mt-4 md:mt-6 space-y-3 md:space-y-4">
           {/* Combine user's original posts with reacted posts */}
@@ -1043,7 +1043,7 @@ const ProfilePage = () => {
                           <video
                             src={post.videoUrl || post.video}
                             poster={post.thumbnail || post.image || post.media}
-                            className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer"
+                            className="w-full rounded-lg mb-3 md:mb-4 object-contain bg-black max-h-60 md:max-h-80 cursor-pointer"
                             muted
                             loop
                             playsInline
@@ -1056,7 +1056,8 @@ const ProfilePage = () => {
                           <img
                             src={post.thumbnail || post.image || post.media}
                             alt="Post media"
-                            className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer"
+                            loading="lazy"
+                            className="w-full rounded-lg mb-3 md:mb-4 object-contain bg-black max-h-60 md:max-h-80 cursor-pointer"
                             onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
@@ -1068,7 +1069,8 @@ const ProfilePage = () => {
                         <img
                           src={post.thumbnail || post.image || post.media}
                           alt="Post media"
-                          className="w-full rounded-lg mb-3 md:mb-4 object-cover max-h-48 md:max-h-60 cursor-pointer"
+                          loading="lazy"
+                          className="w-full rounded-lg mb-3 md:mb-4 object-contain bg-black max-h-60 md:max-h-80 cursor-pointer"
                           onClick={() => handleFullscreen(post)}
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
@@ -1358,7 +1360,8 @@ const ProfilePage = () => {
                         <img
                           src={post.media}
                           alt="Post media"
-                          className="w-full rounded-lg object-cover max-h-60 cursor-pointer"
+                          loading="lazy"
+                          className="w-full rounded-lg object-contain bg-black max-h-80 cursor-pointer"
                           onClick={() => handleFullscreen(post)}
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
@@ -1485,7 +1488,7 @@ const ProfilePage = () => {
                         {(post.mediaType === 'video' || post.type === 'video') && (post.videoUrl || post.video) ? (
                           <video
                             src={post.videoUrl || post.video}
-                            className="w-full rounded-lg object-cover max-h-40 cursor-pointer"
+                            className="w-full rounded-lg object-contain bg-black max-h-60 cursor-pointer"
                             muted
                             loop
                             playsInline
@@ -1497,7 +1500,8 @@ const ProfilePage = () => {
                           <img
                             src={post.media || post.thumbnail || post.image}
                             alt="Saved content"
-                            className="w-full rounded-lg object-cover max-h-40 cursor-pointer"
+                            loading="lazy"
+                            className="w-full rounded-lg object-contain bg-black max-h-60 cursor-pointer"
                             onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;

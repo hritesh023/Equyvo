@@ -124,11 +124,11 @@ const MediaRenderer: React.FC<{
     }
 
     return (
-      <div className="mt-3 rounded-lg overflow-hidden">
-        <img 
-          src={media.url} 
-          alt="Thought content" 
-          className="w-full object-cover max-h-96 cursor-pointer hover:scale-105 transition-transform duration-300"
+      <div className="mt-3 rounded-lg overflow-hidden bg-black">
+        <img
+          src={media.url}
+          alt="Thought content"
+          className="w-full object-contain max-h-96 cursor-pointer hover:scale-[1.02] transition-transform duration-300"
           onClick={() => onFullscreen && onFullscreen({
             type: 'image',
             src: media.url,
@@ -162,11 +162,11 @@ const MediaRenderer: React.FC<{
     }
 
     return (
-      <div className="mt-3 rounded-lg overflow-hidden relative">
-        <img 
-          src={media.url} 
-          alt="GIF content" 
-          className="w-full object-cover max-h-96 cursor-pointer hover:scale-105 transition-transform duration-300"
+      <div className="mt-3 rounded-lg overflow-hidden relative bg-black">
+        <img
+          src={media.url}
+          alt="GIF content"
+          className="w-full object-contain max-h-96 cursor-pointer hover:scale-[1.02] transition-transform duration-300"
           onClick={() => onFullscreen && onFullscreen({
             type: 'image',
             src: media.url,
@@ -339,13 +339,24 @@ const ThoughtsPage = memo(() => {
 
   useEffect(() => {
     fetchThoughts();
-    
+
+    // Live refresh: a thought uploaded in Create appears here instantly.
+    const refresh = () => fetchThoughts();
+    window.addEventListener('userPostCreated', refresh);
+    window.addEventListener('thoughtCreated', refresh);
+    window.addEventListener('feedRefresh', refresh);
+
     // Handle initial loading delay to prevent flash
     const timer = setTimeout(() => {
       setInitialLoading(false);
     }, 500);
 
-    return () => clearTimeout(timer);
+    return () => {
+      clearTimeout(timer);
+      window.removeEventListener('userPostCreated', refresh);
+      window.removeEventListener('thoughtCreated', refresh);
+      window.removeEventListener('feedRefresh', refresh);
+    };
   }, [fetchThoughts]);
 
   const handleVote = async (thoughtId: string, voteType: 'upvote' | 'downvote') => {
@@ -953,8 +964,8 @@ const ThoughtsPage = memo(() => {
 
                     {/* Image - Legacy support */}
                     {thought.image_url && !thought.media && (
-                      <div className="mt-3 rounded-lg overflow-hidden">
-                        <img src={thought.image_url} alt="Thought content" className="w-full object-cover max-h-64" />
+                      <div className="mt-3 rounded-lg overflow-hidden bg-black">
+                        <img src={thought.image_url} alt="Thought content" loading="lazy" className="w-full object-contain max-h-96" />
                       </div>
                     )}
 

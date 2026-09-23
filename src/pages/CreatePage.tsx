@@ -10,6 +10,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
 import { compressImage } from '@/lib/utils';
 import { markHasRealContent } from '@/lib/data';
+import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import api from '@/lib/api';
 
 // Helper to get current user info from localStorage
@@ -203,6 +204,8 @@ const CreatePage = () => {
 }
 
 // Shared helper: persist content to API, index for search, update localStorage, notify other pages
+// STRICT type routing: each type is written to exactly ONE collection so a
+// photo can never leak into Moments and a moment never leaks into Thoughts.
   async function persistContent(content: Record<string, unknown>) {
     const userInfo = getCurrentUserInfo();
     const postData = {
@@ -213,23 +216,46 @@ const CreatePage = () => {
       createdAt: new Date().toISOString(),
     };
     const type = (content.type as string) || 'post';
+    // Surface the API result so callers can surface auth/quota errors instead
+    // of silently showing "success" while only localStorage was updated.
+    let persistError: string | null = null;
     try {
-      if (type === 'story' || type === 'text-story') await api.createStory(postData);
-      else if (type === 'thought') await api.createThought(postData);
-      else if (type === 'moment') await api.createMoment(postData);
-      else await api.createPost(postData);
-      markHasRealContent();
-    } catch (err) { console.error('Failed to persist to API:', err); }
+      if (type === 'story' || type === 'text-story') {
+        const { error } = await api.createStory(postData);
+        if (error) persistError = error;
+      } else if (type === 'thought') {
+        const { error } = await api.createThought(postData);
+        if (error) persistError = error;
+      } else if (type === 'moment') {
+        const { error } = await api.createMoment(postData);
+        if (error) persistError = error;
+      } else {
+        const { error } = await api.createPost(postData);
+        if (error) persistError = error;
+      }
+      if (!persistError) markHasRealContent();
+      else console.error('Failed to persist to API:', persistError);
+    } catch (err) {
+      persistError = err instanceof Error ? err.message : 'persist failed';
+      console.error('Failed to persist to API:', err);
+    }
     try {
+      // Index with full media so Discover/Search/Thoughts render correctly.
+      // thumbnail stays an IMAGE (never a video URL); videoUrl/imageUrl carry
+      // the playable/full-res assets separately.
+      const thumbCandidate = (content.thumbnail || content.image || '') as string;
+      const mediaStr = typeof content.media === 'string' ? (content.media as string) : '';
       await api.indexContent({
         id: content.id as string,
-        title: ((content.content as string)?.slice(0, 60) || type) as string,
+        title: ((content.content as string)?.slice(0, 60) || (content.title as string)?.slice(0, 60) || type) as string,
         description: (content.content as string)?.slice(0, 120) || '',
-        type: type === 'text-story' ? 'story' : (type as any),
+        type: (type === 'text-story' ? 'story' : type === 'photo' ? 'photo' : type === 'video' ? 'video' : type) as any,
         creator: postData.user,
         creatorAvatar: (content.avatar as string) || '',
         views: '0',
-        thumbnail: (content.thumbnail || content.image || content.media || '') as string,
+        thumbnail: thumbCandidate || mediaStr,
+        videoUrl: (content.videoUrl as string) || '',
+        imageUrl: ((content.image as string) || mediaStr || thumbCandidate || '') as string,
         category: (content.category as string) || 'general',
         tags: (content.tags as string[]) || [],
         publishedAt: new Date().toISOString(),
@@ -272,18 +298,28 @@ const CreatePage = () => {
             following: 0,
             posts: [],
           };
-      const mediaUrl = content.media || content.image || content.thumbnail || '';
-      const isVideo = content.mediaType === 'video' || type === 'video' || !!content.videoUrl;
+      // Preserve full-res image SEPARATELY from video so previews never crop
+      // and a video URL is never rendered inside an <img>.
+      const videoUrlStr = (content.videoUrl as string) || '';
+      const mediaStr = typeof content.media === 'string' ? (content.media as string) : '';
+      const imageStr = (content.image as string) || '';
+      const thumbStr = (content.thumbnail as string) || '';
+      const isVideo = content.mediaType === 'video' || type === 'video' || !!videoUrlStr;
+      // For photos: image/media/thumbnail all carry the FULL image URL.
+      // For videos: videoUrl/media carry the playable URL, thumbnail the poster.
+      const fullImage = imageStr || (!isVideo ? (mediaStr || thumbStr) : '') || '';
+      const fullThumb = thumbStr || fullImage || '';
+      const fullMedia = isVideo ? (videoUrlStr || mediaStr) : (fullImage || mediaStr);
       profile.posts = [{
         id: content.id,
         user: postData.user,
         avatar: (content.avatar as string) || '',
         time: 'just now',
         content: (content.content as string) || '',
-        image: mediaUrl,
-        media: (content.videoUrl as string) || content.media || mediaUrl,
-        thumbnail: (content.thumbnail as string) || (content.image as string) || mediaUrl,
-        videoUrl: (content.videoUrl as string) || '',
+        image: fullImage || fullMedia,
+        media: content.media ?? fullMedia,
+        thumbnail: fullThumb || (fullMedia as string),
+        videoUrl: videoUrlStr,
         mediaType: (content.mediaType as string) || (isVideo ? 'video' : 'image'),
         duration: (content.duration as number) || 0,
         publicId: (content.publicId as string) || '',
@@ -296,8 +332,10 @@ const CreatePage = () => {
       }, ...(profile.posts || [])];
       localStorage.setItem('userProfile', JSON.stringify(profile));
     } catch (err) { console.error('Failed to update localStorage profile:', err); }
-    // Invalidate search cache so new content appears immediately
-    window.dispatchEvent(new CustomEvent('userPostCreated', { detail: { post: postData, type } }));
+    // Invalidate search cache so new content appears immediately on EVERY
+    // surface (ForYou, Following, Discover, Moments, Thoughts).
+    broadcastPostCreated(postData, type);
+    return persistError;
   }
 
   const handleFileUpload = async (files: FileList | null, type: string) => {
@@ -328,10 +366,12 @@ const CreatePage = () => {
       case 'thought':
         if (file.type.startsWith('video/') || file.type.startsWith('image/')) {
           if (file.type.startsWith('video/')) {
-            // Check video duration
-            const isValidDuration = await validateVideoDuration(file);
-            if (!isValidDuration) {
-              showError('Video must be less than 5 minutes long');
+            // Check video duration (helper returns { valid, error }).
+            const durationCheck = await validateVideoDuration(file);
+            const validDuration = typeof durationCheck === 'boolean' ? durationCheck : durationCheck.valid;
+            const durationError = typeof durationCheck === 'object' ? durationCheck.error : undefined;
+            if (!validDuration) {
+              showError(durationError || 'Video must be less than 5 minutes long');
               return;
             }
             
@@ -491,13 +531,28 @@ const CreatePage = () => {
         }));
 
         setUploadedStories(prev => [...prev, ...newUploadedStories]);
-        for (const s of newUploadedStories) {
-          await persistContent({ id: s.id, type: 'story', content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '', image: s.thumbnail, thumbnail: s.thumbnail, publicId: s.publicId, resourceType: s.resourceType, user: getCurrentUserInfo().username });
+        for (let i = 0; i < newUploadedStories.length; i++) {
+          const s = newUploadedStories[i];
+          const secureUrl = uploadedStoryResults[i]?.result?.secureUrl || s.thumbnail;
+          const isVid = s.type === 'video';
+          await persistContent({
+            id: s.id,
+            type: 'story',
+            content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '',
+            image: isVid ? '' : secureUrl,
+            media: secureUrl,
+            thumbnail: s.thumbnail || secureUrl,
+            videoUrl: isVid ? secureUrl : '',
+            mediaType: isVid ? 'video' : 'image',
+            publicId: s.publicId,
+            resourceType: s.resourceType,
+            user: getCurrentUserInfo().username,
+          });
         }
         setIsUploading(false);
         showSuccess('Story posted successfully! It will be available for 24 hours.');
         setStoryFiles([]);
-        
+
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
         break;
       case 'schedule':
@@ -629,13 +684,23 @@ const CreatePage = () => {
           }
         }
 
-        const thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
+        let thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
+        // R2 videos have no server poster — capture one client-side so the
+        // Thoughts feed still shows a preview (never a blank card).
+        if (thoughtVideo?.type.startsWith('video/') && !thoughtThumbnail) {
+          try {
+            const poster = await captureVideoPoster(thoughtVideo);
+            if (poster) thoughtThumbnail = poster;
+          } catch { /* poster is best-effort */ }
+        }
+        const thoughtMediaType = thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined;
+        const thoughtSecureUrl = thoughtUploadResult?.secureUrl || '';
         const newUploadedThought: UploadedThought = {
           id: Date.now().toString(),
           content: thoughtContent,
           hasMedia: !!thoughtVideo,
-          mediaType: thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined,
-          mediaUrl: thoughtUploadResult?.secureUrl || (thoughtVideo ? '' : undefined),
+          mediaType: thoughtMediaType,
+          mediaUrl: thoughtSecureUrl || (thoughtVideo ? '' : undefined),
           publicId: thoughtUploadResult?.publicId || '',
           resourceType: thoughtUploadResult?.resourceType || '',
           uploadDate: new Date(),
@@ -648,9 +713,31 @@ const CreatePage = () => {
         };
 
         setUploadedThoughts(prev => [...prev, newUploadedThought]);
-        await persistContent({ id: newUploadedThought.id, type: 'thought', content: newUploadedThought.content, image: thoughtThumbnail, thumbnail: thoughtThumbnail, publicId: newUploadedThought.publicId, resourceType: newUploadedThought.resourceType });
+        // Preserve the playable URL + ThoughtsPage media array. Without this
+        // the thought text saved but its photo/video never rendered.
+        const thoughtMediaArray = thoughtSecureUrl && thoughtMediaType
+          ? [{ type: thoughtMediaType === 'video' ? 'video' : thoughtVideo?.type === 'image/gif' ? 'gif' : 'photo', url: thoughtSecureUrl, thumbnail: thoughtThumbnail || thoughtSecureUrl }]
+          : undefined;
+        const persistErr = await persistContent({
+          id: newUploadedThought.id,
+          type: 'thought',
+          content: newUploadedThought.content,
+          image: thoughtMediaType === 'video' ? '' : (thoughtSecureUrl || thoughtThumbnail),
+          thumbnail: thoughtThumbnail || thoughtSecureUrl,
+          media: thoughtMediaArray ?? thoughtSecureUrl,
+          mediaUrl: thoughtSecureUrl || undefined,
+          videoUrl: thoughtMediaType === 'video' ? thoughtSecureUrl : '',
+          mediaType: thoughtMediaType,
+          image_url: thoughtMediaType === 'video' ? '' : (thoughtSecureUrl || thoughtThumbnail),
+          publicId: newUploadedThought.publicId,
+          resourceType: newUploadedThought.resourceType,
+        });
         setIsUploading(false);
-        showSuccess('Thought posted successfully!');
+        if (persistErr) {
+          showError('Thought saved locally but feed sync failed: ' + persistErr);
+        } else {
+          showSuccess('Thought posted successfully!');
+        }
         setThoughtContent('');
         setThoughtVideo(null);
         break;
@@ -718,7 +805,7 @@ const CreatePage = () => {
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: getThumbnailFromUpload(result),
+          thumbnail: getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
           caption: photoCaption,
           mediaType: file.type.startsWith('video/') ? 'video' : 'image',
           videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
@@ -734,11 +821,32 @@ const CreatePage = () => {
         }));
 
         setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
-        for (const p of newUploadedPhotos) {
-          await persistContent({ id: p.id, type: p.mediaType === 'video' ? 'video' : 'photo', content: p.caption, image: p.thumbnail, thumbnail: p.thumbnail, videoUrl: p.videoUrl, mediaType: p.mediaType, duration: p.duration, publicId: p.publicId, resourceType: p.resourceType });
+        let photoPersistError: string | null = null;
+        for (let i = 0; i < newUploadedPhotos.length; i++) {
+          const p = newUploadedPhotos[i];
+          // Full-res URL straight from the upload result — never the cropped thumbnail.
+          const secureUrl = uploadedPhotoResults[i]?.result?.secureUrl || p.thumbnail || p.videoUrl;
+          const err = await persistContent({
+            id: p.id,
+            type: p.mediaType === 'video' ? 'video' : 'photo',
+            content: p.caption,
+            image: p.mediaType === 'video' ? '' : secureUrl,
+            media: secureUrl,
+            thumbnail: p.thumbnail || secureUrl,
+            videoUrl: p.videoUrl,
+            mediaType: p.mediaType,
+            duration: p.duration,
+            publicId: p.publicId,
+            resourceType: p.resourceType,
+          });
+          if (err) photoPersistError = err;
         }
         setIsUploading(false);
-        showSuccess(`${photoFiles.length} photo(s) posted successfully!`);
+        if (photoPersistError) {
+          showError('Saved locally but feed sync failed: ' + photoPersistError);
+        } else {
+          showSuccess(`${photoFiles.length} photo(s) posted successfully!`);
+        }
         setPhotoFiles([]);
         setPhotoCaption('');
         break;
@@ -802,13 +910,24 @@ const CreatePage = () => {
           })
         );
 
+        // Client posters for R2 videos (server has no thumbnail yet).
+        const videoPosters = await Promise.all(
+          videoFiles.map(async (file, i) => {
+            const t = getThumbnailFromUpload(uploadedVideoResults[i]?.result);
+            if (t) return t;
+            try {
+              const poster = await captureVideoPoster(file);
+              return poster || '';
+            } catch { return ''; }
+          })
+        );
         const newUploadedVideos: UploadedVideo[] = uploadedVideoResults.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           title: videoCaption || file.name,
           fileName: file.name,
           fileSize: file.size,
           duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
-          thumbnail: getThumbnailFromUpload(result),
+          thumbnail: videoPosters[index] || getThumbnailFromUpload(result),
           videoUrl: result?.secureUrl || '',
           publicId: result?.publicId || '',
           resourceType: result?.resourceType || '',
@@ -823,11 +942,17 @@ const CreatePage = () => {
         }));
 
         setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
+        let videoPersistError: string | null = null;
         for (const v of newUploadedVideos) {
-          await persistContent({ id: v.id, type: 'video', content: v.title, image: v.thumbnail, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', publicId: v.publicId, resourceType: v.resourceType });
+          const err = await persistContent({ id: v.id, type: 'video', content: v.title, image: '', media: v.videoUrl, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', publicId: v.publicId, resourceType: v.resourceType });
+          if (err) videoPersistError = err;
         }
         setIsUploading(false);
-        showSuccess(`${videoFiles.length} video(s) posted successfully!`);
+        if (videoPersistError) {
+          showError('Saved locally but feed sync failed: ' + videoPersistError);
+        } else {
+          showSuccess(`${videoFiles.length} video(s) posted successfully!`);
+        }
         setVideoFiles([]);
         setVideoCaption('');
         break;
@@ -929,11 +1054,25 @@ const CreatePage = () => {
           })
         );
 
+        // Posters for R2 video moments + full URLs for photo moments.
+        const momentPosters = await Promise.all(
+          momentFiles.map(async (file, i) => {
+            const t = getThumbnailFromUpload(uploadedResults[i]?.result);
+            if (t) return t;
+            if (file.type.startsWith('video/')) {
+              try {
+                const poster = await captureVideoPoster(file);
+                return poster || '';
+              } catch { return ''; }
+            }
+            return uploadedResults[i]?.result?.secureUrl || '';
+          })
+        );
         const newUploadedMoments: UploadedMoment[] = uploadedResults.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: getThumbnailFromUpload(result),
+          thumbnail: momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
           mediaType: file.type.startsWith('image/') ? 'image' : 'video',
           videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
           publicId: result?.publicId || '',
@@ -947,21 +1086,32 @@ const CreatePage = () => {
         }));
 
         setUploadedMoments(prev => [...prev, ...newUploadedMoments]);
-        for (const m of newUploadedMoments) {
-          await persistContent({
+        let momentPersistError: string | null = null;
+        for (let i = 0; i < newUploadedMoments.length; i++) {
+          const m = newUploadedMoments[i];
+          const secureUrl = uploadedResults[i]?.result?.secureUrl || '';
+          // Photo moment: media/image/thumbnail = full image. Video moment:
+          // media/videoUrl = playable URL, thumbnail = poster only.
+          const err = await persistContent({
             id: m.id,
             type: 'moment',
             content: m.content,
-            media: m.thumbnail,
-            thumbnail: m.thumbnail,
+            image: m.mediaType === 'video' ? '' : (secureUrl || m.thumbnail),
+            media: m.mediaType === 'video' ? (m.videoUrl || secureUrl) : (secureUrl || m.thumbnail),
+            thumbnail: m.thumbnail || secureUrl,
             mediaType: m.mediaType,
             videoUrl: m.videoUrl,
             publicId: m.publicId,
             resourceType: m.resourceType,
           });
+          if (err) momentPersistError = err;
         }
         setIsUploading(false);
-        showSuccess(`${momentFiles.length} moment(s) posted successfully!`);
+        if (momentPersistError) {
+          showError('Saved locally but feed sync failed: ' + momentPersistError);
+        } else {
+          showSuccess(`${momentFiles.length} moment(s) posted successfully!`);
+        }
         setMomentFiles([]);
         setMomentContent('');
         break;
@@ -1931,16 +2081,28 @@ const CreatePage = () => {
         </CardContent>
       </Card>
 
-      {/* Create Content Tabs */}
+      {/* Create Content Tabs — horizontally scrollable icon pills on mobile
+          so labels never squeeze/wrap ("Text Story" etc.); grid on desktop. */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="grid w-full grid-cols-7">
-          <TabsTrigger value="story">Story</TabsTrigger>
-          <TabsTrigger value="text-story">Text Story</TabsTrigger>
-          <TabsTrigger value="thought">Thought</TabsTrigger>
-          <TabsTrigger value="photo">Photos</TabsTrigger>
-          <TabsTrigger value="video">Videos</TabsTrigger>
-          <TabsTrigger value="live">Live</TabsTrigger>
-          <TabsTrigger value="moment">Moments</TabsTrigger>
+        <TabsList className="flex w-full gap-1.5 overflow-x-auto scrollbar-hide bg-transparent p-1 md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md">
+          {[
+            { value: 'story', label: 'Story', Icon: Camera },
+            { value: 'text-story', label: 'Text', Icon: Text },
+            { value: 'thought', label: 'Thought', Icon: Brain },
+            { value: 'photo', label: 'Photos', Icon: ImageIcon },
+            { value: 'video', label: 'Videos', Icon: Film },
+            { value: 'live', label: 'Live', Icon: Zap },
+            { value: 'moment', label: 'Moments', Icon: Video },
+          ].map(({ value, label, Icon }) => (
+            <TabsTrigger
+              key={value}
+              value={value}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:px-3 md:text-sm"
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </TabsTrigger>
+          ))}
         </TabsList>
 
         {/* Story Upload */}

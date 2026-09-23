@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { signInWithEmail, signUpWithEmail } from '../lib/auth';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
@@ -15,6 +15,13 @@ interface AuthPageProps {
 
 const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  // Safe internal return path (e.g. /auth?next=/pricing after an expired
+  // session interrupted checkout). External URLs are never honored.
+  const next = (() => {
+    const n = searchParams.get('next');
+    return n && n.startsWith('/') && !n.startsWith('//') ? n : '/app/home';
+  })();
   const [activeTab, setActiveTab] = useState('login');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
@@ -28,19 +35,24 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
 
   const goHome = (user: User) => {
     onAuthSuccess?.(user);
-    navigate('/app/home');
+    navigate(next);
   };
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const result = await signInWithEmail(loginEmail, loginPassword);
-    setLoading(false);
-    if (result.success) {
-      goHome(result.user);
-    } else {
-      setError(result.error || 'Sign in failed');
+    try {
+      const result = await signInWithEmail(loginEmail, loginPassword);
+      if (result.success && result.user) {
+        goHome(result.user);
+      } else {
+        setError(result.error || 'Sign in failed');
+      }
+    } catch {
+      setError('Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -48,12 +60,17 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const result = await signUpWithEmail(signupEmail, signupPassword, signupName);
-    setLoading(false);
-    if (result.success) {
-      goHome(result.user);
-    } else {
-      setError(result.error || 'Sign up failed');
+    try {
+      const result = await signUpWithEmail(signupEmail, signupPassword, signupName);
+      if (result.success && result.user) {
+        goHome(result.user);
+      } else {
+        setError(result.error || 'Sign up failed');
+      }
+    } catch {
+      setError('Sign up failed. Please try again.');
+    } finally {
+      setLoading(false);
     }
   };
 

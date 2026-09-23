@@ -3,6 +3,24 @@
 ## Overview
 The Equyvo social media app is a comprehensive React application with TypeScript, optimized for production deployment.
 
+## Local development (frontend + API)
+Vite serves the app on `:3000` and proxies `/api/*` to a Functions server on
+`:8788`. If `:8788` isn't running, **every** `/api` call fails (empty 500s)
+and all feeds render empty — the app degrades gracefully, and devtools shows
+a one-line hint telling you what to start.
+
+```bash
+# Terminal 1 — app with HMR
+npm run dev
+
+# Terminal 2 — Cloudflare Pages Functions (posts, moments, thoughts, …)
+npm run build        # dist/ must exist for pages dev
+npm run dev:api      # serves Functions on http://localhost:8788
+```
+
+Production needs none of this: Cloudflare Pages serves `dist/` and
+`functions/` together, so `/api` resolves on the same origin.
+
 ## Build & Deployment
 
 ### Production Build

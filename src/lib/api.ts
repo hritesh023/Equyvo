@@ -26,6 +26,27 @@ function authHeaders(): Record<string, string> {
   return headers;
 }
 
+let localApiWarned = false;
+
+/**
+ * Dev-only, once-per-session hint. In local dev, vite proxies /api to a
+ * Functions server on :8788 — when it isn't running every /api call fails
+ * (empty 500s / network errors) and all feeds render empty. Production
+ * serves Functions alongside the app, so this never fires there.
+ */
+function warnLocalApiOnce(path: string, status: number | string): void {
+  try {
+    if (!import.meta.env.DEV || localApiWarned) return;
+    localApiWarned = true;
+    console.warn(
+      `[Equyvo] ${path} → ${status} with no backend body. ` +
+        `Local dev proxies /api to http://localhost:8788 — start it with: npm run dev:api`,
+    );
+  } catch {
+    /* ignore */
+  }
+}
+
 async function request<T = any>(
   path: string,
   options?: RequestInit
@@ -44,13 +65,19 @@ async function request<T = any>(
       headers,
       ...options,
     });
-    const json = await res.json();
+    // Error pages (vite proxy 500s, gateway HTML) are not JSON — never let
+    // body parsing itself become the reported error.
+    const json = await res.json().catch(() => ({} as Record<string, unknown>));
     if (!res.ok) {
-      return { error: json.error || `Request failed with status ${res.status}` };
+      const bodyError =
+        typeof json.error === 'string' && json.error ? json.error : null;
+      if (!bodyError) warnLocalApiOnce(path, res.status);
+      return { error: bodyError || `Request failed with status ${res.status}` };
     }
-    return json;
+    return json as T;
   } catch (err: any) {
-    return { error: err.message || 'Network error' };
+    warnLocalApiOnce(path, 'network');
+    return { error: err?.message || 'Network error' };
   }
 }
 

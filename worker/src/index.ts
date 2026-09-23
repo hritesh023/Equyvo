@@ -4,12 +4,30 @@ import {
   getStories, createStory, getMoments, createMoment,
   getProfile, upsertProfile, searchContent, likePost, unlikePost, voteThought,
   indexContent, deletePost, deleteThought, deleteStory, deleteMoment, deleteUserData,
-  KEYS, purgeSeedData, SEED_PROFILE_IDS,
+  KEYS, purgeSeedData, SEED_PROFILE_IDS, SEED_PURGED_KEY,
+  getInterests, recordEngagement, bumpPopularity, brainSearchSuggest, brainFeedSuggest,
+  rankFeedItems, ensureContentIndex,
   getActor, bearerFrom, requiresVerifiedWrites, sanitizeBody, rateLimit, rateLimitFor,
   resolvePlan, planQuota, getUsage, addUsage, PLAN_CATALOG, PLATFORM_FEE_BPS, sha256Hex, cloudinaryVariants,
   r2KeyFor, extFromFile, r2DeliveryUrl, validMediaKey,
 } from './kv';
 export { Env };
+
+function parseInterestsParam(v: string | null): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!v) return out;
+  for (const raw of v.split(',')) {
+    const t = raw.trim().toLowerCase().replace(/^#+/, '').slice(0, 40);
+    if (t) out[t] = 5;
+  }
+  return out;
+}
+
+function mergeInterests(a: Record<string, number>, b: Record<string, number>): Record<string, number> {
+  const out: Record<string, number> = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = Math.min(100, (Number(out[k] || 0) + Number(v || 0)));
+  return out;
+}
 
 const GB = 1024 * 1024 * 1024;
 
@@ -32,7 +50,7 @@ function errorResponse(message: string, status = 400): Response {
   });
 }
 
-async function handleRequest(request: Request, env: Env): Promise<Response> {
+async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Promise<any>): void }): Promise<Response> {
   const url = new URL(request.url);
   const path = url.pathname;
   const method = request.method;
@@ -43,8 +61,20 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     return new Response(null, { status: 204, headers: { ...cors, ...SECURITY_HEADERS } });
   }
 
-  await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
-  await purgeSeedData(env);
+  // Lag fix: never block a response on maintenance writes. The old code did
+  // a KV write + full seed-purge scan (hundreds of reads) on EVERY request.
+  // Now: one cheap flag read; the one-time purge runs in the background.
+  try {
+    const purged = await env.EQUYVO_KV.get(SEED_PURGED_KEY);
+    if (!purged) {
+      const p = (async () => {
+        try { await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true'); } catch {}
+        try { await purgeSeedData(env); } catch {}
+      })();
+      if (ctx && ctx.waitUntil) ctx.waitUntil(p);
+      else await p;
+    }
+  } catch { /* ignore maintenance failures */ }
 
   const respond = (data: any, status = 200): Response => {
     const res = jsonResponse(data, status);
@@ -121,8 +151,33 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
   try {
     if (path === '/api/posts' && method === 'GET') {
       const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '50')));
-      const posts = await getPosts(env, limit);
-      return respond({ data: posts, error: null });
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0') || 0);
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
+      const sort = String(url.searchParams.get('sort') || '').toLowerCase();
+      // Fetch one extra page when ranking so offset works on ranked order.
+      const posts = await getPosts(env, Math.min(100, limit + offset));
+      // Transparent AI ranking: existing frontend calls GET /api/posts?limit=50
+      // with no changes, but when we know the user's interests we return
+      // interest-ranked order instead of pure reverse-chronological.
+      let out = posts;
+      let personalized = false;
+      const wantRank = sort === 'relevant' || sort === 'foryou' || !!userId || !!url.searchParams.get('interests');
+      if (wantRank) {
+        try {
+          const stored = userId ? await getInterests(env, userId) : {};
+          const qi = parseInterestsParam(url.searchParams.get('interests'));
+          const interests = mergeInterests(stored, qi);
+          const ranked = rankFeedItems(posts, interests, limit + offset);
+          out = ranked.items.slice(offset, offset + limit);
+          personalized = ranked.personalized;
+        } catch { out = posts.slice(offset, offset + limit); }
+      } else {
+        out = posts.slice(offset, offset + limit);
+      }
+      if (personalized) {
+        return respond({ data: out, error: null, meta: { personalized: true } });
+      }
+      return respond({ data: out, error: null });
     }
 
     if (path === '/api/posts' && method === 'POST') {
@@ -155,6 +210,19 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       if (error) return error;
       const id = path.split('/api/posts/')[1].replace('/like', '');
       const result = await likePost(env, id);
+      // Server-side interest learning: no frontend change needed.
+      try {
+        const raw = await env.EQUYVO_KV.get(KEYS.POST(id));
+        if (raw) {
+          const p: any = JSON.parse(raw);
+          void recordEngagement(env, (actor as any).id, {
+            category: String((p.categories && p.categories[0]) || ''),
+            tags: Array.isArray(p.tags) ? p.tags : [],
+            creator: String(p.user || ''),
+            action: 'like',
+          });
+        }
+      } catch {}
       return respond({ data: result, error: null });
     }
 
@@ -163,6 +231,9 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       if (error) return error;
       const id = path.split('/api/posts/')[1].replace('/unlike', '');
       const result = await unlikePost(env, id);
+      try {
+        void recordEngagement(env, (actor as any).id, { action: 'unlike' });
+      } catch {}
       return respond({ data: result, error: null });
     }
 
@@ -190,6 +261,16 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
       const id = path.split('/api/thoughts/')[1].replace('/vote', '');
       const body = await request.json() as any;
       const result = await voteThought(env, id, body.vote_type);
+      try {
+        const raw = await env.EQUYVO_KV.get(KEYS.THOUGHT(id));
+        if (raw) {
+          const t: any = JSON.parse(raw);
+          void recordEngagement(env, (actor as any).id, {
+            tags: Array.isArray(t.tags) ? t.tags : [],
+            action: 'vote',
+          });
+        }
+      } catch {}
       return respond({ data: result, error: null });
     }
 
@@ -251,14 +332,138 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
 
     if (path === '/api/search' && method === 'GET') {
-      const query = url.searchParams.get('q') || '';
-      let { results, totalCount } = await searchContent(env, query);
+      const query = String(url.searchParams.get('q') || '').slice(0, 200);
+      const limit = Math.min(50, Math.max(1, parseInt(url.searchParams.get('limit') || '20') || 20));
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
+      // Interest-aware AI search (backend-only): merges persisted interests
+      // with explicit ?interests= so the search bar ranks what this user
+      // cares about first. No frontend changes required.
+      let interests: Record<string, number> = {};
+      try {
+        const stored = userId ? await getInterests(env, userId) : {};
+        interests = mergeInterests(stored, parseInterestsParam(url.searchParams.get('interests')));
+        // Also fold profile categories/bio keywords when available.
+        if (userId && Object.keys(stored).length === 0) {
+          try {
+            const prof = await getProfile(env, userId);
+            const extra: Record<string, number> = {};
+            const bio = String((prof as any)?.bio || '');
+            for (const t of bio.toLowerCase().split(/[^a-z0-9]+/).slice(0, 10)) {
+              if (t.length >= 3) extra[t] = 2;
+            }
+            interests = mergeInterests(interests, extra);
+          } catch {}
+        }
+      } catch { interests = {}; }
+      const { results, totalCount, personalized } = await searchContent(env, query, { interests, limit });
       const hasReal = await env.EQUYVO_KV.get('has_real_users');
+      let filtered = results;
       if (hasReal === 'true') {
-        results = results.filter(i => !(i.isSeed || (i.id && typeof i.id === 'string' && i.id.startsWith('seed-'))));
-        totalCount = results.length;
+        filtered = results.filter(i => !(i.isSeed || (i.id && typeof i.id === 'string' && i.id.startsWith('seed-'))));
       }
-      return respond({ data: { results, totalCount, isAiRecommended: results.length === 0 } });
+      // isAiRecommended is now honest: true when interest/AI ranking applied
+      // or when we served the popular fallback for a zero-match query.
+      const isAiRecommended = personalized || totalCount === 0;
+      return respond({ data: { results: filtered, totalCount, isAiRecommended, personalized } });
+    }
+
+    // Personalized feed across posts+thoughts+moments, ranked by interests +
+    // popularity + recency. New endpoint; existing clients are unaffected.
+    if (path === '/api/feed' && method === 'GET') {
+      const limit = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') || '30') || 30));
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0') || 0);
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
+      let interests: Record<string, number> = {};
+      try {
+        const stored = userId ? await getInterests(env, userId) : {};
+        interests = mergeInterests(stored, parseInterestsParam(url.searchParams.get('interests')));
+      } catch { interests = {}; }
+      // Bounded fan-out: newest 60 posts + 30 thoughts + 30 moments.
+      const [posts, thoughts, moments] = await Promise.all([
+        getPosts(env, 60).catch(() => []),
+        getThoughts(env, 30, 0).catch(() => []),
+        getMoments(env, 30).catch(() => []),
+      ]);
+      const norm = [
+        ...posts.map((p: any) => ({ kind: 'post', ...p, createdAt: p.createdAt || p.time })),
+        ...thoughts.map((t: any) => ({ kind: 'thought', id: t.id, content: t.content, user: t.user_id, createdAt: t.created_at || t.updated_at, likes: t.likes_count, comments: t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
+        ...moments.map((m: any) => ({ kind: 'moment', ...m })),
+      ];
+      const { items, personalized } = rankFeedItems(norm, interests, limit + offset);
+      return respond({ data: { items: items.slice(offset, offset + limit), totalCount: norm.length, personalized } });
+    }
+
+    // Engagement ingestion: persists interest signals + popularity. The
+    // current frontend doesn't call this yet, but like/unlike/vote hooks
+    // below also record signals server-side, so interests build up with
+    // zero frontend changes.
+    if (path === '/api/engagement' && method === 'POST') {
+      let raw: any = {};
+      try { raw = await request.json(); } catch { return respondError('Invalid JSON body', 400); }
+      const body = sanitizeBody(raw);
+      const userId = String(body.userId || body.user_id || request.headers.get('X-User-Id') || '').slice(0, 200);
+      if (!userId) return respondError('userId required', 400);
+      const action = String(body.action || 'view').slice(0, 20);
+      const rl = await rateLimit(env, 'engagement', userId, 60);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      const interests = await recordEngagement(env, userId, {
+        category: String(body.category || ''),
+        tags: Array.isArray(body.tags) ? body.tags.slice(0, 10) : [],
+        creator: String(body.creator || ''),
+        action,
+      });
+      if (body.itemId) void bumpPopularity(env, String(body.itemId).slice(0, 64), action === 'view' ? 1 : 3);
+      // Best-effort brain learning (never blocks).
+      try {
+        const bb = (await import('./kv')).brainBase(env);
+        void fetch(`${bb}/v1/learn`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: String(body.itemId || body.category || action), response: `user ${action}`, route_type: 'general_chat', session_id: userId, source: 'equyvo-feed' }),
+        }).catch(() => {});
+      } catch {}
+      return respond({ data: { ok: true, interests: Object.keys(interests).length } });
+    }
+
+    // AI search suggestions (backend proxy to the Contabo brain with instant
+    // local fallback). Frontend keeps working even when the brain is down.
+    if (path === '/api/suggest/search' && method === 'GET') {
+      const q = String(url.searchParams.get('q') || '').slice(0, 100);
+      if (!q) return respond({ data: { suggestions: [] } });
+      const ai = await brainSearchSuggest(env, q).catch(() => [] as string[]);
+      if (ai.length) return respond({ data: { suggestions: ai.map((label) => ({ label, type: 'ai-generated' })), source: 'brain' } });
+      // Instant local fallback: tags/categories from the index.
+      try {
+        const idx = await ensureContentIndex(env);
+        const ql = q.toLowerCase();
+        const seen = new Set<string>();
+        const out: string[] = [];
+        for (const it of idx) {
+          for (const cand of [it.category, ...(it.tags || []), it.title]) {
+            const c = String(cand || '').trim();
+            if (c && c.toLowerCase().includes(ql) && !seen.has(c.toLowerCase()) && out.length < 8) {
+              seen.add(c.toLowerCase());
+              out.push(c);
+            }
+          }
+          if (out.length >= 8) break;
+        }
+        return respond({ data: { suggestions: out.map((label) => ({ label, type: 'local' })), source: 'local' } });
+      } catch {
+        return respond({ data: { suggestions: [], source: 'none' } });
+      }
+    }
+
+    // AI trending/feed suggestions for Discover (backend proxy + fallback).
+    if ((path === '/api/suggest/feed' || path === '/api/trending') && method === 'GET') {
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || 'default').slice(0, 200);
+      let interests: Record<string, number> = {};
+      try { interests = userId ? await getInterests(env, userId) : {}; } catch {}
+      const top = Object.entries(interests).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
+      const ai = await brainFeedSuggest(env, userId, top).catch(() => [] as string[]);
+      if (ai.length) return respond({ data: { suggestions: ai, source: 'brain', personalized: top.length > 0 } });
+      const fb = top.length ? top : ['Trending topics', "What's new", 'Explore categories', 'Popular creators', 'Fresh uploads', 'Community picks'];
+      return respond({ data: { suggestions: fb.slice(0, 8), source: 'local', personalized: top.length > 0 } });
     }
 
     if (path === '/api/content-index' && method === 'POST') {
@@ -449,7 +654,23 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
     }
 
     if (path === '/api/health') {
-      return respond({ status: 'ok', version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() });
+      // Honest health: KV must answer. Brain is best-effort (feed/search work
+      // offline from KV), so a down brain = degraded, not a 503 outage.
+      let kv: string = 'down';
+      try {
+        await env.EQUYVO_KV.get(KEYS.NEXT_ID);
+        kv = 'up';
+      } catch { kv = 'down'; }
+      if (kv === 'down') {
+        return respond({ status: 'down', kv, version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() }, 503);
+      }
+      return respond({ status: 'ok', kv, version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() });
+    }
+
+    // Keep-alive: warms KV + touches the brain so the tunnel/model never idles.
+    if (path === '/api/warmup' && method === 'GET') {
+      try { await env.EQUYVO_KV.get(KEYS.NEXT_ID); } catch {}
+      return respond({ status: 'ok', timestamp: new Date().toISOString() });
     }
 
     return respondError('Not found: ' + path, 404);
@@ -459,7 +680,21 @@ async function handleRequest(request: Request, env: Env): Promise<Response> {
 }
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
-    return handleRequest(request, env);
+  async fetch(request: Request, env: Env, ctx: { waitUntil(p: Promise<any>): void }): Promise<Response> {
+    return handleRequest(request, env, ctx);
+  },
+  async scheduled(_event: unknown, env: Env, ctx: { waitUntil(p: Promise<any>): void }) {
+    // Cron every 5 min keeps KV warm; Workers themselves never sleep, but
+    // this also keeps the Contabo brain tunnel warm via a best-effort ping.
+    ctx.waitUntil((async () => {
+      try { await env.EQUYVO_KV.get(KEYS.NEXT_ID); } catch {}
+      try {
+        const base = String((env as any).BRAIN_URL || 'https://brain.acronous.com').replace(/\/$/, '');
+        const ctrl = new AbortController();
+        const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, 5000);
+        try { await fetch(`${base}/v1/brain/info`, { signal: ctrl.signal }); } catch {}
+        finally { clearTimeout(t); }
+      } catch {}
+    })());
   },
 };

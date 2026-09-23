@@ -13,4 +13,7 @@ export interface Env {
   REQUIRE_VERIFIED_WRITES?: string;
   ALLOWED_ORIGINS?: string;
   APP_VERSION?: string;
+  // Contabo shared brain for AI search/feed suggestions (best-effort proxy).
+  BRAIN_URL?: string;
+  BRAIN_BASE_URL?: string;
 }

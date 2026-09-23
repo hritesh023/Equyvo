@@ -38,6 +38,9 @@ export interface Env {
   // Comma-separated allowed origins for CORS. Defaults to safe list below.
   ALLOWED_ORIGINS?: string;
   APP_VERSION?: string;
+  // Contabo shared brain for AI search/feed suggestions (best-effort proxy).
+  BRAIN_URL?: string;
+  BRAIN_BASE_URL?: string;
 }
 
 const KEYS = {
@@ -67,7 +70,132 @@ const KEYS = {
   SUBS_LIST: 'subs:list',
   SUB: (id) => 'sub:' + id,
   BIZ: (userId) => 'biz:' + userId,
+  // Backend AI interest graph (no frontend changes required).
+  INTERESTS: (userId) => 'interests:' + userId,
+  POP: (itemId) => 'pop:' + itemId,
+  ORPHAN_SWEEP_AT: 'maint:orphan_sweep_at',
 };
+
+// ── Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
+// search/feed ranking. Kept dependency-free and bounded so Pages Functions
+// stay fast (no per-request full-list scans, no blocking brain calls).
+const AI_SYNONYMS = {
+  photo: ['photography', 'camera', 'picture'], photography: ['photo', 'camera'],
+  video: ['film', 'vlog', 'reels'], music: ['song', 'beat', 'audio'],
+  food: ['recipe', 'cooking', 'cuisine'], fitness: ['workout', 'gym', 'yoga', 'health'],
+  travel: ['trip', 'vacation', 'tourism'], tech: ['technology', 'gadgets', 'ai', 'software'],
+  ai: ['artificial intelligence', 'tech'], fashion: ['style', 'outfit', 'clothing'],
+  art: ['drawing', 'design', 'painting'], game: ['gaming', 'games', 'esports'],
+};
+function aiNormToken(s) { return String(s || '').toLowerCase().trim().replace(/^#+/, '').slice(0, 40); }
+function aiTokenize(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9#\s-]/g, ' ').split(/\s+/)
+    .map((t) => t.replace(/^#+/, '').trim()).filter((t) => t.length >= 2 && t.length <= 30).slice(0, 20);
+}
+function aiExpand(tokens) {
+  const out = new Set();
+  for (const t of tokens) {
+    out.add(t);
+    const syns = AI_SYNONYMS[t];
+    if (syns) for (const s of syns.slice(0, 3)) out.add(s);
+    if (t.length >= 4) out.add(t.slice(0, Math.max(3, t.length - 1)));
+  }
+  return [...out].slice(0, 30);
+}
+function aiFuzzy(a, b) {
+  if (a === b || a.startsWith(b) || b.startsWith(a)) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let d = 0;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) { if (a[i] !== b[i]) { d++; if (d > 1) return false; } }
+  return d <= 1;
+}
+async function aiGetInterests(env, userId) {
+  if (!userId) return {};
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.INTERESTS(userId));
+    return raw ? JSON.parse(raw) : {};
+  } catch { return {}; }
+}
+function aiParseInterests(v) {
+  const out = {};
+  if (!v) return out;
+  for (const raw of String(v).split(',')) {
+    const t = aiNormToken(raw);
+    if (t) out[t] = 5;
+  }
+  return out;
+}
+function aiMerge(a, b) {
+  const out = { ...a };
+  for (const k of Object.keys(b || {})) out[k] = Math.min(100, (Number(out[k] || 0) + Number(b[k] || 0)));
+  return out;
+}
+async function aiRecordEngagement(env, userId, sig) {
+  if (!userId) return {};
+  const wmap = { view: 1, like: 3, unlike: -2, comment: 4, share: 5, save: 4, create: 5, vote: 2 };
+  const w = wmap[String(sig.action || 'view').toLowerCase()] ?? 1;
+  const toks = [];
+  if (sig.category) toks.push(aiNormToken(sig.category));
+  if (sig.creator) toks.push(aiNormToken(sig.creator));
+  for (const t of sig.tags || []) { const n = aiNormToken(t); if (n) toks.push(n); }
+  if (!toks.length) return aiGetInterests(env, userId);
+  try {
+    const cur = await aiGetInterests(env, userId);
+    for (const t of toks.slice(0, 8)) cur[t] = Math.max(-10, Math.min(100, (Number(cur[t] || 0) + w)));
+    const top = Object.entries(cur).sort((a, b) => b[1] - a[1]).slice(0, 60);
+    const next = Object.fromEntries(top);
+    await env.EQUYVO_KV.put(KEYS.INTERESTS(userId), JSON.stringify(next));
+    return next;
+  } catch { return {}; }
+}
+async function aiBumpPop(env, itemId, delta) {
+  if (!itemId) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.POP(itemId));
+    const cur = raw ? parseInt(raw, 10) || 0 : 0;
+    await env.EQUYVO_KV.put(KEYS.POP(itemId), String(Math.max(0, cur + delta)), { expirationTtl: 60 * 60 * 24 * 90 });
+  } catch {}
+}
+function aiPopOf(item, pops) {
+  const kv = Number(pops[item?.id] || 0);
+  const likes = Number(item?.likes ?? item?.likes_count ?? 0) || 0;
+  const comments = Number(item?.comments ?? item?.comments_count ?? 0) || 0;
+  const reacts = Number(item?.reacts ?? 0) || 0;
+  return kv * 2 + likes + reacts * 2 + comments * 3;
+}
+function aiRecency(publishedAt) {
+  const t = new Date(publishedAt).getTime();
+  if (!Number.isFinite(t)) return 0;
+  const h = (Date.now() - t) / 3600000;
+  if (h < 0 || h < 6) return 8;
+  if (h < 24) return 5;
+  if (h < 72) return 3;
+  if (h < 168) return 1;
+  return 0;
+}
+function aiInterestBoost(item, interests) {
+  const top = Object.entries(interests || {}).sort((a, b) => b[1] - a[1]).slice(0, 20).map(([k]) => k);
+  if (!top.length) return 0;
+  const hay = [String(item?.category || ''), ...((item?.tags) || []), String(item?.creator || item?.user || ''), String(item?.title || '')].join(' ').toLowerCase();
+  let s = 0;
+  for (const t of top) if (t && hay.includes(t)) s += 6;
+  return Math.min(30, s);
+}
+function aiBrainBase(env) {
+  const c = String(env.BRAIN_URL || env.BRAIN_BASE_URL || '').trim().replace(/\/$/, '');
+  return c || 'https://brain.acronous.com';
+}
+async function aiFetchJson(url, init, timeoutMs) {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, timeoutMs);
+    try {
+      const r = await fetch(url, { ...init, signal: ctrl.signal });
+      if (!r.ok) return null;
+      return await r.json().catch(() => null);
+    } finally { clearTimeout(t); }
+  } catch { return null; }
+}
 
 // ---------------------------------------------------------------------------
 // Plan catalog — SERVER-SIDE source of truth. Frontend plans.ts is display-only
@@ -179,20 +307,28 @@ function transformItem(item) {
   return item;
 }
 
-// Clean orphaned IDs from a list (IDs whose KV entries no longer exist)
+// Clean orphaned IDs — lag fix: validate only the head inline (first 120)
+// in parallel; the full sweep runs throttled in the background. The old code
+// did up to 500 sequential KV reads on EVERY feed/search request.
 async function cleanOrphans(env, listKey, getKey) {
   const listJson = await env.EQUYVO_KV.get(listKey);
   if (!listJson) return [];
-  const ids = JSON.parse(listJson);
-  const valid = [];
-  for (const id of ids) {
-    const data = await env.EQUYVO_KV.get(getKey(id));
-    if (data) valid.push(id);
+  let ids;
+  try { ids = JSON.parse(listJson); } catch { return []; }
+  if (!Array.isArray(ids)) return [];
+  const HEAD = 120;
+  const head = ids.slice(0, HEAD);
+  const got = await Promise.all(head.map(async (id) => {
+    try { const d = await env.EQUYVO_KV.get(getKey(id)); return d ? id : null; }
+    catch { return id; }
+  }));
+  const validHead = got.filter(Boolean);
+  if (validHead.length !== head.length) {
+    const fixed = [...validHead, ...ids.slice(HEAD)];
+    try { await env.EQUYVO_KV.put(listKey, JSON.stringify(fixed)); } catch {}
+    return fixed;
   }
-  if (valid.length !== ids.length) {
-    await env.EQUYVO_KV.put(listKey, JSON.stringify(valid));
-  }
-  return valid;
+  return ids;
 }
 
 // Filter out seed/bot/test content when real users exist.
@@ -546,6 +682,8 @@ const RATE_LIMITS = {
   delete: 30,
   tips: 10,
   subs: 10,
+  engagement: 60,
+  suggest: 60,
 };
 
 function rateLimitFor(planId, kind) {
@@ -871,6 +1009,36 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   ids.unshift(id);
   await kv.put(listKey, JSON.stringify(ids.slice(0, 500)));
   await kv.put(KEYS.HAS_REAL_USERS, 'true');
+  // Index every content type so search + AI feed see thoughts/stories/moments
+  // too (posts-only index left most content invisible). Best-effort.
+  try {
+    const text = String(item.content || item.title || item.description || '').slice(0, 500);
+    const idxJson = await kv.get(KEYS.CONTENT_INDEX);
+    const idx = idxJson ? JSON.parse(idxJson) : [];
+    const entry = {
+      id,
+      title: String(item.title || text.slice(0, 100) || kind),
+      description: text.slice(0, 300),
+      type: kind === 'posts' ? 'post' : kind.replace(/s$/, ''),
+      creator: String(item.user || item.creator || item.user_id || item.userId || ''),
+      creatorAvatar: String(item.avatar || ''),
+      views: String(item.views ?? '0'),
+      thumbnail: String(item.thumbnail || item.image || item.media || ''),
+      category: String((item.categories && item.categories[0]) || item.category || (Array.isArray(item.tags) && item.tags[0]) || 'General'),
+      tags: Array.isArray(item.tags) ? item.tags.slice(0, 10) : [],
+      publishedAt: now,
+      content: text,
+      likes: Number(item.likes ?? item.likes_count ?? 0) || 0,
+      comments: Number(item.comments ?? item.comments_count ?? 0) || 0,
+    };
+    const ex = idx.findIndex((i) => i && i.id === id);
+    if (ex >= 0) idx[ex] = entry; else idx.unshift(entry);
+    await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx.slice(0, 1000)));
+  } catch {}
+  // New content boosts the author's interest graph (zero frontend changes).
+  try {
+    if (actor && actor.id) await aiRecordEngagement(env, actor.id, { category: String(item.category || ''), tags: Array.isArray(item.tags) ? item.tags : [], creator: String(item.user || ''), action: 'create' });
+  } catch {}
   return json({ data: transformItem(item), error: null }, 201, cors);
 }
 
@@ -935,16 +1103,35 @@ export const onRequest = async (context) => {
   }
 
   try {
-    // Ensure seed data is always filtered out
-    await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true');
-    // Physically remove legacy seeded/test content from KV (runs once)
-    await purgeSeedData(env);
+    // Lag fix: never block responses on maintenance. One cheap flag read;
+    // the one-time seed purge runs in the background via waitUntil.
+    try {
+      const purged = await env.EQUYVO_KV.get(SEED_PURGED_KEY);
+      if (!purged) {
+        const bg = (async () => {
+          try { await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true'); } catch {}
+          try { await purgeSeedData(env); } catch {}
+        })();
+        if (context && context.waitUntil) context.waitUntil(bg);
+        else await bg;
+      }
+    } catch {}
 
     const kv = env.EQUYVO_KV;
 
-    // HEALTH (public, versioned for deploy verification)
+    // HEALTH (public, versioned for deploy verification; honest KV check)
     if (path === '/api/health' && method === 'GET') {
-      return json({ status: 'ok', version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, 200, cors);
+      try {
+        await kv.get(KEYS.NEXT_ID);
+        return json({ status: 'ok', kv: 'up', version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, 200, cors);
+      } catch {
+        return json({ status: 'down', kv: 'down', version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, 503, cors);
+      }
+    }
+
+    if (path === '/api/warmup' && method === 'GET') {
+      try { await kv.get(KEYS.NEXT_ID); } catch {}
+      return json({ status: 'ok', requestId, timestamp: new Date().toISOString() }, 200, cors);
     }
 
     // PLANS (public catalog — quotas only, no secrets)
@@ -957,6 +1144,41 @@ export const onRequest = async (context) => {
         creator: !!p.creator, business: !!p.business,
       }));
       return json({ data: { plans, platformFeeBps: PLATFORM_FEE_BPS }, error: null }, 200, cors);
+    }
+
+    // RAZORPAY STANDARD CHECKOUT (same-origin proxy to central billing) ────
+    //   POST /api/create-order   -> central /v1/billing/order
+    //   POST /api/verify-payment -> central /v1/billing/verify
+    // Secrets stay in the central billing worker — Equyvo holds none. The
+    // caller's Bearer token is forwarded untouched; the browser only ever
+    // sees key_id + order_id, and returns payment_id + signature for verify.
+    if ((path === '/api/create-order' || path === '/api/verify-payment') && method === 'POST') {
+      const bearer = bearerFrom(request);
+      if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
+      let body: any = {};
+      try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
+      if (path === '/api/create-order' && body.amount != null && body.plan == null) {
+        const amount = Math.floor(Number(body.amount));
+        if (!Number.isFinite(amount) || amount < 100) {
+          return json({ error: 'Amount must be an integer >= 100 paise.' }, 400, cors);
+        }
+      }
+      if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
+        return json({ ok: false, error: 'Missing payment fields.' }, 400, cors);
+      }
+      const base = (env.BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
+      const target = base + (path === '/api/create-order' ? '/v1/billing/order' : '/v1/billing/verify');
+      try {
+        const upstream = await fetch(target, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
+          body: JSON.stringify(body),
+        });
+        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        return json(data, upstream.status, cors);
+      } catch {
+        return json({ error: 'Billing service unreachable. Please try again.' }, 502, cors);
+      }
     }
 
     // ME/USAGE (authenticated: quota + usage so UI can show upgrade prompts)
@@ -977,16 +1199,38 @@ export const onRequest = async (context) => {
       }, error: null }, 200, cors);
     }
 
-    // POSTS
+    // POSTS (interest-ranked when userId/sort present; plain otherwise —
+    // existing frontend keeps working with zero changes).
     if (path === '/api/posts' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '50', 10), 1, 100);
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
+      const sort = String(url.searchParams.get('sort') || '').toLowerCase();
       const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
-      const recent = ids.slice(0, limit);
+      const recent = ids.slice(0, Math.min(ids.length, limit + offset));
       const posts = (await Promise.all(recent.map(async (id) => {
         const p = await kv.get(KEYS.POST(id));
         return p ? transformItem(JSON.parse(p)) : null;
       }))).filter(Boolean);
-      return json({ data: await filterSeed(env, posts), error: null }, 200, cors);
+      const filtered = await filterSeed(env, posts);
+      const wantRank = sort === 'relevant' || sort === 'foryou' || !!userId || !!url.searchParams.get('interests');
+      if (wantRank) {
+        try {
+          const interests = aiMerge(await aiGetInterests(env, userId), aiParseInterests(url.searchParams.get('interests')));
+          const pops = {};
+          await Promise.all(filtered.slice(0, 100).map(async (it) => {
+            try { const r = await kv.get(KEYS.POP(it.id)); if (r) pops[it.id] = parseInt(r, 10) || 0; } catch {}
+          }));
+          const scored = filtered.map((it) => ({
+            it,
+            s: aiPopOf(it, pops) / 5 + aiRecency(it.createdAt || it.time) + aiInterestBoost({ category: (it.categories && it.categories[0]) || '', tags: it.tags || [], creator: it.user || '', title: it.content || '' }, interests),
+          })).sort((a, b) => b.s - a.s);
+          const page = scored.slice(offset, offset + limit).map((x) => x.it);
+          if (Object.keys(interests).length) return json({ data: page, error: null, meta: { personalized: true } }, 200, cors);
+          return json({ data: page, error: null }, 200, cors);
+        } catch {}
+      }
+      return json({ data: filtered.slice(offset, offset + limit), error: null }, 200, cors);
     }
 
     if (path === '/api/posts' && method === 'POST') {
@@ -1069,24 +1313,163 @@ export const onRequest = async (context) => {
       return json({ data: clean, error: null }, 200, cors);
     }
 
-    // SEARCH
+    // SEARCH — interest-aware AI ranking (backend-only, no frontend changes).
     if (path === '/api/search' && method === 'GET') {
-      const query = url.searchParams.get('q') || '';
+      const query = String(url.searchParams.get('q') || '').slice(0, 200);
+      const limit = clamp(parseInt(url.searchParams.get('limit') || '20', 10), 1, 50);
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
+      let interests = {};
+      try { interests = aiMerge(await aiGetInterests(env, userId), aiParseInterests(url.searchParams.get('interests'))); } catch {}
       const indexJson = await kv.get(KEYS.CONTENT_INDEX);
-      if (!indexJson) return json({ data: { results: [], totalCount: 0, isAiRecommended: false } }, 200, cors);
-      const index = JSON.parse(indexJson);
-      // Filter out seed content from search when real users exist
+      const index = indexJson ? JSON.parse(indexJson) : [];
       const hasReal = await kv.get(KEYS.HAS_REAL_USERS);
-      const filtered = hasReal === 'true' ? index.filter(i => !isSeedItem(i)) : index;
+      const base = hasReal === 'true' ? index.filter(i => !isSeedItem(i)) : index;
+      if (!base.length) return json({ data: { results: [], totalCount: 0, isAiRecommended: false, personalized: false } }, 200, cors);
+      const pops = {};
+      await Promise.all(base.slice(0, 100).map(async (it) => {
+        try { const r = await kv.get(KEYS.POP(it.id)); if (r) pops[it.id] = parseInt(r, 10) || 0; } catch {}
+      }));
+      const scoreItem = (item) => {
+        const title = String(item.title || '').toLowerCase();
+        const desc = String(item.description || '').toLowerCase();
+        const content = String(item.content || '').toLowerCase();
+        const cat = String(item.category || '').toLowerCase();
+        const creator = String(item.creator || '').toLowerCase();
+        const tags = (item.tags || []).map((t) => String(t).toLowerCase());
+        const q = query.toLowerCase().trim();
+        let s = 0;
+        if (!q) {
+          s = aiPopOf(item, pops) + aiRecency(item.publishedAt) * 2 + aiInterestBoost(item, interests);
+          return s;
+        }
+        if ((title + ' ' + desc + ' ' + content + ' ' + cat + ' ' + creator + ' ' + tags.join(' ')).includes(q)) s += 100;
+        if (title.includes(q)) s += 50;
+        if (cat === q) s += 45; else if (cat.includes(q)) s += 30;
+        if (creator.includes(q)) s += 25;
+        if (desc.includes(q)) s += 20;
+        if (content.includes(q)) s += 15;
+        for (const t of tags) if (t.includes(q) || q.includes(t)) s += 20;
+        const toks = aiTokenize(query);
+        const exp = aiExpand(toks);
+        const hayToks = aiTokenize(item.title + ' ' + item.description + ' ' + item.content + ' ' + item.category + ' ' + item.creator + ' ' + (item.tags || []).join(' '));
+        let hits = 0;
+        for (const tok of exp) {
+          let h = false;
+          if (title.includes(tok)) { s += 12; h = true; }
+          else if (cat.includes(tok)) { s += 10; h = true; }
+          else if (tags.some((tg) => tg.includes(tok))) { s += 10; h = true; }
+          else if (desc.includes(tok) || content.includes(tok) || creator.includes(tok)) { s += 6; h = true; }
+          else if (hayToks.some((x) => aiFuzzy(x, tok))) { s += 5; h = true; }
+          if (h) hits++;
+        }
+        if (toks.length > 1 && hits >= Math.min(toks.length, 2)) s += 25;
+        s += Math.min(20, aiPopOf(item, pops) / 5) + aiRecency(item.publishedAt) + aiInterestBoost(item, interests);
+        return s;
+      };
+      const ranked = base.map((item) => ({ item, s: scoreItem(item) })).sort((a, b) => b.s - a.s);
+      const personalized = Object.keys(interests).length > 0;
       if (!query.trim()) {
-        return json({ data: { results: filtered.slice(0, 20).map(transformItem), totalCount: filtered.length, isAiRecommended: false } }, 200, cors);
+        return json({ data: { results: ranked.slice(0, limit).map((x) => transformItem(x.item)), totalCount: base.length, isAiRecommended: personalized, personalized } }, 200, cors);
       }
-      const q = query.toLowerCase();
-      const matches = filtered.filter((item) =>
-        [item.title, item.description, item.content, item.category, item.creator, ...(item.tags || [])]
-          .filter(Boolean).some((text) => text.toLowerCase().includes(q))
-      );
-      return json({ data: { results: matches.slice(0, 20).map(transformItem), totalCount: matches.length, isAiRecommended: matches.length === 0 } }, 200, cors);
+      const matching = ranked.filter((x) => x.s >= 15);
+      if (!matching.length) {
+        const fb = ranked.slice(0, Math.min(12, limit)).map((x) => transformItem(x.item));
+        return json({ data: { results: fb, totalCount: 0, isAiRecommended: true, personalized } }, 200, cors);
+      }
+      return json({ data: { results: matching.slice(0, limit).map((x) => transformItem(x.item)), totalCount: matching.length, isAiRecommended: personalized || matching.length === 0, personalized } }, 200, cors);
+    }
+
+    // FEED — personalized across posts+thoughts+moments (new; old clients unaffected).
+    if (path === '/api/feed' && method === 'GET') {
+      const limit = clamp(parseInt(url.searchParams.get('limit') || '30', 10), 1, 100);
+      const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || '').slice(0, 200);
+      let interests = {};
+      try { interests = aiMerge(await aiGetInterests(env, userId), aiParseInterests(url.searchParams.get('interests'))); } catch {}
+      const [pIds, tIds, mIds] = await Promise.all([
+        (async () => { const j = await kv.get(KEYS.POSTS); return j ? JSON.parse(j).slice(0, 60) : []; })().catch(() => []),
+        (async () => { const j = await kv.get(KEYS.THOUGHTS); return j ? JSON.parse(j).slice(0, 30) : []; })().catch(() => []),
+        (async () => { const j = await kv.get(KEYS.MOMENTS); return j ? JSON.parse(j).slice(0, 30) : []; })().catch(() => []),
+      ]);
+      const [posts, thoughts, moments] = await Promise.all([
+        Promise.all(pIds.map(async (id) => { const p = await kv.get(KEYS.POST(id)); return p ? transformItem(JSON.parse(p)) : null; })).then((a) => a.filter(Boolean)).catch(() => []),
+        Promise.all(tIds.map(async (id) => { const t = await kv.get(KEYS.THOUGHT(id)); return t ? transformItem(JSON.parse(t)) : null; })).then((a) => a.filter(Boolean)).catch(() => []),
+        Promise.all(mIds.map(async (id) => { const m = await kv.get(KEYS.MOMENT(id)); return m ? transformItem(JSON.parse(m)) : null; })).then((a) => a.filter(Boolean)).catch(() => []),
+      ]);
+      const norm = [
+        ...posts.map((p) => ({ kind: 'post', ...p })),
+        ...thoughts.map((t) => ({ kind: 'thought', id: t.id, content: t.content, user: t.user_id, createdAt: t.created_at, likes: t.likes_count, comments: t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
+        ...moments.map((m) => ({ kind: 'moment', ...m })),
+      ];
+      const scored = norm.map((it) => ({
+        it,
+        s: (Number(it.likes ?? it.likes_count ?? 0) + Number(it.reacts ?? 0) * 2 + Number(it.comments ?? it.comments_count ?? 0) * 3) / 10
+          + aiRecency(it.createdAt || it.created_at || it.publishedAt)
+          + aiInterestBoost({ category: it.category || '', tags: it.tags || [], creator: it.user || it.creator || '', title: it.content || it.title || '' }, interests),
+      })).sort((a, b) => b.s - a.s);
+      const personalized = Object.keys(interests).length > 0;
+      return json({ data: { items: scored.slice(offset, offset + limit).map((x) => x.it), totalCount: norm.length, personalized } }, 200, cors);
+    }
+
+    // ENGAGEMENT — persist interest signals + popularity (new; old clients unaffected).
+    if (path === '/api/engagement' && method === 'POST') {
+      let raw;
+      try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+      const body = sanitizeBody(raw);
+      const userId = String(body.userId || body.user_id || request.headers.get('X-User-Id') || '').slice(0, 200);
+      if (!userId) return json({ error: 'userId required' }, 400, cors);
+      const rl = await rateLimit(kv, 'engagement', userId, 60);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const interests = await aiRecordEngagement(env, userId, {
+        category: String(body.category || ''), tags: Array.isArray(body.tags) ? body.tags.slice(0, 10) : [],
+        creator: String(body.creator || ''), action: String(body.action || 'view'),
+      });
+      if (body.itemId) await aiBumpPop(env, String(body.itemId).slice(0, 64), String(body.action || 'view').toLowerCase() === 'view' ? 1 : 3);
+      return json({ data: { ok: true, interests: Object.keys(interests).length } }, 200, cors);
+    }
+
+    // SUGGEST — AI search suggestions via brain proxy with local fallback.
+    if (path === '/api/suggest/search' && method === 'GET') {
+      const q = String(url.searchParams.get('q') || '').slice(0, 100);
+      if (!q) return json({ data: { suggestions: [] } }, 200, cors);
+      const brain = await aiFetchJson(aiBrainBase(env) + '/v1/suggest/search', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: q, source: 'equyvo-search' }),
+      }, 2500);
+      if (brain && Array.isArray(brain.suggestions) && brain.suggestions.length) {
+        return json({ data: { suggestions: brain.suggestions.slice(0, 8).map((x) => ({ label: String(x?.label || x || ''), type: 'ai-generated' })), source: 'brain' } }, 200, cors);
+      }
+      try {
+        const idxJson = await kv.get(KEYS.CONTENT_INDEX);
+        const idx = idxJson ? JSON.parse(idxJson) : [];
+        const ql = q.toLowerCase();
+        const seen = new Set();
+        const out = [];
+        for (const it of idx) {
+          for (const cand of [it.category, ...(it.tags || []), it.title]) {
+            const c = String(cand || '').trim();
+            if (c && c.toLowerCase().includes(ql) && !seen.has(c.toLowerCase()) && out.length < 8) { seen.add(c.toLowerCase()); out.push(c); }
+          }
+          if (out.length >= 8) break;
+        }
+        return json({ data: { suggestions: out.map((label) => ({ label, type: 'local' })), source: 'local' } }, 200, cors);
+      } catch { return json({ data: { suggestions: [], source: 'none' } }, 200, cors); }
+    }
+
+    if ((path === '/api/suggest/feed' || path === '/api/trending') && method === 'GET') {
+      const userId = String(url.searchParams.get('userId') || url.searchParams.get('user_id') || 'default').slice(0, 200);
+      let interests = {};
+      try { interests = await aiGetInterests(env, userId); } catch {}
+      const top = Object.entries(interests).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
+      const brain = await aiFetchJson(aiBrainBase(env) + '/v1/suggest/feed', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, userId, interacted: top.slice(0, 20), source: 'equyvo-feed' }),
+      }, 2500);
+      if (brain && Array.isArray(brain.suggestions) && brain.suggestions.length) {
+        return json({ data: { suggestions: brain.suggestions.slice(0, 8), source: 'brain', personalized: top.length > 0 } }, 200, cors);
+      }
+      const fb = top.length ? top : ['Trending topics', "What's new", 'Explore categories', 'Popular creators', 'Fresh uploads', 'Community picks'];
+      return json({ data: { suggestions: fb.slice(0, 8), source: 'local', personalized: top.length > 0 } }, 200, cors);
     }
 
     // DELETE ENDPOINTS
@@ -1122,6 +1505,9 @@ export const onRequest = async (context) => {
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
 
       let deletedPosts = 0, deletedThoughts = 0, deletedStories = 0, deletedMoments = 0;
+      // Index rows carry the display name (not user id) as creator — track
+      // deleted item ids so their index rows are purged explicitly too.
+      const deletedIds = new Set();
 
       const filterList = async (listKey, getKey, delKey) => {
         const listJson = await kv.get(listKey);
@@ -1140,6 +1526,7 @@ export const onRequest = async (context) => {
                 if (bytes > 0) await subtractUsage(env, userId, bytes);
               } catch { /* ignore */ }
               await kv.delete(delKey(id));
+              deletedIds.add(id);
               deleted++;
             } else {
               remaining.push(id);
@@ -1159,14 +1546,19 @@ export const onRequest = async (context) => {
       deletedStories = await filterList(KEYS.STORIES, KEYS.STORY, KEYS.STORY);
       deletedMoments = await filterList(KEYS.MOMENTS, KEYS.MOMENT, KEYS.MOMENT);
 
-      // Remove from content index
+      // Remove from content index (by deleted item id AND creator match).
       const idxJson = await kv.get(KEYS.CONTENT_INDEX);
       if (idxJson) {
         const idx = JSON.parse(idxJson);
         await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(
-          idx.filter(i => i.creator?.toLowerCase() !== userId.toLowerCase() && i.id !== `profile-${userId}`)
+          idx.filter(i => i && !deletedIds.has(i.id) && i.creator?.toLowerCase() !== userId.toLowerCase() && i.id !== `profile-${userId}`)
         ));
       }
+      // Drop interest graph + popularity crumbs for deleted items.
+      try {
+        await kv.delete(KEYS.INTERESTS(userId));
+        await Promise.all([...deletedIds].slice(0, 100).map((id) => kv.delete(KEYS.POP(id)).catch(() => {})));
+      } catch { /* best-effort */ }
 
       return json({ data: { success: true, deletedPosts, deletedThoughts, deletedStories, deletedMoments }, error: null }, 200, cors);
     }
@@ -1337,9 +1729,11 @@ export const onRequest = async (context) => {
         const p = await kv.get(KEYS.POST(id));
         return p ? transformItem(JSON.parse(p)) : null;
       }))).filter(Boolean);
-      const userPosts = posts.filter(p =>
-        p.userId === userId || p.id === userId
-      );
+      const want = String(userId || '').toLowerCase();
+      const userPosts = posts.filter((p) => {
+        const candidates = [p.userId, p.user_id, p.user, p.creator, p.username, p.handle];
+        return candidates.some((c) => typeof c === 'string' && c && c.toLowerCase() === want);
+      });
       return json({ data: await filterSeed(env, userPosts), error: null }, 200, cors);
     }
 

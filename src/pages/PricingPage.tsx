@@ -1,33 +1,76 @@
 import React, { useEffect, useState } from 'react';
-import { Crown, Check, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Crown, Check, Loader2, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EQUYVO_PLANS, formatINR } from '@/lib/plans';
-import { buyPlan, getBillingStatus } from '@/lib/billing';
+import { AuthRequiredError, buyPlan, getBillingStatus } from '@/lib/billing';
+import { getStoredUser } from '@/lib/auth';
 import { toast } from 'sonner';
 
+const PLAN_KEY = 'equyvo_active_plan';
+
 const PricingPage: React.FC = () => {
-  const [activePlan, setActivePlan] = useState<string | null>(null);
+  const navigate = useNavigate();
+  const [activePlan, setActivePlan] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(PLAN_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // True when checkout can't proceed without a fresh sign-in (expired or
+  // missing token). Shows a re-sign-in CTA instead of a dead-end toast.
+  const [needsAuth, setNeedsAuth] = useState(false);
 
   useEffect(() => {
     getBillingStatus()
       .then((s) => {
         const sub = s.subscriptions?.['equyvo'] ?? s.access;
-        if (sub) setActivePlan(sub.plan);
+        if (sub?.plan) {
+          setActivePlan(sub.plan);
+          try {
+            localStorage.setItem(PLAN_KEY, sub.plan);
+          } catch { /* ignore */ }
+        }
+        setNeedsAuth(false);
       })
-      .catch(() => {})
+      .catch(() => {
+        // Billing unreachable / signed out: fall back to cached plan so the
+        // page stays useful, and let checkout decide about re-auth.
+      })
       .finally(() => setLoading(false));
   }, []);
+
+  const goSignIn = () => {
+    navigate('/auth?next=' + encodeURIComponent('/pricing'));
+  };
 
   const buy = async (planId: string) => {
     setBusy(planId);
     try {
       toast.info('Opening secure Razorpay checkout…');
       const v = await buyPlan(planId);
-      setActivePlan(v.plan || planId);
+      const plan = v.plan || planId;
+      setActivePlan(plan);
+      // Persist instantly + notify the ad gate so sponsored slots vanish
+      // the moment Premium/Creator activates (no app restart needed).
+      try {
+        localStorage.setItem(PLAN_KEY, plan);
+      } catch { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan } }));
+      setNeedsAuth(false);
       toast.success('Payment verified. Your plan is active.');
     } catch (e: unknown) {
+      if (e instanceof AuthRequiredError) {
+        // Signed-in user with an expired session, or signed-out visitor:
+        // route to sign-in and bring them back to finish checkout.
+        setNeedsAuth(true);
+        const who = getStoredUser() ? 'Your session expired. Sign in again to continue.' : 'Sign in to continue with your subscription.';
+        toast.info(who);
+        return;
+      }
       const msg = e instanceof Error ? e.message : 'Payment failed.';
       if (msg !== 'payment_cancelled') toast.error(msg);
     } finally {
@@ -46,6 +89,22 @@ const PricingPage: React.FC = () => {
           Most people stay on Free forever. Upgrade for premium experience — or to earn as a creator.
         </p>
       </div>
+
+      {needsAuth && !loading && (
+        <div className="mb-6 mx-auto max-w-xl rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 flex flex-col sm:flex-row items-center gap-3 text-center sm:text-left">
+          <div className="flex-1">
+            <p className="font-semibold text-sm">Sign in to continue</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              {getStoredUser()
+                ? 'Your session expired, so checkout was paused. Sign in again — you’ll land right back here.'
+                : 'Checkout needs an account. Sign in (or create one) and you’ll return here to finish.'}
+            </p>
+          </div>
+          <Button size="sm" onClick={goSignIn} className="shrink-0">
+            <LogIn className="h-4 w-4 mr-1.5" /> Sign in
+          </Button>
+        </div>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>

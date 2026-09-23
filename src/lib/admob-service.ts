@@ -51,26 +51,41 @@ type AdMobPlugin = {
   hideNativeAd?: () => Promise<void>;
 };
 
-let pluginCache: AdMobPlugin | null | undefined;
+let pluginPromise: Promise<{ plugin: AdMobPlugin | null }> | null = null;
 let initPromise: Promise<void> | null = null;
 let lastImpressionAt = 0;
 
-async function getPlugin(): Promise<AdMobPlugin | null> {
-  if (pluginCache !== undefined) return pluginCache;
-  try {
-    // Optional dependency — only present in native builds. Dynamic import so
-    // the web bundle never hard-requires it.
-    const mod = await import('@capacitor-community/admob').catch(() => null);
-    const candidate =
-      (mod as { AdMob?: AdMobPlugin } | null)?.AdMob ??
-      (mod as unknown as AdMobPlugin | null);
-    pluginCache =
-      candidate && typeof candidate === 'object' ? candidate : null;
-  } catch {
-    pluginCache = null;
+/**
+ * Load the AdMob bridge WITHOUT ever letting Capacitor's plugin proxy cross
+ * a promise boundary. The proxy answers ANY property read (including
+ * `.then`) with a method wrapper, so `await proxy` / `return proxy` from an
+ * async function makes the runtime *call* `proxy.then()` → CapacitorException
+ * `"AdMob.then()" is not implemented` — on web AND on native. The proxy is
+ * therefore always carried inside a plain `{ plugin }` holder (awaiting the
+ * holder is safe) and only ever touched synchronously afterwards: property
+ * reads and method *calls* are fine; awaiting the proxy itself is not.
+ */
+function loadPlugin(): Promise<{ plugin: AdMobPlugin | null }> {
+  // Web has no AdMob bridge: don't even import the module (skips the stub,
+  // its chunk, and any chance of touching the proxy on web).
+  if (!isNativePlatform()) return Promise.resolve({ plugin: null });
+  if (!pluginPromise) {
+    pluginPromise = import('@capacitor-community/admob').then(
+      (mod) => {
+        const candidate =
+          (mod as { AdMob?: AdMobPlugin } | null)?.AdMob ?? null;
+        return {
+          plugin:
+            candidate && typeof candidate === 'object' ? candidate : null,
+        };
+      },
+      () => ({ plugin: null }),
+    );
   }
-  return pluginCache;
+  return pluginPromise;
 }
+
+
 
 export function isNativePlatform(): boolean {
   try {
@@ -85,7 +100,9 @@ export function initializeAds(): Promise<void> {
   if (initPromise) return initPromise;
   initPromise = (async () => {
     try {
-      const plugin = await getPlugin();
+      // Destructure synchronously: `plugin` itself is never awaited or
+      // returned (see loadPlugin) — only real method-call promises are.
+      const { plugin } = await loadPlugin();
       if (!plugin?.initialize) return;
       const testDevices = admobTestDevices();
       const options: AdMobInitializationOptions = {
@@ -160,7 +177,7 @@ export async function loadNativeAd(
 ): Promise<NativeAdData | null> {
   try {
     if (!isNativePlatform()) return null;
-    const plugin = await getPlugin();
+    const { plugin } = await loadPlugin();
     if (!plugin?.loadNativeAd) return null;
     await initializeAds();
     const raw = await plugin
@@ -238,7 +255,7 @@ export async function showFeedBanner(): Promise<boolean> {
     const adId = effectiveBannerAdUnitId();
     if (!adId) return false;
     if (!isDevEnvironment() && !isBannerConfigured()) return false;
-    const plugin = await getPlugin();
+    const { plugin } = await loadPlugin();
     if (!plugin?.showBanner) return false;
     await initializeAds();
     if (bannerState === 'shown' && bannerAdId === adId) {
@@ -302,7 +319,7 @@ export async function hideFeedBanner(): Promise<void> {
   if (bannerState !== 'shown') return;
   bannerState = 'hidden';
   try {
-    const plugin = await getPlugin();
+    const { plugin } = await loadPlugin();
     await plugin?.hideBanner?.();
   } catch {
     /* ignore */

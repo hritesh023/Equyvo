@@ -1,19 +1,28 @@
 // Centralized billing client for Equyvo.
 // All payments run through Razorpay orders created + verified server-side at
 // https://api.acronous.com. The app never handles card/UPI data or secrets.
-import { getToken } from './auth';
+import { getAuthToken, getToken } from './auth';
+
+/** Thrown when checkout needs a fresh sign-in (never a dead-end toast). */
+export class AuthRequiredError extends Error {
+  code = 'AUTH_REQUIRED';
+  constructor(message = 'Please sign in again to continue with your subscription.') {
+    super(message);
+    this.name = 'AuthRequiredError';
+  }
+}
 
 const API_BASE = 'https://api.acronous.com';
 
-function authHeaders(): Record<string, string> {
-  const t = getToken();
+async function authHeaders(): Promise<Record<string, string>> {
+  const t = (await getAuthToken()) || getToken();
   const h: Record<string, string> = { 'Content-Type': 'application/json' };
   if (t) h['Authorization'] = 'Bearer ' + t;
   return h;
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(API_BASE + path, { ...init, headers: authHeaders() });
+  const r = await fetch(API_BASE + path, { ...init, headers: await authHeaders() });
   const j = await r.json().catch(() => ({ error: 'bad_response' }));
   if (!r.ok) throw new Error((j as { error?: string }).error || `Request failed (${r.status})`);
   return j as T;
@@ -46,7 +55,10 @@ export function getBillingStatus(): Promise<BillingStatus> {
 
 /** Full checkout: create order -> Razorpay (UPI/cards/netbanking) -> verify. */
 export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string }> {
-  if (!getToken()) throw new Error('Please sign in first.');
+  // Silent-refresh the session first: a signed-in user whose token expired
+  // must sail into checkout, not hit "Please sign in first".
+  const token = (await getAuthToken()) || getToken();
+  if (!token) throw new AuthRequiredError();
   const order = await req<{ order_id: string; amount: number; currency: string; key_id: string }>(
     '/v1/billing/order', { method: 'POST', body: JSON.stringify({ plan }) });
   await loadRazorpay();

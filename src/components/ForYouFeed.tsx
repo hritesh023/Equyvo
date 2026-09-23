@@ -357,7 +357,8 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                         <img
                           src={img}
                           alt="Post content"
-                          className="w-full rounded-lg mb-4 object-cover max-h-80 cursor-pointer bg-secondary"
+                          loading="lazy"
+                          className="w-full rounded-lg mb-4 object-contain bg-black max-h-96 cursor-pointer"
                           onClick={() => handleContentClick(post)}
                         />
                       );

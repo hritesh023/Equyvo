@@ -72,9 +72,23 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingPost, setEditingPost] = useState<Post | null>(null);
 
-  // Filter posts to show only from following accounts
-  const followingPosts = posts.filter(post => 
-    followingAccounts.includes(post.user) || post.isFollowing
+  // Filter posts to followed creators only (case-insensitive).
+  // Any upload — photo, video, moment, thought — from a followed account
+  // lands here instantly because HomePage re-fetches on userPostCreated.
+  const followingSet = React.useMemo(
+    () => new Set((followingAccounts || []).map((f) => String(f).toLowerCase())),
+    [followingAccounts],
+  );
+  const followingPosts = React.useMemo(
+    () =>
+      posts.filter((post) => {
+        const name = String(post.user || (post as any).creator || '').toLowerCase();
+        if (name && followingSet.has(name)) return true;
+        const id = String((post as any).userId || (post as any).user_id || '').toLowerCase();
+        if (id && followingSet.has(id)) return true;
+        return Boolean(post.isFollowing);
+      }),
+    [posts, followingSet],
   );
 
   // ── UX-friendly native ads: in-feed slots only, never on video ──
@@ -199,9 +213,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
               <p className="text-sm text-gray-400">Suggestions to follow:</p>
               <div className="flex justify-center gap-2 flex-wrap">
                 {['Equyvo Official', 'Tech Enthusiast', 'Emma Thompson'].map(account => (
-                  <Button key={account} variant="outline" size="sm" className="text-xs">
-                    Follow {account}
-                  </Button>
+                  <FollowButton key={account} userName={account} size="sm" className="text-xs" />
                 ))}
               </div>
             </div>
@@ -294,7 +306,8 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                         <img
                           src={img}
                           alt="Post content"
-                          className="w-full rounded-lg mb-4 object-cover max-h-80 cursor-pointer bg-secondary"
+                          loading="lazy"
+                          className="w-full rounded-lg mb-4 object-contain bg-black max-h-96 cursor-pointer"
                           onClick={() => handleContentClick(post)}
                         />
                       );

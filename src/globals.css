@@ -108,16 +108,26 @@
     background-color: #0a0a0a !important;
   }
   
+  html {
+    /* Keep the overscroll/rubber-band area black so curved notches and
+       pull gestures never flash a white edge. */
+    overscroll-behavior-y: none;
+    background-color: #0a0a0a !important;
+  }
+
   body {
     @apply bg-background text-foreground antialiased;
     min-height: 100vh;
+    min-height: 100dvh;
     font-feature-settings: "rlig" 1, "calt" 1;
     background-color: #0a0a0a !important;
+    overscroll-behavior-y: none;
   }
-  
+
   #root {
     @apply bg-background text-foreground;
     min-height: 100vh;
+    min-height: 100dvh;
     background-color: #0a0a0a !important;
     color: hsl(var(--foreground)) !important;
   }
@@ -675,6 +685,14 @@
     padding-bottom: env(safe-area-inset-bottom, 1rem);
   }
 
+  /* Edge-to-edge fill for curved screens / landscape notches: adds the
+     left/right display-cutout insets without touching vertical rhythm.
+     Apply to the app shell so every page inherits it. */
+  .edge-fill {
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+  }
+
   /* Safe area inset for mobile navigation */
   .safe-area-inset-bottom {
     padding-bottom: env(safe-area-inset-bottom, 0);
@@ -691,23 +709,27 @@
 
   /* Enhanced mobile navigation with safe area and better touch targets */
   @media (max-width: 767px) {
-    /* Ensure proper mobile viewport handling */
+    /* Proper mobile viewport handling: dynamic viewport units track the
+       URL bar / gesture bar so the app fills curved screens exactly.
+       min-height (not fixed height) so content can grow and scroll. */
     html, body {
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
       overflow-x: hidden;
+      overflow-x: clip;
       position: relative;
-      top: 0;
-      left: 0;
       -webkit-text-size-adjust: 100%;
       -webkit-tap-highlight-color: transparent;
     }
 
     /* Root container for mobile */
     #root {
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      min-height: 100vh;
+      min-height: 100dvh;
       overflow-x: hidden;
+      overflow-x: clip;
       position: relative;
     }
 

@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { UserPlus, UserCheck } from 'lucide-react';
 import { showSuccess } from '@/utils/toast';
+import { isFollowing as isFollowingUser, setFollowing } from '@/lib/feed-store';
 
 interface FollowButtonProps {
   userId?: string;
@@ -20,23 +21,43 @@ const FollowButton: React.FC<FollowButtonProps> = ({
   variant = 'outline',
   className = '',
 }) => {
-  const [isFollowing, setIsFollowing] = useState(false);
+  const key = userName || userId || 'user';
+  const [isFollowing, setIsFollowingState] = useState(() => {
+    try { return isFollowingUser(key); } catch { return false; }
+  });
   const [isLoading, setIsLoading] = useState(false);
 
+  // Stay in sync when follow changes elsewhere (feed, profile, suggestions).
+  useEffect(() => {
+    const sync = () => {
+      try { setIsFollowingState(isFollowingUser(key)); } catch { /* ignore */ }
+    };
+    sync();
+    window.addEventListener('followChanged', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('followChanged', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, [key]);
+
   const handleFollow = async () => {
+    if (!key) return;
     setIsLoading(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setIsFollowing(!isFollowing);
-      setIsLoading(false);
-      
-      if (!isFollowing) {
-        showSuccess(`Now following ${userName}!`);
+    try {
+      const next = !isFollowing;
+      // Persisted + broadcast: Following tab updates instantly, cross-tab.
+      setFollowing(key, next);
+      if (userId && userId !== key) setFollowing(userId, next);
+      setIsFollowingState(next);
+      if (next) {
+        showSuccess(`Now following ${userName}! Their uploads will appear in Following.`);
       } else {
         showSuccess(`Unfollowed ${userName}`);
       }
-    }, 500);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

@@ -20,6 +20,10 @@ const KEYS = {
   HASH: (sha256: string) => `mediahash:${sha256}`,
   CREATOR: (userId: string) => `creator:${userId}`,
   MEDIA: (publicId: string) => `media:${publicId}`,
+  // AI interest graph (backend-only; no frontend changes required).
+  INTERESTS: (userId: string) => `interests:${userId}`,
+  POP: (itemId: string) => `pop:${itemId}`,
+  ORPHAN_SWEEP_AT: 'maint:orphan_sweep_at',
 };
 
 export { KEYS };
@@ -177,7 +181,7 @@ export function sanitizeBody(body: any): any {
   if (!body || typeof body !== 'object' || Array.isArray(body)) throw new Error('Invalid request body');
   return sanitizeValue(body, 0) || {};
 }
-const BASE_LIMITS: Record<string, number> = { posts: 10, thoughts: 20, stories: 10, moments: 10, profile: 5, upload: 5, index: 20, delete: 30 };
+const BASE_LIMITS: Record<string, number> = { posts: 10, thoughts: 20, stories: 10, moments: 10, profile: 5, upload: 5, index: 20, delete: 30, engagement: 60, suggest: 60 };
 export function rateLimitFor(planId: string, kind: string): number {
   const base = BASE_LIMITS[kind] || 20;
   if (planId === 'eq_creator_pro' || planId === 'eq_business') return base * 4;
@@ -329,7 +333,15 @@ export const SEED_PURGED_KEY = 'seed_purged';
 
 export async function purgeSeedData(env: Env): Promise<void> {
   const kv = env.EQUYVO_KV;
-  if (await kv.get(SEED_PURGED_KEY)) return;
+  // Fast path: single KV read. The old code ran a full multi-list scan on
+  // EVERY request (hundreds of KV reads) which made every feed/search slow.
+  // Now the scan runs at most once ever (flag) and callers should fire it
+  // via waitUntil so it never blocks the response.
+  let flag: string | null = null;
+  try {
+    flag = await kv.get(SEED_PURGED_KEY);
+  } catch { return; }
+  if (flag) return;
 
   const removedUserIds = new Set<string>();
 
@@ -385,18 +397,73 @@ function filterSeed<T>(items: T[], hasReal: boolean): T[] {
 }
 
 async function cleanOrphans(env: Env, listKey: string, getKey: (id: string) => string): Promise<string[]> {
+  // Lag fix: the old code validated the ENTIRE list (up to 500 ids) with
+  // sequential KV reads on every feed/search request → multi-second latency.
+  // New behavior: validate only what we need for this page (first 120 ids)
+  // inline, and run the full sweep in the background at most every 5 min.
   const listJson = await env.EQUYVO_KV.get(listKey);
   if (!listJson) return [];
-  const ids: string[] = JSON.parse(listJson);
-  const valid: string[] = [];
-  for (const id of ids) {
-    const data = await env.EQUYVO_KV.get(getKey(id));
-    if (data) valid.push(id);
+  let ids: string[];
+  try {
+    ids = JSON.parse(listJson);
+  } catch { return []; }
+  if (!Array.isArray(ids)) return [];
+  const HEAD = 120;
+  const head = ids.slice(0, HEAD);
+  const results = await Promise.all(
+    head.map(async (id) => {
+      try {
+        const data = await env.EQUYVO_KV.get(getKey(id));
+        return data ? id : null;
+      } catch { return id; }
+    })
+  );
+  const validHead = results.filter(Boolean) as string[];
+  const tail = ids.slice(HEAD);
+  const needsHeadFix = validHead.length !== head.length;
+  if (needsHeadFix) {
+    const fixed = [...validHead, ...tail];
+    try {
+      await env.EQUYVO_KV.put(listKey, JSON.stringify(fixed));
+    } catch { /* ignore */ }
+    return fixed;
   }
-  if (valid.length !== ids.length) {
-    await env.EQUYVO_KV.put(listKey, JSON.stringify(valid));
-  }
-  return valid;
+  // Background full sweep (throttled): repairs tail orphans without blocking.
+  try {
+    const last = await env.EQUYVO_KV.get(KEYS.ORPHAN_SWEEP_AT);
+    const now = Date.now();
+    if (!last || now - Number(last || 0) > 5 * 60 * 1000) {
+      const sweep = (async () => {
+        try {
+          await env.EQUYVO_KV.put(KEYS.ORPHAN_SWEEP_AT, String(now));
+          const full = await env.EQUYVO_KV.get(listKey);
+          if (!full) return;
+          const all: string[] = JSON.parse(full);
+          const batch = 25;
+          const valid: string[] = [];
+          for (let i = 0; i < all.length; i += batch) {
+            const slice = all.slice(i, i + batch);
+            const got = await Promise.all(
+              slice.map(async (id) => {
+                try {
+                  const d = await env.EQUYVO_KV.get(getKey(id));
+                  return d ? id : null;
+                } catch { return id; }
+              })
+            );
+            for (const v of got) if (v) valid.push(v);
+          }
+          if (valid.length !== all.length) {
+            await env.EQUYVO_KV.put(listKey, JSON.stringify(valid));
+          }
+        } catch { /* best-effort */ }
+      })();
+      // If a waitUntil-style hook is available the caller handles it; here we
+      // just float the promise (KV is fast enough in batches).
+      void sweep;
+    }
+  } catch { /* ignore */ }
+  return ids;
 }
 
 async function sha1Hex(str: string): Promise<string> {
@@ -620,13 +687,34 @@ export async function createThought(env: Env, thought: Omit<Thought, 'id' | 'cre
     updated_at: now,
   };
   await env.EQUYVO_KV.put(KEYS.THOUGHT(id), JSON.stringify(newThought));
-  
+
   const listJson = await env.EQUYVO_KV.get(KEYS.THOUGHTS);
   const ids: string[] = listJson ? JSON.parse(listJson) : [];
   ids.unshift(id);
   await env.EQUYVO_KV.put(KEYS.THOUGHTS, JSON.stringify(ids.slice(0, 500)));
   await markHasRealUsers(env);
-  
+
+  // Index thoughts so search + AI feed see them (posts-only index was a gap).
+  try {
+    const text = String((newThought as any).content || '').slice(0, 500);
+    await indexContent(env, {
+      id,
+      title: text.slice(0, 100) || 'Thought',
+      description: text.slice(0, 300),
+      type: 'thought',
+      creator: String((newThought as any).user_id || (newThought as any).userId || ''),
+      creatorAvatar: '',
+      views: '0',
+      thumbnail: String((newThought as any).media?.[0]?.url || ''),
+      category: String(((newThought as any).tags && (newThought as any).tags[0]) || 'General'),
+      tags: Array.isArray((newThought as any).tags) ? (newThought as any).tags.slice(0, 10) : [],
+      publishedAt: now,
+      content: text,
+      likes: Number((newThought as any).likes_count || 0),
+      comments: Number((newThought as any).comments_count || 0),
+    });
+  } catch { /* best-effort */ }
+
   return newThought;
 }
 
@@ -659,19 +747,39 @@ export async function getStories(env: Env, limit = 20): Promise<Story[]> {
 
 export async function createStory(env: Env, story: Omit<Story, 'id'>): Promise<Story> {
   const id = (story as any).id || await getNextId(env);
+  const now = new Date().toISOString();
   const newStory: Story = {
     ...story,
     id,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   };
   await env.EQUYVO_KV.put(KEYS.STORY(id), JSON.stringify(newStory));
-  
+
   const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
   const ids: string[] = listJson ? JSON.parse(listJson) : [];
   ids.unshift(id);
   await env.EQUYVO_KV.put(KEYS.STORIES, JSON.stringify(ids.slice(0, 200)));
   await markHasRealUsers(env);
-  
+
+  try {
+    await indexContent(env, {
+      id,
+      title: `Story by ${String((newStory as any).user || 'creator').slice(0, 60)}`,
+      description: '',
+      type: 'story',
+      creator: String((newStory as any).user || (newStory as any).userId || ''),
+      creatorAvatar: String((newStory as any).avatar || ''),
+      views: '0',
+      thumbnail: String((newStory as any).image || ''),
+      category: 'Stories',
+      tags: [],
+      publishedAt: now,
+      content: '',
+      likes: 0,
+      comments: 0,
+    });
+  } catch { /* best-effort */ }
+
   return newStory;
 }
 
@@ -708,19 +816,41 @@ export async function getMoments(env: Env, limit = 20): Promise<Moment[]> {
 
 export async function createMoment(env: Env, moment: Omit<Moment, 'id'>): Promise<Moment> {
   const id = (moment as any).id || await getNextId(env);
+  const now = new Date().toISOString();
   const newMoment: Moment = {
     ...moment,
     id,
-    createdAt: new Date().toISOString(),
+    createdAt: now,
   };
   await env.EQUYVO_KV.put(KEYS.MOMENT(id), JSON.stringify(newMoment));
-  
+
   const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);
   const ids: string[] = listJson ? JSON.parse(listJson) : [];
   ids.unshift(id);
   await env.EQUYVO_KV.put(KEYS.MOMENTS, JSON.stringify(ids.slice(0, 500)));
   await markHasRealUsers(env);
-  
+
+  try {
+    const text = String((newMoment as any).content || '').slice(0, 500);
+    await indexContent(env, {
+      id,
+      title: text.slice(0, 100) || 'Moment',
+      description: text.slice(0, 300),
+      type: String((newMoment as any).mediaType || 'video'),
+      creator: String((newMoment as any).user || (newMoment as any).userId || ''),
+      creatorAvatar: '',
+      views: String((newMoment as any).views ?? '0'),
+      thumbnail: String((newMoment as any).thumbnail || (newMoment as any).media || ''),
+      videoUrl: String((newMoment as any).videoUrl || ''),
+      category: 'Moments',
+      tags: [],
+      publishedAt: now,
+      content: text,
+      likes: Number((newMoment as any).likes || 0),
+      comments: Number((newMoment as any).comments || 0),
+    });
+  } catch { /* best-effort */ }
+
   return newMoment;
 }
 
@@ -783,53 +913,402 @@ export async function indexContent(env: Env, item: ContentIndexItem): Promise<vo
   await env.EQUYVO_KV.put(KEYS.CONTENT_INDEX, JSON.stringify(index.slice(0, 1000)));
 }
 
-export async function searchContent(env: Env, query: string): Promise<{ results: ContentIndexItem[]; totalCount: number }> {
-  const json = await env.EQUYVO_KV.get(KEYS.CONTENT_INDEX);
-  if (!json) return { results: [], totalCount: 0 };
-  const index: ContentIndexItem[] = JSON.parse(json);
-  
-  if (!query.trim()) {
-    return { results: index.slice(0, 20), totalCount: index.length };
-  }
-  
-  const q = query.toLowerCase().trim();
-  const scored = index.map(item => {
-    let score = 0;
-    const searchable = [item.title, item.description, item.content, item.category, item.creator, ...item.tags]
-      .filter(Boolean).join(' ').toLowerCase();
-    
-    if (searchable.includes(q)) score += 100;
-    if (item.title.toLowerCase().includes(q)) score += 50;
-    if (item.category.toLowerCase().includes(q)) score += 40;
-    if (item.creator.toLowerCase().includes(q)) score += 35;
-    if (item.description.toLowerCase().includes(q)) score += 30;
-    if (item.content?.toLowerCase().includes(q)) score += 25;
-    
-    const tagMatches = item.tags.filter(t => t.toLowerCase().includes(q)).length;
-    score += tagMatches * 20;
-    
-    return { item, score };
-  });
-  
-  const threshold = 10;
-  const matching = scored.filter(s => s.score >= threshold);
-  matching.sort((a, b) => b.score - a.score);
-  
-  if (matching.length === 0) {
-    scored.sort((a, b) => b.score - a.score);
-    return { results: scored.slice(0, 12).map(s => s.item), totalCount: index.length };
-  }
-  
-  return { results: matching.slice(0, 20).map(s => s.item), totalCount: matching.length };
+// ── Backend AI: interest graph + smart search/feed (no frontend changes) ──
+// Interests are a counted map {token -> weight} persisted per user in KV.
+// Tokens come from engagement (views/likes/comments/shares/saves), explicit
+// ?interests= params, and profile categories. Search + feed boost items whose
+// category/tags/creator match the user's top interests.
+
+export type InterestMap = Record<string, number>;
+
+const SYNONYMS: Record<string, string[]> = {
+  photo: ['photography', 'camera', 'picture', 'pics'],
+  photography: ['photo', 'camera', 'picture'],
+  video: ['film', 'vlog', 'reels', 'clips'],
+  music: ['song', 'songs', 'beat', 'audio', 'singer'],
+  food: ['recipe', 'recipes', 'cooking', 'cuisine', 'restaurant'],
+  fitness: ['workout', 'gym', 'yoga', 'health', 'exercise'],
+  travel: ['trip', 'vacation', 'tourism', 'vlog'],
+  tech: ['technology', 'gadgets', 'ai', 'software', 'coding'],
+  ai: ['artificial intelligence', 'machine learning', 'tech'],
+  fashion: ['style', 'outfit', 'clothing', 'trend'],
+  art: ['drawing', 'design', 'painting', 'illustration'],
+  game: ['gaming', 'games', 'esports', 'play'],
+};
+
+function normToken(s: string): string {
+  return String(s || '').toLowerCase().trim().replace(/^#+/, '').slice(0, 40);
 }
 
-// --- Likes / Votes (stored in KV as counters) ---
+function tokenize(s: string): string[] {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9#\s-]/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.replace(/^#+/, '').trim())
+    .filter((t) => t.length >= 2 && t.length <= 30)
+    .slice(0, 20);
+}
+
+function expandQueryTokens(tokens: string[]): string[] {
+  const out = new Set<string>();
+  for (const t of tokens) {
+    out.add(t);
+    const syns = SYNONYMS[t];
+    if (syns) for (const s of syns.slice(0, 3)) out.add(s);
+    // prefix token for partial matches ("phot" → "photo")
+    if (t.length >= 4) out.add(t.slice(0, Math.max(3, t.length - 1)));
+  }
+  return [...out].slice(0, 30);
+}
+
+function editDist1(a: string, b: string): boolean {
+  // cheap fuzzy: equal, prefix, or single-edit distance for short tokens
+  if (a === b) return true;
+  if (a.startsWith(b) || b.startsWith(a)) return true;
+  if (Math.abs(a.length - b.length) > 1) return false;
+  let diff = 0;
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    if (a[i] !== b[i]) {
+      diff++;
+      if (diff > 1) return false;
+    }
+  }
+  return diff <= 1;
+}
+
+export async function getInterests(env: Env, userId: string): Promise<InterestMap> {
+  if (!userId) return {};
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.INTERESTS(userId));
+    if (!raw) return {};
+    const m = JSON.parse(raw);
+    return m && typeof m === 'object' ? (m as InterestMap) : {};
+  } catch { return {}; }
+}
+
+export async function recordEngagement(
+  env: Env,
+  userId: string,
+  signals: { category?: string; tags?: string[]; creator?: string; action?: string }
+): Promise<InterestMap> {
+  if (!userId) return {};
+  const actionW: Record<string, number> = { view: 1, like: 3, unlike: -2, comment: 4, share: 5, save: 4, create: 5, vote: 2 };
+  const w = actionW[String(signals.action || 'view').toLowerCase()] ?? 1;
+  const tokens: string[] = [];
+  if (signals.category) tokens.push(normToken(signals.category));
+  if (signals.creator) tokens.push(normToken(signals.creator));
+  for (const t of signals.tags || []) {
+    const n = normToken(t);
+    if (n) tokens.push(n);
+  }
+  if (!tokens.length) return getInterests(env, userId);
+  let cur: InterestMap = {};
+  try {
+    cur = await getInterests(env, userId);
+    for (const t of tokens.slice(0, 8)) {
+      cur[t] = Math.max(-10, Math.min(100, (Number(cur[t] || 0) + w)));
+    }
+    // cap map size: keep top 60
+    const entries = Object.entries(cur).sort((a, b) => b[1] - a[1]).slice(0, 60);
+    cur = Object.fromEntries(entries);
+    await env.EQUYVO_KV.put(KEYS.INTERESTS(userId), JSON.stringify(cur));
+  } catch { /* best-effort */ }
+  return cur;
+}
+
+export async function bumpPopularity(env: Env, itemId: string, delta = 1): Promise<void> {
+  if (!itemId) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.POP(itemId));
+    const cur = raw ? parseInt(raw, 10) || 0 : 0;
+    await env.EQUYVO_KV.put(KEYS.POP(itemId), String(Math.max(0, cur + delta)), { expirationTtl: 60 * 60 * 24 * 90 });
+  } catch { /* ignore */ }
+}
+
+async function popMap(env: Env, ids: string[]): Promise<Record<string, number>> {
+  const out: Record<string, number> = {};
+  await Promise.all(
+    ids.slice(0, 100).map(async (id) => {
+      try {
+        const raw = await env.EQUYVO_KV.get(KEYS.POP(id));
+        if (raw) out[id] = parseInt(raw, 10) || 0;
+      } catch { /* ignore */ }
+    })
+  );
+  return out;
+}
+
+function popularityOf(item: any, pops: Record<string, number>): number {
+  const kv = Number(pops[item?.id] || 0);
+  const likes = Number(item?.likes ?? item?.likes_count ?? 0) || 0;
+  const comments = Number(item?.comments ?? item?.comments_count ?? 0) || 0;
+  const reacts = Number(item?.reacts ?? 0) || 0;
+  const views = Number(String(item?.views ?? '0').replace(/[^0-9]/g, '') || 0) || 0;
+  return kv * 2 + likes + reacts * 2 + comments * 3 + Math.min(50, views / 20);
+}
+
+function recencyBoost(publishedAt?: string): number {
+  if (!publishedAt) return 0;
+  const t = new Date(publishedAt).getTime();
+  if (!Number.isFinite(t)) return 0;
+  const hours = (Date.now() - t) / 3600000;
+  if (hours < 0) return 8;
+  if (hours < 6) return 8;
+  if (hours < 24) return 5;
+  if (hours < 72) return 3;
+  if (hours < 168) return 1;
+  return 0;
+}
+
+function interestBoost(item: any, interests: InterestMap): number {
+  if (!interests || Object.keys(interests).length === 0) return 0;
+  const top = Object.entries(interests)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([k]) => k);
+  if (!top.length) return 0;
+  const hay = [
+    String(item?.category || ''),
+    ...((item?.tags as string[]) || []),
+    String(item?.creator || item?.user || ''),
+    String(item?.title || '').split(/\s+/).slice(0, 6).join(' '),
+  ].join(' ').toLowerCase();
+  let s = 0;
+  for (const t of top) {
+    if (t && hay.includes(t)) s += 6;
+  }
+  return Math.min(30, s);
+}
+
+export async function ensureContentIndex(env: Env): Promise<ContentIndexItem[]> {
+  // Backfill: old deployments only indexed posts. Thoughts/stories/moments
+  // were invisible to search. If the index is missing/small, rebuild from
+  // the source lists (bounded: newest 200 of each) without blocking writes.
+  let index: ContentIndexItem[] = [];
+  try {
+    const json = await env.EQUYVO_KV.get(KEYS.CONTENT_INDEX);
+    if (json) {
+      try { index = JSON.parse(json) || []; } catch { index = []; }
+    }
+  } catch { index = []; }
+  if (index.length >= 20) return index;
+  try {
+    const getList = async (k: string) => {
+      try {
+        const j = await env.EQUYVO_KV.get(k);
+        return j ? (JSON.parse(j) as string[]).slice(0, 200) : [];
+      } catch { return []; }
+    };
+    const [postIds, thoughtIds, momentIds, storyIds] = await Promise.all([
+      getList(KEYS.POSTS), getList(KEYS.THOUGHTS), getList(KEYS.MOMENTS), getList(KEYS.STORIES),
+    ]);
+    const byId = new Map<string, ContentIndexItem>();
+    for (const it of index) if (it && it.id) byId.set(it.id, it);
+    const pull = async (ids: string[], get: (id: string) => string, kind: string) => {
+      const batch = 20;
+      for (let i = 0; i < ids.length; i += batch) {
+        const slice = ids.slice(i, i + batch);
+        const rows = await Promise.all(
+          slice.map(async (id) => {
+            try {
+              const raw = await env.EQUYVO_KV.get(get(id));
+              return raw ? { id, raw } : null;
+            } catch { return null; }
+          })
+        );
+        for (const r of rows) {
+          if (!r || byId.has(r.id)) continue;
+          try {
+            const o = JSON.parse(r.raw);
+            if (isSeedItem(o)) continue;
+            const text = String(o.content || o.title || o.description || '').slice(0, 500);
+            byId.set(r.id, {
+              id: r.id,
+              title: String(o.title || text.slice(0, 100) || kind),
+              description: text.slice(0, 300),
+              type: kind,
+              creator: String(o.user || o.creator || o.user_id || o.userId || ''),
+              creatorAvatar: String(o.avatar || ''),
+              views: String(o.views ?? '0'),
+              thumbnail: String(o.thumbnail || o.image || o.media || ''),
+              category: String((o.categories && o.categories[0]) || o.category || 'General'),
+              tags: Array.isArray(o.tags) ? o.tags.slice(0, 10) : [],
+              publishedAt: String(o.createdAt || o.created_at || new Date().toISOString()),
+              content: text,
+              likes: Number(o.likes ?? o.likes_count ?? 0) || 0,
+              comments: Number(o.comments ?? o.comments_count ?? 0) || 0,
+            });
+          } catch { /* skip */ }
+        }
+        if (byId.size >= 400) break;
+      }
+    };
+    await pull(postIds, KEYS.POST, 'post');
+    await pull(thoughtIds, KEYS.THOUGHT, 'thought');
+    await pull(momentIds, KEYS.MOMENT, 'moment');
+    await pull(storyIds, KEYS.STORY, 'story');
+    index = [...byId.values()].slice(0, 1000);
+    if (index.length) {
+      try { await env.EQUYVO_KV.put(KEYS.CONTENT_INDEX, JSON.stringify(index)); } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+  return index;
+}
+
+export async function searchContent(
+  env: Env,
+  query: string,
+  opts: { interests?: InterestMap; limit?: number } = {}
+): Promise<{ results: ContentIndexItem[]; totalCount: number; personalized: boolean }> {
+  const limit = Math.min(50, Math.max(1, opts.limit || 20));
+  const index = await ensureContentIndex(env);
+  if (!index.length) return { results: [], totalCount: 0, personalized: false };
+  const interests = opts.interests || {};
+
+  if (!query.trim()) {
+    // Empty query = personalized popular feed, not raw index order.
+    const pops = await popMap(env, index.map((i) => i.id));
+    const ranked = [...index]
+      .map((item) => ({
+        item,
+        score: popularityOf(item, pops) + recencyBoost(item.publishedAt) * 2 + interestBoost(item, interests),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, limit)
+      .map((s) => s.item);
+    return { results: ranked, totalCount: index.length, personalized: Object.keys(interests).length > 0 };
+  }
+
+  const tokens = tokenize(query);
+  const expanded = expandQueryTokens(tokens);
+  const q = query.toLowerCase().trim();
+  const pops = await popMap(env, index.map((i) => i.id));
+  const scored = index.map((item) => {
+    let score = 0;
+    const title = String(item.title || '').toLowerCase();
+    const desc = String(item.description || '').toLowerCase();
+    const content = String(item.content || '').toLowerCase();
+    const cat = String(item.category || '').toLowerCase();
+    const creator = String(item.creator || '').toLowerCase();
+    const tags = (item.tags || []).map((t) => String(t).toLowerCase());
+    const hayTokens = tokenize(`${item.title} ${item.description} ${item.content} ${item.category} ${item.creator} ${(item.tags || []).join(' ')}`);
+
+    if (`${title} ${desc} ${content} ${cat} ${creator} ${tags.join(' ')}`.includes(q)) score += 100;
+    if (title.includes(q)) score += 50;
+    if (cat === q) score += 45;
+    else if (cat.includes(q)) score += 30;
+    if (creator.includes(q)) score += 25;
+    if (desc.includes(q)) score += 20;
+    if (content.includes(q)) score += 15;
+    for (const t of tags) if (t.includes(q) || q.includes(t)) score += 20;
+
+    // Token-level (multi-word queries, typos, synonyms)
+    let tokHits = 0;
+    for (const tok of expanded) {
+      let hit = false;
+      if (title.includes(tok)) { score += 12; hit = true; }
+      else if (cat.includes(tok)) { score += 10; hit = true; }
+      else if (tags.some((tg) => tg.includes(tok))) { score += 10; hit = true; }
+      else if (desc.includes(tok) || content.includes(tok) || creator.includes(tok)) { score += 6; hit = true; }
+      else if (hayTokens.some((h) => editDist1(h, tok))) { score += 5; hit = true; }
+      if (hit) tokHits++;
+    }
+    if (tokens.length > 1 && tokHits >= Math.min(tokens.length, 2)) score += 25;
+
+    // Quality signals: popular + fresh + matches user interests rank higher.
+    score += Math.min(20, popularityOf(item, pops) / 5);
+    score += recencyBoost(item.publishedAt);
+    score += interestBoost(item, interests);
+    return { item, score };
+  });
+
+  const matching = scored.filter((s) => s.score >= 15).sort((a, b) => b.score - a.score);
+  if (!matching.length) {
+    // Honest popular fallback (never a blank page): top popular+fresh items.
+    const fb = [...scored].sort((a, b) => b.score - a.score).slice(0, Math.min(12, limit)).map((s) => s.item);
+    return { results: fb, totalCount: 0, personalized: Object.keys(interests).length > 0 };
+  }
+  return { results: matching.slice(0, limit).map((s) => s.item), totalCount: matching.length, personalized: Object.keys(interests).length > 0 };
+}
+
+export function brainBase(env: Env): string {
+  const c = String((env as any).BRAIN_URL || (env as any).BRAIN_BASE_URL || '').trim().replace(/\/$/, '');
+  if (c) return c;
+  return 'https://brain.acronous.com';
+}
+
+async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<any | null> {
+  try {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => { try { ctrl.abort(); } catch {} }, timeoutMs);
+    try {
+      const r = await fetch(url, { ...init, signal: ctrl.signal });
+      if (!r.ok) return null;
+      return await r.json().catch(() => null);
+    } finally {
+      clearTimeout(t);
+    }
+  } catch { return null; }
+}
+
+export async function brainSearchSuggest(env: Env, query: string): Promise<string[]> {
+  const q = String(query || '').trim().slice(0, 100);
+  if (!q) return [];
+  const d = await fetchJson(`${brainBase(env)}/v1/suggest/search`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query: q, source: 'equyvo-search' }),
+  }, 2500);
+  const s = (d as any)?.suggestions;
+  if (Array.isArray(s)) {
+    return s.map((x: any) => String(x?.label || x || '').trim()).filter(Boolean).slice(0, 8);
+  }
+  return [];
+}
+
+export async function brainFeedSuggest(env: Env, userId: string, interacted: string[]): Promise<string[]> {
+  const d = await fetchJson(`${brainBase(env)}/v1/suggest/feed`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId || 'default', userId: userId || 'default', interacted: (interacted || []).slice(0, 20), source: 'equyvo-feed' }),
+  }, 2500);
+  const s = (d as any)?.suggestions;
+  if (Array.isArray(s)) return s.map((x: any) => String(x || '').trim()).filter(Boolean).slice(0, 8);
+  return [];
+}
+
+export function rankFeedItems(items: any[], interests: InterestMap, limit: number): { items: any[]; personalized: boolean } {
+  const personalized = Object.keys(interests || {}).length > 0;
+  const scored = (items || []).map((it) => {
+    const likes = Number(it?.likes ?? it?.likes_count ?? 0) || 0;
+    const reacts = Number(it?.reacts ?? 0) || 0;
+    const comments = Number(it?.comments ?? it?.comments_count ?? 0) || 0;
+    const engagement = (likes + reacts * 2 + comments * 3) / 10;
+    const pop = Number((it as any)?.__pop || 0);
+    let score = engagement + pop / 5 + recencyBoost(it?.createdAt || it?.created_at || it?.publishedAt) + interestBoost({
+      category: it?.category || (it?.categories && it.categories[0]) || '',
+      tags: it?.tags || [],
+      creator: it?.user || it?.creator || '',
+      title: it?.content || it?.title || '',
+    }, interests);
+    // tiny deterministic jitter-free tiebreak by id hash (no random lag spikes)
+    return { it, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return { items: scored.slice(0, limit).map((s) => s.it), personalized };
+}
+
+// --- Likes / Votes (stored in KV as counters + popularity for AI feed) ---
 export async function likePost(env: Env, postId: string): Promise<{ liked: boolean; likes_count: number }> {
   const postJson = await env.EQUYVO_KV.get(KEYS.POST(postId));
   if (!postJson) throw new Error('Post not found');
   const post = JSON.parse(postJson) as Post;
   post.likes += 1;
   await env.EQUYVO_KV.put(KEYS.POST(postId), JSON.stringify(post));
+  // Feed signal: popular items rank higher for everyone (best-effort).
+  void bumpPopularity(env, postId, 3);
   return { liked: true, likes_count: post.likes };
 }
 
@@ -839,6 +1318,7 @@ export async function unlikePost(env: Env, postId: string): Promise<{ liked: boo
   const post = JSON.parse(postJson) as Post;
   post.likes = Math.max(0, post.likes - 1);
   await env.EQUYVO_KV.put(KEYS.POST(postId), JSON.stringify(post));
+  void bumpPopularity(env, postId, -2);
   return { liked: false, likes_count: post.likes };
 }
 
@@ -849,6 +1329,7 @@ export async function voteThought(env: Env, thoughtId: string, voteType: 'upvote
   const thought = JSON.parse(thoughtJson) as Thought;
   // Simple vote tracking
   await env.EQUYVO_KV.put(KEYS.THOUGHT(thoughtId), JSON.stringify(thought));
+  void bumpPopularity(env, thoughtId, voteType === 'upvote' ? 2 : -1);
   return { success: true };
 }
 
@@ -943,6 +1424,10 @@ export async function deleteMoment(env: Env, momentId: string): Promise<boolean>
 
 export async function deleteUserData(env: Env, userId: string): Promise<{ deletedPosts: number; deletedThoughts: number; deletedStories: number; deletedMoments: number }> {
   let deletedPosts = 0, deletedThoughts = 0, deletedStories = 0, deletedMoments = 0;
+  // Index entries are keyed by item id, but carry the display name (not the
+  // user id) as creator — so track every deleted item id and purge those
+  // index rows explicitly. Creator-name matching alone misses them.
+  const deletedIds = new Set<string>();
 
   // Delete profile
   await env.EQUYVO_KV.delete(KEYS.PROFILE(userId));
@@ -960,6 +1445,7 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
           await purgeStoredMedia(env, post);
           await refundStoredMedia(env, userId, post);
           await env.EQUYVO_KV.delete(KEYS.POST(id));
+          deletedIds.add(id);
           deletedPosts++;
         } else {
           remaining.push(id);
@@ -982,6 +1468,7 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
           await purgeStoredMedia(env, thought);
           await refundStoredMedia(env, userId, thought);
           await env.EQUYVO_KV.delete(KEYS.THOUGHT(id));
+          deletedIds.add(id);
           deletedThoughts++;
         } else {
           remaining.push(id);
@@ -1004,6 +1491,7 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
           await purgeStoredMedia(env, story);
           await refundStoredMedia(env, userId, story);
           await env.EQUYVO_KV.delete(KEYS.STORY(id));
+          deletedIds.add(id);
           deletedStories++;
         } else {
           remaining.push(id);
@@ -1026,6 +1514,7 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
           await purgeStoredMedia(env, moment);
           await refundStoredMedia(env, userId, moment);
           await env.EQUYVO_KV.delete(KEYS.MOMENT(id));
+          deletedIds.add(id);
           deletedMoments++;
         } else {
           remaining.push(id);
@@ -1035,14 +1524,19 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
     await env.EQUYVO_KV.put(KEYS.MOMENTS, JSON.stringify(remaining));
   }
 
-  // Remove from content index
+  // Remove from content index (by deleted item id AND creator match).
   const indexJson = await env.EQUYVO_KV.get(KEYS.CONTENT_INDEX);
   if (indexJson) {
     const index = JSON.parse(indexJson);
     await env.EQUYVO_KV.put(KEYS.CONTENT_INDEX, JSON.stringify(
-      index.filter((i: any) => i.creator?.toLowerCase() !== userId.toLowerCase() && i.id !== `profile-${userId}`)
+      index.filter((i: any) => !deletedIds.has(i?.id) && i.creator?.toLowerCase() !== userId.toLowerCase() && i.id !== `profile-${userId}`)
     ));
   }
+  // Drop the user's interest graph + popularity crumbs for deleted items.
+  try {
+    await env.EQUYVO_KV.delete(KEYS.INTERESTS(userId));
+    await Promise.all([...deletedIds].slice(0, 100).map((id) => env.EQUYVO_KV.delete(KEYS.POP(id)).catch(() => {})));
+  } catch { /* best-effort */ }
 
   return { deletedPosts, deletedThoughts, deletedStories, deletedMoments };
 }

@@ -466,11 +466,12 @@ const SearchPage: React.FC = () => {
                   {viewMode === 'grid' ? (
                     // Grid View
                     <>
-                      <div className="relative">
-                        <img 
-                          src={result.thumbnail} 
+                      <div className="relative bg-black">
+                        <img
+                          src={result.thumbnail}
                           alt={result.title}
-                          className="w-full h-48 object-cover rounded-t-lg"
+                          loading="lazy"
+                          className="w-full h-48 object-contain rounded-t-lg"
                         />
                         {result.type === 'video' && (
                           <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">
@@ -553,10 +554,11 @@ const SearchPage: React.FC = () => {
                   ) : (
                     // List View
                     <div className="flex gap-4 p-4">
-                      <img 
-                        src={result.thumbnail} 
+                      <img
+                        src={result.thumbnail}
                         alt={result.title}
-                        className="w-32 h-20 object-cover rounded-md flex-shrink-0"
+                        loading="lazy"
+                        className="w-32 h-20 object-contain bg-black rounded-md flex-shrink-0"
                       />
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold mb-1 line-clamp-1 group-hover:text-primary transition-colors">

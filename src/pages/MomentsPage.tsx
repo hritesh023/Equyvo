@@ -13,6 +13,8 @@ import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { useMediaSession } from '@/hooks/use-media-session';
+import { fetchMoments } from '@/lib/data';
+import { allowedForSurface, creatorOf, imageUrlOf, videoUrlOf } from '@/lib/feed-store';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -58,8 +60,65 @@ const MomentsPage = () => {
     };
   }, [activeVideoIndex]);
 
-  // Real moments data comes from the API feed
-  const moments: any[] = [];
+  // Real moments feed — strict routing: moment-type ONLY (photo or video).
+  // Photos uploaded via Photos NEVER land here; videos via Videos never do.
+  const [moments, setMoments] = useState<any[]>([]);
+  const [isLoadingMoments, setIsLoadingMoments] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        setIsLoadingMoments(true);
+        const items = await fetchMoments(30).catch(() => []);
+        const mapped = (items as any[])
+          .filter((m: any) => allowedForSurface(String((m as any).type || 'moment'), 'moments'))
+          .map((m: any) => {
+            const vid = videoUrlOf(m);
+            const img = imageUrlOf(m) || m.thumbnail || '';
+            return {
+              id: m.id,
+              user: creatorOf(m),
+              description: m.content || '',
+              avatar: m.avatar || '',
+              videoUrl: vid,
+              thumbnail: img,
+              image: img,
+              media: vid || img,
+              mediaType: vid ? 'video' : 'image',
+              likes: m.likes ?? 0,
+              comments: m.comments ?? 0,
+              shares: m.shares ?? 0,
+              views: m.views ?? 0,
+              song: m.song || 'original sound',
+              time: m.time || m.createdAt || 'just now',
+              createdAt: m.createdAt,
+            };
+          })
+          .sort((a, b) => {
+            const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return tb - ta;
+          });
+        if (!cancelled) setMoments(mapped);
+      } catch {
+        if (!cancelled) setMoments([]);
+      } finally {
+        if (!cancelled) setIsLoadingMoments(false);
+      }
+    };
+    load();
+    const refresh = () => load();
+    window.addEventListener('userPostCreated', refresh);
+    window.addEventListener('momentCreated', refresh);
+    window.addEventListener('feedRefresh', refresh);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('userPostCreated', refresh);
+      window.removeEventListener('momentCreated', refresh);
+      window.removeEventListener('feedRefresh', refresh);
+    };
+  }, []);
 
   useMediaSession({
     videoRef: {
@@ -456,13 +515,32 @@ const MomentsPage = () => {
     showSuccess('🔗 Link copied to clipboard!');
   };
 
+  if (isLoadingMoments) {
+    return (
+      <div className="w-full h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)] bg-black flex flex-col items-center justify-center gap-3">
+        <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white"></div>
+        <p className="text-white/70 text-sm">Loading moments…</p>
+      </div>
+    );
+  }
+
+  if (moments.length === 0) {
+    return (
+      <div className="w-full h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)] bg-black flex flex-col items-center justify-center gap-4 px-6 text-center">
+        <p className="text-white text-lg font-semibold">No moments yet</p>
+        <p className="text-white/60 text-sm max-w-sm">Be the first to share a vertical photo or video — it will appear here, in For You, Following (for your followers) and Discover.</p>
+        <Button onClick={() => navigate('/app/create')}>Create a moment</Button>
+      </div>
+    );
+  }
+
   return (
     <div
       ref={containerRef}
       className={`w-full bg-black snap-y snap-mandatory overflow-y-scroll overflow-x-hidden no-scrollbar ${
-        isMobile ? 'h-[calc(100vh-7rem)]' : 'h-[calc(100vh-4rem)]'
+        isMobile ? 'h-[calc(100vh-7rem)] h-[calc(100dvh-7rem)]' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'
       }`}
-      style={{ 
+      style={{
         scrollBehavior: 'smooth',
         scrollbarWidth: 'none',
         msOverflowStyle: 'none'
@@ -474,7 +552,7 @@ const MomentsPage = () => {
           key={moment.id}
           data-index={index}
           className={`moment-slide relative w-full snap-start snap-always bg-black overflow-hidden ${
-            isMobile ? 'h-[calc(100vh-7rem)]' : 'h-[calc(100vh-4rem)]'
+            isMobile ? 'h-[calc(100vh-7rem)] h-[calc(100dvh-7rem)]' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'
           }`}
         >
           {/* Video Player - Full Page Portrait */}
@@ -486,7 +564,9 @@ const MomentsPage = () => {
               className="h-full w-auto object-contain"
               style={{
                 aspectRatio: '9/16',
-                maxHeight: isMobile ? 'calc(100vh - 7rem)' : 'calc(100vh - 4rem)',
+                // min() prefers the dynamic viewport when toolbars collapse;
+                // legacy browsers ignore it and fall back to the class height.
+                maxHeight: isMobile ? 'min(calc(100vh - 7rem), calc(100dvh - 7rem))' : 'min(calc(100vh - 4rem), calc(100dvh - 4rem))',
                 maxWidth: '100vw',
                 objectFit: 'contain',
                 backgroundColor: 'black'
@@ -522,7 +602,20 @@ const MomentsPage = () => {
                   }
                 }, 400);
               }}
-            />) : null}
+            />) : (
+              <img
+                src={moment.thumbnail || moment.image}
+                alt={moment.description || 'Moment photo'}
+                className="h-full w-auto object-contain"
+                style={{
+                  aspectRatio: '9/16',
+                  maxHeight: isMobile ? 'min(calc(100vh - 7rem), calc(100dvh - 7rem))' : 'min(calc(100vh - 4rem), calc(100dvh - 4rem))',
+                  maxWidth: '100vw',
+                  backgroundColor: 'black',
+                }}
+                loading={index < 2 ? 'eager' : 'lazy'}
+              />
+            )}
             {likeAnimIndex === index && (
               <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
                 <ThumbsUp className="h-20 w-20 text-blue-500 fill-blue-500 animate-like-float drop-shadow-2xl" />

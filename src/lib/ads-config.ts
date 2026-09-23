@@ -34,6 +34,22 @@ export function admobTestDevices(): string[] {
     .filter(Boolean);
 }
 
+// ── AdSense for Web (the format that earns on equyvo.com) ─────────────────
+// AdMob Native Advanced has NO web SDK — that is why the web build could only
+// ever show the Equyvo house promo. On web, in-feed earning comes from
+// AdSense (display ads inside <ins> slots). Native apps keep using AdMob.
+export const ADSENSE_CLIENT_ID =
+  import.meta.env.VITE_ADSENSE_CLIENT || '';
+export const ADSENSE_SLOT =
+  import.meta.env.VITE_ADSENSE_SLOT || '';
+
+/** True when a real AdSense slot is configured (never true with test IDs). */
+export function isAdSenseConfigured(): boolean {
+  return (
+    ADSENSE_CLIENT_ID.startsWith('ca-pub-') && ADSENSE_SLOT.trim() !== ''
+  );
+}
+
 export const ADS_ENABLED =
   (import.meta.env.VITE_ADS_ENABLED ?? 'true') !== 'false';
 

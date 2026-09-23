@@ -31,8 +31,29 @@ export function useAdPlan(): string | null {
       .catch(() => {
         /* offline / signed out — stay on free-tier ad behaviour */
       });
+    // Instant update the moment a purchase (or plan change) lands, without
+    // waiting for the next billing fetch or app restart.
+    const onPlanChanged = (e: Event) => {
+      const p = (e as CustomEvent).detail?.plan as string | undefined;
+      if (p && !cancelled) {
+        setPlan(p);
+      } else if (!cancelled) {
+        try {
+          setPlan(localStorage.getItem(PLAN_KEY));
+        } catch {
+          /* ignore */
+        }
+      }
+    };
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PLAN_KEY && !cancelled) setPlan(e.newValue);
+    };
+    window.addEventListener('planChanged', onPlanChanged);
+    window.addEventListener('storage', onStorage);
     return () => {
       cancelled = true;
+      window.removeEventListener('planChanged', onPlanChanged);
+      window.removeEventListener('storage', onStorage);
     };
   }, []);
 

@@ -19,6 +19,8 @@ import FollowingFeed from '@/components/FollowingFeed';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
+import { getThoughts } from '@/lib/thoughts';
+import { allowedForSurface, creatorOf, getFollowing } from '@/lib/feed-store';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -54,7 +56,21 @@ const HomePage = () => {
       setActiveTab('foryou');
     }
   }, [showChatsTab, activeTab]);
-  const [followingAccounts, setFollowingAccounts] = useState<string[]>([]);
+  // Persisted follow graph — Following tab filters on this (was hardcoded []).
+  const [followingAccounts, setFollowingAccounts] = useState<string[]>(() => {
+    try { return getFollowing(); } catch { return []; }
+  });
+  useEffect(() => {
+    const sync = () => {
+      try { setFollowingAccounts(getFollowing()); } catch { /* ignore */ }
+    };
+    window.addEventListener('followChanged', sync);
+    window.addEventListener('storage', sync);
+    return () => {
+      window.removeEventListener('followChanged', sync);
+      window.removeEventListener('storage', sync);
+    };
+  }, []);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string } | null>(null);
@@ -113,27 +129,81 @@ const HomePage = () => {
     });
   };
 
-  // Fetch posts from API
+  // Unified ForYou feed: posts + photos + videos + moments + thoughts.
+  // Strict type routing keeps stories/live out of this surface; the Moments
+  // rail below shows moment-type items in vertical cards.
   useEffect(() => {
     const loadPosts = async () => {
       try {
         setIsLoadingPosts(true);
         const user = await getAuthenticatedUser();
-        const posts = await fetchPosts(user?.id);
-        setEnhancedPosts(posts.filter(post => !deletedPostIds.current.has(post.id)));
+        const [posts, moments] = await Promise.all([
+          fetchPosts(user?.id).catch(() => []),
+          fetchMoments(30).catch(() => []),
+        ]);
+        const thoughtsRes = await getThoughts(30, 0).catch(() => ({ data: [] as never[] }));
+        const thoughts = ((thoughtsRes as { data: any[] }).data || []).map((t: any) => {
+          const mediaArr = Array.isArray(t.media) ? t.media : [];
+          const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+          const videoUrl = firstMedia?.type === 'video' ? firstMedia.url || '' : (t.videoUrl || '');
+          const image = firstMedia && firstMedia.type !== 'video' ? firstMedia.url || firstMedia.thumbnail || '' : (t.image || t.image_url || t.thumbnail || '');
+          return {
+            id: t.id,
+            user: t.user?.username || t.creator || t.user_id || 'Unknown',
+            avatar: t.user?.avatar_url || t.avatar || '',
+            time: t.created_at ? new Date(t.created_at).toLocaleString() : (t.time || 'just now'),
+            content: t.content || '',
+            image,
+            thumbnail: firstMedia?.thumbnail || image,
+            media: firstMedia?.url || image,
+            videoUrl,
+            mediaType: videoUrl ? 'video' : (image ? 'image' : 'text'),
+            likes: t.likes_count ?? t.likes ?? 0,
+            reacts: t.reacts_count ?? t.reacts ?? 0,
+            comments: t.comments_count ?? t.comments ?? 0,
+            shares: t.shares_count ?? t.shares ?? 0,
+            type: 'thought',
+            tags: t.tags || [],
+            categories: t.categories || [],
+            upvotes_count: t.upvotes_count,
+            downvotes_count: t.downvotes_count,
+            user_vote: t.user_vote,
+            createdAt: t.created_at || t.createdAt,
+          };
+        });
+        const momentPosts = (moments as any[]).map((m: any) => ({
+          ...m,
+          type: 'moment',
+          user: m.user || m.creator || 'Unknown',
+        }));
+        const merged = [...(posts as any[]), ...momentPosts, ...thoughts]
+          .filter((p: any) => allowedForSurface(String(p.type || 'post'), 'foryou'))
+          .filter((post: any) => !deletedPostIds.current.has(post.id))
+          .sort((a: any, b: any) => {
+            const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+            const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+            return tb - ta;
+          });
+        setEnhancedPosts(merged as Post[]);
       } catch {
         setEnhancedPosts([]);
       } finally {
         setIsLoadingPosts(false);
       }
     };
-    
+
     loadPosts();
 
     const handlePostCreated = () => { loadPosts(); };
     window.addEventListener('userPostCreated', handlePostCreated);
+    window.addEventListener('feedRefresh', handlePostCreated);
+    window.addEventListener('momentCreated', handlePostCreated);
+    window.addEventListener('thoughtCreated', handlePostCreated);
     return () => {
       window.removeEventListener('userPostCreated', handlePostCreated);
+      window.removeEventListener('feedRefresh', handlePostCreated);
+      window.removeEventListener('momentCreated', handlePostCreated);
+      window.removeEventListener('thoughtCreated', handlePostCreated);
     };
   }, []);
 
@@ -168,7 +238,7 @@ const HomePage = () => {
   const [stories, setStories] = useState<Story[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(true);
 
-  // Fetch stories using mock data
+  // Fetch stories + refresh live when a story is uploaded
   useEffect(() => {
     const loadStories = async () => {
       try {
@@ -181,29 +251,50 @@ const HomePage = () => {
         setIsLoadingStories(false);
       }
     };
-    
+
     loadStories();
+    const refresh = () => loadStories();
+    window.addEventListener('userPostCreated', refresh);
+    window.addEventListener('storyUploaded', refresh);
+    return () => {
+      window.removeEventListener('userPostCreated', refresh);
+      window.removeEventListener('storyUploaded', refresh);
+    };
   }, []);
 
   // Real moments data from mock data
   const [moments, setMoments] = useState<any[]>([]);
   const [isLoadingMoments, setIsLoadingMoments] = useState(true);
 
-  // Fetch moments using mock data
+  // Fetch moments + refresh live when a moment is uploaded
   useEffect(() => {
     const loadMoments = async () => {
       try {
         setIsLoadingMoments(true);
-        const moments = await fetchMoments();
-        setMoments(moments);
+        const items = await fetchMoments();
+        // Strict routing: only moment-type items in the Moments rail.
+        setMoments(
+          (items as any[]).filter((m: any) =>
+            allowedForSurface(String((m as any).type || 'moment'), 'moments'),
+          ),
+        );
       } catch {
         setMoments([]);
       } finally {
         setIsLoadingMoments(false);
       }
     };
-    
+
     loadMoments();
+    const refresh = () => loadMoments();
+    window.addEventListener('userPostCreated', refresh);
+    window.addEventListener('momentCreated', refresh);
+    window.addEventListener('feedRefresh', refresh);
+    return () => {
+      window.removeEventListener('userPostCreated', refresh);
+      window.removeEventListener('momentCreated', refresh);
+      window.removeEventListener('feedRefresh', refresh);
+    };
   }, []);
 
   // Check for active live stream and listen for live notifications

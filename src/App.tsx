@@ -96,6 +96,12 @@ const AppContent = () => {
       const result = await signOutUser();
       if (result.success) {
         clearStoredUser();
+        // Drop the cached plan so the next account on this device gets
+        // correct ad behaviour (never inherit someone else's Premium).
+        try {
+          localStorage.removeItem('equyvo_active_plan');
+        } catch { /* ignore */ }
+        window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: null } }));
         setUser(null);
         navigate('/auth');
       }
@@ -138,11 +144,13 @@ const AppContent = () => {
         isSidebarOpen && !isMobile ? 'lg:ml-64' : 'lg:ml-0'
       }`}>
         {shouldShowNavbar && <Navbar user={user} onSignOut={handleSignOut} />}
-        <main className={`flex-1 overflow-y-auto ${
-          shouldShowNavbar 
-            ? (location.pathname === '/moments' || location.pathname === '/app/moments' 
-                ? 'w-full pt-14 pb-16 md:pt-0 md:pb-0' 
-                : 'w-full pt-14 pb-16 md:pt-0 md:pb-0') 
+        {/* Edge-to-edge shell: top/bottom offsets grow with the device's
+            notch + home-indicator insets (Dynamic Island, punch-hole,
+            gesture bar) so content never hides under the fixed navs;
+            edge-fill covers curved left/right display edges. */}
+        <main className={`flex-1 overflow-y-auto edge-fill ${
+          shouldShowNavbar
+            ? 'w-full pt-[calc(3.25rem+env(safe-area-inset-top,0px))] pb-[calc(4rem+env(safe-area-inset-bottom,0px))] md:pt-0 md:pb-0'
             : 'w-full'
         }`}>
         <Routes>
