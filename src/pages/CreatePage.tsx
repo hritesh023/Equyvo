@@ -1,7 +1,8 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2 } from 'lucide-react';
+import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop } from 'lucide-react';
+import MediaCropper from '@/components/MediaCropper';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -1513,6 +1514,159 @@ const CreatePage = () => {
     }
   };
 
+  // ---- Custom thumbnails (upload a separate one, or adjust the current) ----
+  // Works for videos, stories, photos and moments. The cropped image is
+  // uploaded, then saved on the published post so feeds, profile and search
+  // all show it. Live streams keep theirs locally until you go live.
+  type ThumbKind = 'video' | 'story' | 'photo' | 'moment' | 'live';
+  interface ThumbCropState {
+    src: string;
+    aspect: number;
+    outW: number;
+    outH: number;
+    title: string;
+    target: { kind: ThumbKind; id: string };
+  }
+  const THUMB_SPEC: Record<ThumbKind, { aspect: number; outW: number; outH: number; label: string }> = {
+    video: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'video thumbnail' },
+    photo: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'photo thumbnail' },
+    live: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'stream thumbnail' },
+    story: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
+    moment: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
+  };
+  const [thumbCrop, setThumbCrop] = useState<ThumbCropState | null>(null);
+  const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
+  const thumbTargetRef = useRef<ThumbCropState['target'] | null>(null);
+
+  const openThumbAdjust = (kind: ThumbKind, id: string, src: string) => {
+    if (!src) {
+      showError('No thumbnail to adjust yet — upload a separate one first.');
+      return;
+    }
+    const spec = THUMB_SPEC[kind];
+    setThumbCrop({
+      src,
+      aspect: spec.aspect,
+      outW: spec.outW,
+      outH: spec.outH,
+      title: `Adjust ${spec.label}`,
+      target: { kind, id },
+    });
+  };
+
+  const openThumbUpload = (kind: ThumbKind, id: string) => {
+    thumbTargetRef.current = { kind, id };
+    document.getElementById('custom-thumb-upload')?.click();
+  };
+
+  const handleCustomThumbPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const t = thumbTargetRef.current;
+    thumbTargetRef.current = null;
+    if (!file || !t) return;
+    if (!file.type.startsWith('image/')) {
+      showError('Please select an image file');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showError('Thumbnail must be less than 5MB');
+      return;
+    }
+    const spec = THUMB_SPEC[t.kind];
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setThumbCrop({
+        src: reader.result as string,
+        aspect: spec.aspect,
+        outW: spec.outW,
+        outH: spec.outH,
+        title: `Crop ${spec.label}`,
+        target: t,
+      });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const patchLocalThumb = (id: string, url: string) => {
+    try {
+      const saved = localStorage.getItem('userProfile');
+      if (!saved) return;
+      const profile = JSON.parse(saved);
+      if (!Array.isArray(profile.posts)) return;
+      let changed = false;
+      profile.posts = profile.posts.map((p: unknown) => {
+        const post = p as Record<string, unknown>;
+        if (post && post.id === id) {
+          changed = true;
+          return { ...post, thumbnail: url };
+        }
+        return post;
+      });
+      if (changed) localStorage.setItem('userProfile', JSON.stringify(profile));
+    } catch {
+      /* ignore */
+    }
+  };
+
+  const handleThumbCropComplete = async (file: File) => {
+    const t = thumbCrop?.target;
+    setThumbCrop(null);
+    if (!t) return;
+    const busyKey = `${t.kind}:${t.id}`;
+    setThumbBusyId(busyKey);
+    try {
+      if (t.kind === 'live') {
+        // Live isn't published yet — keep the file; go-live uploads it.
+        if (liveThumbnailPreview.startsWith('blob:')) {
+          try {
+            URL.revokeObjectURL(liveThumbnailPreview);
+          } catch {
+            /* ignore */
+          }
+        }
+        setLiveThumbnailFile(file);
+        setLiveThumbnailPreview(URL.createObjectURL(file));
+        showSuccess('Stream thumbnail updated');
+        return;
+      }
+      const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+      const { data, error } = await api.uploadFile(up, 'equyvo/thumbnails');
+      if (error || !data?.secureUrl) throw new Error(error || 'Thumbnail upload failed');
+      const url = data.secureUrl;
+      if (t.kind === 'video') {
+        setUploadedVideos((prev) => prev.map((v) => (v.id === t.id ? { ...v, thumbnail: url } : v)));
+      } else if (t.kind === 'photo') {
+        setUploadedPhotos((prev) => prev.map((p) => (p.id === t.id ? { ...p, thumbnail: url } : p)));
+      } else if (t.kind === 'story') {
+        setUploadedStories((prev) => prev.map((s) => (s.id === t.id ? { ...s, thumbnail: url } : s)));
+      } else {
+        setUploadedMoments((prev) => prev.map((m) => (m.id === t.id ? { ...m, thumbnail: url } : m)));
+      }
+      const { error: updateError } =
+        t.kind === 'story'
+          ? await api.updateStory(t.id, { thumbnail: url })
+          : t.kind === 'moment'
+            ? await api.updateMoment(t.id, { thumbnail: url })
+            : await api.updatePost(t.id, { thumbnail: url });
+      if (updateError) throw new Error(updateError);
+      patchLocalThumb(t.id, url);
+      try {
+        window.dispatchEvent(new CustomEvent('feedRefresh'));
+      } catch {
+        /* ignore */
+      }
+      showSuccess('Thumbnail updated everywhere');
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '';
+      showError(msg || "Couldn't update the thumbnail. Please try again.");
+    } finally {
+      setThumbBusyId(null);
+    }
+  };
+
+  const thumbBusy = (kind: ThumbKind, id: string) => thumbBusyId === `${kind}:${id}`;
+
   const handleEditDraftPost = (draft: DraftPost) => {
     // Load draft content back into form
     switch (draft.type) {
@@ -1690,6 +1844,28 @@ const CreatePage = () => {
                           {video.isPrivate ? 'Private' : 'Public'}
                         </Button>
                         <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={thumbBusy('video', video.id)}
+                          onClick={() => openThumbUpload('video', video.id)}
+                          className="flex items-center gap-1"
+                          title="Upload a separate thumbnail"
+                        >
+                          {thumbBusy('video', video.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                          Thumb
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!video.thumbnail || thumbBusy('video', video.id)}
+                          onClick={() => openThumbAdjust('video', video.id, video.thumbnail)}
+                          className="flex items-center gap-1"
+                          title="Crop and reposition the current thumbnail"
+                        >
+                          <Crop className="h-4 w-4" />
+                          Adjust
+                        </Button>
+                        <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDeleteVideo(video.id)}
@@ -1784,6 +1960,28 @@ const CreatePage = () => {
                           {moment.isPrivate ? 'Private' : 'Public'}
                         </Button>
                         <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={thumbBusy('moment', moment.id)}
+                          onClick={() => openThumbUpload('moment', moment.id)}
+                          className="flex items-center gap-1"
+                          title="Upload a separate cover"
+                        >
+                          {thumbBusy('moment', moment.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                          Cover
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!moment.thumbnail || thumbBusy('moment', moment.id)}
+                          onClick={() => openThumbAdjust('moment', moment.id, moment.thumbnail)}
+                          className="flex items-center gap-1"
+                          title="Crop and reposition the current cover"
+                        >
+                          <Crop className="h-4 w-4" />
+                          Adjust
+                        </Button>
+                        <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => handleDeleteMoment(moment.id)}
@@ -1869,6 +2067,28 @@ const CreatePage = () => {
                         >
                           {story.isPrivate ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                           {story.isPrivate ? 'Private' : 'Public'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={thumbBusy('story', story.id)}
+                          onClick={() => openThumbUpload('story', story.id)}
+                          className="flex items-center gap-1"
+                          title="Upload a separate cover"
+                        >
+                          {thumbBusy('story', story.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                          Cover
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!story.thumbnail || thumbBusy('story', story.id)}
+                          onClick={() => openThumbAdjust('story', story.id, story.thumbnail)}
+                          className="flex items-center gap-1"
+                          title="Crop and reposition the current cover"
+                        >
+                          <Crop className="h-4 w-4" />
+                          Adjust
                         </Button>
                         <Button
                           variant="ghost"
@@ -2034,6 +2254,28 @@ const CreatePage = () => {
                         >
                           {photo.isPrivate ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                           {photo.isPrivate ? 'Private' : 'Public'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={thumbBusy('photo', photo.id)}
+                          onClick={() => openThumbUpload('photo', photo.id)}
+                          className="flex items-center gap-1"
+                          title="Upload a separate thumbnail"
+                        >
+                          {thumbBusy('photo', photo.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                          Thumb
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          disabled={!photo.thumbnail || thumbBusy('photo', photo.id)}
+                          onClick={() => openThumbAdjust('photo', photo.id, photo.thumbnail)}
+                          className="flex items-center gap-1"
+                          title="Crop and reposition the current thumbnail"
+                        >
+                          <Crop className="h-4 w-4" />
+                          Adjust
                         </Button>
                         <Button
                           variant="ghost"
@@ -2901,16 +3143,30 @@ const CreatePage = () => {
                 <Label>Stream Thumbnail</Label>
                 <div className="mt-1 flex items-center gap-4">
                   {liveThumbnailPreview ? (
-                    <div className="relative w-32 h-20 rounded-lg overflow-hidden border">
-                      <img src={liveThumbnailPreview} alt="Thumbnail preview" className="w-full h-full object-cover" />
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-32 h-20 rounded-lg overflow-hidden border">
+                        <img src={liveThumbnailPreview} alt="Thumbnail preview" className="w-full h-full object-cover" />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
+                          onClick={() => { setLiveThumbnailFile(null); setLiveThumbnailPreview(''); }}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
                       <Button
                         type="button"
                         variant="ghost"
-                        size="icon"
-                        className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
-                        onClick={() => { setLiveThumbnailFile(null); setLiveThumbnailPreview(''); }}
+                        size="sm"
+                        disabled={thumbBusy('live', 'live')}
+                        onClick={() => openThumbAdjust('live', 'live', liveThumbnailPreview)}
+                        className="flex items-center gap-1"
+                        title="Crop and reposition this thumbnail"
                       >
-                        <X className="h-3 w-3" />
+                        <Crop className="h-4 w-4" />
+                        Adjust
                       </Button>
                     </div>
                   ) : (
@@ -2934,10 +3190,29 @@ const CreatePage = () => {
                     className="hidden"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
-                      if (file) {
-                        setLiveThumbnailFile(file);
-                        setLiveThumbnailPreview(URL.createObjectURL(file));
+                      e.target.value = '';
+                      if (!file) return;
+                      if (!file.type.startsWith('image/')) {
+                        showError('Please select an image file');
+                        return;
                       }
+                      if (file.size > 5 * 1024 * 1024) {
+                        showError('Thumbnail must be less than 5MB');
+                        return;
+                      }
+                      const spec = THUMB_SPEC.live;
+                      const reader = new FileReader();
+                      reader.onloadend = () => {
+                        setThumbCrop({
+                          src: reader.result as string,
+                          aspect: spec.aspect,
+                          outW: spec.outW,
+                          outH: spec.outH,
+                          title: `Crop ${spec.label}`,
+                          target: { kind: 'live', id: 'live' },
+                        });
+                      };
+                      reader.readAsDataURL(file);
                     }}
                   />
                 </div>
@@ -3202,6 +3477,25 @@ const CreatePage = () => {
             <p className="text-sm text-muted-foreground mt-2">This may take a moment depending on file size</p>
           </Card>
         </div>
+      )}
+
+      {/* Shared thumbnail picker + cropper for all media kinds */}
+      <input
+        id="custom-thumb-upload"
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleCustomThumbPicked}
+      />
+      {thumbCrop && (
+        <MediaCropper
+          imageSrc={thumbCrop.src}
+          aspect={thumbCrop.aspect}
+          output={[thumbCrop.outW, thumbCrop.outH]}
+          title={thumbCrop.title}
+          onCancel={() => setThumbCrop(null)}
+          onCropComplete={handleThumbCropComplete}
+        />
       )}
 
       {/* Schedule Modal */}

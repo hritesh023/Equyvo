@@ -1997,7 +1997,7 @@ export const onRequest = async (context) => {
 
     // ---- CONTENT UPDATE (owner-only): edit text + visibility ----
     // PUT /api/posts/:id | /api/thoughts/:id | /api/stories/:id |
-    //     /api/moments/:id  with { content?, title?, visibility? }
+    //     /api/moments/:id  with { content?, title?, visibility?, thumbnail? }
     // Lets owners flip an item between public / followers / private
     // ("hide from public") without deleting it.
     const updateMatch = path.match(/^\/(api)\/(posts|thoughts|stories|moments)\/([^/]+)$/);
@@ -2038,16 +2038,24 @@ export const onRequest = async (context) => {
         if (next === 'public') { delete parsed.isPrivate; delete parsed.hidden; delete parsed.hideFromPublic; }
       }
       if (Array.isArray(clean.tags)) parsed.tags = clean.tags.map((t) => String(t).slice(0, 40)).slice(0, 10);
+      // Owner-supplied cover art: uploaded thumbnail URL only (never inline
+      // data — those belong in /api/upload, not in KV item bodies).
+      if (typeof clean.thumbnail === 'string' && clean.thumbnail) {
+        const thumb = String(clean.thumbnail).slice(0, 2000);
+        if (/^https?:\/\//i.test(thumb) && !thumb.startsWith('data:')) {
+          parsed.thumbnail = thumb;
+        }
+      }
       parsed.updatedAt = new Date().toISOString();
       await kv.put(getKey(id), JSON.stringify(parsed));
-      // Keep the search index visibility in sync (best-effort).
+      // Keep the search index visibility + thumbnail in sync (best-effort).
       try {
         const idxJson = await kv.get(KEYS.CONTENT_INDEX);
         if (idxJson) {
           const idx = JSON.parse(idxJson);
           const ix = idx.findIndex((i) => i && i.id === id);
           if (ix >= 0) {
-            idx[ix] = { ...idx[ix], visibility: parsed.visibility || 'public' };
+            idx[ix] = { ...idx[ix], visibility: parsed.visibility || 'public', thumbnail: parsed.thumbnail || idx[ix].thumbnail || '' };
             await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx));
           }
         }
