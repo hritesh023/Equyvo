@@ -7,13 +7,11 @@ import { Switch } from "@/components/ui/switch";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import {
-  Bell, 
-  Shield, 
-  Palette, 
-  HelpCircle, 
-  LogOut, 
-  Moon, 
-  Sun,
+  Bell,
+  Shield,
+  Palette,
+  HelpCircle,
+  LogOut,
   Globe,
   Lock,
   Eye,
@@ -27,6 +25,7 @@ import {
 import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
+import { useTheme } from '@/components/theme-provider';
 import api from '@/lib/api';
 
 const SettingsPage = () => {
@@ -35,10 +34,17 @@ const SettingsPage = () => {
   const [notifications, setNotifications] = useState(() => {
     return localStorage.getItem('notifications') === 'true';
   });
-  const [darkMode, setDarkMode] = useState(() => {
-    const savedTheme = localStorage.getItem('theme');
-    return savedTheme ? savedTheme === 'dark' : true; // Default to dark like the main app
-  });
+  // Appearance is driven by the app-wide theme only. This screen never
+  // touches the document class itself, so just opening Settings can never
+  // flip a light-mode user into dark mode.
+  const { theme, setTheme } = useTheme();
+  const darkMode =
+    theme === 'dark' ||
+    (theme === 'system' &&
+      (typeof window === 'undefined' ||
+        (typeof window.matchMedia === 'function' &&
+          window.matchMedia('(prefers-color-scheme: dark)').matches)));
+  const setDarkMode = (next: boolean) => setTheme(next ? 'dark' : 'light');
   const [privateProfile, setPrivateProfile] = useState(() => {
     return localStorage.getItem('privateProfile') === 'true';
   });
@@ -148,16 +154,16 @@ const SettingsPage = () => {
     localStorage.setItem('equyvo_ads_personalized', personalizedAds.toString());
   }, [personalizedAds]);
 
+  // One-time cleanup of the legacy per-page key this screen used to write.
+  // It is no longer read anywhere, so a stale 'dark' value can't override
+  // the app-wide choice anymore.
   useEffect(() => {
-    const root = window.document.documentElement;
-    if (darkMode) {
-      root.classList.add('dark');
-      localStorage.setItem('theme', 'dark');
-    } else {
-      root.classList.remove('dark');
-      localStorage.setItem('theme', 'light');
+    try {
+      localStorage.removeItem('theme');
+    } catch {
+      /* ignore */
     }
-  }, [darkMode]);
+  }, []);
 
   const handleSignOut = async () => {
     const result = await signOutUser();
