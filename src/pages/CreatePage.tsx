@@ -2309,7 +2309,7 @@ const CreatePage = () => {
       {/* Create Content Tabs — horizontally scrollable icon pills on mobile
           so labels never squeeze/wrap ("Text Story" etc.); grid on desktop. */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="flex w-full max-w-full gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
+        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
           {[
             { value: 'story', label: 'Story', Icon: Camera },
             { value: 'text-story', label: 'Text', Icon: Text },

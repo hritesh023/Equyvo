@@ -990,7 +990,7 @@ const ProfilePage = () => {
 
       {/* User Content Tabs */}
       <Tabs defaultValue="posts" className="w-full">
-        <TabsList className="flex w-full max-w-full gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid md:grid-cols-6 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
+        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid md:grid-cols-6 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
           <TabsTrigger value="posts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">All Posts</TabsTrigger>
           <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
           <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
