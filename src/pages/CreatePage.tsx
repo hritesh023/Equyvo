@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop } from 'lucide-react';
@@ -30,6 +30,40 @@ function getCurrentUserInfo(): { userId: string; username: string } {
   } catch { /* no stored user — fall through to anonymous */ }
   return { userId: 'anonymous', username: 'anonymous' };
 }
+
+type ThumbKind =
+  | 'video'
+  | 'story'
+  | 'photo'
+  | 'moment'
+  | 'thought'
+  | 'live'
+  | 'pending-video'
+  | 'pending-moment'
+  | 'pending-thought'
+  | 'pending-story';
+
+interface ThumbCropState {
+  src: string;
+  aspect: number;
+  outW: number;
+  outH: number;
+  title: string;
+  target: { kind: ThumbKind; id: string };
+}
+
+const THUMB_SPEC: Record<ThumbKind, { aspect: number; outW: number; outH: number; label: string }> = {
+  video: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'video thumbnail' },
+  photo: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'photo thumbnail' },
+  live: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'stream thumbnail' },
+  story: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
+  moment: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
+  thought: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
+  'pending-video': { aspect: 16 / 9, outW: 1280, outH: 720, label: 'video thumbnail' },
+  'pending-moment': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
+  'pending-thought': { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
+  'pending-story': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
+};
 
 const CreatePage = () => {
   const [activeTab, setActiveTab] = useState('story');
@@ -66,6 +100,10 @@ const CreatePage = () => {
   const [thoughtThumbPreview, setThoughtThumbPreview] = useState<string>('');
   const [storyThumbFile, setStoryThumbFile] = useState<File | null>(null);
   const [storyThumbPreview, setStoryThumbPreview] = useState<string>('');
+
+  const [thumbCrop, setThumbCrop] = useState<ThumbCropState | null>(null);
+  const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
+  const thumbTargetRef = useRef<{ kind: ThumbKind; id: string } | null>(null);
 
   const clearVideoThumb = () => {
     if (videoThumbPreview.startsWith('blob:')) {
@@ -114,8 +152,85 @@ const CreatePage = () => {
   const openPendingThumbPicker = (
     kind: 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story',
   ) => {
-    thumbTargetRef.current = kind as unknown as ThumbCropState['target'];
-    document.getElementById('custom-thumb-upload')?.click();
+    thumbTargetRef.current = { kind, id: kind };
+    const input = document.getElementById('custom-thumb-upload') as HTMLInputElement | null;
+    if (input) {
+      input.value = '';
+      input.click();
+    }
+  };
+
+  const openThumbUpload = (kind: ThumbKind, id: string) => {
+    thumbTargetRef.current = { kind, id };
+    const input = document.getElementById('custom-thumb-upload') as HTMLInputElement | null;
+    if (input) {
+      input.value = '';
+      input.click();
+    }
+  };
+
+  const openThumbAdjust = (kind: ThumbKind, id: string, src: string) => {
+    if (!src) {
+      showError('No thumbnail to adjust yet — upload a separate one first.');
+      return;
+    }
+    const spec = THUMB_SPEC[kind] || THUMB_SPEC.video;
+    setThumbCrop({
+      src,
+      aspect: (spec && spec.aspect) || 16 / 9,
+      outW: (spec && spec.outW) || 1280,
+      outH: (spec && spec.outH) || 720,
+      title: `Adjust ${(spec && spec.label) || 'thumbnail'}`,
+      target: { kind, id },
+    });
+  };
+
+  const handleCustomThumbPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    const t = thumbTargetRef.current;
+    thumbTargetRef.current = null;
+    if (!file) return;
+    if (!t) {
+      showError('Upload target could not be identified. Please try again.');
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      showError('Please select an image file');
+      return;
+    }
+    if (file.size > 5 * 1024 * 1024) {
+      showError('Thumbnail must be less than 5MB');
+      return;
+    }
+
+    const rawKind = (typeof t === 'object' && t !== null) ? t.kind : (typeof t === 'string' ? t : undefined);
+    const rawId = (typeof t === 'object' && t !== null) ? t.id : (typeof t === 'string' ? t : undefined);
+    const kind: ThumbKind = (rawKind && rawKind in THUMB_SPEC) ? (rawKind as ThumbKind) : 'video';
+    const id: string = rawId || kind;
+    const spec = THUMB_SPEC[kind] || THUMB_SPEC.video;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const src = typeof reader.result === 'string' ? reader.result : '';
+        if (!src) throw new Error('Could not read image');
+        setThumbCrop({
+          src,
+          aspect: (spec && spec.aspect) || 16 / 9,
+          outW: (spec && spec.outW) || 1280,
+          outH: (spec && spec.outH) || 720,
+          title: `Crop ${(spec && spec.label) || 'thumbnail'}`,
+          target: { kind, id },
+        });
+      } catch {
+        showError('Could not process thumbnail image. Please try another one.');
+      }
+    };
+    reader.onerror = () => {
+      showError('Failed to read image file. Please try another one.');
+    };
+    reader.readAsDataURL(file);
   };
 
   // New states for scheduling and content management
@@ -1772,81 +1887,6 @@ const CreatePage = () => {
   // Works for videos, stories, photos and moments. The cropped image is
   // uploaded, then saved on the published post so feeds, profile and search
   // all show it. Live streams keep theirs locally until you go live.
-  type ThumbKind = 'video' | 'story' | 'photo' | 'moment' | 'thought' | 'live'
-    | 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story';
-  interface ThumbCropState {
-    src: string;
-    aspect: number;
-    outW: number;
-    outH: number;
-    title: string;
-    target: { kind: ThumbKind; id: string };
-  }
-  const THUMB_SPEC: Record<ThumbKind, { aspect: number; outW: number; outH: number; label: string }> = {
-    video: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'video thumbnail' },
-    photo: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'photo thumbnail' },
-    live: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'stream thumbnail' },
-    story: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
-    moment: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
-    thought: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
-    'pending-video': { aspect: 16 / 9, outW: 1280, outH: 720, label: 'video thumbnail' },
-    'pending-moment': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
-    'pending-thought': { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
-    'pending-story': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
-  };
-  const [thumbCrop, setThumbCrop] = useState<ThumbCropState | null>(null);
-  const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
-  const thumbTargetRef = useRef<ThumbCropState['target'] | null>(null);
-
-  const openThumbAdjust = (kind: ThumbKind, id: string, src: string) => {
-    if (!src) {
-      showError('No thumbnail to adjust yet — upload a separate one first.');
-      return;
-    }
-    const spec = THUMB_SPEC[kind];
-    setThumbCrop({
-      src,
-      aspect: spec.aspect,
-      outW: spec.outW,
-      outH: spec.outH,
-      title: `Adjust ${spec.label}`,
-      target: { kind, id },
-    });
-  };
-
-  const openThumbUpload = (kind: ThumbKind, id: string) => {
-    thumbTargetRef.current = { kind, id };
-    document.getElementById('custom-thumb-upload')?.click();
-  };
-
-  const handleCustomThumbPicked = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = '';
-    const t = thumbTargetRef.current;
-    thumbTargetRef.current = null;
-    if (!file || !t) return;
-    if (!file.type.startsWith('image/')) {
-      showError('Please select an image file');
-      return;
-    }
-    if (file.size > 5 * 1024 * 1024) {
-      showError('Thumbnail must be less than 5MB');
-      return;
-    }
-    const spec = THUMB_SPEC[t.kind];
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setThumbCrop({
-        src: reader.result as string,
-        aspect: spec.aspect,
-        outW: spec.outW,
-        outH: spec.outH,
-        title: `Crop ${spec.label}`,
-        target: t,
-      });
-    };
-    reader.readAsDataURL(file);
-  };
 
   const patchLocalThumb = (id: string, url: string) => {
     try {
@@ -1857,7 +1897,7 @@ const CreatePage = () => {
       let changed = false;
       profile.posts = profile.posts.map((p: unknown) => {
         const post = p as Record<string, unknown>;
-        if (post && post.id === id) {
+        if (post && String(post.id) === String(id)) {
           changed = true;
           return { ...post, thumbnail: url };
         }
@@ -3651,7 +3691,7 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
-                        onClick={() => document.getElementById('live-thumbnail-upload')?.click()}
+                        onClick={() => openThumbUpload('live', 'live')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
                         Upload Thumbnail
@@ -3678,15 +3718,24 @@ const CreatePage = () => {
                       }
                       const spec = THUMB_SPEC.live;
                       const reader = new FileReader();
-                      reader.onloadend = () => {
-                        setThumbCrop({
-                          src: reader.result as string,
-                          aspect: spec.aspect,
-                          outW: spec.outW,
-                          outH: spec.outH,
-                          title: `Crop ${spec.label}`,
-                          target: { kind: 'live', id: 'live' },
-                        });
+                      reader.onload = () => {
+                        try {
+                          const src = typeof reader.result === 'string' ? reader.result : '';
+                          if (!src) throw new Error('Failed to read image');
+                          setThumbCrop({
+                            src,
+                            aspect: (spec && spec.aspect) || 16 / 9,
+                            outW: (spec && spec.outW) || 1280,
+                            outH: (spec && spec.outH) || 720,
+                            title: `Crop ${(spec && spec.label) || 'stream thumbnail'}`,
+                            target: { kind: 'live', id: 'live' },
+                          });
+                        } catch {
+                          showError('Could not process thumbnail image. Please try another one.');
+                        }
+                      };
+                      reader.onerror = () => {
+                        showError('Failed to read thumbnail file. Please try another one.');
                       };
                       reader.readAsDataURL(file);
                     }}
@@ -4015,9 +4064,9 @@ const CreatePage = () => {
       {thumbCrop && (
         <MediaCropper
           imageSrc={thumbCrop.src}
-          aspect={thumbCrop.aspect}
-          output={[thumbCrop.outW, thumbCrop.outH]}
-          title={thumbCrop.title}
+          aspect={thumbCrop.aspect || 16 / 9}
+          output={[thumbCrop.outW || 1280, thumbCrop.outH || 720]}
+          title={thumbCrop.title || 'Adjust thumbnail'}
           onCancel={() => setThumbCrop(null)}
           onCropComplete={handleThumbCropComplete}
         />

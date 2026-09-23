@@ -54,64 +54,52 @@ export const getThoughts = async (limit = 20, offset = 0) => {
 };
 
 export const createThought = async (thoughtData: CreateThoughtData) => {
-  try {
-    const user = await getAuthenticatedUser();
-    if (!user) throw new Error('User not authenticated');
+  const user = await getAuthenticatedUser();
+  if (!user) throw new Error('User not authenticated');
 
-    if (thoughtData.media && thoughtData.media.length > 0) {
-      const validTypes = ['image', 'video', 'gif'];
-      const isValidMedia = thoughtData.media.every(media => 
-        validTypes.includes(media.type) && media.url
-      );
-      if (!isValidMedia) throw new Error('Invalid media format');
-    }
-
-    const { data, error } = await api.createThought({
-      user_id: user.id,
-      content: thoughtData.content,
-      platform: 'equyvo',
-      tags: thoughtData.tags || [],
-      comments_count: 0,
-      shares_count: 0,
-      retweets_count: 0,
-      media: thoughtData.media || null,
-      likes_count: 0,
-    });
-
-    if (error) throw new Error(error);
-    return data;
-  } catch (error) {
-    throw error;
+  if (thoughtData.media && thoughtData.media.length > 0) {
+    const validTypes = ['image', 'video', 'gif'];
+    const isValidMedia = thoughtData.media.every(media => 
+      validTypes.includes(media.type) && media.url
+    );
+    if (!isValidMedia) throw new Error('Invalid media format');
   }
+
+  const { data, error } = await api.createThought({
+    user_id: user.id,
+    content: thoughtData.content,
+    platform: 'equyvo',
+    tags: thoughtData.tags || [],
+    comments_count: 0,
+    shares_count: 0,
+    retweets_count: 0,
+    media: thoughtData.media || null,
+    likes_count: 0,
+  });
+
+  if (error) throw new Error(error);
+  return data;
 };
 
-export const deleteThought = async (thoughtId: string) => {
-  try {
-    // For now, just a mock success
-    await new Promise(resolve => setTimeout(resolve, 300));
-    return true;
-  } catch (error) {
-    throw error;
-  }
+export const deleteThought = async (_thoughtId: string) => {
+  // For now, just a mock success
+  await new Promise(resolve => setTimeout(resolve, 300));
+  return true;
 };
 
 // Votes API
 export const voteOnThought = async (voteData: VoteData) => {
-  try {
-    await new Promise(resolve => setTimeout(resolve, 200));
-    // TODO: Implement vote endpoint in worker
-    return {
-      success: true,
-      upvotes_count: Math.floor(Math.random() * 20),
-      downvotes_count: Math.floor(Math.random() * 5),
-      user_vote: voteData.vote_type
-    };
-  } catch (error) {
-    throw error;
-  }
+  await new Promise(resolve => setTimeout(resolve, 200));
+  // TODO: Implement vote endpoint in worker
+  return {
+    success: true,
+    upvotes_count: Math.floor(Math.random() * 20),
+    downvotes_count: Math.floor(Math.random() * 5),
+    user_vote: voteData.vote_type
+  };
 };
 
-export const getThoughtVotes = async (thoughtId: string) => {
+export const getThoughtVotes = async (_thoughtId: string) => {
   try {
     await new Promise(resolve => setTimeout(resolve, 200));
     return {
@@ -119,23 +107,19 @@ export const getThoughtVotes = async (thoughtId: string) => {
       downvotes_count: Math.floor(Math.random() * 5),
       user_vote: null
     };
-  } catch (error) {
+  } catch {
     return { upvotes_count: 0, downvotes_count: 0, user_vote: null };
   }
 };
 
 // Likes API
-export const likeThought = async (likeData: LikeData) => {
-  try {
-    await new Promise(resolve => setTimeout(resolve, 200));
-    const liked = Math.random() > 0.5;
-    return {
-      liked,
-      likes_count: liked ? 1 : 0
-    };
-  } catch (error) {
-    throw error;
-  }
+export const likeThought = async (_likeData: LikeData) => {
+  await new Promise(resolve => setTimeout(resolve, 200));
+  const liked = Math.random() > 0.5;
+  return {
+    liked,
+    likes_count: liked ? 1 : 0
+  };
 };
 
 export const getThoughtLikes = async (thoughtId: string) => {

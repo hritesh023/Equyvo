@@ -8,9 +8,9 @@ import { showError } from '@/utils/toast';
 interface MediaCropperProps {
   imageSrc: string;
   /** Width / height of the crop frame, e.g. 16/9 landscape or 9/16 portrait. */
-  aspect: number;
+  aspect?: number;
   /** Output pixel size, e.g. [1280, 720]. */
-  output: [number, number];
+  output?: [number, number];
   title?: string;
   onCancel: () => void;
   onCropComplete: (file: File) => void;
@@ -25,12 +25,16 @@ const MAX_ZOOM = 3;
  */
 const MediaCropper: React.FC<MediaCropperProps> = ({
   imageSrc,
-  aspect,
-  output,
+  aspect = 16 / 9,
+  output = [1280, 720],
   title = 'Adjust thumbnail',
   onCancel,
   onCropComplete,
 }) => {
+  const safeAspect = typeof aspect === 'number' && !isNaN(aspect) && aspect > 0 ? aspect : 16 / 9;
+  const outW = output && output[0] > 0 ? output[0] : 1280;
+  const outH = output && output[1] > 0 ? output[1] : 720;
+
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
@@ -40,7 +44,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   const [working, setWorking] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; id: number } | null>(null);
 
-  const stageH = stageW > 0 ? stageW / aspect : 0;
+  const stageH = stageW > 0 ? stageW / safeAspect : 0;
 
   useEffect(() => {
     const measure = () => {
@@ -117,11 +121,11 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
       const cw = Math.min(sW, imgSize.w - cx);
       const ch = Math.min(sH, imgSize.h - cy);
       const canvas = document.createElement('canvas');
-      canvas.width = output[0];
-      canvas.height = output[1];
+      canvas.width = outW;
+      canvas.height = outH;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('no canvas context');
-      ctx.drawImage(img, cx, cy, cw, ch, 0, 0, output[0], output[1]);
+      ctx.drawImage(img, cx, cy, cw, ch, 0, 0, outW, outH);
       const blob = await new Promise<Blob | null>((resolve) => {
         try {
           canvas.toBlob(resolve, 'image/jpeg', 0.9);
@@ -160,7 +164,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
         <div
           ref={stageRef}
           className="relative w-full cursor-grab touch-none select-none overflow-hidden rounded-xl bg-black active:cursor-grabbing"
-          style={{ aspectRatio: `${output[0]} / ${output[1]}` }}
+          style={{ aspectRatio: `${outW} / ${outH}` }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={endDrag}
