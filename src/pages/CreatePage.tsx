@@ -27,7 +27,7 @@ function getCurrentUserInfo(): { userId: string; username: string } {
         username: user.username || user.email?.split('@')[0] || 'anonymous',
       };
     }
-  } catch {}
+  } catch { /* no stored user — fall through to anonymous */ }
   return { userId: 'anonymous', username: 'anonymous' };
 }
 
@@ -53,6 +53,70 @@ const CreatePage = () => {
   const [momentFiles, setMomentFiles] = useState<File[]>([]);
   const [momentContent, setMomentContent] = useState('');
   const [videoCaption, setVideoCaption] = useState('');
+
+  // ---- Pre-publish custom thumbnails (one section per media tab, like Live) ----
+  // Each video/moment/thought/story tab gets its own separate thumbnail picker.
+  // The picked file is uploaded at post time and used as the thumbnail/poster
+  // for that batch, overriding the auto-captured poster.
+  const [videoThumbFile, setVideoThumbFile] = useState<File | null>(null);
+  const [videoThumbPreview, setVideoThumbPreview] = useState<string>('');
+  const [momentThumbFile, setMomentThumbFile] = useState<File | null>(null);
+  const [momentThumbPreview, setMomentThumbPreview] = useState<string>('');
+  const [thoughtThumbFile, setThoughtThumbFile] = useState<File | null>(null);
+  const [thoughtThumbPreview, setThoughtThumbPreview] = useState<string>('');
+  const [storyThumbFile, setStoryThumbFile] = useState<File | null>(null);
+  const [storyThumbPreview, setStoryThumbPreview] = useState<string>('');
+
+  const clearVideoThumb = () => {
+    if (videoThumbPreview.startsWith('blob:')) {
+      try { URL.revokeObjectURL(videoThumbPreview); } catch { /* ignore */ }
+    }
+    setVideoThumbFile(null);
+    setVideoThumbPreview('');
+  };
+  const clearMomentThumb = () => {
+    if (momentThumbPreview.startsWith('blob:')) {
+      try { URL.revokeObjectURL(momentThumbPreview); } catch { /* ignore */ }
+    }
+    setMomentThumbFile(null);
+    setMomentThumbPreview('');
+  };
+  const clearThoughtThumb = () => {
+    if (thoughtThumbPreview.startsWith('blob:')) {
+      try { URL.revokeObjectURL(thoughtThumbPreview); } catch { /* ignore */ }
+    }
+    setThoughtThumbFile(null);
+    setThoughtThumbPreview('');
+  };
+  const clearStoryThumb = () => {
+    if (storyThumbPreview.startsWith('blob:')) {
+      try { URL.revokeObjectURL(storyThumbPreview); } catch { /* ignore */ }
+    }
+    setStoryThumbFile(null);
+    setStoryThumbPreview('');
+  };
+
+  /** Upload a pre-publish thumbnail file; returns '' on failure. */
+  const uploadPendingThumb = async (file: File | null): Promise<string> => {
+    if (!file) return '';
+    try {
+      const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+      const { data, error } = await api.uploadFile(up, 'equyvo/thumbnails');
+      if (error || !data?.secureUrl) throw new Error(error || 'Thumbnail upload failed');
+      return data.secureUrl;
+    } catch {
+      showError('Custom thumbnail upload failed — using auto poster instead.');
+      return '';
+    }
+  };
+
+  /** Open the shared cropper for a pre-publish (not yet posted) thumbnail. */
+  const openPendingThumbPicker = (
+    kind: 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story',
+  ) => {
+    thumbTargetRef.current = kind as unknown as ThumbCropState['target'];
+    document.getElementById('custom-thumb-upload')?.click();
+  };
 
   // New states for scheduling and content management
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
@@ -704,6 +768,8 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
+        // Custom cover picked in the separate thumbnail section (like Live).
+        const storyCustomThumb = await uploadPendingThumb(storyThumbFile);
         const uploadedStoryResults = await Promise.all(
           storyFiles.map(async (file) => {
             try {
@@ -724,7 +790,7 @@ const CreatePage = () => {
           fileName: file.name,
           fileSize: file.size,
           duration: file.type.startsWith('video/') ? '0:15' : undefined,
-          thumbnail: getThumbnailFromUpload(result),
+          thumbnail: storyCustomThumb || getThumbnailFromUpload(result),
           publicId: result?.publicId || '',
           resourceType: result?.resourceType || '',
           uploadDate: new Date(),
@@ -764,6 +830,7 @@ const CreatePage = () => {
           showSuccess('Story posted successfully! It will be available for 24 hours.');
         }
         setStoryFiles([]);
+        clearStoryThumb();
 
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
         break;
@@ -901,6 +968,9 @@ const CreatePage = () => {
         }
 
         let thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
+        // Separate thumbnail section (like Live) wins over any auto poster.
+        const thoughtCustomThumb = await uploadPendingThumb(thoughtThumbFile);
+        if (thoughtCustomThumb) thoughtThumbnail = thoughtCustomThumb;
         // Videos without a server poster get one captured client-side so the
         // Thoughts feed still shows a preview (never a blank card).
         if (thoughtVideo?.type.startsWith('video/') && !thoughtThumbnail) {
@@ -957,6 +1027,7 @@ const CreatePage = () => {
         }
         setThoughtContent('');
         setThoughtVideo(null);
+        clearThoughtThumb();
         break;
       case 'schedule':
         if (!scheduleDateTime) {
@@ -1113,6 +1184,8 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
+        // Custom thumbnail from the separate section (like Live) wins.
+        const videoCustomThumb = await uploadPendingThumb(videoThumbFile);
         const uploadedVideoResults = await Promise.all(
           videoFiles.map(async (file) => {
             try {
@@ -1144,7 +1217,7 @@ const CreatePage = () => {
           fileName: file.name,
           fileSize: file.size,
           duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
-          thumbnail: videoPosters[index] || getThumbnailFromUpload(result),
+          thumbnail: videoCustomThumb || videoPosters[index] || getThumbnailFromUpload(result),
           videoUrl: result?.secureUrl || '',
           publicId: result?.publicId || '',
           resourceType: result?.resourceType || '',
@@ -1172,6 +1245,7 @@ const CreatePage = () => {
         }
         setVideoFiles([]);
         setVideoCaption('');
+        clearVideoThumb();
         break;
       case 'schedule':
         if (!scheduleDateTime) {
@@ -1257,6 +1331,8 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
+        // Custom cover from the separate thumbnail section (like Live) wins.
+        const momentCustomThumb = await uploadPendingThumb(momentThumbFile);
         const uploadedResults = await Promise.all(
           momentFiles.map(async (file) => {
             try {
@@ -1289,7 +1365,7 @@ const CreatePage = () => {
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
-          thumbnail: momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
+          thumbnail: momentCustomThumb || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
           mediaType: file.type.startsWith('image/') ? 'image' : 'video',
           videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
           publicId: result?.publicId || '',
@@ -1331,6 +1407,7 @@ const CreatePage = () => {
         }
         setMomentFiles([]);
         setMomentContent('');
+        clearMomentThumb();
         break;
       case 'schedule':
         if (!scheduleDateTime) {
@@ -1695,7 +1772,8 @@ const CreatePage = () => {
   // Works for videos, stories, photos and moments. The cropped image is
   // uploaded, then saved on the published post so feeds, profile and search
   // all show it. Live streams keep theirs locally until you go live.
-  type ThumbKind = 'video' | 'story' | 'photo' | 'moment' | 'thought' | 'live';
+  type ThumbKind = 'video' | 'story' | 'photo' | 'moment' | 'thought' | 'live'
+    | 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story';
   interface ThumbCropState {
     src: string;
     aspect: number;
@@ -1711,6 +1789,10 @@ const CreatePage = () => {
     story: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
     moment: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
     thought: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
+    'pending-video': { aspect: 16 / 9, outW: 1280, outH: 720, label: 'video thumbnail' },
+    'pending-moment': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
+    'pending-thought': { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
+    'pending-story': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
   };
   const [thumbCrop, setThumbCrop] = useState<ThumbCropState | null>(null);
   const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
@@ -1806,6 +1888,41 @@ const CreatePage = () => {
         setLiveThumbnailFile(file);
         setLiveThumbnailPreview(URL.createObjectURL(file));
         showSuccess('Stream thumbnail updated');
+        return;
+      }
+      if (t.kind === 'pending-video' || t.kind === 'pending-moment' || t.kind === 'pending-thought' || t.kind === 'pending-story') {
+        // Pre-publish thumbnails aren't posted yet — keep the cropped file
+        // locally; the post handler uploads it and uses it as the poster.
+        const previewUrl = URL.createObjectURL(file);
+        if (t.kind === 'pending-video') {
+          if (videoThumbPreview.startsWith('blob:')) {
+            try { URL.revokeObjectURL(videoThumbPreview); } catch { /* ignore */ }
+          }
+          setVideoThumbFile(file);
+          setVideoThumbPreview(previewUrl);
+          showSuccess('Video thumbnail set — it will be used when you post.');
+        } else if (t.kind === 'pending-moment') {
+          if (momentThumbPreview.startsWith('blob:')) {
+            try { URL.revokeObjectURL(momentThumbPreview); } catch { /* ignore */ }
+          }
+          setMomentThumbFile(file);
+          setMomentThumbPreview(previewUrl);
+          showSuccess('Moment cover set — it will be used when you post.');
+        } else if (t.kind === 'pending-thought') {
+          if (thoughtThumbPreview.startsWith('blob:')) {
+            try { URL.revokeObjectURL(thoughtThumbPreview); } catch { /* ignore */ }
+          }
+          setThoughtThumbFile(file);
+          setThoughtThumbPreview(previewUrl);
+          showSuccess('Thought thumbnail set — it will be used when you post.');
+        } else {
+          if (storyThumbPreview.startsWith('blob:')) {
+            try { URL.revokeObjectURL(storyThumbPreview); } catch { /* ignore */ }
+          }
+          setStoryThumbFile(file);
+          setStoryThumbPreview(previewUrl);
+          showSuccess('Story cover set — it will be used when you post.');
+        }
         return;
       }
       const up = file.type.startsWith('image/') ? await compressImage(file) : file;
@@ -2852,6 +2969,56 @@ const CreatePage = () => {
                 />
               </div>
 
+              {/* Story Cover — separate thumbnail section, like Live */}
+              <div>
+                <Label>Story Cover (optional)</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Upload a separate cover for video stories. Photos use the photo itself unless you override it here.
+                </p>
+                <div className="mt-1 flex items-center gap-4">
+                  {storyThumbPreview ? (
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-20 h-32 rounded-lg overflow-hidden border">
+                        <img src={storyThumbPreview} alt="Story cover preview" className="w-full h-full object-cover" />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
+                          onClick={clearStoryThumb}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openThumbAdjust('pending-story', 'pending-story', storyThumbPreview)}
+                        className="flex items-center gap-1"
+                        title="Crop and reposition this cover"
+                      >
+                        <Crop className="h-4 w-4" />
+                        Adjust
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPendingThumbPicker('pending-story')}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Cover
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Recommended: 720x1280</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
                 <Button onClick={() => handlePostStory('post')} className="w-full sm:flex-1">
@@ -3092,6 +3259,56 @@ const CreatePage = () => {
                 </div>
               </div>
 
+              {/* Thought Thumbnail — separate section, like Live */}
+              <div>
+                <Label>Video Thumbnail (optional)</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Upload a separate thumbnail for thought videos. Used as the poster across feeds when you post.
+                </p>
+                <div className="mt-1 flex items-center gap-4">
+                  {thoughtThumbPreview ? (
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-32 h-20 rounded-lg overflow-hidden border">
+                        <img src={thoughtThumbPreview} alt="Thought thumbnail preview" className="w-full h-full object-cover" />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
+                          onClick={clearThoughtThumb}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openThumbAdjust('pending-thought', 'pending-thought', thoughtThumbPreview)}
+                        className="flex items-center gap-1"
+                        title="Crop and reposition this thumbnail"
+                      >
+                        <Crop className="h-4 w-4" />
+                        Adjust
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPendingThumbPicker('pending-thought')}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Thumbnail
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Recommended: 1280x720</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
                 <Button onClick={() => handlePostThought('post')} className="w-full sm:flex-1">
@@ -3283,6 +3500,56 @@ const CreatePage = () => {
                   onChange={(e) => setVideoCaption(e.target.value)}
                   className="mt-1"
                 />
+              </div>
+
+              {/* Video Thumbnail — separate section, like Live */}
+              <div>
+                <Label>Video Thumbnail (optional)</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Upload a separate thumbnail for your video. It is shown across feeds instead of the auto poster.
+                </p>
+                <div className="mt-1 flex items-center gap-4">
+                  {videoThumbPreview ? (
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-32 h-20 rounded-lg overflow-hidden border">
+                        <img src={videoThumbPreview} alt="Video thumbnail preview" className="w-full h-full object-cover" />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
+                          onClick={clearVideoThumb}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openThumbAdjust('pending-video', 'pending-video', videoThumbPreview)}
+                        className="flex items-center gap-1"
+                        title="Crop and reposition this thumbnail"
+                      >
+                        <Crop className="h-4 w-4" />
+                        Adjust
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPendingThumbPicker('pending-video')}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Thumbnail
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Recommended: 1280x720</span>
+                    </div>
+                  )}
+                </div>
               </div>
 
               {/* Action Buttons */}
@@ -3550,6 +3817,55 @@ const CreatePage = () => {
                   ))}
                 </div>
               )}
+              {/* Moment Cover — separate thumbnail section, like Live */}
+              <div>
+                <Label>Moment Cover (optional)</Label>
+                <p className="text-xs text-muted-foreground mb-2">
+                  Upload a separate cover for video moments. Photo moments use the photo itself unless you override it here.
+                </p>
+                <div className="mt-1 flex items-center gap-4">
+                  {momentThumbPreview ? (
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-20 h-32 rounded-lg overflow-hidden border">
+                        <img src={momentThumbPreview} alt="Moment cover preview" className="w-full h-full object-cover" />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white"
+                          onClick={clearMomentThumb}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => openThumbAdjust('pending-moment', 'pending-moment', momentThumbPreview)}
+                        className="flex items-center gap-1"
+                        title="Crop and reposition this cover"
+                      >
+                        <Crop className="h-4 w-4" />
+                        Adjust
+                      </Button>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => openPendingThumbPicker('pending-moment')}
+                      >
+                        <Upload className="h-4 w-4 mr-2" />
+                        Upload Cover
+                      </Button>
+                      <span className="text-xs text-muted-foreground">Recommended: 720x1280</span>
+                    </div>
+                  )}
+                </div>
+              </div>
               <div className="flex flex-col sm:flex-row gap-2">
                 <Button onClick={() => handlePostMoment('post')} disabled={isUploading || momentFiles.length === 0} className="w-full sm:flex-1">
                   {isUploading ? (

@@ -17,6 +17,7 @@ import CommentSection from '@/components/CommentSection';
 import SearchSuggest from '@/components/SearchSuggest';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import ReportModal from '@/components/ReportModal';
+import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import type { FullscreenContent, ContentType } from '@/types';
@@ -24,6 +25,77 @@ import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
 import { fetchMoments, fetchPosts } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
+
+/** Image that never shows a broken-image icon: renders a neutral placeholder
+ *  when the URL is empty or fails to load (production hardening). */
+const DiscoverImg: React.FC<{ src?: string; alt?: string; className?: string }> = ({
+  src,
+  alt = 'Post',
+  className = '',
+}) => {
+  const [failed, setFailed] = React.useState(false);
+  React.useEffect(() => setFailed(false), [src]);
+  if (!src || failed) {
+    return (
+      <div className={`flex items-center justify-center bg-muted ${className}`}>
+        <Image className="w-8 h-8 text-muted-foreground/50" />
+      </div>
+    );
+  }
+  return (
+    <img
+      src={src}
+      alt={alt}
+      loading="lazy"
+      onError={() => setFailed(true)}
+      className={className}
+    />
+  );
+};
+
+/** Production rule: media the app cannot render is never shown. An item is
+ *  renderable when it is live OR has a playable video URL OR a real image URL. */
+const hasRenderableMedia = (i: any): boolean => {
+  if (i?.isLive || i?.live || String(i?.type || '').toLowerCase() === 'live') return true;
+  const v = String(i?.videoUrl || '').trim();
+  const img = String(i?.image || i?.thumbnail || '').trim();
+  return Boolean(v || img);
+};
+
+/** Build the fullscreen payload for any discover card (single place, so every
+ *  card — public uploads included — opens correctly with actions working). */
+const toFullscreen = (
+  item: any,
+  likes: number | undefined,
+): { content: FullscreenContent; type: ContentType } => {
+  const card = String(item.contentType || '').toLowerCase();
+  const isLive = card === 'live' || !!item.isLive || !!item.live;
+  const isVideo = card === 'video' || !!item.videoUrl || String(item.mediaType || '').toLowerCase() === 'video';
+  const type: ContentType = isLive ? 'live' : isVideo ? 'moment' : 'image';
+  return {
+    content: {
+      id: item.id,
+      type,
+      contentType: isLive ? 'live' : isVideo ? 'video' : 'image',
+      forcePortrait: isVideo && !isLive,
+      title: item.title,
+      creator: item.creator,
+      creatorId: item.creatorId || `user-${item.creator}`,
+      image: item.image,
+      thumbnail: item.thumbnail || item.image,
+      videoUrl: item.videoUrl,
+      mediaUrl: item.videoUrl || item.image,
+      likes: likes ?? item.likes,
+      comments: item.comments,
+      category: item.category,
+      isLive: item.isLive,
+      live: item.live,
+      views: item.views,
+      duration: item.duration,
+    },
+    type,
+  };
+};
 
 const DiscoverPage = () => {
   const [activeTab, setActiveTab] = useState('grid');
@@ -67,28 +139,36 @@ const DiscoverPage = () => {
     setFullscreenType(type);
   };
 
+  const baseLikesOf = (contentId: string): number => {
+    const mapped = postLikes.get(contentId);
+    if (typeof mapped === 'number') return mapped;
+    const found = discoverItems.find((d) => d.id === contentId);
+    const n = Number(found?.likes);
+    return Number.isFinite(n) ? n : 0;
+  };
+
   const handleLike = (contentId: string) => {
     setLikedPosts(prev => {
       const newSet = new Set(prev);
       const isCurrentlyLiked = newSet.has(contentId);
-      
+
       if (isCurrentlyLiked) {
         newSet.delete(contentId);
         showSuccess('💔 Post unliked');
-        // Decrement likes
+        // Decrement likes (from the true base count, not 0)
         setPostLikes(prevLikes => {
           const newLikes = new Map(prevLikes);
-          const currentLikes = newLikes.get(contentId) || 0;
+          const currentLikes = prevLikes.has(contentId) ? (prevLikes.get(contentId) as number) : baseLikesOf(contentId);
           newLikes.set(contentId, Math.max(0, currentLikes - 1));
           return newLikes;
         });
       } else {
         newSet.add(contentId);
         showSuccess('❤️ Post liked!');
-        // Increment likes
+        // Increment likes (from the true base count, not 0)
         setPostLikes(prevLikes => {
           const newLikes = new Map(prevLikes);
-          const currentLikes = newLikes.get(contentId) || 0;
+          const currentLikes = prevLikes.has(contentId) ? (prevLikes.get(contentId) as number) : baseLikesOf(contentId);
           newLikes.set(contentId, currentLikes + 1);
           return newLikes;
         });
@@ -253,34 +333,41 @@ const DiscoverPage = () => {
           };
         });
         const mapped = [
-          ...(posts as any[]).map((p: any) => ({
-            id: p.id,
-            type: p.type || (p.videoUrl ? 'video' : 'photo'),
-            title: String(p.content || p.title || 'Post').slice(0, 80),
-            content: p.content || '',
-            creator: creatorOf(p),
-            creatorId: p.userId || p.user || 'unknown',
-            image: imageUrlOf(p),
-            thumbnail: imageUrlOf(p),
-            videoUrl: videoUrlOf(p),
-            mediaType: p.mediaType,
-            likes: p.likes ?? 0,
-            comments: p.comments ?? 0,
-            views: p.views ?? 0,
-            category: (p.categories && p.categories[0]) || p.category || 'General',
-            tags: p.tags || [],
-            timestamp: p.createdAt || p.time || new Date().toISOString(),
-            createdAt: p.createdAt,
-            isLive: p.isLive,
-            live: p.live,
-            duration: p.duration,
-          })),
+          ...(posts as any[]).map((p: any) => {
+            const vid = videoUrlOf(p);
+            const img = imageUrlOf(p);
+            const live = !!(p.isLive || p.live || String(p.type || '').toLowerCase() === 'live');
+            return {
+              id: p.id,
+              type: p.type || (vid ? 'video' : 'photo'),
+              contentType: live ? 'live' : vid ? 'video' : 'image',
+              title: String(p.content || p.title || 'Post').slice(0, 80),
+              content: p.content || '',
+              creator: creatorOf(p),
+              creatorId: p.userId || p.user || 'unknown',
+              image: img,
+              thumbnail: img,
+              videoUrl: vid,
+              mediaType: p.mediaType || (vid ? 'video' : 'image'),
+              likes: p.likes ?? 0,
+              comments: p.comments ?? 0,
+              views: p.views ?? 0,
+              category: (p.categories && p.categories[0]) || p.category || 'General',
+              tags: p.tags || [],
+              timestamp: p.createdAt || p.time || new Date().toISOString(),
+              createdAt: p.createdAt,
+              isLive: p.isLive,
+              live: p.live,
+              duration: p.duration,
+            };
+          }),
           ...(moments as any[]).map((m: any) => {
             const vid = videoUrlOf(m);
             const img = imageUrlOf(m);
             return {
               id: m.id,
               type: 'moment',
+              contentType: vid ? 'video' : 'image',
               title: String(m.content || 'Moment').slice(0, 80),
               content: m.content || '',
               creator: creatorOf(m),
@@ -299,8 +386,11 @@ const DiscoverPage = () => {
               duration: m.duration || '0:30',
             };
           }),
-          ...thoughts,
-        ].filter((i) => allowedForSurface(String(i.type || 'post'), 'discover'));
+          ...thoughts.map((t: any) => ({
+            ...t,
+            contentType: t.videoUrl ? 'video' : t.image || t.thumbnail ? 'image' : 'text',
+          })),
+        ].filter((i) => allowedForSurface(String(i.type || 'post'), 'discover') && hasRenderableMedia(i));
         if (!cancelled) setDiscoverItems(mapped.sort((a, b) => timeOf(b) - timeOf(a)));
       } catch {
         if (!cancelled) setDiscoverItems([]);
@@ -324,8 +414,9 @@ const DiscoverPage = () => {
   }, []);
 
   const toCardType = (item: any): 'image' | 'video' | 'live' => {
-    if (item.isLive || item.live || item.type === 'live') return 'live';
-    if (item.videoUrl || item.mediaType === 'video' || item.type === 'video' || (item.type === 'moment' && item.videoUrl)) return 'video';
+    const ct = String(item?.contentType || '').toLowerCase();
+    if (ct === 'live' || item?.isLive || item?.live || item?.type === 'live') return 'live';
+    if (ct === 'video' || item?.videoUrl || item?.mediaType === 'video' || item?.type === 'video' || (item?.type === 'moment' && item?.videoUrl)) return 'video';
     return 'image';
   };
 
@@ -369,21 +460,22 @@ const DiscoverPage = () => {
     [discoverItems, applyFilters],
   );
 
-  // Initialize postLikes map with initial like counts
+  // Seed like counts as items load (async fetch lands after mount, so this
+  // must re-run when discoverItems changes — never overwriting live counts).
   React.useEffect(() => {
-    const allData = [...gridData, ...trendingData, ...liveData, ...longformData];
-    const initialLikes = new Map<string, number>();
-    
-    allData.forEach(item => {
-      if (!postLikes.has(item.id)) {
-        initialLikes.set(item.id, item.likes);
+    if (discoverItems.length === 0) return;
+    setPostLikes((prev) => {
+      let changed = false;
+      const next = new Map(prev);
+      for (const item of discoverItems) {
+        if (!next.has(item.id) && typeof item.likes === 'number') {
+          next.set(item.id, item.likes);
+          changed = true;
+        }
       }
+      return changed ? next : prev;
     });
-    
-    if (initialLikes.size > 0) {
-      setPostLikes(prev => new Map([...prev, ...initialLikes]));
-    }
-  }, []); // Only run once on mount
+  }, [discoverItems]);
 
   const handleTagClick = (tag: string) => {
     // Open fullscreen browse instead of navigating to search
@@ -600,37 +692,16 @@ const DiscoverPage = () => {
             </div>
           ) : (
             gridData.map((item, i) => (
-              <Card 
-                key={item.id} 
+              <Card
+                key={item.id}
                 className="group cursor-pointer hover:shadow-lg transition-all duration-300"
-                onClick={() => handleOpenFullscreen({
-                  id: item.id,
-                  type: item.contentType === 'video' ? 'moment' : item.contentType,
-                  contentType: item.contentType,
-                  forcePortrait: item.contentType === 'video',
-                  title: item.title,
-                  creator: item.creator,
-                  creatorId: `user-${item.creator}`,
-                  image: item.image,
-                  thumbnail: item.thumbnail,
-                  videoUrl: item.videoUrl,
-                  mediaUrl: item.videoUrl,
-                  likes: postLikes.get(item.id) || item.likes,
-                  comments: item.comments,
-                  category: item.category,
-                  isLive: item.isLive,
-                  live: item.live,
-                  views: item.views,
-                  duration: item.duration,
-                }, item.contentType === 'video' ? 'moment' : item.contentType)}
+                onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
               >
                 <CardContent className="p-4">
                   <div className="flex gap-4">
                     <div className="w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden bg-black">
-                      <img
+                      <DiscoverImg
                         src={item.thumbnail || item.image}
-                        alt="Post"
-                        loading="lazy"
                         className="w-full h-full object-contain"
                       />
                     </div>
@@ -659,7 +730,7 @@ const DiscoverPage = () => {
                       </p>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
-                          <ThumbsUp className="w-4 h-4" /> {postLikes.get(item.id) || item.likes}
+                          <ThumbsUp className="w-4 h-4" /> {postLikes.get(item.id) ?? item.likes}
                         </span>
                         <span className="flex items-center gap-1">
                           <MessageCircle className="w-4 h-4" /> {item.comments}
@@ -705,6 +776,20 @@ const DiscoverPage = () => {
                       >
                         <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                       </button>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <SaveButton postId={item.id} content={item} />
+                      </div>
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <StandardPostMenu
+                          postId={item.id}
+                          postUserId={item.creatorId}
+                          contentType={toCardType(item) === 'video' ? 'video' : toCardType(item) === 'live' ? 'live' : 'post'}
+                          onReport={handleReport}
+                          onHide={handleHide}
+                          onCopyLink={handleCopyLink}
+                          onShare={() => handleShare({ id: item.id, title: item.title, image: item.image })}
+                        />
+                      </div>
                     </div>
                   </div>
                 </CardContent>
@@ -740,62 +825,67 @@ const DiscoverPage = () => {
           </div>
         ) : (
           gridData.map((item, i) => (
-            <div 
-              key={item.id} 
+            <div
+              key={item.id}
               className={`relative aspect-square bg-muted group cursor-pointer overflow-hidden ${i % 3 === 0 && i % 2 === 0 ? 'row-span-2 col-span-2' : ''}`}
-              onClick={() => handleOpenFullscreen({
-                id: item.id,
-                type: item.contentType === 'video' ? 'moment' : item.contentType,
-                contentType: item.contentType,
-                forcePortrait: item.contentType === 'video',
-                title: item.title,
-                creator: item.creator,
-                creatorId: `user-${item.creator}`,
-                image: item.image,
-                thumbnail: item.thumbnail,
-                videoUrl: item.videoUrl,
-                mediaUrl: item.videoUrl,
-                likes: postLikes.get(item.id) || item.likes,
-                comments: item.comments,
-                category: item.category,
-                isLive: item.isLive,
-                live: item.live,
-                views: item.views,
-                duration: item.duration,
-              }, item.contentType === 'video' ? 'moment' : item.contentType)}
+              onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
             >
-              <img
+              <DiscoverImg
                 src={item.thumbnail || item.image}
-                alt="Post"
-                loading="lazy"
                 className="w-full h-full object-contain bg-black transition-transform duration-500 group-hover:scale-[1.02]"
               />
-              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity hidden md:flex items-center justify-center gap-3 text-white">
-                <button 
+              {/* Top-left: category */}
+              <div className="absolute top-2 left-2">
+                <Badge className="text-xs bg-black/50 hover:bg-black/70">
+                  {item.category}
+                </Badge>
+              </div>
+              {/* Top-right: 3-dot menu — always visible so public uploads are actionable */}
+              <div
+                className="absolute top-1.5 right-1.5 rounded-full bg-black/50 backdrop-blur-sm"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <StandardPostMenu
+                  postId={item.id}
+                  postUserId={item.creatorId}
+                  contentType={toCardType(item) === 'video' ? 'video' : toCardType(item) === 'live' ? 'live' : 'post'}
+                  onReport={handleReport}
+                  onHide={handleHide}
+                  onCopyLink={handleCopyLink}
+                  onShare={() => handleShare({ id: item.id, title: item.title, image: item.image })}
+                  className="text-white hover:text-white"
+                />
+              </div>
+              {/* Bottom action bar: like / comment / share / save — always
+                  visible (mobile never had hover), overlay on desktop hover */}
+              <div className="absolute inset-x-0 bottom-0 flex items-center justify-around gap-1 bg-gradient-to-t from-black/80 via-black/50 to-transparent px-2 pb-2 pt-8 text-white">
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleLike(item.id);
                   }}
-                  className={`flex items-center gap-1 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-all hover:scale-110 ${
+                  aria-label="Like"
+                  className={`flex items-center gap-1 rounded-full bg-black/50 p-2 transition-all hover:scale-110 hover:bg-black/70 ${
                     likedPosts?.has(item.id) ? 'text-red-500' : ''
                   }`}
                 >
-                  <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} /> 
-                  <span className="text-xs font-medium">{postLikes.get(item.id) || item.likes}</span>
+                  <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                  <span className="text-xs font-medium">{postLikes.get(item.id) ?? item.likes}</span>
                 </button>
-                <button 
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleComment(item.id, item.creator);
                   }}
-                  className={`flex items-center gap-1 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-all hover:scale-110 ${
-                    commentedPosts?.has(item.id) ? 'text-blue-500' : ''
+                  aria-label="Comment"
+                  className={`flex items-center gap-1 rounded-full bg-black/50 p-2 transition-all hover:scale-110 hover:bg-black/70 ${
+                    commentedPosts?.has(item.id) ? 'text-blue-400' : ''
                   }`}
                 >
-                  <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} /> 
+                  <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                   <span className="text-xs font-medium">{item.comments}</span>
                 </button>
-                <button 
+                <button
                   onClick={(e) => {
                     e.stopPropagation();
                     handleShare({
@@ -804,34 +894,36 @@ const DiscoverPage = () => {
                       image: item.image
                     });
                   }}
-                  className={`flex items-center gap-1 bg-black/50 p-2 rounded-full hover:bg-black/70 transition-all hover:scale-110 ${
-                    sharedPosts?.has(item.id) ? 'text-green-500' : ''
+                  aria-label="Share"
+                  className={`flex items-center gap-1 rounded-full bg-black/50 p-2 transition-all hover:scale-110 hover:bg-black/70 ${
+                    sharedPosts?.has(item.id) ? 'text-green-400' : ''
                   }`}
                 >
                   <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                 </button>
+                <div
+                  className="flex items-center rounded-full bg-black/50 transition-all hover:bg-black/70"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <SaveButton postId={item.id} content={item} className="text-white hover:text-white" iconClassName="text-white" />
+                </div>
               </div>
-              {item.contentType === 'live' && (
-                <div className="absolute top-2 right-2 flex items-center gap-1 bg-red-600 text-white text-xs px-2 py-0.5 rounded animate-pulse">
+              {toCardType(item) === 'live' && (
+                <div className="absolute top-2 right-12 flex items-center gap-1 bg-red-600 text-white text-xs px-2 py-0.5 rounded animate-pulse">
                   <div className="w-1.5 h-1.5 bg-white rounded-full" />
                   LIVE
                 </div>
               )}
-              {item.contentType === 'video' && (
-                <div className="absolute top-2 right-2">
+              {toCardType(item) === 'video' && (
+                <div className="absolute top-10 right-2">
                   <Video className="w-5 h-5 text-white drop-shadow-md" />
                 </div>
               )}
-              {item.contentType === 'video' && (
-                <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                  {item.duration || `${Math.floor(Math.random() * 10) + 1}:${Math.floor(Math.random() * 60).toString().padStart(2, '0')}`}
+              {toCardType(item) === 'video' && item.duration && (
+                <div className="absolute bottom-12 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
+                  {item.duration}
                 </div>
               )}
-              <div className="absolute top-2 left-2">
-                <Badge className="text-xs bg-black/50 hover:bg-black/70">
-                  {item.category}
-                </Badge>
-              </div>
             </div>
           ))
         )}
@@ -863,37 +955,17 @@ const DiscoverPage = () => {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {trendingData.map((item, i) => (
-            <Card 
-              key={item.id} 
+            <Card
+              key={item.id}
               className="overflow-hidden hover:shadow-lg transition-all duration-300 border-border/50 group cursor-pointer"
-              onClick={() => handleOpenFullscreen({
-                id: item.id,
-                type: item.contentType === 'video' ? 'moment' : item.contentType,
-                contentType: item.contentType,
-                forcePortrait: item.contentType === 'video',
-                title: item.title,
-                creator: item.creator,
-                creatorId: `user-${item.creator}`,
-                thumbnail: item.thumbnail,
-                image: item.image,
-                likes: postLikes.get(item.id) || item.likes,
-                views: item.views,
-                duration: item.duration || '3:45',
-                published: `${Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago`,
-                verified: true,
-                subscribers: 50000 + i * 10000,
-                description: 'This is an amazing trending content that everyone is talking about!',
-                category: item.category,
-                isLive: item.isLive,
-                live: item.live,
-              }, item.contentType === 'video' ? 'moment' : item.contentType)}
+              onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
             >
               <div className="relative aspect-video bg-black">
-                <img src={item.thumbnail || item.image} loading="lazy" alt="" className="w-full h-full object-contain" />
+                <DiscoverImg src={item.thumbnail || item.image} alt="" className="w-full h-full object-contain" />
                 <Badge className="absolute top-2 left-2 bg-orange-500/90 hover:bg-orange-600 border-none">#{i + 1} Trending</Badge>
-                {item.contentType === 'video' && (
+                {toCardType(item) === 'video' && item.duration && (
                   <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                    3:45
+                    {item.duration}
                   </div>
                 )}
                 <div className="absolute top-2 right-12">
@@ -905,9 +977,10 @@ const DiscoverPage = () => {
               <CardContent className="p-3">
                 <div className="flex gap-3 items-start justify-between">
                   <div className="flex gap-3">
-                    <Avatar 
+                    <Avatar
                       className="w-8 h-8 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         // Navigate to user profile when avatar is clicked
                         navigateToProfile(navigate, item.creatorId, item.creator);
                       }}
@@ -921,17 +994,48 @@ const DiscoverPage = () => {
                       <p className="text-xs text-muted-foreground mt-1">{item.creator} • {item.views} views • {Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</p>
                     </div>
                   </div>
-                  <StandardPostMenu
-                    postId={item.id}
-                    onReport={handleReport}
-                    onHide={handleHide}
-                    onCopyLink={handleCopyLink}
-                    onShare={() => handleShare({
-                      id: item.id,
-                      title: item.title,
-                      image: item.thumbnail
-                    })}
-                  />
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <StandardPostMenu
+                      postId={item.id}
+                      postUserId={item.creatorId}
+                      contentType={toCardType(item) === 'video' ? 'video' : toCardType(item) === 'live' ? 'live' : 'post'}
+                      onReport={handleReport}
+                      onHide={handleHide}
+                      onCopyLink={handleCopyLink}
+                      onShare={() => handleShare({
+                        id: item.id,
+                        title: item.title,
+                        image: item.thumbnail
+                      })}
+                    />
+                  </div>
+                </div>
+                {/* Always-visible actions: like / comment / share / save */}
+                <div className="mt-2 flex items-center gap-1 border-t border-border/50 pt-2" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => handleLike(item.id)}
+                    aria-label="Like"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${likedPosts?.has(item.id) ? 'text-red-500' : 'text-muted-foreground'}`}
+                  >
+                    <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                    <span className="text-xs">{postLikes.get(item.id) ?? item.likes}</span>
+                  </button>
+                  <button
+                    onClick={() => handleComment(item.id, item.creator)}
+                    aria-label="Comment"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${commentedPosts?.has(item.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
+                  >
+                    <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                    <span className="text-xs">{item.comments}</span>
+                  </button>
+                  <button
+                    onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
+                    aria-label="Share"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${sharedPosts?.has(item.id) ? 'text-green-500' : 'text-muted-foreground'}`}
+                  >
+                    <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                  </button>
+                  <SaveButton postId={item.id} content={item} />
                 </div>
               </CardContent>
             </Card>
@@ -965,31 +1069,13 @@ const DiscoverPage = () => {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {liveData.map((item, i) => (
-            <Card 
-              key={item.id} 
+            <Card
+              key={item.id}
               className="group cursor-pointer"
-              onClick={() => handleOpenFullscreen({
-                id: item.id,
-                type: 'live',
-                contentType: 'live',
-                title: item.title,
-                creator: item.creator,
-                creatorId: `user-${item.creator}`,
-                thumbnail: item.thumbnail,
-                image: item.image,
-                isLive: true,
-                live: true,
-                likes: postLikes.get(item.id) || item.likes,
-                views: item.views,
-                verified: true,
-                subscribers: 25000 + i * 5000,
-                description: 'Live streaming content - join the stream now!',
-                category: item.category,
-                duration: item.duration,
-              }, 'live')}
+              onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
             >
               <div className="relative aspect-video bg-black">
-                <img src={item.thumbnail || item.image} loading="lazy" alt="" className="w-full h-full object-contain rounded-t-lg" />
+                <DiscoverImg src={item.thumbnail || item.image} alt="" className="w-full h-full object-contain rounded-t-lg" />
                 <div className="absolute top-3 left-3 bg-red-600 text-white px-2 py-0.5 rounded text-xs font-bold animate-pulse">LIVE</div>
                 <div className="absolute bottom-3 left-3 bg-black/60 text-white px-2 py-0.5 rounded text-xs backdrop-blur-sm flex items-center gap-1">
                   <Users className="w-3 h-3" /> {item.views} watching
@@ -1003,9 +1089,10 @@ const DiscoverPage = () => {
               <CardContent className="p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Avatar 
+                    <Avatar
                       className="w-8 h-8 ring-2 ring-red-500 ring-offset-2 cursor-pointer hover:ring-4 hover:ring-red-400 transition-all duration-200"
-                      onClick={() => {
+                      onClick={(e) => {
+                        e.stopPropagation();
                         // Navigate to user profile when avatar is clicked
                         navigateToProfile(navigate, item.creatorId, item.creator);
                       }}
@@ -1021,17 +1108,48 @@ const DiscoverPage = () => {
                       </div>
                     </div>
                   </div>
-                  <StandardPostMenu
-                    postId={item.id}
-                    onReport={handleReport}
-                    onHide={handleHide}
-                    onCopyLink={handleCopyLink}
-                    onShare={() => handleShare({
-                      id: item.id,
-                      title: item.title,
-                      image: item.thumbnail
-                    })}
-                  />
+                  <div onClick={(e) => e.stopPropagation()}>
+                    <StandardPostMenu
+                      postId={item.id}
+                      postUserId={item.creatorId}
+                      contentType="live"
+                      onReport={handleReport}
+                      onHide={handleHide}
+                      onCopyLink={handleCopyLink}
+                      onShare={() => handleShare({
+                        id: item.id,
+                        title: item.title,
+                        image: item.thumbnail
+                      })}
+                    />
+                  </div>
+                </div>
+                {/* Always-visible actions: like / comment / share / save */}
+                <div className="mt-2 flex items-center gap-1 border-t border-border/50 pt-2" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => handleLike(item.id)}
+                    aria-label="Like"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${likedPosts?.has(item.id) ? 'text-red-500' : 'text-muted-foreground'}`}
+                  >
+                    <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                    <span className="text-xs">{postLikes.get(item.id) ?? item.likes}</span>
+                  </button>
+                  <button
+                    onClick={() => handleComment(item.id, item.creator)}
+                    aria-label="Comment"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${commentedPosts?.has(item.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
+                  >
+                    <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                    <span className="text-xs">{item.comments}</span>
+                  </button>
+                  <button
+                    onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
+                    aria-label="Share"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${sharedPosts?.has(item.id) ? 'text-green-500' : 'text-muted-foreground'}`}
+                  >
+                    <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                  </button>
+                  <SaveButton postId={item.id} content={item} />
                 </div>
               </CardContent>
             </Card>
@@ -1065,35 +1183,16 @@ const DiscoverPage = () => {
       ) : (
         <div className="space-y-6">
           {longformData.map((item, i) => (
-            <div 
-              key={item.id} 
+            <div
+              key={item.id}
               className="flex flex-col sm:flex-row gap-4 group cursor-pointer hover:bg-muted/30 p-2 rounded-xl transition-colors"
-              onClick={() => handleOpenFullscreen({
-                id: item.id,
-                type: 'video',
-                contentType: item.contentType,
-                title: item.title || 'Comprehensive Guide to building Social Media Apps in 2026 - Full Course',
-                creator: item.creator,
-                creatorId: `user-${item.creator}`,
-                thumbnail: item.thumbnail,
-                image: item.image,
-                likes: postLikes.get(item.id) || item.likes,
-                views: item.views,
-                duration: item.duration || '12:45',
-                published: `${Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago`,
-                verified: true,
-                subscribers: 100000 + i * 20000,
-                description: 'In this video we will explore how to build a production ready social media application using the latest tech stack...',
-                category: item.category,
-                isLive: item.isLive,
-                live: item.live,
-              }, 'video')}
+              onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
             >
               <div className="relative sm:w-64 md:w-80 flex-shrink-0 aspect-video rounded-xl overflow-hidden shadow-md bg-black">
-                <img src={item.thumbnail || item.image} loading="lazy" alt="" className="w-full h-full object-contain" />
-                {item.contentType === 'video' && (
+                <DiscoverImg src={item.thumbnail || item.image} alt="" className="w-full h-full object-contain" />
+                {item.duration && (
                   <div className="absolute bottom-2 right-2 bg-black/90 text-white text-xs px-1.5 py-0.5 rounded font-medium">
-                    12:45
+                    {item.duration}
                   </div>
                 )}
                 <div className="absolute top-2 left-2">
@@ -1103,12 +1202,26 @@ const DiscoverPage = () => {
                 </div>
               </div>
               <div className="flex-1 py-1">
-                <h3 className="text-lg font-bold leading-tight line-clamp-2 group-hover:text-primary transition-colors mb-1">
-                  {item.title}
-                </h3>
-                <Avatar 
+                <div className="flex items-start justify-between gap-2">
+                  <h3 className="text-lg font-bold leading-tight line-clamp-2 group-hover:text-primary transition-colors mb-1">
+                    {item.title}
+                  </h3>
+                  <div onClick={(e) => e.stopPropagation()} className="flex-shrink-0">
+                    <StandardPostMenu
+                      postId={item.id}
+                      postUserId={item.creatorId}
+                      contentType="video"
+                      onReport={handleReport}
+                      onHide={handleHide}
+                      onCopyLink={handleCopyLink}
+                      onShare={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
+                    />
+                  </div>
+                </div>
+                <Avatar
                   className="w-8 h-8 ring-2 ring-red-500 ring-offset-2 cursor-pointer hover:ring-4 hover:ring-red-400 transition-all duration-200"
-                  onClick={() => {
+                  onClick={(e) => {
+                    e.stopPropagation();
                     // Navigate to user profile when avatar is clicked
                     navigateToProfile(navigate, item.creatorId, item.creator);
                   }}
@@ -1134,8 +1247,35 @@ const DiscoverPage = () => {
                     <span>{Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
                   </div>
                   <p className="text-xs text-muted-foreground line-clamp-2 pt-2">
-                    In this video we will explore how to build a production ready social media application using the latest tech stack...
+                    {item.content || item.title}
                   </p>
+                </div>
+                {/* Always-visible actions: like / comment / share / save */}
+                <div className="mt-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                  <button
+                    onClick={() => handleLike(item.id)}
+                    aria-label="Like"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${likedPosts?.has(item.id) ? 'text-red-500' : 'text-muted-foreground'}`}
+                  >
+                    <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                    <span className="text-xs">{postLikes.get(item.id) ?? item.likes}</span>
+                  </button>
+                  <button
+                    onClick={() => handleComment(item.id, item.creator)}
+                    aria-label="Comment"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${commentedPosts?.has(item.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
+                  >
+                    <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                    <span className="text-xs">{item.comments}</span>
+                  </button>
+                  <button
+                    onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
+                    aria-label="Share"
+                    className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${sharedPosts?.has(item.id) ? 'text-green-500' : 'text-muted-foreground'}`}
+                  >
+                    <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
+                  </button>
+                  <SaveButton postId={item.id} content={item} />
                 </div>
               </div>
             </div>
