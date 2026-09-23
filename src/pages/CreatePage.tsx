@@ -91,6 +91,181 @@ const CreatePage = () => {
     } catch { /* ignore */ }
   }, []);
 
+  // Load everything this account ever published into management, so the
+  // thumbnail/delete/privacy controls exist for all uploads on any device.
+  // (The in-session lists alone vanish on reload.)
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const stored = localStorage.getItem('equyvo_cognito_user');
+        const uid = stored ? (JSON.parse(stored)?.id || '') : '';
+        if (!uid) return;
+        const { data, error } = await api.getUserContent(uid);
+        if (cancelled || error || !data || typeof data !== 'object') return;
+        const d = data as { posts?: any[]; thoughts?: any[]; stories?: any[]; moments?: any[] };
+        const toDate = (v: unknown): Date => {
+          const dt = v ? new Date(String(v)) : new Date();
+          return isNaN(dt.getTime()) ? new Date() : dt;
+        };
+        const num = (v: unknown): number => {
+          const n = Number(v);
+          return Number.isFinite(n) ? n : 0;
+        };
+        const isPriv = (item: any): boolean =>
+          String(item?.visibility || '').toLowerCase() === 'private';
+        const lower = (v: unknown): string => String(v || '').toLowerCase();
+        const videos: UploadedVideo[] = (d.posts || [])
+          .filter((p) => lower(p?.type) === 'video')
+          .map((p: any, i: number) => ({
+            id: String(p.id ?? `srv-video-${i}`),
+            title: String(p.content || p.title || 'Video'),
+            fileName: '',
+            fileSize: 0,
+            duration: String(p.duration || ''),
+            thumbnail: String(p.thumbnail || ''),
+            videoUrl: String(p.videoUrl || p.media || ''),
+            publicId: String(p.publicId || ''),
+            resourceType: String(p.resourceType || ''),
+            uploadDate: toDate(p.createdAt || p.created_at),
+            isPrivate: isPriv(p),
+            views: num(p.views),
+            likes: num(p.likes),
+            comments: num(p.comments),
+            shares: num(p.shares),
+            watchTime: 0,
+            engagement: 0,
+          }));
+        const photos: UploadedPhoto[] = (d.posts || [])
+          .filter((p) => ['photo', 'image'].includes(lower(p?.type)))
+          .map((p: any, i: number) => ({
+            id: String(p.id ?? `srv-photo-${i}`),
+            fileName: '',
+            fileSize: 0,
+            thumbnail: String(p.thumbnail || p.image || p.media || ''),
+            caption: String(p.content || ''),
+            mediaType: (lower(p.mediaType) === 'video' ? 'video' : 'image') as 'image' | 'video',
+            videoUrl: String(p.videoUrl || ''),
+            publicId: String(p.publicId || ''),
+            resourceType: String(p.resourceType || ''),
+            uploadDate: toDate(p.createdAt || p.created_at),
+            isPrivate: isPriv(p),
+            views: num(p.views),
+            likes: num(p.likes),
+            comments: num(p.comments),
+            shares: num(p.shares),
+          }));
+        const stories: UploadedStory[] = (d.stories || [])
+          .filter((s) => lower(s?.type || 'story') !== 'text-story')
+          .map((s: any, i: number) => {
+            const isVid = lower(s.mediaType) === 'video' || !!s.videoUrl;
+            return {
+              id: String(s.id ?? `srv-story-${i}`),
+              type: (isVid ? 'video' : 'image') as 'image' | 'video',
+              fileName: '',
+              fileSize: 0,
+              duration: isVid ? String(s.duration || '0:15') : undefined,
+              thumbnail: String(s.thumbnail || ''),
+              publicId: String(s.publicId || ''),
+              resourceType: String(s.resourceType || ''),
+              uploadDate: toDate(s.createdAt || s.created_at),
+              isPrivate: isPriv(s),
+              views: num(s.views),
+              likes: num(s.likes),
+              comments: num(s.comments),
+              shares: num(s.shares),
+              expiresAt: new Date(toDate(s.createdAt || s.created_at).getTime() + 24 * 60 * 60 * 1000),
+            };
+          });
+        const textStories: UploadedTextStory[] = (d.stories || [])
+          .filter((s) => lower(s?.type) === 'text-story')
+          .map((s: any, i: number) => {
+            const at = toDate(s.createdAt || s.created_at);
+            return {
+              id: String(s.id ?? `srv-text-${i}`),
+              content: String(s.content || ''),
+              backgroundColor: String(s.backgroundColor || s.background || '#000000'),
+              textColor: String(s.textColor || s.color || '#FFFFFF'),
+              uploadDate: at,
+              isPrivate: isPriv(s),
+              views: num(s.views),
+              likes: num(s.likes),
+              comments: num(s.comments),
+              shares: num(s.shares),
+              expiresAt: new Date(at.getTime() + 24 * 60 * 60 * 1000),
+            };
+          });
+        const moments: UploadedMoment[] = (d.moments || [])
+          .map((m: any, i: number) => {
+            const isVid = lower(m.mediaType) === 'video' || !!m.videoUrl;
+            return {
+              id: String(m.id ?? `srv-moment-${i}`),
+              fileName: '',
+              fileSize: 0,
+              thumbnail: String(m.thumbnail || ''),
+              mediaType: (isVid ? 'video' : 'image') as 'image' | 'video',
+              videoUrl: String(m.videoUrl || ''),
+              publicId: String(m.publicId || ''),
+              resourceType: String(m.resourceType || ''),
+              content: String(m.content || ''),
+              uploadDate: toDate(m.createdAt || m.created_at),
+              isPrivate: isPriv(m),
+              views: num(m.views),
+              likes: num(m.likes),
+              comments: num(m.comments),
+            };
+          });
+        const thoughts: UploadedThought[] = (d.thoughts || [])
+          .map((t: any, i: number) => {
+            const mediaArr = Array.isArray(t.media) ? t.media : [];
+            const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+            const videoUrl = firstMedia?.type === 'video' ? String(firstMedia.url || '') : String(t.videoUrl || '');
+            const image = firstMedia && firstMedia.type !== 'video'
+              ? String(firstMedia.url || firstMedia.thumbnail || '')
+              : String(t.image || t.image_url || t.thumbnail || '');
+            const mediaUrl = String(t.mediaUrl || videoUrl || image || '');
+            return {
+              id: String(t.id ?? `srv-thought-${i}`),
+              content: String(t.content || ''),
+              hasMedia: !!(mediaUrl || t.thumbnail),
+              mediaType: (videoUrl ? 'video' : mediaUrl ? 'image' : undefined) as 'image' | 'video' | undefined,
+              mediaUrl: mediaUrl || undefined,
+              thumbnail: String(t.thumbnail || image || '') || undefined,
+              publicId: String(t.publicId || ''),
+              resourceType: String(t.resourceType || ''),
+              uploadDate: toDate(t.createdAt || t.created_at),
+              isPrivate: isPriv(t),
+              views: num(t.views),
+              likes: num(t.likes ?? t.likes_count),
+              comments: num(t.comments ?? t.comments_count),
+              shares: num(t.shares ?? t.shares_count),
+              reacts: num(t.reacts ?? t.reacts_count),
+            };
+          });
+        if (cancelled) return;
+        function mergeById<T extends { id: string }>(prev: T[], incoming: T[]): T[] {
+          if (!incoming.length) return prev;
+          const seen = new Set(prev.map((x) => x.id));
+          return [...prev, ...incoming.filter((x) => !seen.has(x.id))];
+        }
+        setUploadedVideos((prev) => mergeById(prev, videos));
+        setUploadedPhotos((prev) => mergeById(prev, photos));
+        setUploadedStories((prev) => mergeById(prev, stories));
+        setUploadedTextStories((prev) => mergeById(prev, textStories));
+        setUploadedMoments((prev) => mergeById(prev, moments));
+        setUploadedThoughts((prev) => mergeById(prev, thoughts));
+        if (videos.length + photos.length + stories.length + moments.length + thoughts.length + textStories.length > 0) {
+          setShowContentManagement(true);
+        }
+      } catch {
+        /* offline: session items still work */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Type definitions for scheduled and draft posts
   interface ScheduledPost {
     id: string;
@@ -151,6 +326,7 @@ const CreatePage = () => {
     hasMedia: boolean;
     mediaType?: 'image' | 'video';
     mediaUrl?: string;
+    thumbnail?: string;
     publicId?: string;
     resourceType?: string;
     uploadDate: Date;
@@ -741,6 +917,7 @@ const CreatePage = () => {
           hasMedia: !!thoughtVideo,
           mediaType: thoughtMediaType,
           mediaUrl: thoughtSecureUrl || (thoughtVideo ? '' : undefined),
+          thumbnail: thoughtThumbnail || thoughtSecureUrl || undefined,
           publicId: thoughtUploadResult?.publicId || '',
           resourceType: thoughtUploadResult?.resourceType || '',
           uploadDate: new Date(),
@@ -1518,7 +1695,7 @@ const CreatePage = () => {
   // Works for videos, stories, photos and moments. The cropped image is
   // uploaded, then saved on the published post so feeds, profile and search
   // all show it. Live streams keep theirs locally until you go live.
-  type ThumbKind = 'video' | 'story' | 'photo' | 'moment' | 'live';
+  type ThumbKind = 'video' | 'story' | 'photo' | 'moment' | 'thought' | 'live';
   interface ThumbCropState {
     src: string;
     aspect: number;
@@ -1533,6 +1710,7 @@ const CreatePage = () => {
     live: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'stream thumbnail' },
     story: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
     moment: { aspect: 9 / 16, outW: 720, outH: 1280, label: 'moment cover' },
+    thought: { aspect: 16 / 9, outW: 1280, outH: 720, label: 'thought thumbnail' },
   };
   const [thumbCrop, setThumbCrop] = useState<ThumbCropState | null>(null);
   const [thumbBusyId, setThumbBusyId] = useState<string | null>(null);
@@ -1640,6 +1818,8 @@ const CreatePage = () => {
         setUploadedPhotos((prev) => prev.map((p) => (p.id === t.id ? { ...p, thumbnail: url } : p)));
       } else if (t.kind === 'story') {
         setUploadedStories((prev) => prev.map((s) => (s.id === t.id ? { ...s, thumbnail: url } : s)));
+      } else if (t.kind === 'thought') {
+        setUploadedThoughts((prev) => prev.map((x) => (x.id === t.id ? { ...x, thumbnail: url } : x)));
       } else {
         setUploadedMoments((prev) => prev.map((m) => (m.id === t.id ? { ...m, thumbnail: url } : m)));
       }
@@ -1648,7 +1828,9 @@ const CreatePage = () => {
           ? await api.updateStory(t.id, { thumbnail: url })
           : t.kind === 'moment'
             ? await api.updateMoment(t.id, { thumbnail: url })
-            : await api.updatePost(t.id, { thumbnail: url });
+            : t.kind === 'thought'
+              ? await api.updateThought(t.id, { thumbnail: url })
+              : await api.updatePost(t.id, { thumbnail: url });
       if (updateError) throw new Error(updateError);
       patchLocalThumb(t.id, url);
       try {
@@ -1768,6 +1950,7 @@ const CreatePage = () => {
         ...uploadedStories,
         ...uploadedThoughts,
         ...uploadedPhotos,
+        ...uploadedMoments,
         ...uploadedTextStories
       ].length > 0 && (
           <Card>
@@ -2139,9 +2322,9 @@ const CreatePage = () => {
                   <div key={thought.id} className="border rounded-lg p-4 space-y-4">
                     <div className="flex items-start justify-between">
                       <div className="flex items-start gap-3">
-                        {thought.hasMedia && thought.mediaUrl && (
+                        {thought.hasMedia && (thought.thumbnail || thought.mediaUrl) && (
                           <img
-                            src={thought.mediaUrl}
+                            src={thought.thumbnail || thought.mediaUrl}
                             alt="Thought media"
                             className="w-16 h-16 object-cover rounded"
                           />
@@ -2173,6 +2356,32 @@ const CreatePage = () => {
                           {thought.isPrivate ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
                           {thought.isPrivate ? 'Private' : 'Public'}
                         </Button>
+                        {thought.mediaType === 'video' && (
+                          <>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              disabled={thumbBusy('thought', thought.id)}
+                              onClick={() => openThumbUpload('thought', thought.id)}
+                              className="flex items-center gap-1"
+                              title="Upload a separate thumbnail"
+                            >
+                              {thumbBusy('thought', thought.id) ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                              Thumb
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              disabled={!thought.thumbnail || thumbBusy('thought', thought.id)}
+                              onClick={() => openThumbAdjust('thought', thought.id, thought.thumbnail || '')}
+                              className="flex items-center gap-1"
+                              title="Crop and reposition the current thumbnail"
+                            >
+                              <Crop className="h-4 w-4" />
+                              Adjust
+                            </Button>
+                          </>
+                        )}
                         <Button
                           variant="ghost"
                           size="sm"
