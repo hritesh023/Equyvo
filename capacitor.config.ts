@@ -1,5 +1,10 @@
 import type { CapacitorConfig } from '@capacitor/cli';
 
+// Live-reload URL is DEV ONLY. Release builds must load the bundled dist/;
+// leaving `server.url` set ships an app that points at the phone's own
+// localhost and renders nothing on real devices.
+const isDev = process.env.NODE_ENV !== 'production' && !process.env.CAPACITOR_RELEASE;
+
 const config: CapacitorConfig = {
   appId: 'com.equyvo.app',
   appName: 'Equyvo',
@@ -7,8 +12,12 @@ const config: CapacitorConfig = {
   server: {
     androidScheme: 'https',
     iosScheme: 'https',
-    url: 'http://localhost:3000',
-    cleartext: true,
+    ...(isDev
+      ? {
+          url: 'http://localhost:3000',
+          cleartext: true,
+        }
+      : {}),
     allowNavigation: ['*']
   },
   android: {
