@@ -8,9 +8,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { X, Upload, Camera, Loader2 } from 'lucide-react';
+import { X, Upload, Camera, Loader2, Crop } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { compressImage } from '@/lib/utils';
+import AvatarCropper from '@/components/AvatarCropper';
 import api from '@/lib/api';
 
 async function uploadFile(file: File, folder: string) {
@@ -44,9 +45,12 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [avatarFile, setAvatarFile] = useState<File | null>(null);
   const [avatarPreview, setAvatarPreview] = useState(currentProfile.avatar);
   const [isUploading, setIsUploading] = useState(false);
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Allow picking the same file again
+    e.target.value = '';
     if (file) {
       if (file.size > 5 * 1024 * 1024) {
         showError('Avatar file size must be less than 5MB');
@@ -56,13 +60,25 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
         showError('Please select an image file');
         return;
       }
-      setAvatarFile(file);
       const reader = new FileReader();
       reader.onloadend = () => {
-        setAvatarPreview(reader.result as string);
+        setCropSrc(reader.result as string);
       };
       reader.readAsDataURL(file);
     }
+  };
+
+  const handleCropComplete = (file: File) => {
+    if (avatarPreview.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(avatarPreview);
+      } catch {
+        /* ignore */
+      }
+    }
+    setAvatarFile(file);
+    setAvatarPreview(URL.createObjectURL(file));
+    setCropSrc(null);
   };
 
   const handleSave = async () => {
@@ -145,9 +161,21 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
               onChange={handleAvatarChange}
               className="hidden"
             />
-            <p className="text-xs text-muted-foreground">
-              Click camera to change photo
-            </p>
+            <div className="flex items-center gap-2">
+              <p className="text-xs text-muted-foreground">
+                Click camera to change photo
+              </p>
+              {avatarPreview && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 gap-1 px-2 text-xs"
+                  onClick={() => setCropSrc(avatarPreview)}
+                >
+                  <Crop className="h-3 w-3" /> Adjust
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Name */}
@@ -213,7 +241,19 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   );
 
   if (typeof window === 'undefined') return null;
-  return createPortal(modal, document.body);
+  return createPortal(
+    <>
+      {modal}
+      {cropSrc && (
+        <AvatarCropper
+          imageSrc={cropSrc}
+          onCancel={() => setCropSrc(null)}
+          onCropComplete={handleCropComplete}
+        />
+      )}
+    </>,
+    document.body,
+  );
 };
 
 export default EditProfileModal;
