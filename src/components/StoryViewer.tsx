@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff, Heart } from 'lucide-react';
+import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff, ThumbsUp } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -723,7 +723,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                 className="text-white hover:bg-white/20"
                 title={isStoryLiked ? 'Unlike story' : 'Like story'}
               >
-                <Heart className={`h-5 w-5 ${isStoryLiked ? 'fill-red-500 text-red-500' : ''}`} />
+                <ThumbsUp className={`h-5 w-5 ${isStoryLiked ? 'fill-current text-blue-500' : ''}`} />
               </Button>
               {storyLikeCount > 0 && (
                 <span className="text-white text-[11px] font-medium leading-none -mt-0.5">{storyLikeCount}</span>
