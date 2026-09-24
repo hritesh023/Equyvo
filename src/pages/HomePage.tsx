@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
-import { allowedForSurface, creatorOf, getFollowing, hideFromMyView } from '@/lib/feed-store';
+import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
@@ -200,11 +200,13 @@ const HomePage = () => {
     window.addEventListener('feedRefresh', handlePostCreated);
     window.addEventListener('momentCreated', handlePostCreated);
     window.addEventListener('thoughtCreated', handlePostCreated);
+    window.addEventListener('profileUpdated', handlePostCreated);
     return () => {
       window.removeEventListener('userPostCreated', handlePostCreated);
       window.removeEventListener('feedRefresh', handlePostCreated);
       window.removeEventListener('momentCreated', handlePostCreated);
       window.removeEventListener('thoughtCreated', handlePostCreated);
+      window.removeEventListener('profileUpdated', handlePostCreated);
     };
   }, []);
 
@@ -257,9 +259,11 @@ const HomePage = () => {
     const refresh = () => loadStories();
     window.addEventListener('userPostCreated', refresh);
     window.addEventListener('storyUploaded', refresh);
+    window.addEventListener('profileUpdated', refresh);
     return () => {
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('storyUploaded', refresh);
+      window.removeEventListener('profileUpdated', refresh);
     };
   }, []);
 
@@ -291,10 +295,12 @@ const HomePage = () => {
     window.addEventListener('userPostCreated', refresh);
     window.addEventListener('momentCreated', refresh);
     window.addEventListener('feedRefresh', refresh);
+    window.addEventListener('profileUpdated', refresh);
     return () => {
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
+      window.removeEventListener('profileUpdated', refresh);
     };
   }, []);
 
@@ -680,7 +686,46 @@ const HomePage = () => {
                           <AvatarFallback>{story.user.substring(0, 2)}</AvatarFallback>
                         </Avatar>
                       </div>
-                      <img src={story.image} alt={story.user} className="w-full h-full object-cover" />
+                      {(() => {
+                        // Custom uploaded cover (thumbnail) wins; photo next;
+                        // video stories without a poster show first frame.
+                        const art = storyImageOf(story) || story.image || '';
+                        const vsrc = storyVideoOf(story);
+                        if (art) {
+                          return (
+                            <img
+                              src={art}
+                              alt={story.user}
+                              className="w-full h-full object-cover"
+                              loading="lazy"
+                              onError={(e) => {
+                                const t = e.currentTarget;
+                                if (story.image && art !== story.image && t.src !== story.image) {
+                                  t.src = story.image;
+                                } else if (t.src.indexOf('placeholder.svg') === -1) {
+                                  t.src = '/placeholder.svg';
+                                }
+                              }}
+                            />
+                          );
+                        }
+                        if (vsrc) {
+                          return (
+                            <video
+                              src={vsrc}
+                              className="w-full h-full object-cover"
+                              muted
+                              playsInline
+                              preload="metadata"
+                            />
+                          );
+                        }
+                        return (
+                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500 to-pink-500">
+                            <span className="text-white text-2xl font-bold">{story.user.substring(0, 1).toUpperCase()}</span>
+                          </div>
+                        );
+                      })()}
                       <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
                         <p className="text-white text-xs font-medium truncate">{story.user}</p>
                         <p className="text-white/80 text-xs">{story.time}</p>

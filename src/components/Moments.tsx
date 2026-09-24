@@ -243,8 +243,8 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       duration: moment.mediaType === 'video' ? '0:30' : undefined,
       description: moment.content,
       creatorId: moment.user,
-      verified: Math.random() > 0.7,
-      subscribers: Math.floor(Math.random() * 100000),
+      // Only real values: never invent verified/subscriber counts.
+      verified: (moment as any).verified === true,
       fallbackImage: moment.thumbnail || moment.media,
       // Ensure portrait mode for moments
       aspectRatio: '9/16',

@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Button } from '@/components/ui/button';
 import { Slider } from '@/components/ui/slider';
-import { X, ZoomIn, Check, Loader2 } from 'lucide-react';
+import { X, ZoomIn, Check, Loader2, RotateCcw, Maximize2, Shrink } from 'lucide-react';
 import { showError } from '@/utils/toast';
 
 interface MediaCropperProps {
@@ -16,12 +16,16 @@ interface MediaCropperProps {
   onCropComplete: (file: File) => void;
 }
 
-const MIN_ZOOM = 1;
+const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 3;
 
+type FitMode = 'fit' | 'fill';
+
 /**
- * Rectangular media cropper. The whole stage IS the crop frame —
- * drag to reposition, slider/wheel to zoom. Used for content thumbnails.
+ * Flexible thumbnail cropper. Two modes:
+ * - Fit (default): whole image visible, no auto-crop — letterboxed output.
+ * - Fill: classic cover crop — drag to position, zoom to choose the crop.
+ * Reset restores the original framing (zoom 1, centered) at any time.
  */
 const MediaCropper: React.FC<MediaCropperProps> = ({
   imageSrc,
@@ -41,10 +45,24 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   const [stageW, setStageW] = useState(0);
   const [zoom, setZoom] = useState(1);
   const [pos, setPos] = useState({ x: 0, y: 0 });
+  const [fitMode, setFitMode] = useState<FitMode>('fit');
   const [working, setWorking] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; id: number } | null>(null);
 
   const stageH = stageW > 0 ? stageW / safeAspect : 0;
+
+  const resetFraming = useCallback(() => {
+    setZoom(1);
+    setPos({ x: 0, y: 0 });
+  }, []);
+
+  const switchMode = useCallback((mode: FitMode) => {
+    setFitMode(mode);
+    // Re-center so the original framing is restored instead of keeping a
+    // stale crop offset from the other mode.
+    setPos({ x: 0, y: 0 });
+    if (mode === 'fit') setZoom(1);
+  }, []);
 
   useEffect(() => {
     const measure = () => {
@@ -56,7 +74,9 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   }, []);
 
   const baseScale = imgSize.w > 0 && imgSize.h > 0 && stageW > 0 && stageH > 0
-    ? Math.max(stageW / imgSize.w, stageH / imgSize.h)
+    ? (fitMode === 'fit'
+        ? Math.min(stageW / imgSize.w, stageH / imgSize.h)
+        : Math.max(stageW / imgSize.w, stageH / imgSize.h))
     : 1;
   const renderedW = imgSize.w * baseScale * zoom;
   const renderedH = imgSize.h * baseScale * zoom;
@@ -111,21 +131,42 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
     if (!img || imgSize.w === 0 || stageW === 0 || working) return;
     setWorking(true);
     try {
-      const unit = baseScale * zoom;
-      const sW = stageW / unit;
-      const sH = stageH / unit;
-      const sx = (stageW / 2 + pos.x - renderedW / 2) / unit;
-      const sy = (stageH / 2 + pos.y - renderedH / 2) / unit;
-      const cx = Math.min(Math.max(0, sx), Math.max(0, imgSize.w - sW));
-      const cy = Math.min(Math.max(0, sy), Math.max(0, imgSize.h - sH));
-      const cw = Math.min(sW, imgSize.w - cx);
-      const ch = Math.min(sH, imgSize.h - cy);
       const canvas = document.createElement('canvas');
       canvas.width = outW;
       canvas.height = outH;
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('no canvas context');
-      ctx.drawImage(img, cx, cy, cw, ch, 0, 0, outW, outH);
+      // Fill background so Fit outputs never have transparent gutters.
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(0, 0, outW, outH);
+      if (fitMode === 'fit' && zoom === 1 && pos.x === 0 && pos.y === 0) {
+        // True original-size export: whole image, aspect-preserved, centered.
+        const s = Math.min(outW / imgSize.w, outH / imgSize.h);
+        const dw = imgSize.w * s;
+        const dh = imgSize.h * s;
+        ctx.drawImage(img, 0, 0, imgSize.w, imgSize.h, (outW - dw) / 2, (outH - dh) / 2, dw, dh);
+      } else if (fitMode === 'fit') {
+        // Fit + user zoom/pan: keep aspect, letterbox, honor framing.
+        const unit = baseScale * zoom;
+        const renderedWFit = imgSize.w * unit;
+        const renderedHFit = imgSize.h * unit;
+        const dx = (outW - (renderedWFit / stageW) * outW) / 2 + (pos.x / stageW) * outW;
+        const dy = (outH - (renderedHFit / stageH) * outH) / 2 + (pos.y / stageH) * outH;
+        const dw = (renderedWFit / stageW) * outW;
+        const dh = (renderedHFit / stageH) * outH;
+        ctx.drawImage(img, 0, 0, imgSize.w, imgSize.h, dx, dy, dw, dh);
+      } else {
+        const unit = baseScale * zoom;
+        const sW = stageW / unit;
+        const sH = stageH / unit;
+        const sx = (stageW / 2 + pos.x - renderedW / 2) / unit;
+        const sy = (stageH / 2 + pos.y - renderedH / 2) / unit;
+        const cx = Math.min(Math.max(0, sx), Math.max(0, imgSize.w - sW));
+        const cy = Math.min(Math.max(0, sy), Math.max(0, imgSize.h - sH));
+        const cw = Math.min(sW, imgSize.w - cx);
+        const ch = Math.min(sH, imgSize.h - cy);
+        ctx.drawImage(img, cx, cy, cw, ch, 0, 0, outW, outH);
+      }
       const blob = await new Promise<Blob | null>((resolve) => {
         try {
           canvas.toBlob(resolve, 'image/jpeg', 0.9);
@@ -195,8 +236,40 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
         </div>
 
         <p className="mt-3 text-center text-xs text-muted-foreground">
-          Drag to position — everything in this frame becomes the thumbnail.
+          {fitMode === 'fit'
+            ? 'Fit shows the whole image with no auto-crop. Switch to Fill to crop, or zoom/drag to adjust.'
+            : 'Fill crops to the frame — drag to position, zoom to choose the crop.'}
         </p>
+
+        <div className="mt-3 flex items-center gap-2">
+          <Button
+            type="button"
+            variant={fitMode === 'fit' ? 'default' : 'outline'}
+            size="sm"
+            className="flex-1"
+            onClick={() => switchMode('fit')}
+          >
+            <Shrink className="mr-1 h-3.5 w-3.5" /> Fit (no crop)
+          </Button>
+          <Button
+            type="button"
+            variant={fitMode === 'fill' ? 'default' : 'outline'}
+            size="sm"
+            className="flex-1"
+            onClick={() => switchMode('fill')}
+          >
+            <Maximize2 className="mr-1 h-3.5 w-3.5" /> Fill (crop)
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={resetFraming}
+            title="Reset to original framing"
+          >
+            <RotateCcw className="h-4 w-4" />
+          </Button>
+        </div>
 
         <div className="mt-3 flex items-center gap-3">
           <ZoomIn className="h-4 w-4 shrink-0 text-muted-foreground" />

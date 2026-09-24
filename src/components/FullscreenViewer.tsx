@@ -1105,14 +1105,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       >
                         {actualContent.creator || 'Unknown Creator'}
                       </span>
-                      {actualContent.verified && (
+                      {actualContent.verified === true && (
                         <div className="bg-blue-500 rounded-full p-0.5">
                           <div className="w-2 h-2 bg-white rounded-full"></div>
                         </div>
                       )}
                     </div>
-                    {actualContent.subscribers && (
-                      <span className="text-white/60">{formatNumber(actualContent.subscribers)} subscribers</span>
+                    {/* Equyvo has followers only — no subscribers. Follower counts
+                        are shown only when the server provides a real number. */}
+                    {Number.isFinite(Number((actualContent as any)?.followersCount ?? (actualContent as any)?.followerCount)) &&
+                      Number((actualContent as any)?.followersCount ?? (actualContent as any)?.followerCount) > 0 && (
+                      <span className="text-white/60">{formatNumber(Number((actualContent as any)?.followersCount ?? (actualContent as any)?.followerCount))} followers</span>
                     )}
                     {actualContent.views && (
                       <span className="flex items-center gap-1">
@@ -1363,14 +1366,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 >
                   {actualContent.creator || 'Unknown Creator'}
                 </span>
-                {actualContent.verified && (
+                {actualContent.verified === true && (
                   <div className="bg-blue-500 rounded-full p-0.5">
                     <div className="w-2 h-2 bg-white rounded-full"></div>
                   </div>
                 )}
               </div>
-              {actualContent.subscribers && (
-                <span className="text-white/60">{formatNumber(actualContent.subscribers)} subscribers</span>
+              {Number.isFinite(Number((actualContent as any)?.followersCount ?? (actualContent as any)?.followerCount)) &&
+                Number((actualContent as any)?.followersCount ?? (actualContent as any)?.followerCount) > 0 && (
+                <span className="text-white/60">{formatNumber(Number((actualContent as any)?.followersCount ?? (actualContent as any)?.followerCount))} followers</span>
               )}
               {actualContent.views && (
                 <span className="flex items-center gap-1">
@@ -1507,9 +1511,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
                   title={`${actualContent.creator}'s Profile`}
                 >
-                  {actualContent.creator || 'Unknown Creator'}
+                {actualContent.creator || 'Unknown Creator'}
                 </span>
-                {actualContent.verified && (
+                {actualContent.verified === true && (
                   <div className="bg-blue-500 rounded-full p-0.5">
                     <div className="w-2 h-2 bg-white rounded-full"></div>
                   </div>
@@ -1530,7 +1534,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <p className="text-white/70 text-sm mt-2 line-clamp-2">
                 {actualContent.description}
               </p>
-            )}
+           )}
           </div>
 
           {/* Action Buttons */}
@@ -1705,7 +1709,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 >
                   {actualContent.creator || 'Unknown Creator'}
                 </span>
-                {actualContent.verified && (
+                {actualContent.verified === true && (
                   <div className="bg-blue-500 rounded-full p-0.5">
                     <div className="w-2 h-2 bg-white rounded-full"></div>
                   </div>

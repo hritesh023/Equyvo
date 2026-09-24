@@ -660,12 +660,34 @@ const ProfilePage = () => {
 
   const handleSaveProfile = async (updatedProfile: Partial<UserProfile>) => {
     const currentUser = getStoredUser();
-    setUserProfile(prev => ({
-      ...prev,
-      ...updatedProfile,
-      _userEmail: currentUser?.email || prev._userEmail,
-    } as unknown as typeof prev));
     const merged = { ...userProfile, ...updatedProfile, _userEmail: currentUser?.email || userProfile._userEmail };
+    setUserProfile(merged as unknown as typeof userProfile);
+    // Persist locally so every surface reads the fresh name/avatar on next
+    // load, and keep the auth record in sync so NEW uploads are stamped with
+    // the updated name (CreatePage reads it for the `user` field).
+    try {
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('userProfile', JSON.stringify(merged));
+        if (currentUser) {
+          const nextUsername =
+            (merged as unknown as Record<string, unknown>).username as string ||
+            (merged as unknown as Record<string, unknown>).name as string ||
+            currentUser.username;
+          const nextFullName =
+            (merged as unknown as Record<string, unknown>).name as string ||
+            currentUser.fullName;
+          localStorage.setItem(
+            'equyvo_cognito_user',
+            JSON.stringify({
+              ...currentUser,
+              username: nextUsername,
+              fullName: nextFullName,
+              avatar: (merged as unknown as Record<string, unknown>).avatar || (currentUser as unknown as Record<string, unknown>).avatar,
+            }),
+          );
+        }
+      }
+    } catch { /* storage is best-effort */ }
     try {
       await api.updateProfile(merged);
       await api.indexContent({
@@ -831,8 +853,8 @@ const ProfilePage = () => {
       duration: post.duration,
       description: post.content || '',
       creatorId: post.user || 'unknown',
-      verified: Math.random() > 0.7,
-      subscribers: Math.floor(Math.random() * 100000),
+      // Only real values: never invent verified/subscriber counts.
+      verified: (post as any).verified === true,
       fallbackImage: post.thumbnail || post.image || post.media,
       // Ensure proper aspect ratio and orientation for moments
       aspectRatio: isMoment ? '9/16' : post.image ? '16/9' : undefined,

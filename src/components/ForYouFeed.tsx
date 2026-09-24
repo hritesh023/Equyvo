@@ -242,8 +242,8 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
       duration: post.duration,
       description: post.content,
       creatorId: post.user,
-      verified: Math.random() > 0.7,
-      subscribers: Math.floor(Math.random() * 100000),
+      // Only real values: never invent verified/subscriber counts.
+      verified: (post as any).verified === true,
       fallbackImage: img,
       // Ensure proper aspect ratio for images
       aspectRatio: isMomentPost ? '9/16' : (img ? '16/9' : undefined),

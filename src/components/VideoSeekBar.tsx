@@ -173,38 +173,12 @@ const VideoSeekBar: React.FC<VideoSeekBarProps> = ({
     };
   }, []);
 
-  const previewLeft = Math.min(Math.max(hoverX, 68), Math.max(68, barWidth - 68));
+  const HALF_PREVIEW = 60; // half of the 112px preview + margin
+  const previewLeft = Math.min(Math.max(hoverX, HALF_PREVIEW), Math.max(HALF_PREVIEW, barWidth - HALF_PREVIEW));
   const hoverProgress = hoverTime != null && safeDuration > 0 ? (hoverTime / safeDuration) * 100 : 0;
 
   return (
-    <div className={`select-none ${className}`}>
-      {/* Floating preview window */}
-      {hoverTime != null && safeDuration > 0 && (
-        <div
-          className="pointer-events-none absolute z-40 -translate-x-1/2"
-          style={{ left: previewLeft, bottom: compact ? 26 : 34 }}
-        >
-          <div className="overflow-hidden rounded-lg border border-white/20 bg-black/90 shadow-xl backdrop-blur-sm">
-            {previewUrl ? (
-              <img
-                src={previewUrl}
-                alt={`Preview at ${formatTime(hoverTime)}`}
-                className="h-[63px] w-[112px] object-cover"
-                draggable={false}
-              />
-            ) : (
-              <div className="flex h-[63px] w-[112px] items-center justify-center bg-gradient-to-br from-zinc-700 to-zinc-900">
-                <span className="text-xs font-medium text-white/80">{formatTime(hoverTime)}</span>
-              </div>
-            )}
-            <div className="bg-black/80 px-2 py-1 text-center text-[11px] font-semibold tabular-nums text-white">
-              {formatTime(hoverTime)}
-            </div>
-          </div>
-          <div className="mx-auto h-2 w-px bg-white/70" />
-        </div>
-      )}
-
+    <div className={`relative select-none ${className}`}>
       <div className="flex items-center gap-2">
         {!compact && (
           <span className="min-w-[38px] text-right text-[11px] font-medium tabular-nums text-white/85">
@@ -260,6 +234,34 @@ const VideoSeekBar: React.FC<VideoSeekBarProps> = ({
             }
           }}
         >
+          {/* Floating peek preview — rendered INSIDE the bar container so
+              `left` is measured from the bar's own left edge and the window
+              always sits directly above the tap/hover point. */}
+          {hoverTime != null && safeDuration > 0 && (
+            <div
+              className="pointer-events-none absolute z-40 -translate-x-1/2"
+              style={{ left: previewLeft, bottom: 22 }}
+            >
+              <div className="overflow-hidden rounded-lg border border-white/20 bg-black/90 shadow-xl backdrop-blur-sm">
+                {previewUrl ? (
+                  <img
+                    src={previewUrl}
+                    alt={`Preview at ${formatTime(hoverTime)}`}
+                    className="h-[63px] w-[112px] object-cover"
+                    draggable={false}
+                  />
+                ) : (
+                  <div className="flex h-[63px] w-[112px] items-center justify-center bg-gradient-to-br from-zinc-700 to-zinc-900">
+                    <span className="text-xs font-medium text-white/80">{formatTime(hoverTime)}</span>
+                  </div>
+                )}
+                <div className="bg-black/80 px-2 py-1 text-center text-[11px] font-semibold tabular-nums text-white">
+                  {formatTime(hoverTime)}
+                </div>
+              </div>
+              <div className="mx-auto h-2 w-px bg-white/70" />
+            </div>
+          )}
           <div className="relative h-1 w-full overflow-visible rounded-full bg-white/25 transition-all group-hover:h-1.5">
             {/* Hover ghost */}
             {hoverTime != null && (

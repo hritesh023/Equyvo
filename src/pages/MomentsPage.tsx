@@ -120,11 +120,13 @@ const MomentsPage = () => {
     window.addEventListener('userPostCreated', refresh);
     window.addEventListener('momentCreated', refresh);
     window.addEventListener('feedRefresh', refresh);
+    window.addEventListener('profileUpdated', refresh);
     return () => {
       cancelled = true;
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
+      window.removeEventListener('profileUpdated', refresh);
     };
   }, []);
 
@@ -592,12 +594,13 @@ const MomentsPage = () => {
     <div
       ref={containerRef}
       className={`w-full bg-black snap-y snap-mandatory overflow-y-scroll overflow-x-hidden no-scrollbar ${
-        isMobile ? 'h-[calc(100vh-7rem)] h-[calc(100dvh-7rem)]' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'
+        isMobile ? 'h-[calc(100dvh-7rem)]' : 'h-[calc(100dvh-4rem)]'
       }`}
       style={{
         scrollBehavior: 'smooth',
         scrollbarWidth: 'none',
-        msOverflowStyle: 'none'
+        msOverflowStyle: 'none',
+        overscrollBehaviorY: 'contain',
       }}
       onClick={() => setHasEngaged(true)}
     >
@@ -605,20 +608,22 @@ const MomentsPage = () => {
         <div
           key={moment.id}
           data-index={index}
-          className={`moment-slide relative w-full snap-start snap-always bg-black overflow-hidden ${
-            isMobile ? 'h-[calc(100vh-7rem)] h-[calc(100dvh-7rem)]' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'
+          className={`moment-slide relative w-full shrink-0 snap-start snap-always bg-black overflow-hidden ${
+            isMobile ? 'h-[calc(100dvh-7rem)]' : 'h-[calc(100dvh-4rem)]'
           }`}
         >
-          {/* Video Player - Full-bleed portrait: fills the slide exactly, no scroll gap */}
+          {/* Portrait stage: any upload dimension is shown in full (no crop,
+              no scroll gap). object-contain letterboxes with black gutters. */}
           <div className="absolute inset-0 flex items-center justify-center overflow-hidden bg-black">
-            <div className="relative h-full w-full max-w-[480px] overflow-hidden bg-black">
+            <div className="relative h-full w-full max-w-[480px] shrink-0 overflow-hidden bg-black">
             {moment.videoUrl ? (
             <video
               ref={el => videoRefs.current[index] = el}
               src={moment.videoUrl}
-              className="absolute inset-0 h-full w-full object-cover"
+              className="absolute inset-0 h-full w-full object-contain"
               style={{
-                backgroundColor: 'black'
+                backgroundColor: 'black',
+                objectPosition: 'center center',
               }}
               loop
               playsInline
@@ -655,9 +660,10 @@ const MomentsPage = () => {
               <img
                 src={moment.thumbnail || moment.image}
                 alt={moment.description || 'Moment photo'}
-                className="absolute inset-0 h-full w-full object-cover"
+                className="absolute inset-0 h-full w-full object-contain"
                 style={{
                   backgroundColor: 'black',
+                  objectPosition: 'center center',
                 }}
                 loading={index < 2 ? 'eager' : 'lazy'}
                 draggable={false}

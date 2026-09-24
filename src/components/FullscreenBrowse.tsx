@@ -76,8 +76,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
       likes: content.likes || 0,
       comments: content.comments || 0,
       views: content.views || 0,
-      verified: content.verified || false,
-      subscribers: content.subscribers || 0,
+      verified: content.verified === true,
       published: content.published || 'Recently',
       description: content.description || `Amazing ${content.type} content by ${content.creator}`
     };
@@ -201,9 +200,6 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
                         <span className="flex items-center gap-1">
                           <Users className="h-3 w-3" /> {formatNumber(content.viewers)} watching
                         </span>
-                      )}
-                      {content.subscribers && (
-                        <span>{formatNumber(content.subscribers)} subscribers</span>
                       )}
                     </div>
 

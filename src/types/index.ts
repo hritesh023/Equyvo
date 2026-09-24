@@ -115,4 +115,10 @@ export interface Story {
   isBotContent?: boolean;
   isFollowing?: boolean;
   isOwn?: boolean;
+  // Server-preserved media fields (custom covers, playable URLs, counts).
+  thumbnail?: string;
+  media?: string;
+  videoUrl?: string;
+  mediaType?: string;
+  likes?: number;
 }

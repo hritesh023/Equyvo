@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff } from 'lucide-react';
+import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff, Heart } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,7 +17,7 @@ import { useAudio } from '../contexts/AudioContext';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
-import { hideFromMyView } from '@/lib/feed-store';
+import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -55,6 +55,38 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const audioRef = useRef<HTMLAudioElement>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
+
+  // Story likes (persisted per account on this device; the server story
+  // endpoint has no like field, so counts are local + any server value).
+  const LIKED_STORIES_KEY = 'equyvo_liked_stories';
+  const [likedStories, setLikedStories] = useState<Set<string>>(() => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem(LIKED_STORIES_KEY) : null;
+      const arr = raw ? JSON.parse(raw) : [];
+      return new Set(Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const isStoryLiked = currentStory ? likedStories.has(currentStory.id) : false;
+  const storyLikeCount = (Number((currentStory as unknown as Record<string, unknown>)?.likes) || 0) + (isStoryLiked ? 1 : 0);
+  const toggleStoryLike = () => {
+    if (!currentStory) return;
+    const id = currentStory.id;
+    setLikedStories((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+        showSuccess('❤️ Story liked');
+      }
+      try {
+        localStorage.setItem(LIKED_STORIES_KEY, JSON.stringify([...next]));
+      } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   // Signal fullscreen takeover so the feed banner stays hidden over stories.
   useEffect(() => {
@@ -246,7 +278,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       clearInterval(progressIntervalRef.current);
     }
 
-    if (story.type === 'video' && videoRef.current) {
+    if ((story.type === 'video' || !!storyVideoOf(story)) && videoRef.current) {
       const video = videoRef.current;
       
       const handleVideoLoad = () => {
@@ -393,7 +425,12 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
   if (!currentStory) return null;
 
-  const isVideo = currentStory.type === 'video';
+  // Server items may carry the playable URL as videoUrl/media (not `video`)
+  // and the cover as thumbnail/media (not `image`) — resolve every alias so
+  // uploaded thumbnails and videos actually appear.
+  const storyVideoSrc = storyVideoOf(currentStory) || currentStory.video || '';
+  const storyImgSrc = storyImageOf(currentStory) || currentStory.image || '';
+  const isVideo = currentStory.type === 'video' || !!storyVideoSrc;
 
   return (
     <div 
@@ -507,8 +544,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                 content={{
                   ...currentStory,
                   type: 'story',
-                  media: currentStory.image || currentStory.video,
-                  mediaType: currentStory.type || 'image',
+                  media: storyImgSrc || storyVideoSrc || currentStory.image || currentStory.video,
+                  mediaType: currentStory.type || (storyVideoSrc ? 'video' : 'image'),
                   content: currentStory.content || `Story by ${currentStory.user}`
                 }} 
                 className="text-white hover:bg-white/20" 
@@ -541,7 +578,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                   )}
                   <video
                     ref={videoRef}
-                    src={currentStory.video}
+                    src={storyVideoSrc}
                     className={`story-image ${videoLoaded ? 'block' : 'hidden'}`}
                     muted={isGloballyMuted}
                     preload="metadata"
@@ -588,11 +625,13 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             </>
           ) : (
             <img
-              src={currentStory.image}
+              src={storyImgSrc || '/placeholder.svg'}
               alt={currentStory.user}
               className="story-image"
               onError={(e) => {
-                e.currentTarget.src = '/placeholder.svg';
+                if (e.currentTarget.src.indexOf('placeholder.svg') === -1) {
+                  e.currentTarget.src = '/placeholder.svg';
+                }
               }}
             />
           )}
@@ -673,6 +712,23 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-black/70 backdrop-blur-lg p-4 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-3">
+            <div className="flex flex-col items-center flex-shrink-0">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStoryLike();
+                }}
+                className="text-white hover:bg-white/20"
+                title={isStoryLiked ? 'Unlike story' : 'Like story'}
+              >
+                <Heart className={`h-5 w-5 ${isStoryLiked ? 'fill-red-500 text-red-500' : ''}`} />
+              </Button>
+              {storyLikeCount > 0 && (
+                <span className="text-white text-[11px] font-medium leading-none -mt-0.5">{storyLikeCount}</span>
+              )}
+            </div>
             <Button
               variant="ghost"
               size="icon"

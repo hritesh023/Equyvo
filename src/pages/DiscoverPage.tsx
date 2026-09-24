@@ -404,12 +404,14 @@ const DiscoverPage = () => {
     window.addEventListener('feedRefresh', refresh);
     window.addEventListener('momentCreated', refresh);
     window.addEventListener('thoughtCreated', refresh);
+    window.addEventListener('profileUpdated', refresh);
     return () => {
       cancelled = true;
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('thoughtCreated', refresh);
+      window.removeEventListener('profileUpdated', refresh);
     };
   }, []);
 

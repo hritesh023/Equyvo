@@ -31,6 +31,89 @@ function getCurrentUserInfo(): { userId: string; username: string } {
   return { userId: 'anonymous', username: 'anonymous' };
 }
 
+// Freshest author identity: profile page edits (name/avatar) win over the
+// auth record, so new uploads are always stamped with the real current user.
+function getCurrentAuthor(): { userId: string; username: string; avatar: string } {
+  let userId = 'anonymous';
+  let username = 'anonymous';
+  let email = '';
+  try {
+    const stored = localStorage.getItem('equyvo_cognito_user');
+    if (stored) {
+      const u = JSON.parse(stored);
+      userId = u.id || u.email || 'anonymous';
+      email = u.email || '';
+      username = u.username || u.fullName || (u.email ? String(u.email).split('@')[0] : 'anonymous');
+    }
+  } catch { /* fall through to anonymous */ }
+  let avatar = '';
+  try {
+    const saved = localStorage.getItem('userProfile');
+    if (saved) {
+      const p = JSON.parse(saved);
+      const belongs = !email || !p._userEmail || p._userEmail === email || p.id === userId;
+      if (belongs) {
+        if (p.username || p.name) username = p.username || p.name;
+        if (typeof p.avatar === 'string' && p.avatar) avatar = p.avatar;
+      }
+    }
+  } catch { /* ignore */ }
+  return { userId, username, avatar };
+}
+
+// Local pre-upload preview: shows BOTH the file name and a live
+// thumbnail/preview (image <img>, video <video>) before anything is posted.
+function useLocalPreviewUrl(file: File | null | undefined): string {
+  const [url, setUrl] = useState('');
+  useEffect(() => {
+    if (!file) {
+      setUrl('');
+      return;
+    }
+    let u = '';
+    try {
+      u = URL.createObjectURL(file);
+      setUrl(u);
+    } catch {
+      setUrl('');
+      return;
+    }
+    return () => {
+      try {
+        URL.revokeObjectURL(u);
+      } catch { /* ignore */ }
+    };
+  }, [file]);
+  return url;
+}
+
+const LocalMediaThumb: React.FC<{ file: File; className?: string }> = ({ file, className }) => {
+  const url = useLocalPreviewUrl(file);
+  const cls = className || 'h-14 w-14 rounded-lg object-cover border bg-black';
+  if (!url) {
+    return (
+      <div className="flex h-14 w-14 items-center justify-center rounded-lg border bg-muted">
+        {file.type.startsWith('image/') ? (
+          <ImageIcon className="h-5 w-5 text-blue-500" />
+        ) : (
+          <FileVideo className="h-5 w-5 text-green-500" />
+        )}
+      </div>
+    );
+  }
+  if (file.type.startsWith('image/')) {
+    return <img src={url} alt={file.name} className={cls} />;
+  }
+  if (file.type.startsWith('video/')) {
+    return <video src={url} className={cls} muted playsInline preload="metadata" />;
+  }
+  return (
+    <div className="flex h-14 w-14 items-center justify-center rounded-lg border bg-muted">
+      <FileVideo className="h-5 w-5 text-muted-foreground" />
+    </div>
+  );
+};
+
 type ThumbKind =
   | 'video'
   | 'story'
@@ -584,11 +667,15 @@ const CreatePage = () => {
 // STRICT type routing: each type is written to exactly ONE collection so a
 // photo can never leak into Moments and a moment never leaks into Thoughts.
   async function persistContent(content: Record<string, unknown>) {
-    const userInfo = getCurrentUserInfo();
+    // Real author identity: profile edits (name/avatar) are stamped onto
+    // every upload so feeds show the authentic user, never a stale name.
+    const author = getCurrentAuthor();
     const postData = {
       ...content,
-      userId: userInfo.userId,
-      user: (content.user as string) || userInfo.username,
+      userId: author.userId,
+      user: (content.user as string) || author.username,
+      creator: (content.creator as string) || author.username,
+      avatar: (content.avatar as string) || author.avatar,
       // Per-upload audience chosen in the UI; the server enforces it for
       // every account on every device (private accounts default sensibly).
       visibility: (content.visibility as string) || contentVisibility,
@@ -673,11 +760,11 @@ const CreatePage = () => {
       const profile = savedProfile
         ? JSON.parse(savedProfile)
         : {
-            _userEmail: userInfo.userId,
-            id: userInfo.userId,
-            name: userInfo.username,
-            username: userInfo.username,
-            avatar: '',
+            _userEmail: author.userId,
+            id: author.userId,
+            name: author.username,
+            username: author.username,
+            avatar: author.avatar,
             bio: '',
             followers: 0,
             following: 0,
@@ -698,7 +785,7 @@ const CreatePage = () => {
       profile.posts = [{
         id: content.id,
         user: postData.user,
-        avatar: (content.avatar as string) || '',
+        avatar: (content.avatar as string) || (postData.avatar as string) || '',
         time: 'just now',
         content: (content.content as string) || '',
         image: fullImage || fullMedia,
@@ -909,11 +996,11 @@ const CreatePage = () => {
           publicId: result?.publicId || '',
           resourceType: result?.resourceType || '',
           uploadDate: new Date(),
-          isPrivate: false,
-          views: Math.floor(Math.random() * 500),
-          likes: Math.floor(Math.random() * 50),
-          comments: Math.floor(Math.random() * 25),
-          shares: Math.floor(Math.random() * 10),
+          isPrivate: contentVisibility !== 'public',
+          views: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
         }));
 
@@ -934,7 +1021,8 @@ const CreatePage = () => {
             mediaType: isVid ? 'video' : 'image',
             publicId: s.publicId,
             resourceType: s.resourceType,
-            user: getCurrentUserInfo().username,
+            user: getCurrentAuthor().username,
+            avatar: getCurrentAuthor().avatar,
           });
           if (err) storyPersistError = err;
         }
@@ -1001,11 +1089,11 @@ const CreatePage = () => {
           backgroundColor: textStoryBackground,
           textColor: textStoryColor,
           uploadDate: new Date(),
-          isPrivate: false,
-          views: Math.floor(Math.random() * 300),
-          likes: Math.floor(Math.random() * 30),
-          comments: Math.floor(Math.random() * 15),
-          shares: Math.floor(Math.random() * 8),
+          isPrivate: contentVisibility !== 'public',
+          views: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
         };
 
@@ -1106,12 +1194,12 @@ const CreatePage = () => {
           publicId: thoughtUploadResult?.publicId || '',
           resourceType: thoughtUploadResult?.resourceType || '',
           uploadDate: new Date(),
-          isPrivate: false,
-          views: Math.floor(Math.random() * 200),
-          likes: Math.floor(Math.random() * 40),
-          comments: Math.floor(Math.random() * 20),
-          shares: Math.floor(Math.random() * 12),
-          reacts: Math.floor(Math.random() * 25)
+          isPrivate: contentVisibility !== 'public',
+          views: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          reacts: 0
         };
 
         setUploadedThoughts(prev => [...prev, newUploadedThought]);
@@ -1216,11 +1304,11 @@ const CreatePage = () => {
           publicId: result?.publicId || '',
           resourceType: result?.resourceType || '',
           uploadDate: new Date(),
-          isPrivate: false,
-          views: Math.floor(Math.random() * 600),
-          likes: Math.floor(Math.random() * 80),
-          comments: Math.floor(Math.random() * 35),
-          shares: Math.floor(Math.random() * 20)
+          isPrivate: contentVisibility !== 'public',
+          views: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0
         }));
 
         setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
@@ -1337,13 +1425,13 @@ const CreatePage = () => {
           publicId: result?.publicId || '',
           resourceType: result?.resourceType || '',
           uploadDate: new Date(),
-          isPrivate: false,
-          views: Math.floor(Math.random() * 1000),
-          likes: Math.floor(Math.random() * 100),
-          comments: Math.floor(Math.random() * 50),
-          shares: Math.floor(Math.random() * 25),
-          watchTime: Math.floor(Math.random() * 500),
-          engagement: Math.floor(Math.random() * 100)
+          isPrivate: contentVisibility !== 'public',
+          views: 0,
+          likes: 0,
+          comments: 0,
+          shares: 0,
+          watchTime: 0,
+          engagement: 0
         }));
 
         setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
@@ -1487,10 +1575,10 @@ const CreatePage = () => {
           resourceType: result?.resourceType || '',
           content: momentContent,
           uploadDate: new Date(),
-          isPrivate: false,
-          views: Math.floor(Math.random() * 200),
-          likes: Math.floor(Math.random() * 30),
-          comments: Math.floor(Math.random() * 10),
+          isPrivate: contentVisibility !== 'public',
+          views: 0,
+          likes: 0,
+          comments: 0,
         }));
 
         setUploadedMoments(prev => [...prev, ...newUploadedMoments]);
@@ -1582,7 +1670,7 @@ const CreatePage = () => {
         }
       }
 
-      const userInfo = getCurrentUserInfo();
+      const author = getCurrentAuthor();
 
       // Create live content entry
       const liveId = Date.now().toString();
@@ -1595,8 +1683,10 @@ const CreatePage = () => {
         thumbnail: liveThumbnailUrl,
         publicId: liveThumbnailPublicId,
         resourceType: liveThumbnailResourceType,
-        user: userInfo.username,
-        userId: userInfo.userId,
+        user: author.username,
+        userId: author.userId,
+        avatar: author.avatar,
+        creator: author.username,
         isLive: true,
         live: true,
         time: 'just now',
@@ -1734,7 +1824,7 @@ const CreatePage = () => {
         : '0:00',
       thumbnail: liveThumbnail,
       uploadDate: new Date(),
-      isPrivate: false,
+      isPrivate: contentVisibility !== 'public',
       views: 0,
       likes: 0,
       comments: 0,
@@ -2968,22 +3058,18 @@ const CreatePage = () => {
                 />
               </div>
 
-              {/* Uploaded Files */}
+              {/* Selected files: file name + live preview before posting */}
               {storyFiles.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="font-semibold">Uploaded Files:</h4>
+                  <h4 className="font-semibold">Selected Files ({storyFiles.length}):</h4>
                   {storyFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        {file.type.startsWith('image/') ? (
-                          <Image className="h-5 w-5 text-blue-500" />
-                        ) : (
-                          <FileVideo className="h-5 w-5 text-green-500" />
-                        )}
-                        <div>
-                          <p className="text-sm font-medium">{file.name}</p>
+                    <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between p-3 border rounded-lg gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <LocalMediaThumb file={file} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate max-w-[220px]" title={file.name}>{file.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {file.type.startsWith('image/') ? 'Image' : 'Video'}
+                            {file.type.startsWith('image/') ? 'Image' : 'Video'} • {(file.size / (1024 * 1024)).toFixed(1)} MB
                           </p>
                         </div>
                       </div>
@@ -3264,13 +3350,13 @@ const CreatePage = () => {
                 </p>
                 <div className="mt-1">
                   {thoughtVideo ? (
-                    <div className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <FileVideo className="h-5 w-5 text-green-500" />
-                        <div>
-                          <p className="text-sm font-medium">{thoughtVideo.name}</p>
+                    <div className="flex items-center justify-between p-3 border rounded-lg gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <LocalMediaThumb file={thoughtVideo} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate max-w-[220px]" title={thoughtVideo.name}>{thoughtVideo.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            Video
+                            {thoughtVideo.type.startsWith('image/') ? 'Photo' : 'Video'} • {(thoughtVideo.size / (1024 * 1024)).toFixed(1)} MB
                           </p>
                         </div>
                       </div>
@@ -3407,16 +3493,16 @@ const CreatePage = () => {
                 />
               </div>
 
-              {/* Uploaded Photos */}
+              {/* Selected photos: file name + live preview before posting */}
               {photoFiles.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="font-semibold">Uploaded Photos ({photoFiles.length}):</h4>
+                  <h4 className="font-semibold">Selected Photos ({photoFiles.length}):</h4>
                   {photoFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <ImageIcon className="h-5 w-5 text-blue-500" />
-                        <div>
-                          <p className="text-sm font-medium">{file.name}</p>
+                    <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between p-3 border rounded-lg gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <LocalMediaThumb file={file} />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate max-w-[220px]" title={file.name}>{file.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {formatFileSize(file.size)} • Photo
                           </p>
@@ -3503,16 +3589,16 @@ const CreatePage = () => {
                 />
               </div>
 
-              {/* Uploaded Videos */}
+              {/* Selected videos: file name + live preview before posting */}
               {videoFiles.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="font-semibold">Uploaded Videos ({videoFiles.length}):</h4>
+                  <h4 className="font-semibold">Selected Videos ({videoFiles.length}):</h4>
                   {videoFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        <Film className="h-5 w-5 text-green-500" />
-                        <div>
-                          <p className="text-sm font-medium">{file.name}</p>
+                    <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between p-3 border rounded-lg gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <LocalMediaThumb file={file} className="h-14 w-20 rounded-lg object-cover border bg-black" />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate max-w-[220px]" title={file.name}>{file.name}</p>
                           <p className="text-xs text-muted-foreground">
                             {formatFileSize(file.size)} • Video
                           </p>
@@ -3839,19 +3925,15 @@ const CreatePage = () => {
               </div>
               {momentFiles.length > 0 && (
                 <div className="space-y-2">
-                  <h4 className="font-semibold">Selected Files:</h4>
+                  <h4 className="font-semibold">Selected Files ({momentFiles.length}):</h4>
                   {momentFiles.map((file, index) => (
-                    <div key={index} className="flex items-center justify-between p-3 border rounded-lg">
-                      <div className="flex items-center gap-3">
-                        {file.type.startsWith('image/') ? (
-                          <Image className="h-8 w-8 text-blue-500" />
-                        ) : (
-                          <Video className="h-8 w-8 text-orange-500" />
-                        )}
-                        <div>
-                          <p className="font-medium truncate max-w-[200px]">{file.name}</p>
+                    <div key={`${file.name}-${file.size}-${index}`} className="flex items-center justify-between p-3 border rounded-lg gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <LocalMediaThumb file={file} className="h-16 w-12 rounded-lg object-cover border bg-black" />
+                        <div className="min-w-0">
+                          <p className="font-medium truncate max-w-[200px]" title={file.name}>{file.name}</p>
                           <p className="text-sm text-muted-foreground">
-                            {(file.size / (1024 * 1024)).toFixed(1)} MB
+                            {(file.size / (1024 * 1024)).toFixed(1)} MB • {file.type.startsWith('image/') ? 'Photo' : 'Video'}
                           </p>
                         </div>
                       </div>

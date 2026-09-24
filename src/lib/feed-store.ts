@@ -129,6 +129,34 @@ export function creatorOf(item: UnifiedItem): string {
   return String(item.user || item.creator || item.user_id || item.userId || 'Unknown');
 }
 
+/** Best display image for a story card/viewer (photo itself or video poster).
+ * Prefers an uploaded custom cover (`thumbnail`), then the photo, then any
+ * non-video media URL. Never returns a video URL. */
+export function storyImageOf(item: unknown): string {
+  const s = (item || {}) as Record<string, unknown>;
+  const media = typeof s.media === 'string' ? s.media : '';
+  const candidates = [s.thumbnail, s.image, media, s.fallbackImage];
+  for (const c of candidates) {
+    if (typeof c !== 'string' || !c) continue;
+    // Skip playable video URLs — callers use storyVideoOf() for those.
+    if (/\.(mp4|webm|mov)(\?|$)/i.test(c)) continue;
+    if (c.includes('/video/upload/')) continue;
+    return c;
+  }
+  return '';
+}
+
+/** Best playable video URL for a story (empty for photo/text stories). */
+export function storyVideoOf(item: unknown): string {
+  const s = (item || {}) as Record<string, unknown>;
+  const direct = (s.video || s.videoUrl || '') as string;
+  if (typeof direct === 'string' && direct) return direct;
+  const media = typeof s.media === 'string' ? s.media : '';
+  if (String(s.mediaType || '').toLowerCase() === 'video' && media) return media;
+  if (String(s.type || '').toLowerCase() === 'video' && media && /\.(mp4|webm|mov)(\?|$)/i.test(media)) return media;
+  return '';
+}
+
 /** Stable timestamp for sorting (newest first). */
 export function timeOf(item: UnifiedItem): number {
   const raw = item.createdAt || item.created_at || item.publishedAt || item.time;

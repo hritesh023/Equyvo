@@ -339,10 +339,40 @@ async function filterVisibleItems(env, viewer, items) {
   const out = [];
   for (const it of items) {
     try {
-      if (await canViewerSeeItem(env, viewer, it, cache)) out.push(it);
+      if (await canViewerSeeItem(env, viewer, it, cache)) {
+        // Fresh author identity on every read: profile renames / avatar
+        // changes reflect on all surfaces (Discover, Moments, feeds,
+        // search) on next fetch, on every device and account.
+        try {
+          const owner = itemOwnerId(it);
+          let profile = cache.get(owner);
+          if (profile === undefined && owner) {
+            profile = await getStoredProfile(env, owner);
+            cache.set(owner, profile);
+          }
+          applyAuthorIdentity(it, profile);
+        } catch { /* display overlay is best-effort */ }
+        out.push(it);
+      }
     } catch { /* skip undecidable items */ }
   }
   return out;
+}
+
+// Author identity overlay: the stored profile is the source of truth for
+// display name + avatar. Stale per-item copies (written at upload time) are
+// refreshed here so updates propagate immediately everywhere.
+function applyAuthorIdentity(item, authorProfile) {
+  if (!item || typeof item !== 'object' || !authorProfile || typeof authorProfile !== 'object') return;
+  const name = String(authorProfile.username || authorProfile.name || '').slice(0, 80);
+  if (name) {
+    item.user = name;
+    item.creator = name;
+  }
+  if (typeof authorProfile.avatar === 'string' && authorProfile.avatar) {
+    item.avatar = authorProfile.avatar;
+  }
+  if (authorProfile.verified === true) item.verified = true;
 }
 
 // Public-safe profile subset for strangers viewing a private account.
