@@ -872,6 +872,79 @@ export async function getProfile(env: Env, userId: string): Promise<UserProfile 
   return json ? JSON.parse(json) : null;
 }
 
+// --- Display-name change quota (mirrors Pages Functions) ---
+// Free accounts get 2 display-name changes; each verified paid purchase
+// grants +2 more. Avatars, bios and usernames stay unlimited. Enforcement
+// lives here so no client can bypass it.
+export const NAME_CHANGE_BASE_QUOTA = 2;
+export const NAME_CHANGE_GRANT_PER_PURCHASE = 2;
+const NAME_PAID_PLAN_IDS = new Set([
+  'eq_plus', 'eq_premium', 'eq_creator', 'eq_creator_pro', 'eq_business',
+]);
+
+export interface NameQuotaState {
+  used: number;
+  quota: number;
+  remaining: number;
+  grants: string[];
+  bonusPlans: string[];
+}
+
+export function nameQuotaState(profile: any): NameQuotaState {
+  const p = profile && typeof profile === 'object' ? profile : {};
+  const usedRaw = Number(p.nameChangesUsed);
+  const used = Number.isFinite(usedRaw) && usedRaw > 0 ? Math.floor(usedRaw) : 0;
+  const quotaRaw = Number(p.nameChangeQuota);
+  const quota = Number.isFinite(quotaRaw) && quotaRaw > 0 ? Math.floor(quotaRaw) : NAME_CHANGE_BASE_QUOTA;
+  const grants = Array.isArray(p.nameGrantPayments)
+    ? (p.nameGrantPayments as unknown[]).filter((x): x is string => typeof x === 'string').slice(-50)
+    : [];
+  const bonusPlans = Array.isArray(p.nameBonusPlans)
+    ? (p.nameBonusPlans as unknown[]).filter((x): x is string => typeof x === 'string')
+    : [];
+  return { used, quota, remaining: Math.max(0, quota - used), grants, bonusPlans };
+}
+
+/**
+ * Merge a client profile update into the stored profile, enforcing the
+ * display-name quota. Only an actual change of `name` consumes quota (first
+ * set on a fresh profile is free); avatar/bio/username are unlimited.
+ * Returns `{ profile }` on success or `{ quotaError }` when exhausted
+ * (caller must answer 402 without saving).
+ */
+export function prepareProfileUpdate(
+  prev: any,
+  clean: Record<string, any>,
+  livePlanId?: string,
+): { profile: UserProfile; quotaError?: { used: number; quota: number } } {
+  const base = prev && typeof prev === 'object' ? prev : {};
+  const st = nameQuotaState(base);
+  let used = st.used;
+  let quota = st.quota;
+  const bonusPlans = [...st.bonusPlans];
+  const prevName = typeof base.name === 'string' ? base.name : '';
+  const nextName = typeof clean.name === 'string' ? clean.name : prevName;
+  const nameChanged = prevName ? nextName.trim() !== prevName.trim() : false;
+  if (nameChanged) {
+    if (livePlanId && NAME_PAID_PLAN_IDS.has(livePlanId) && !bonusPlans.includes(livePlanId)) {
+      quota += NAME_CHANGE_GRANT_PER_PURCHASE;
+      bonusPlans.push(livePlanId);
+    }
+    if (used >= quota) return { profile: base as UserProfile, quotaError: { used, quota } };
+    used += 1;
+  }
+  return {
+    profile: {
+      ...(base as object),
+      ...clean,
+      nameChangesUsed: used,
+      nameChangeQuota: quota,
+      nameGrantPayments: st.grants,
+      nameBonusPlans: bonusPlans,
+    } as unknown as UserProfile,
+  };
+}
+
 export async function upsertProfile(env: Env, profile: UserProfile): Promise<UserProfile> {
   await env.EQUYVO_KV.put(KEYS.PROFILE(profile.id), JSON.stringify(profile));
   return profile;

@@ -10,6 +10,7 @@ import {
   getActor, bearerFrom, requiresVerifiedWrites, sanitizeBody, rateLimit, rateLimitFor,
   resolvePlan, planQuota, getUsage, addUsage, PLAN_CATALOG, PLATFORM_FEE_BPS, sha256Hex, cloudinaryVariants,
   r2KeyFor, extFromFile, r2DeliveryUrl, validMediaKey,
+  nameQuotaState, prepareProfileUpdate,
 } from './kv';
 export { Env };
 
@@ -308,6 +309,16 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       return respond({ data: moment, error: null }, 201);
     }
 
+    // Display-name quota read (authenticated): powers the editor's
+    // remaining-count + Premium upsell. Must precede the /api/profile/:id route.
+    if (path === '/api/profile/name-quota' && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const prof = await getProfile(env, (actor as any).id);
+      const st = nameQuotaState(prof || {});
+      return respond({ data: { used: st.used, quota: st.quota, remaining: st.remaining }, error: null });
+    }
+
     if (path.startsWith('/api/profile/') && method === 'GET') {
       const userId = path.split('/api/profile/')[1];
       if (SEED_PROFILE_IDS.has(userId)) return respondError('Profile not found', 404);
@@ -327,8 +338,29 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if (!rl.ok) return respondError('Too many requests', 429);
       const clean = sanitizeBody(raw);
       clean.id = id;
-      const profile = await upsertProfile(env, clean);
-      return respond({ data: profile, error: null });
+      // Quota counters are server-owned: forged client values are dropped.
+      delete clean.nameChangesUsed;
+      delete clean.nameChangeQuota;
+      delete clean.nameGrantPayments;
+      delete clean.nameBonusPlans;
+      if (typeof clean.bio === 'string') clean.bio = String(clean.bio).slice(0, 500);
+      if (typeof clean.name === 'string') clean.name = String(clean.name).slice(0, 80);
+      if (typeof clean.username === 'string') clean.username = String(clean.username).slice(0, 80);
+      // Display-name quota: only an actual `name` change consumes quota;
+      // avatar/bio/username edits stay unlimited.
+      const prev = await getProfile(env, id);
+      const { profile, quotaError } = prepareProfileUpdate(prev || {}, clean, planId);
+      if (quotaError) {
+        return respond({
+          error: `You have used all ${quotaError.quota} free profile name changes. Buy a Premium plan to get 2 more changes.`,
+          code: 'NAME_CHANGE_QUOTA',
+          used: quotaError.used,
+          quota: quotaError.quota,
+          remaining: 0,
+        }, 402);
+      }
+      const saved = await upsertProfile(env, profile);
+      return respond({ data: saved, error: null });
     }
 
     if (path === '/api/search' && method === 'GET') {

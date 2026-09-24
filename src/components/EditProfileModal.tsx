@@ -46,6 +46,38 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   const [avatarPreview, setAvatarPreview] = useState(currentProfile.avatar);
   const [isUploading, setIsUploading] = useState(false);
   const [cropSrc, setCropSrc] = useState<string | null>(null);
+  // Display-name quota (server-enforced; shown here for transparency).
+  // Avatars stay unlimited — only the Name field consumes quota.
+  const [quota, setQuota] = useState<{ used: number; quota: number; remaining: number } | null>(null);
+
+  // Refresh fields + quota every time the modal opens (the parent keeps this
+  // component mounted, so initial useState would otherwise go stale).
+  React.useEffect(() => {
+    if (!isOpen) return;
+    setName(currentProfile.name);
+    setUsername(currentProfile.username);
+    setBio(currentProfile.bio);
+    setAvatarFile(null);
+    setAvatarPreview(currentProfile.avatar);
+    setCropSrc(null);
+    setQuota(null);
+    let cancelled = false;
+    api.getNameQuota()
+      .then(({ data, error }) => {
+        if (!cancelled && !error && data && typeof data.remaining === 'number') {
+          setQuota({ used: data.used, quota: data.quota, remaining: data.remaining });
+        }
+      })
+      .catch(() => { /* fail-open: the server still enforces on save */ });
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen]);
+
+  const nameChanged =
+    name.trim() !== (currentProfile.name || '').trim();
+  const nameBlocked =
+    !!nameChanged && !!quota && quota.remaining <= 0;
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -92,6 +124,13 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }
     if (username.length < 3) {
       showError('Username must be at least 3 characters');
+      return;
+    }
+    // Display-name quota is enforced server-side; check first so the user
+    // gets the Premium upsell instead of a silent round-trip. Avatar uploads
+    // are always allowed — only a changed Name consumes quota.
+    if (nameBlocked) {
+      showError('You have used all your profile name changes. Buy Premium to get 2 more.');
       return;
     }
 
@@ -178,7 +217,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
             </div>
           </div>
 
-          {/* Name */}
+          {/* Name (quota-limited: 2 free, +2 per Premium purchase) */}
           <div>
             <Label htmlFor="name">Name</Label>
             <Input
@@ -188,6 +227,42 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
               placeholder="Enter your name"
               className="mt-1"
             />
+            {quota ? (
+              quota.remaining > 0 || !nameChanged ? (
+                <p className="text-xs text-muted-foreground mt-1">
+                  {quota.remaining} of {quota.quota} name changes remaining
+                  {nameChanged ? ' (saving will use 1)' : ''} · profile photo changes are unlimited
+                </p>
+              ) : (
+                <div className="mt-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3">
+                  <p className="text-xs font-semibold">No name changes left ({quota.used}/{quota.quota} used)</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Buy Premium to get 2 more name changes. You can still update your photo, username and bio for free.
+                  </p>
+                  <div className="flex gap-2 mt-2">
+                    <Button
+                      type="button"
+                      size="sm"
+                      onClick={() => { window.location.href = '/pricing'; }}
+                    >
+                      Buy Premium
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setName(currentProfile.name)}
+                    >
+                      Keep old name
+                    </Button>
+                  </div>
+                </div>
+              )
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1">
+                Profile photo changes are unlimited · name changes are limited
+              </p>
+            )}
           </div>
 
           {/* Username */}

@@ -395,6 +395,48 @@ function publicSafeProfile(profile) {
 }
 
 // ---------------------------------------------------------------------------
+// Profile display-name change quota — server-side source of truth.
+//  - Every account gets NAME_CHANGE_BASE_QUOTA (2) free display-name changes.
+//  - Profile icons/avatars, bios and usernames stay unlimited.
+//  - Each verified paid-plan purchase grants +2 more (idempotent per
+//    payment). A paid plan active without a recorded purchase grants +2 once
+//    per plan on demand (covers legacy purchases).
+// The client only displays counts; enforcement happens here, so no device,
+// account swear-jar bypass, reinstall, or forged field can exceed the quota.
+// ---------------------------------------------------------------------------
+
+const NAME_CHANGE_BASE_QUOTA = 2;
+const NAME_CHANGE_GRANT_PER_PURCHASE = 2;
+const NAME_PAID_PLAN_IDS = new Set([
+  'eq_plus', 'eq_premium', 'eq_creator', 'eq_creator_pro', 'eq_business',
+]);
+
+function nameQuotaState(profile) {
+  const p = profile && typeof profile === 'object' ? profile : {};
+  const usedRaw = Number(p.nameChangesUsed);
+  const used = Number.isFinite(usedRaw) && usedRaw > 0 ? Math.floor(usedRaw) : 0;
+  const quotaRaw = Number(p.nameChangeQuota);
+  const quota = Number.isFinite(quotaRaw) && quotaRaw > 0 ? Math.floor(quotaRaw) : NAME_CHANGE_BASE_QUOTA;
+  const grants = Array.isArray(p.nameGrantPayments)
+    ? p.nameGrantPayments.filter((x) => typeof x === 'string').slice(-50)
+    : [];
+  const bonusPlans = Array.isArray(p.nameBonusPlans)
+    ? p.nameBonusPlans.filter((x) => typeof x === 'string')
+    : [];
+  return { used, quota, remaining: Math.max(0, quota - used), grants, bonusPlans };
+}
+
+function quotaErrorBody(used, quota) {
+  return {
+    error: `You have used all ${quota} free profile name changes. Buy a Premium plan to get 2 more changes.`,
+    code: 'NAME_CHANGE_QUOTA',
+    used,
+    quota,
+    remaining: 0,
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Content-safety helpers — server-only. Blocklists, heuristics, and the shared
 // Acronous brain check all run here. The client only ever receives a generic
 // "violates community guidelines" message; internals are never exposed.
@@ -1545,6 +1587,33 @@ export const onRequest = async (context) => {
           body: JSON.stringify(body),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        // Verified purchase → +2 display-name changes (idempotent per
+        // payment). Best-effort: never fails the payment response itself.
+        if (upstream.ok && path === '/api/verify-payment') {
+          try {
+            const actor = await getActor(request, env);
+            if (actor) {
+              const paymentKey = String(
+                (body && (body.razorpay_payment_id || body.payment_id)) || '',
+              ).slice(0, 100) || ('verify:' + String(Date.now()));
+              const prof = (await getStoredProfile(env, actor.id)) || { id: actor.id };
+              const st = nameQuotaState(prof);
+              if (!st.grants.includes(paymentKey)) {
+                prof.nameChangeQuota = st.quota + NAME_CHANGE_GRANT_PER_PURCHASE;
+                prof.nameChangesUsed = st.used;
+                prof.nameGrantPayments = [...st.grants, paymentKey].slice(-50);
+                if (!Array.isArray(prof.nameBonusPlans)) prof.nameBonusPlans = st.bonusPlans;
+                await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(prof));
+                data.nameGrant = {
+                  granted: NAME_CHANGE_GRANT_PER_PURCHASE,
+                  quota: prof.nameChangeQuota,
+                  used: st.used,
+                  remaining: Math.max(0, prof.nameChangeQuota - st.used),
+                };
+              }
+            }
+          } catch { /* grant is best-effort */ }
+        }
         return json(data, upstream.status, cors);
       } catch {
         return json({ error: 'Billing service unreachable. Please try again.' }, 502, cors);
@@ -1667,6 +1736,17 @@ export const onRequest = async (context) => {
       return await createItem(context, 'moments', KEYS.MOMENTS, KEYS.MOMENT, cors);
     }
 
+    // NAME-CHANGE QUOTA (authenticated): { used, quota, remaining } so the
+    // profile editor can show remaining renames + the Premium upsell.
+    if (path === '/api/profile/name-quota' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const prof = (await getStoredProfile(env, actor.id)) || {};
+      const st = nameQuotaState(prof);
+      return json({ data: { used: st.used, quota: st.quota, remaining: st.remaining }, error: null }, 200, cors);
+    }
+
     // PROFILE
     // Private accounts: strangers (non-followers) receive only the
     // public-safe subset (avatar + basic details, no media/content), like
@@ -1710,6 +1790,12 @@ export const onRequest = async (context) => {
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
       clean.id = id;
+      // Quota counters are server-owned: forged client values are dropped and
+      // the stored counters are merged back on save.
+      delete clean.nameChangesUsed;
+      delete clean.nameChangeQuota;
+      delete clean.nameGrantPayments;
+      delete clean.nameBonusPlans;
       // Account type: public/private toggle (signup page + settings).
       // Accepts isPrivate boolean and/or accountType string; stored as
       // canonical isPrivate + accountType. Never trusts the client for
@@ -1723,8 +1809,45 @@ export const onRequest = async (context) => {
         clean.accountType = clean.isPrivate ? 'private' : 'public';
       }
       if (typeof clean.bio === 'string') clean.bio = clean.bio.slice(0, 500);
-      await kv.put(KEYS.PROFILE(id), JSON.stringify(clean));
-      return json({ data: clean, error: null }, 200, cors);
+      if (typeof clean.name === 'string') clean.name = clean.name.slice(0, 80);
+      if (typeof clean.username === 'string') clean.username = clean.username.slice(0, 80);
+      // Display-name quota: avatar/bio/username edits are unlimited; only an
+      // actual change of the display `name` consumes quota. The first-ever
+      // name on a fresh profile is free (establishing, not changing).
+      const prevProfile = (await getStoredProfile(env, id)) || {};
+      const qs = nameQuotaState(prevProfile);
+      let used = qs.used;
+      let quota = qs.quota;
+      const bonusPlans = [...qs.bonusPlans];
+      const prevName = typeof prevProfile.name === 'string' ? prevProfile.name : '';
+      const nextName = typeof clean.name === 'string' ? clean.name : prevName;
+      const nameChanged = prevName ? nextName.trim() !== prevName.trim() : false;
+      if (nameChanged) {
+        // On-demand grant for a paid plan that never recorded a purchase
+        // (legacy purchases predate the grant ledger): +2 once per plan.
+        try {
+          const live = await resolvePlan(env, actor, bearerFrom(request));
+          if (NAME_PAID_PLAN_IDS.has(live.planId) && !bonusPlans.includes(live.planId)) {
+            quota += NAME_CHANGE_GRANT_PER_PURCHASE;
+            bonusPlans.push(live.planId);
+          }
+        } catch { /* quota check below still applies */ }
+        if (used >= quota) {
+          return json(quotaErrorBody(used, quota), 402, cors);
+        }
+        used += 1;
+      }
+      const merged = {
+        ...prevProfile,
+        ...clean,
+        id,
+        nameChangesUsed: used,
+        nameChangeQuota: quota,
+        nameGrantPayments: qs.grants,
+        nameBonusPlans: bonusPlans,
+      };
+      await kv.put(KEYS.PROFILE(id), JSON.stringify(merged));
+      return json({ data: merged, error: null }, 200, cors);
     }
 
     // SEARCH — interest-aware AI ranking (backend-only, no frontend changes).
@@ -2070,11 +2193,16 @@ export const onRequest = async (context) => {
       if (Array.isArray(clean.tags)) parsed.tags = clean.tags.map((t) => String(t).slice(0, 40)).slice(0, 10);
       // Owner-supplied cover art: uploaded thumbnail URL only (never inline
       // data — those belong in /api/upload, not in KV item bodies).
+      // An explicit empty string clears the cover (profile "Remove cover").
+      let thumbnailCleared = false;
       if (typeof clean.thumbnail === 'string' && clean.thumbnail) {
         const thumb = String(clean.thumbnail).slice(0, 2000);
         if (/^https?:\/\//i.test(thumb) && !thumb.startsWith('data:')) {
           parsed.thumbnail = thumb;
         }
+      } else if (clean.thumbnail === '') {
+        delete parsed.thumbnail;
+        thumbnailCleared = true;
       }
       parsed.updatedAt = new Date().toISOString();
       await kv.put(getKey(id), JSON.stringify(parsed));
@@ -2085,7 +2213,11 @@ export const onRequest = async (context) => {
           const idx = JSON.parse(idxJson);
           const ix = idx.findIndex((i) => i && i.id === id);
           if (ix >= 0) {
-            idx[ix] = { ...idx[ix], visibility: parsed.visibility || 'public', thumbnail: parsed.thumbnail || idx[ix].thumbnail || '' };
+            idx[ix] = {
+              ...idx[ix],
+              visibility: parsed.visibility || 'public',
+              thumbnail: thumbnailCleared ? '' : (parsed.thumbnail || idx[ix].thumbnail || ''),
+            };
             await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx));
           }
         }

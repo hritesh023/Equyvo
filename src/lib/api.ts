@@ -132,6 +132,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // Display-name change quota (server-enforced source of truth).
+  getNameQuota: () =>
+    request<{ data: { used: number; quota: number; remaining: number }; error: null }>(
+      '/profile/name-quota'
+    ),
+
   // Search
   search: (query: string) =>
     request<{ data: { results: any[]; totalCount: number; isAiRecommended: boolean }; error: null }>(

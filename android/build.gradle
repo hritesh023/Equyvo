@@ -32,10 +32,20 @@ allprojects {
                     targetCompatibility JavaVersion.VERSION_17
                 }
             }
-            
+
             project.tasks.withType(JavaCompile) {
                 sourceCompatibility = JavaVersion.VERSION_17
                 targetCompatibility = JavaVersion.VERSION_17
+            }
+
+            // Pin Kotlin bytecode to 17 as well (Capacitor plugin modules
+            // default to the running JDK, which breaks javac otherwise).
+            // No Kotlin classes are referenced here so configuration never
+            // fails on modules without the Kotlin plugin.
+            project.plugins.withId('org.jetbrains.kotlin.android') {
+                project.tasks.matching { t -> t.name.startsWith('compile') && t.name.endsWith('Kotlin') }.configureEach { t ->
+                    t.kotlinOptions.jvmTarget = '17'
+                }
             }
         }
     }

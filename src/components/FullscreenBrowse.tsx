@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { showSuccess } from '@/utils/toast';
+import { avatarOf } from '@/utils/avatar';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 
@@ -171,7 +172,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
                     <div className="flex items-start justify-between mb-3">
                       <div className="flex items-center gap-2">
                         <Avatar className="h-8 w-8">
-                          <AvatarImage src={`https://picsum.photos/seed/${content.creator}/100/100`} />
+                          {avatarOf(content) ? <AvatarImage src={avatarOf(content)} /> : null}
                           <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                             {content.creator.substring(0, 2).toUpperCase()}
                           </AvatarFallback>

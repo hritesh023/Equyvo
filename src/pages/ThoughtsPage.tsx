@@ -53,6 +53,21 @@ import { withInFeedAds } from '@/lib/feed-ads';
 import { shouldShowAds } from '@/lib/ads-config';
 import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
+import { resolveAvatar } from '@/utils/avatar';
+
+// Real author avatar for locally-created reacted copies: the signed-in
+// user's uploaded profile icon, or '' (initials shown) — never fake art.
+function realAuthorAvatar(): string {
+  try {
+    const rawUser = localStorage.getItem('equyvo_cognito_user');
+    const u = rawUser ? JSON.parse(rawUser) : null;
+    const rawProfile = localStorage.getItem('userProfile');
+    const p = rawProfile ? JSON.parse(rawProfile) : null;
+    return resolveAvatar(p?.avatar, u?.avatar);
+  } catch {
+    return '';
+  }
+}
 
 // MediaRenderer component to handle different media types
 const MediaRenderer: React.FC<{ 
@@ -646,7 +661,7 @@ const ThoughtsPage = memo(() => {
           user: {
             id: 'current-user',
             username: 'You',
-            avatar_url: 'https://picsum.photos/seed/user/100/100'
+            avatar_url: realAuthorAvatar(),
           },
           content: `🔄 Reacted to: ${thought.content}`,
           created_at: new Date().toISOString(),
@@ -910,7 +925,7 @@ const ThoughtsPage = memo(() => {
                         }}
                         title={`${thought.user?.username}'s Profile`}
                       >
-                        <AvatarImage src={thought.user?.avatar_url} />
+                        {thought.user?.avatar_url ? <AvatarImage src={thought.user.avatar_url} /> : null}
                         <AvatarFallback>{typeof thought.user?.username === 'string' ? thought.user.username.substring(0, 2).toUpperCase() : 'U'}</AvatarFallback>
                       </Avatar>
                       <div className="flex-1">

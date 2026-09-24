@@ -9,6 +9,7 @@ import CommentSection from '@/components/CommentSection';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { avatarOf } from '@/utils/avatar';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
@@ -39,6 +40,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
 }) => {
   // Check for temp content from split view
   const actualContent = (window as any).tempFullscreenContent || content;
+  // Real author avatar only: the uploader's uploaded/updated profile icon
+  // (overlaid fresh from the server profile on every read). When the author
+  // has no photo, render initials — never a fake/bot placeholder image.
+  const realAvatarSrc = avatarOf(actualContent);
+  const hideBrokenImage = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    const target = e.target as HTMLImageElement;
+    target.style.display = 'none';
+  };
   const actualType = (window as any).tempFullscreenContent ? (window as any).tempFullscreenContent.type || 'video' : type;
   
   // Clear temp content after using it
@@ -1094,7 +1103,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                         }}
                         title={`${actualContent.creator}'s Profile`}
                       >
-                        <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
+                                          {realAvatarSrc ? <AvatarImage src={realAvatarSrc} /> : null}
                         <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                           {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                         </AvatarFallback>
@@ -1354,7 +1363,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   }}
                   title={`${actualContent.creator}'s Profile`}
                 >
-                  <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
+                                    {realAvatarSrc ? <AvatarImage src={realAvatarSrc} /> : null}
                   <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                     {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                   </AvatarFallback>
@@ -1501,7 +1510,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   }}
                   title={`${actualContent.creator}'s Profile`}
                 >
-                  <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
+                                    {realAvatarSrc ? <AvatarImage src={realAvatarSrc} /> : null}
                   <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                     {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                   </AvatarFallback>
@@ -1646,10 +1655,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             setShowImageOverlay(prev => !prev);
           }}
         >
+          {(actualContent?.thumbnail ||
+            actualContent?.image ||
+            actualContent?.mediaUrl ||
+            actualContent?.media ||
+            actualContent?.src) ? (
           <img
-            src={actualContent?.thumbnail || 
-                 actualContent?.image || 
-                 actualContent?.mediaUrl || 
+            src={actualContent?.thumbnail ||
+                 actualContent?.image ||
+                 actualContent?.mediaUrl ||
                  actualContent?.media ||
                  actualContent?.src}
             alt={actualContent?.title || 'Fullscreen Image'}
@@ -1665,17 +1679,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               imageRendering: 'crisp-edges',
               imageResolution: 'from-image 1dppx'
             }}
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              if (!target.src.includes('picsum')) {
-                target.src = `https://picsum.photos/seed/${actualContent?.id || 'fallback'}/1920/1080`;
-              }
-            }}
+            onError={hideBrokenImage}
             onLoad={(e) => {
               const target = e.target as HTMLImageElement;
               target.style.imageRendering = 'auto';
             }}
           />
+          ) : (
+            <div className="text-white text-center px-6">
+              <p className="text-xl mb-2">Image not available</p>
+              <p className="text-sm text-gray-400">The uploader did not attach viewable media</p>
+            </div>
+          )}
         </div>
       )}
 
@@ -1698,7 +1713,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
                   onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
                 >
-                  <AvatarImage src={`https://picsum.photos/seed/${actualContent.creatorId || actualContent.creator || 'unknown'}/100/100`} />
+                                    {realAvatarSrc ? <AvatarImage src={realAvatarSrc} /> : null}
                   <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
                     {(actualContent.creator || 'Unknown').substring(0, 2).toUpperCase()}
                   </AvatarFallback>
@@ -1816,11 +1831,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             }
           }}
         >
+          {(actualContent?.thumbnail ||
+            actualContent?.image ||
+            actualContent?.mediaUrl ||
+            actualContent?.media ||
+            actualContent?.videoUrl ||
+            actualContent?.src) ? (
           <img
-            src={actualContent?.thumbnail || 
-                 actualContent?.image || 
-                 actualContent?.mediaUrl || 
-                 actualContent?.media || 
+            src={actualContent?.thumbnail ||
+                 actualContent?.image ||
+                 actualContent?.mediaUrl ||
+                 actualContent?.media ||
                  actualContent?.videoUrl ||
                  actualContent?.src}
             alt={actualContent?.title || 'Fullscreen Content'}
@@ -1836,20 +1857,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               imageRendering: 'crisp-edges',
               imageResolution: 'from-image 1dppx'
             }}
-            onError={(e) => {
-              const target = e.target as HTMLImageElement;
-              // Try fallback sources with higher resolution
-              if (!target.src.includes('picsum')) {
-                target.src = `https://picsum.photos/seed/${actualContent?.id || 'fallback'}/1920/1080`;
-              }
-            }}
+            onError={hideBrokenImage}
             onLoad={(e) => {
               const target = e.target as HTMLImageElement;
               // Enhance image quality for HD displays
               target.style.imageRendering = 'auto';
             }}
           />
-          
+          ) : (
+            <div className="text-white text-center px-6">
+              <p className="text-xl mb-2">Content not available</p>
+              <p className="text-sm text-gray-400">The uploader did not attach viewable media</p>
+            </div>
+          )}
+
         </div>
       )}
 

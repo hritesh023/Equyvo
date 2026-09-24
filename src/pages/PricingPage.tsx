@@ -62,6 +62,9 @@ const PricingPage: React.FC = () => {
       window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan } }));
       setNeedsAuth(false);
       toast.success('Payment verified. Your plan is active.');
+      if (v.nameGrant && v.nameGrant.granted > 0) {
+        toast.success(`+${v.nameGrant.granted} profile name changes added (${v.nameGrant.remaining} available).`);
+      }
     } catch (e: unknown) {
       if (e instanceof AuthRequiredError) {
         // Signed-in user with an expired session, or signed-out visitor:

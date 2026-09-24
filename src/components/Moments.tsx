@@ -596,20 +596,14 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         </div>
                       ) : (
                         <img
-                          src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
+                          src={moment.thumbnail || moment.fallbackImage || ''}
                           alt="Moment thumbnail"
                           loading="lazy"
                           className="w-full h-full object-cover bg-black"
-                            onError={(e) => {
-                            const target = e.target as HTMLImageElement;
-                            // Try multiple fallback images in sequence
-                            if (!target.src.includes('picsum.photos/seed/')) {
-                              target.src = `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`;
-                            } else if (!target.src.includes('unsplash')) {
-                              target.src = 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=700&fit=crop&auto=format&dpr=2';
-                            } else {
-                              handleThumbnailError(moment.id);
-                            }
+                            onError={() => {
+                            // Real media only: a broken thumbnail shows the
+                            // neutral loading state, never a fake/bot image.
+                            handleThumbnailError(moment.id);
                           }}
                           onLoad={() => {
                             // Clear thumbnail error if successfully loaded
@@ -923,20 +917,14 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     </div>
                   ) : (
                     <img
-                      src={moment.thumbnail || moment.fallbackImage || `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`}
+                      src={moment.thumbnail || moment.fallbackImage || ''}
                       alt="Moment thumbnail"
                       loading="lazy"
                       className="w-full h-full object-cover bg-black"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        if (!target.src.includes('picsum.photos/seed/')) {
-                          handleThumbnailError(moment.id);
-                          target.src = `https://picsum.photos/seed/${moment.id}-portrait/400/700.jpg`;
-                        } else if (!target.src.includes('unsplash')) {
-                          target.src = 'https://images.unsplash.com/photo-1506905925346-21bda4d32df4?w=400&h=700&fit=crop&auto=format&dpr=2';
-                        } else {
-                          handleThumbnailError(moment.id);
-                        }
+                      onError={() => {
+                        // Real media only: a broken thumbnail shows the
+                        // neutral loading state, never a fake/bot image.
+                        handleThumbnailError(moment.id);
                       }}
                       onLoad={() => {
                         // Clear thumbnail error if successfully loaded
@@ -1130,16 +1118,13 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     </div>
                   ) : (
                     <img
-                      src={moment.thumbnail || 'https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&h=700&fit=crop'}
+                      src={moment.thumbnail || moment.media || ''}
                       alt="Moment"
                       loading="lazy"
                       className="w-full h-full object-cover bg-black"
-                      onError={(e) => {
-                        const target = e.target as HTMLImageElement;
-                        if (!target.src.includes('placeholder')) {
-                          handleThumbnailError(moment.id);
-                          target.src = 'https://images.unsplash.com/photo-1551632811-561732d1e306?w=400&h=700&fit=crop';
-                        }
+                      onError={() => {
+                        // Real media only: never substitute a stock photo.
+                        handleThumbnailError(moment.id);
                       }}
                       onClick={(e) => {
                         e.stopPropagation();

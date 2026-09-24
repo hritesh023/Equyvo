@@ -55,7 +55,7 @@ export function getBillingStatus(): Promise<BillingStatus> {
 }
 
 /** Full checkout: create order -> Razorpay (UPI/cards/netbanking) -> verify. */
-export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string }> {
+export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string; nameGrant?: { granted: number; quota: number; used: number; remaining: number } }> {
   // Silent-refresh the session first: a signed-in user whose token expired
   // must sail into checkout, not hit "Please sign in first".
   const token = (await getAuthToken()) || getToken();

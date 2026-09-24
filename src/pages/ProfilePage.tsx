@@ -58,6 +58,15 @@ const myAccountId = (): string => {
   }
 };
 
+/** Real media only: hide a broken image instead of swapping in fake art. */
+const hideBrokenImg = (e: React.SyntheticEvent<HTMLImageElement>) => {
+  try {
+    (e.target as HTMLImageElement).style.display = 'none';
+  } catch {
+    /* ignore */
+  }
+};
+
 const createDefaultProfile = (user?: { email?: string; fullName?: string; username?: string; id?: string }) => {
   const displayName = user?.fullName || (user?.email ? user.email.split('@')[0] : '');
   const handle = user?.username || (user?.email ? `@${user.email.split('@')[0]}` : '');
@@ -538,7 +547,7 @@ const ProfilePage = () => {
           id: `user-reacted-${postId}`,
           originalPostId: postId,
           user: 'You',
-          avatar: 'https://picsum.photos/seed/user/100/100',
+          avatar: userProfile.avatar || '',
           time: 'Just now',
           content: `🔄 Reacted to: ${post.content}`,
           likes: post.likes,
@@ -660,6 +669,7 @@ const ProfilePage = () => {
 
   const handleSaveProfile = async (updatedProfile: Partial<UserProfile>) => {
     const currentUser = getStoredUser();
+    const prevSnapshot = userProfile;
     const merged = { ...userProfile, ...updatedProfile, _userEmail: currentUser?.email || userProfile._userEmail };
     setUserProfile(merged as unknown as typeof userProfile);
     // Persist locally so every surface reads the fresh name/avatar on next
@@ -689,7 +699,25 @@ const ProfilePage = () => {
       }
     } catch { /* storage is best-effort */ }
     try {
-      await api.updateProfile(merged);
+      const res = (await api.updateProfile(merged)) as unknown as {
+        error?: string;
+        code?: string;
+        quota?: number;
+      };
+      // Server-enforced display-name quota (402 NAME_CHANGE_QUOTA): roll back
+      // the optimistic rename so no surface shows a name the server rejected.
+      if (res && (res.code === 'NAME_CHANGE_QUOTA' || /name change/i.test(res.error || ''))) {
+        setUserProfile(prevSnapshot);
+        try {
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('userProfile', JSON.stringify(prevSnapshot));
+          }
+        } catch { /* storage is best-effort */ }
+        showError(
+          `You have used all ${res.quota || 2} profile name changes. Buy Premium to get 2 more — your photo can still be updated for free.`,
+        );
+        return;
+      }
       await api.indexContent({
         id: merged.id || currentUser?.id || 'profile',
         title: merged.name || merged.username || 'User',
@@ -803,6 +831,26 @@ const ProfilePage = () => {
         ...prev,
         posts: prev.posts.map(p => (p.id === postId ? ({ ...p, visibility: 'private' } as Post) : p)),
       }));
+    }
+  };
+
+  // Owner-only story-cover removal: clears the custom thumbnail on the
+  // server (owner-checked) and mirrors locally, so the story keeps its media
+  // but drops the cover everywhere on next fetch.
+  const handleRemoveStoryCover = async (storyId: string) => {
+    try {
+      const { error } = await api.updateStory(storyId, { thumbnail: '' });
+      if (error) {
+        showError("Couldn't remove the cover. Please try again.");
+        return;
+      }
+      setUserProfile(prev => ({
+        ...prev,
+        posts: prev.posts.map(p => (p.id === storyId ? ({ ...p, thumbnail: '' } as Post) : p)),
+      }));
+      showSuccess('Story cover removed');
+    } catch {
+      showError("Couldn't remove the cover. Please try again.");
     }
   };
 
@@ -1012,8 +1060,9 @@ const ProfilePage = () => {
 
       {/* User Content Tabs */}
       <Tabs defaultValue="posts" className="w-full">
-        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid md:grid-cols-6 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
+        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
           <TabsTrigger value="posts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">All Posts</TabsTrigger>
+          <TabsTrigger value="stories" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Stories</TabsTrigger>
           <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
           <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
           <TabsTrigger value="thoughts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Thoughts</TabsTrigger>
@@ -1288,6 +1337,87 @@ const ProfilePage = () => {
             <p className="text-center text-muted-foreground">No posts yet. Share something!</p>
           )}
         </TabsContent>
+        <TabsContent value="stories" className="mt-6 space-y-4">
+          {userProfile.posts.filter(p => p.type === 'story' || (p as { type?: string }).type === 'text-story').length > 0 ? (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+              {userProfile.posts.filter(p => p.type === 'story' || (p as { type?: string }).type === 'text-story').map((story) => (
+                <Card key={story.id} className="overflow-hidden">
+                  <div className="relative aspect-[9/16] bg-black">
+                    {story.type !== 'text-story' && (story.thumbnail || story.image || story.media) ? (
+                      <img
+                        src={story.thumbnail || story.image || story.media}
+                        alt={story.content || 'Story'}
+                        loading="lazy"
+                        className="w-full h-full object-cover cursor-pointer"
+                        onClick={() => handleFullscreen(story)}
+                        onError={hideBrokenImg}
+                      />
+                    ) : (
+                      <div
+                        className="w-full h-full flex items-center justify-center p-4 text-center cursor-pointer"
+                        onClick={() => handleFullscreen(story)}
+                      >
+                        <p className="text-white text-sm line-clamp-6">{story.content || 'Story'}</p>
+                      </div>
+                    )}
+                    <div
+                      className="absolute top-2 right-2 rounded-full bg-black/60 backdrop-blur-sm"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <StandardPostMenu
+                        postId={story.id}
+                        postUserId={typeof story.user === 'string' ? story.user : ''}
+                        postOwnerId={ownerIdOf(story)}
+                        currentUserId={myAccountId()}
+                        contentType="story"
+                        isProfilePage={true}
+                        onReport={handleReport}
+                        onDelete={() => handleDeletePost(story.id)}
+                        onDeleted={(id) => {
+                          setUserProfile(prev => ({
+                            ...prev,
+                            posts: prev.posts.filter(p => p.id !== id)
+                          }));
+                        }}
+                        onEdit={() => handleEditPost(story)}
+                        onHide={() => handleHide(story.id)}
+                        onHidden={(id) => {
+                          setUserProfile(prev => ({
+                            ...prev,
+                            posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                          }));
+                        }}
+                        onShare={handleMenuShare}
+                        onCopyLink={handleCopyLink}
+                        className="text-white hover:text-white"
+                      />
+                    </div>
+                  </div>
+                  <CardContent className="p-3">
+                    <p className="text-sm font-medium line-clamp-2 leading-tight mb-1">{story.content || 'Story'}</p>
+                    <p className="text-xs text-muted-foreground mb-2">{story.time || ''}{typeof story.views !== 'undefined' ? ` • ${story.views} views` : ''}</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {story.type !== 'text-story' && story.thumbnail ? (
+                        <Button variant="outline" size="sm" className="text-xs" onClick={() => handleRemoveStoryCover(story.id)}>
+                          <X className="h-3 w-3 mr-1" /> Remove cover
+                        </Button>
+                      ) : null}
+                      <Button variant="destructive" size="sm" className="text-xs" onClick={() => handleDeletePost(story.id)}>
+                        <Trash className="h-3 w-3 mr-1" /> Delete story
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Camera className="h-10 w-10 mx-auto mb-2 opacity-20" />
+              <p>No stories yet — they appear here for 24 hours after you post</p>
+            </div>
+          )}
+        </TabsContent>
+
         <TabsContent value="moments" className="mt-6">
           <Moments
             moments={userProfile.posts.filter(post => post.type === 'moment').map(post => ({
@@ -1397,7 +1527,7 @@ const ProfilePage = () => {
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
                     <Avatar className="h-10 w-10">
-                      <AvatarImage src={post.avatar} />
+                      {post.avatar ? <AvatarImage src={post.avatar} /> : null}
                       <AvatarFallback>{typeof post.user === 'string' ? post.user.substring(0, 2).toUpperCase() : (post.user && typeof post.user === 'object' && 'username' in post.user ? String((post.user as any).username).substring(0, 2).toUpperCase() : 'U')}</AvatarFallback>
                     </Avatar>
                     <div>
@@ -1449,7 +1579,8 @@ const ProfilePage = () => {
                             className="absolute inset-0 w-full h-full object-cover"
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              target.src = `https://picsum.photos/seed/fallback-video-${post.id}/400/300.jpg`;
+                              // Real media only: hide broken art, never swap in a fake image.
+                              target.style.display = 'none';
                             }}
                           />
                           {post.videoUrl ? (
@@ -1524,7 +1655,8 @@ const ProfilePage = () => {
                           onClick={() => handleFullscreen(post)}
                           onError={(e) => {
                             const target = e.target as HTMLImageElement;
-                            target.src = `https://picsum.photos/seed/fallback-${post.id}/400/300.jpg`;
+                            // Real media only: hide broken art, never swap in a fake image.
+                            target.style.display = 'none';
                           }}
                         />
                       )}
@@ -1664,7 +1796,8 @@ const ProfilePage = () => {
                             onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              target.src = `https://picsum.photos/seed/fallback-saved-${post.id}/400/300.jpg`;
+                              // Real media only: hide broken art, never swap in a fake image.
+                              target.style.display = 'none';
                             }}
                           />
                         )}

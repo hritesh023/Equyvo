@@ -231,10 +231,35 @@ const CreatePage = () => {
     }
   };
 
+  /** A cover/thumbnail may only exist alongside its actual media. This is the
+   *  single gate used by every picker, so a cover can never be uploaded (or
+   *  even selected) unless that tab's media is already chosen. */
+  const hasMediaForPending = (
+    kind: 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story',
+  ): boolean => {
+    if (kind === 'pending-video') return videoFiles.length > 0;
+    if (kind === 'pending-moment') return momentFiles.length > 0;
+    if (kind === 'pending-thought') return thoughtVideo !== null;
+    return storyFiles.length > 0;
+  };
+
+  const pendingMediaHint = (
+    kind: 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story',
+  ): string => {
+    if (kind === 'pending-video') return 'Select at least one video first — a thumbnail needs its video.';
+    if (kind === 'pending-moment') return 'Select at least one moment photo/video first — a cover needs its media.';
+    if (kind === 'pending-thought') return 'Attach the thought photo/video first — a thumbnail needs its media.';
+    return 'Select at least one story photo/video first — a cover needs its media.';
+  };
+
   /** Open the shared cropper for a pre-publish (not yet posted) thumbnail. */
   const openPendingThumbPicker = (
     kind: 'pending-video' | 'pending-moment' | 'pending-thought' | 'pending-story',
   ) => {
+    if (!hasMediaForPending(kind)) {
+      showError(pendingMediaHint(kind));
+      return;
+    }
     thumbTargetRef.current = { kind, id: kind };
     const input = document.getElementById('custom-thumb-upload') as HTMLInputElement | null;
     if (input) {
@@ -244,6 +269,11 @@ const CreatePage = () => {
   };
 
   const openThumbUpload = (kind: ThumbKind, id: string) => {
+    // Live streams have no file: the title is the media commitment.
+    if (kind === 'live' && !liveTitle.trim()) {
+      showError('Enter a stream title first — a thumbnail needs its stream.');
+      return;
+    }
     thumbTargetRef.current = { kind, id };
     const input = document.getElementById('custom-thumb-upload') as HTMLInputElement | null;
     if (input) {
@@ -291,6 +321,15 @@ const CreatePage = () => {
     const rawId = (typeof t === 'object' && t !== null) ? t.id : (typeof t === 'string' ? t : undefined);
     const kind: ThumbKind = (rawKind && rawKind in THUMB_SPEC) ? (rawKind as ThumbKind) : 'video';
     const id: string = rawId || kind;
+    // Defense in depth: even if the picker was forced open, a pre-publish
+    // cover is rejected here unless its media is currently selected.
+    if (
+      (kind === 'pending-video' || kind === 'pending-moment' || kind === 'pending-thought' || kind === 'pending-story') &&
+      !hasMediaForPending(kind)
+    ) {
+      showError(pendingMediaHint(kind));
+      return;
+    }
     const spec = THUMB_SPEC[kind] || THUMB_SPEC.video;
 
     const reader = new FileReader();
@@ -936,10 +975,16 @@ const CreatePage = () => {
   const handleRemoveFile = (index: number, type: string) => {
     switch (type) {
       case 'story':
-        setStoryFiles(prev => prev.filter((_, i) => i !== index));
+        // A cover cannot outlive its media: dropping the last file drops the cover too.
+        setStoryFiles(prev => {
+          const next = prev.filter((_, i) => i !== index);
+          if (next.length === 0) clearStoryThumb();
+          return next;
+        });
         break;
       case 'thought':
         setThoughtVideo(null);
+        clearThoughtThumb();
         break;
 
       case 'photo':
@@ -947,11 +992,19 @@ const CreatePage = () => {
         break;
 
       case 'video':
-        setVideoFiles(prev => prev.filter((_, i) => i !== index));
+        setVideoFiles(prev => {
+          const next = prev.filter((_, i) => i !== index);
+          if (next.length === 0) clearVideoThumb();
+          return next;
+        });
         break;
 
       case 'moment':
-        setMomentFiles(prev => prev.filter((_, i) => i !== index));
+        setMomentFiles(prev => {
+          const next = prev.filter((_, i) => i !== index);
+          if (next.length === 0) clearMomentThumb();
+          return next;
+        });
         break;
     }
   };
@@ -970,8 +1023,6 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
-        // Custom cover picked in the separate thumbnail section (like Live).
-        const storyCustomThumb = await uploadPendingThumb(storyThumbFile);
         const uploadedStoryResults = await Promise.all(
           storyFiles.map(async (file) => {
             try {
@@ -986,7 +1037,20 @@ const CreatePage = () => {
           })
         );
 
-        const newUploadedStories: UploadedStory[] = uploadedStoryResults.map(({ file, result }, index) => ({
+        // Robust pairing: only media that actually uploaded gets persisted.
+        // Failed files are left selected for retry and no orphan cover-only
+        // story is ever created.
+        const storySuccesses = uploadedStoryResults.filter(
+          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
+        );
+        if (storySuccesses.length === 0) {
+          setIsUploading(false);
+          showError('Story upload failed — no cover was posted without its media.');
+          break;
+        }
+        // The custom cover is uploaded only now that its media exists.
+        const storyCustomThumb = await uploadPendingThumb(storyThumbFile);
+        const newUploadedStories: UploadedStory[] = storySuccesses.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           type: file.type.startsWith('image/') ? 'image' : 'video',
           fileName: file.name,
@@ -1008,7 +1072,8 @@ const CreatePage = () => {
         let storyPersistError: string | null = null;
         for (let i = 0; i < newUploadedStories.length; i++) {
           const s = newUploadedStories[i];
-          const secureUrl = uploadedStoryResults[i]?.result?.secureUrl || s.thumbnail;
+          const secureUrl = storySuccesses[i]?.result?.secureUrl || '';
+          if (!secureUrl) continue;
           const isVid = s.type === 'video';
           const err = await persistContent({
             id: s.id,
@@ -1029,10 +1094,13 @@ const CreatePage = () => {
         setIsUploading(false);
         if (storyPersistError) {
           showError('Saved locally but feed sync failed: ' + storyPersistError);
+        } else if (storySuccesses.length < uploadedStoryResults.length) {
+          showSuccess(`${storySuccesses.length} story item(s) posted; failed files were kept for retry.`);
         } else {
           showSuccess('Story posted successfully! It will be available for 24 hours.');
         }
-        setStoryFiles([]);
+        // Keep failed files selected for retry; the consumed cover is cleared.
+        setStoryFiles(prev => prev.filter(f => !storySuccesses.some(s => s.file === f)));
         clearStoryThumb();
 
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
@@ -1171,8 +1239,16 @@ const CreatePage = () => {
         }
 
         let thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
-        // Separate thumbnail section (like Live) wins over any auto poster.
-        const thoughtCustomThumb = await uploadPendingThumb(thoughtThumbFile);
+        // The thumbnail is uploaded only when there is real thought media:
+        // a cover can never be posted without its photo/video.
+        const thoughtMediaType = thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined;
+        const thoughtSecureUrl = thoughtUploadResult?.secureUrl || '';
+        if (thoughtVideo && !thoughtSecureUrl) {
+          setIsUploading(false);
+          showError('Thought media upload failed — nothing was posted without its media.');
+          break;
+        }
+        const thoughtCustomThumb = await uploadPendingThumb(thoughtVideo ? thoughtThumbFile : null);
         if (thoughtCustomThumb) thoughtThumbnail = thoughtCustomThumb;
         // Videos without a server poster get one captured client-side so the
         // Thoughts feed still shows a preview (never a blank card).
@@ -1182,8 +1258,6 @@ const CreatePage = () => {
             if (poster) thoughtThumbnail = poster;
           } catch { /* poster is best-effort */ }
         }
-        const thoughtMediaType = thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined;
-        const thoughtSecureUrl = thoughtUploadResult?.secureUrl || '';
         const newUploadedThought: UploadedThought = {
           id: Date.now().toString(),
           content: thoughtContent,
@@ -1292,7 +1366,17 @@ const CreatePage = () => {
           })
         );
 
-        const newUploadedPhotos: UploadedPhoto[] = uploadedPhotoResults.map(({ file, result }, index) => ({
+        // Only photos that actually uploaded are persisted — failed files stay
+        // selected for retry and no media-less item is ever created.
+        const photoSuccesses = uploadedPhotoResults.filter(
+          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
+        );
+        if (photoSuccesses.length === 0) {
+          setIsUploading(false);
+          showError('Photo upload failed — nothing was posted without its media.');
+          break;
+        }
+        const newUploadedPhotos: UploadedPhoto[] = photoSuccesses.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
@@ -1316,7 +1400,8 @@ const CreatePage = () => {
         for (let i = 0; i < newUploadedPhotos.length; i++) {
           const p = newUploadedPhotos[i];
           // Full-res URL straight from the upload result — never the cropped thumbnail.
-          const secureUrl = uploadedPhotoResults[i]?.result?.secureUrl || p.thumbnail || p.videoUrl;
+          const secureUrl = photoSuccesses[i]?.result?.secureUrl || '';
+          if (!secureUrl) continue;
           const err = await persistContent({
             id: p.id,
             type: p.mediaType === 'video' ? 'video' : 'photo',
@@ -1335,10 +1420,13 @@ const CreatePage = () => {
         setIsUploading(false);
         if (photoPersistError) {
           showError('Saved locally but feed sync failed: ' + photoPersistError);
+        } else if (photoSuccesses.length < uploadedPhotoResults.length) {
+          showSuccess(`${photoSuccesses.length} photo(s) posted; failed files were kept for retry.`);
         } else {
-          showSuccess(`${photoFiles.length} photo(s) posted successfully!`);
+          showSuccess(`${photoSuccesses.length} photo(s) posted successfully!`);
         }
-        setPhotoFiles([]);
+        // Keep failed files selected for retry.
+        setPhotoFiles(prev => prev.filter(f => !photoSuccesses.some(s => s.file === f)));
         setPhotoCaption('');
         break;
       case 'schedule':
@@ -1387,8 +1475,6 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
-        // Custom thumbnail from the separate section (like Live) wins.
-        const videoCustomThumb = await uploadPendingThumb(videoThumbFile);
         const uploadedVideoResults = await Promise.all(
           videoFiles.map(async (file) => {
             try {
@@ -1403,10 +1489,24 @@ const CreatePage = () => {
           })
         );
 
+        // Only videos that actually uploaded are persisted — failed files are
+        // kept selected for retry and no thumbnail-only item is ever created.
+        const videoSuccesses = uploadedVideoResults.filter(
+          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
+        );
+        if (videoSuccesses.length === 0) {
+          setIsUploading(false);
+          showError('Video upload failed — no thumbnail was posted without its video.');
+          break;
+        }
+        // Custom thumbnail from the separate section wins (uploaded only now
+        // that its video media exists).
+        const videoCustomThumb = await uploadPendingThumb(videoThumbFile);
+
         // Client posters for videos that arrived without a thumbnail.
         const videoPosters = await Promise.all(
-          videoFiles.map(async (file, i) => {
-            const t = getThumbnailFromUpload(uploadedVideoResults[i]?.result);
+          videoSuccesses.map(async ({ file, result }) => {
+            const t = getThumbnailFromUpload(result);
             if (t) return t;
             try {
               const poster = await captureVideoPoster(file);
@@ -1414,7 +1514,7 @@ const CreatePage = () => {
             } catch { return ''; }
           })
         );
-        const newUploadedVideos: UploadedVideo[] = uploadedVideoResults.map(({ file, result }, index) => ({
+        const newUploadedVideos: UploadedVideo[] = videoSuccesses.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           title: videoCaption || file.name,
           fileName: file.name,
@@ -1437,16 +1537,20 @@ const CreatePage = () => {
         setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
         let videoPersistError: string | null = null;
         for (const v of newUploadedVideos) {
+          if (!v.videoUrl) continue;
           const err = await persistContent({ id: v.id, type: 'video', content: v.title, image: '', media: v.videoUrl, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', publicId: v.publicId, resourceType: v.resourceType });
           if (err) videoPersistError = err;
         }
         setIsUploading(false);
         if (videoPersistError) {
           showError('Saved locally but feed sync failed: ' + videoPersistError);
+        } else if (videoSuccesses.length < uploadedVideoResults.length) {
+          showSuccess(`${videoSuccesses.length} video(s) posted; failed files were kept for retry.`);
         } else {
-          showSuccess(`${videoFiles.length} video(s) posted successfully!`);
+          showSuccess(`${videoSuccesses.length} video(s) posted successfully!`);
         }
-        setVideoFiles([]);
+        // Keep failed files selected for retry; the consumed thumbnail is cleared.
+        setVideoFiles(prev => prev.filter(f => !videoSuccesses.some(s => s.file === f)));
         setVideoCaption('');
         clearVideoThumb();
         break;
@@ -1534,8 +1638,6 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
-        // Custom cover from the separate thumbnail section (like Live) wins.
-        const momentCustomThumb = await uploadPendingThumb(momentThumbFile);
         const uploadedResults = await Promise.all(
           momentFiles.map(async (file) => {
             try {
@@ -1550,10 +1652,24 @@ const CreatePage = () => {
           })
         );
 
+        // Only moment media that actually uploaded is persisted — failed files
+        // stay selected for retry and no cover-only item is ever created.
+        const momentSuccesses = uploadedResults.filter(
+          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
+        );
+        if (momentSuccesses.length === 0) {
+          setIsUploading(false);
+          showError('Moment upload failed — no cover was posted without its media.');
+          break;
+        }
+        // Custom cover from the separate thumbnail section wins (uploaded only
+        // now that its moment media exists).
+        const momentCustomThumb = await uploadPendingThumb(momentThumbFile);
+
         // Posters for video moments + full URLs for photo moments.
         const momentPosters = await Promise.all(
-          momentFiles.map(async (file, i) => {
-            const t = getThumbnailFromUpload(uploadedResults[i]?.result);
+          momentSuccesses.map(async ({ file, result }) => {
+            const t = getThumbnailFromUpload(result);
             if (t) return t;
             if (file.type.startsWith('video/')) {
               try {
@@ -1561,10 +1677,10 @@ const CreatePage = () => {
                 return poster || '';
               } catch { return ''; }
             }
-            return uploadedResults[i]?.result?.secureUrl || '';
+            return result?.secureUrl || '';
           })
         );
-        const newUploadedMoments: UploadedMoment[] = uploadedResults.map(({ file, result }, index) => ({
+        const newUploadedMoments: UploadedMoment[] = momentSuccesses.map(({ file, result }, index) => ({
           id: Date.now().toString() + index,
           fileName: file.name,
           fileSize: file.size,
@@ -1585,7 +1701,8 @@ const CreatePage = () => {
         let momentPersistError: string | null = null;
         for (let i = 0; i < newUploadedMoments.length; i++) {
           const m = newUploadedMoments[i];
-          const secureUrl = uploadedResults[i]?.result?.secureUrl || '';
+          const secureUrl = momentSuccesses[i]?.result?.secureUrl || '';
+          if (!secureUrl) continue;
           // Photo moment: media/image/thumbnail = full image. Video moment:
           // media/videoUrl = playable URL, thumbnail = poster only.
           const err = await persistContent({
@@ -1605,10 +1722,13 @@ const CreatePage = () => {
         setIsUploading(false);
         if (momentPersistError) {
           showError('Saved locally but feed sync failed: ' + momentPersistError);
+        } else if (momentSuccesses.length < uploadedResults.length) {
+          showSuccess(`${momentSuccesses.length} moment(s) posted; failed files were kept for retry.`);
         } else {
-          showSuccess(`${momentFiles.length} moment(s) posted successfully!`);
+          showSuccess(`${momentSuccesses.length} moment(s) posted successfully!`);
         }
-        setMomentFiles([]);
+        // Keep failed files selected for retry; the consumed cover is cleared.
+        setMomentFiles(prev => prev.filter(f => !momentSuccesses.some(s => s.file === f)));
         setMomentContent('');
         clearMomentThumb();
         break;
@@ -3100,6 +3220,7 @@ const CreatePage = () => {
                 <Label>Story Cover (optional)</Label>
                 <p className="text-xs text-muted-foreground mb-2">
                   Upload a separate cover for video stories. Photos use the photo itself unless you override it here.
+                  A cover requires its story media — select media first.
                 </p>
                 <div className="mt-1 flex items-center gap-4">
                   {storyThumbPreview ? (
@@ -3134,6 +3255,8 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={storyFiles.length === 0}
+                        title={storyFiles.length === 0 ? 'Select story media first — a cover needs its media' : 'Upload a separate cover'}
                         onClick={() => openPendingThumbPicker('pending-story')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
@@ -3390,6 +3513,7 @@ const CreatePage = () => {
                 <Label>Video Thumbnail (optional)</Label>
                 <p className="text-xs text-muted-foreground mb-2">
                   Upload a separate thumbnail for thought videos. Used as the poster across feeds when you post.
+                  A thumbnail requires its thought media — attach media first.
                 </p>
                 <div className="mt-1 flex items-center gap-4">
                   {thoughtThumbPreview ? (
@@ -3424,6 +3548,8 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={!thoughtVideo}
+                        title={!thoughtVideo ? 'Attach the thought photo/video first — a thumbnail needs its media' : 'Upload a separate thumbnail'}
                         onClick={() => openPendingThumbPicker('pending-thought')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
@@ -3633,6 +3759,7 @@ const CreatePage = () => {
                 <Label>Video Thumbnail (optional)</Label>
                 <p className="text-xs text-muted-foreground mb-2">
                   Upload a separate thumbnail for your video. It is shown across feeds instead of the auto poster.
+                  A thumbnail requires its video — select a video first.
                 </p>
                 <div className="mt-1 flex items-center gap-4">
                   {videoThumbPreview ? (
@@ -3667,6 +3794,8 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={videoFiles.length === 0}
+                        title={videoFiles.length === 0 ? 'Select at least one video first — a thumbnail needs its video' : 'Upload a separate thumbnail'}
                         onClick={() => openPendingThumbPicker('pending-video')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
@@ -3777,6 +3906,8 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={!liveTitle.trim()}
+                        title={!liveTitle.trim() ? 'Enter a stream title first — a thumbnail needs its stream' : 'Upload a stream thumbnail'}
                         onClick={() => openThumbUpload('live', 'live')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
@@ -3953,6 +4084,7 @@ const CreatePage = () => {
                 <Label>Moment Cover (optional)</Label>
                 <p className="text-xs text-muted-foreground mb-2">
                   Upload a separate cover for video moments. Photo moments use the photo itself unless you override it here.
+                  A cover requires its moment media — select media first.
                 </p>
                 <div className="mt-1 flex items-center gap-4">
                   {momentThumbPreview ? (
@@ -3987,6 +4119,8 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
+                        disabled={momentFiles.length === 0}
+                        title={momentFiles.length === 0 ? 'Select moment media first — a cover needs its media' : 'Upload a separate cover'}
                         onClick={() => openPendingThumbPicker('pending-moment')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
