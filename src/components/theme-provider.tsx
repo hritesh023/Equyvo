@@ -64,7 +64,7 @@ export function ThemeProvider({
     // dark logo in dark mode.
     try {
       const logoSrc =
-        effectiveTheme === "light" ? "/Equyvo_logo_light.png" : "/Equyvo_logo.png";
+        effectiveTheme === "light" ? "/Equyvo_logo_light_v2.png" : "/Equyvo_logo.png";
       const iconLink = window.document.querySelector<HTMLLinkElement>(
         'link[rel="icon"]',
       );

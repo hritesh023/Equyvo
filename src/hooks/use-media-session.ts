@@ -32,7 +32,7 @@ export function useMediaSession({
         (localStorage.getItem('vite-ui-theme') !== 'dark' &&
           localStorage.getItem('vite-ui-theme') !== 'light' &&
           window.matchMedia('(prefers-color-scheme: light)').matches))
-        ? '/Equyvo_logo_light.png'
+        ? '/Equyvo_logo_light_v2.png'
         : '/Equyvo_logo.png';
 
     navigator.mediaSession.metadata = new MediaMetadata({

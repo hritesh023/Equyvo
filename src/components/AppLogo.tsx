@@ -2,7 +2,7 @@ import React from 'react';
 import { useTheme } from './theme-provider';
 
 export const DARK_LOGO_SRC = '/Equyvo_logo.png';
-export const LIGHT_LOGO_SRC = '/Equyvo_logo_light.png';
+export const LIGHT_LOGO_SRC = '/Equyvo_logo_light_v2.png';
 
 /** Resolve light/dark logo from the app theme (handles "system"). */
 export function useThemedLogoSrc(): string {
@@ -43,7 +43,7 @@ interface AppLogoProps extends Omit<React.ImgHTMLAttributes<HTMLImageElement>, '
 
 /**
  * Theme-aware Equyvo logo.
- * Shows Equyvo_logo_light.png in light mode, Equyvo_logo.png in dark mode.
+ * Shows Equyvo_logo_light_v2.png in light mode, Equyvo_logo.png in dark mode.
  */
 const AppLogo: React.FC<AppLogoProps> = ({ alt = 'Equyvo Logo', ...rest }) => {
   const src = useThemedLogoSrc();

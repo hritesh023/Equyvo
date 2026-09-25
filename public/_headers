@@ -1,0 +1,16 @@
+/
+  Cache-Control: no-cache, must-revalidate
+/index.html
+  Cache-Control: no-cache, must-revalidate
+/Equyvo_logo_light_v2.png
+  Cache-Control: public, max-age=31536000, immutable
+/Equyvo_logo_light.png
+  Cache-Control: public, max-age=31536000, immutable
+/Equyvo_logo.png
+  Cache-Control: public, max-age=31536000, immutable
+/js/*
+  Cache-Control: public, max-age=31536000, immutable
+/assets/*
+  Cache-Control: public, max-age=31536000, immutable
+/images/*
+  Cache-Control: public, max-age=31536000, immutable
