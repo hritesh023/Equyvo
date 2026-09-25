@@ -24,6 +24,17 @@ const KEYS = {
   INTERESTS: (userId: string) => `interests:${userId}`,
   POP: (itemId: string) => `pop:${itemId}`,
   ORPHAN_SWEEP_AT: 'maint:orphan_sweep_at',
+  // Social graph / chat / notifications / safety (mirrors Pages Functions).
+  FOLLOWING: (userId: string) => `following:${userId}`,
+  FOLLOWERS: (userId: string) => `followers:${userId}`,
+  FOLLOW_REQ: (userId: string) => `followreq:${userId}`,
+  REPORTS_LIST: 'reports:list',
+  REPORT: (id: string) => `report:${id}`,
+  FLAGS: (kind: string, id: string) => `flags:${kind}:${id}`,
+  MOD_QUEUE: 'mod:queue',
+  CHAT: (a: string, b: string) => `chat:${a}:${b}`,
+  NOTIF: (userId: string) => `notif:${userId}`,
+  LIVE: 'live:now',
 };
 
 export { KEYS };
@@ -642,6 +653,7 @@ export async function createPost(env: Env, post: Omit<Post, 'id' | 'time' | 'cre
     comments: 0,
   });
   
+  try { void fanOutUpload(env, String((newPost as any).userId || ''), String((newPost as any).user || ''), String((newPost as any).content || '').slice(0, 120)); } catch { /* ignore */ }
   return newPost;
 }
 
@@ -715,6 +727,7 @@ export async function createThought(env: Env, thought: Omit<Thought, 'id' | 'cre
     });
   } catch { /* best-effort */ }
 
+  try { void fanOutUpload(env, String((newThought as any).user_id || ''), String((newThought as any).user_id || ''), String((newThought as any).content || '').slice(0, 120)); } catch { /* ignore */ }
   return newThought;
 }
 
@@ -780,6 +793,7 @@ export async function createStory(env: Env, story: Omit<Story, 'id'>): Promise<S
     });
   } catch { /* best-effort */ }
 
+  try { void fanOutUpload(env, String((newStory as any).userId || (newStory as any).user || ''), String((newStory as any).user || ''), 'New story'); } catch { /* ignore */ }
   return newStory;
 }
 
@@ -851,6 +865,7 @@ export async function createMoment(env: Env, moment: Omit<Moment, 'id'>): Promis
     });
   } catch { /* best-effort */ }
 
+  try { void fanOutUpload(env, String((newMoment as any).userId || ''), String((newMoment as any).user || ''), String((newMoment as any).content || '').slice(0, 120) || 'New moment'); } catch { /* ignore */ }
   return newMoment;
 }
 
@@ -1639,3 +1654,245 @@ export const SECURITY_HEADERS: Record<string, string> = {
   'Referrer-Policy': 'strict-origin-when-cross-origin',
   'Permissions-Policy': 'camera=(), microphone=(), geolocation=()',
 };
+
+// --- Social graph / chat / notifications / reports (mirrors Pages Functions) ---
+// Production serves Pages Functions; this standalone-Worker mirror stays in
+// sync so either runtime behaves identically. Every list is bounded so reads
+// stay fast (lag-free); notification writes are best-effort and never block.
+
+export async function readIdList(env: Env, key: string): Promise<string[]> {
+  try {
+    const raw = await env.EQUYVO_KV.get(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+export function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+}
+
+export interface SocialSummary {
+  id: string; name: string; username: string; avatar: string;
+  isPrivate?: boolean; verified?: boolean;
+}
+
+export function profileSummary(p: any, fallbackId: string): SocialSummary {
+  const f = String(fallbackId || '');
+  if (!p || typeof p !== 'object') {
+    return { id: f, name: f.replace(/^@/, '') || 'user', username: f.startsWith('@') ? f : '@' + f, avatar: '' };
+  }
+  const id = String(p.id || f);
+  const username = String(p.username || p.name || id);
+  return {
+    id,
+    name: String(p.name || username),
+    username: username.startsWith('@') ? username : '@' + username,
+    avatar: String(p.avatar || ''),
+    isPrivate: p.isPrivate === true,
+    verified: p.verified === true,
+  };
+}
+
+export async function isFollowingPair(env: Env, viewerId: string, authorId: string): Promise<boolean> {
+  if (!viewerId || !authorId) return false;
+  if (viewerId === authorId) return true;
+  try {
+    const [following, followers] = await Promise.all([
+      readIdList(env, KEYS.FOLLOWING(viewerId)),
+      readIdList(env, KEYS.FOLLOWERS(authorId)),
+    ]);
+    const t = String(authorId).toLowerCase();
+    const v = String(viewerId).toLowerCase();
+    if (following.some((x) => x.toLowerCase() === t)) return true;
+    if (followers.some((x) => x.toLowerCase() === v)) return true;
+    return false;
+  } catch { return false; }
+}
+
+/** Light viewer for public reads: identity when present, null when anonymous. Never throws. */
+export async function getViewer(request: Request, env: Env): Promise<{ id: string; email: string } | null> {
+  try {
+    const actor: any = await getActor(request, env);
+    if (actor && actor.id) return { id: String(actor.id), email: String(actor.email || '') };
+  } catch { /* anonymous */ }
+  return null;
+}
+
+function chatPairKey(a: string, b: string): string {
+  const x = String(a || ''), y = String(b || '');
+  return (x < y ? KEYS.CHAT(x, y) : KEYS.CHAT(y, x));
+}
+
+export interface ChatRecord {
+  id: string; from: string; to: string; text: string;
+  type: string; fileUrl: string; fileName: string;
+  status: string; createdAt: string;
+}
+
+export async function readChatMessages(env: Env, a: string, b: string, limit = 100): Promise<ChatRecord[]> {
+  try {
+    const raw = await env.EQUYVO_KV.get(chatPairKey(a, b));
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr : [];
+    return list.slice(-Math.min(300, Math.max(1, limit)));
+  } catch { return []; }
+}
+
+export async function writeChatMessages(env: Env, a: string, b: string, list: ChatRecord[]): Promise<void> {
+  try { await env.EQUYVO_KV.put(chatPairKey(a, b), JSON.stringify(list.slice(-300))); } catch { /* best-effort */ }
+}
+
+export async function pushUserNotification(env: Env, userId: string, item: Record<string, any>): Promise<void> {
+  if (!userId || !item) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.NOTIF(userId));
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr : [];
+    list.unshift({ id: generateId(), at: new Date().toISOString(), read: false, ...item });
+    await env.EQUYVO_KV.put(KEYS.NOTIF(userId), JSON.stringify(list.slice(0, 100)));
+  } catch { /* never block on notify */ }
+}
+
+/** Gated 1:1 chat: allowed when EITHER side follows the other. Strangers get 403. */
+export async function canChat(env: Env, viewerId: string, peerId: string): Promise<boolean> {
+  if (!viewerId || !peerId) return false;
+  if (viewerId === peerId) return true;
+  try {
+    const [mine, theirs] = await Promise.all([
+      readIdList(env, KEYS.FOLLOWING(viewerId)),
+      readIdList(env, KEYS.FOLLOWERS(viewerId)),
+    ]);
+    const t = String(peerId).toLowerCase();
+    if (mine.some((x) => x.toLowerCase() === t)) return true;
+    if (theirs.some((x) => x.toLowerCase() === t)) return true;
+    const [pFollowing, pFollowers] = await Promise.all([
+      readIdList(env, KEYS.FOLLOWING(peerId)),
+      readIdList(env, KEYS.FOLLOWERS(peerId)),
+    ]);
+    const v = String(viewerId).toLowerCase();
+    if (pFollowing.some((x) => x.toLowerCase() === v)) return true;
+    if (pFollowers.some((x) => x.toLowerCase() === v)) return true;
+    return false;
+  } catch { return false; }
+}
+
+/** New-upload fan-out: followers get an in-app (+push) notification. Bounded, background-safe. */
+export async function fanOutUpload(env: Env, actorId: string, author: string, title: string): Promise<void> {
+  try {
+    const followers = await readIdList(env, KEYS.FOLLOWERS(actorId));
+    const head = followers.slice(0, 50);
+    const a = String(author || actorId).slice(0, 80);
+    const t = String(title || '').slice(0, 120) || 'New post';
+    await Promise.all(head.map((fid) => pushUserNotification(env, fid, {
+      kind: 'upload', title: 'New from ' + a, body: t,
+      actorId, actorName: a,
+    }).catch(() => {})));
+  } catch { /* ignore */ }
+}
+
+function ownsItem(item: any, actor: { id: string; email?: string; username?: string }): boolean {
+  if (!actor) return false;
+  const norm = (v: any) => String(v || '').trim().toLowerCase();
+  const owner = item && (item.ownerId || item.userId || item.user_id || '');
+  if (owner) {
+    const o = norm(owner);
+    if (o && (o === norm(actor.id) || o === norm(actor.email) || (actor.username && o === norm(actor.username)))) return true;
+  }
+  return false;
+}
+
+const REPORT_TARGET_KEY: Record<string, (id: string) => string> = {
+  post: (id) => KEYS.POST(id),
+  thought: (id) => KEYS.THOUGHT(id),
+  story: (id) => KEYS.STORY(id),
+  moment: (id) => KEYS.MOMENT(id),
+};
+
+export interface FileReportInput {
+  kind: string; id: string; reason: string; reasons: string[];
+  details: string; reporter: string;
+}
+
+export async function fileReport(env: Env, input: FileReportInput): Promise<{ ok: boolean; count: number; skipped?: boolean }> {
+  const getKey = REPORT_TARGET_KEY[input.kind];
+  if (!getKey) throw new Error('Invalid report');
+  const raw = await env.EQUYVO_KV.get(getKey(input.id));
+  if (!raw) return { ok: true, count: 0, skipped: true };
+  let parsed: any = {};
+  try { parsed = JSON.parse(raw); } catch { return { ok: true, count: 0, skipped: true }; }
+  const owner = String(parsed.ownerId || parsed.userId || parsed.user_id || '');
+  if (owner && owner === input.reporter) return { ok: true, count: 0, skipped: true };
+  const report = {
+    id: generateId(), kind: input.kind, contentId: input.id,
+    reason: input.reason, reasons: input.reasons,
+    details: String(input.details || '').slice(0, 1000),
+    reporter: input.reporter, createdAt: new Date().toISOString(),
+  };
+  await env.EQUYVO_KV.put(KEYS.REPORT(report.id), JSON.stringify(report));
+  try {
+    const listJson = await env.EQUYVO_KV.get(KEYS.REPORTS_LIST);
+    const ids: string[] = listJson ? JSON.parse(listJson) : [];
+    ids.unshift(report.id);
+    await env.EQUYVO_KV.put(KEYS.REPORTS_LIST, JSON.stringify(ids.slice(0, 2000)));
+  } catch { /* ignore */ }
+  let count = 1;
+  try {
+    const flagRaw = await env.EQUYVO_KV.get(KEYS.FLAGS(input.kind, input.id));
+    count = (flagRaw ? parseInt(flagRaw, 10) || 0 : 0) + 1;
+    await env.EQUYVO_KV.put(KEYS.FLAGS(input.kind, input.id), String(count));
+  } catch { /* ignore */ }
+  // Auto-moderation mirrors Pages: 3+ quarantine (owner-only), 5+ remove.
+  if (count >= 3) {
+    const now = new Date().toISOString();
+    parsed.moderation = { status: count >= 5 ? 'removed' : 'quarantined', at: now, reason: 'community' };
+    parsed.visibility = 'private';
+    try { await env.EQUYVO_KV.put(getKey(input.id), JSON.stringify(parsed)); } catch { /* ignore */ }
+    try {
+      const qRaw = await env.EQUYVO_KV.get(KEYS.MOD_QUEUE);
+      const q = qRaw ? JSON.parse(qRaw) : [];
+      q.unshift({ kind: input.kind, id: input.id, owner, reason: count >= 5 ? 'removed' : 'auto-review', at: now });
+      await env.EQUYVO_KV.put(KEYS.MOD_QUEUE, JSON.stringify((Array.isArray(q) ? q : []).slice(0, 500)));
+    } catch { /* ignore */ }
+  }
+  return { ok: true, count };
+}
+
+/** Newest reports with content snapshots for the dashboard monitor. Bounded. */
+export async function listReports(env: Env, limit = 100): Promise<any[]> {
+  let ids: string[] = [];
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.REPORTS_LIST);
+    ids = raw ? JSON.parse(raw) : [];
+    if (!Array.isArray(ids)) ids = [];
+  } catch { ids = []; }
+  const out: any[] = [];
+  const n = Math.min(200, Math.max(1, limit));
+  for (const rid of ids.slice(0, n)) {
+    try {
+      const rraw = await env.EQUYVO_KV.get(KEYS.REPORT(rid));
+      if (!rraw) continue;
+      const r = JSON.parse(rraw);
+      let snapshot: any = null;
+      try {
+        const getKey = REPORT_TARGET_KEY[r.kind];
+        if (getKey) {
+          const craw = await env.EQUYVO_KV.get(getKey(r.contentId));
+          if (craw) {
+            const c = JSON.parse(craw);
+            snapshot = {
+              owner: c.ownerId || c.userId || c.user_id || c.creator || c.user || '?',
+              text: String(c.content || c.title || c.description || '').slice(0, 300),
+              visibility: c.visibility || 'public',
+              moderation: c.moderation || null,
+              createdAt: c.createdAt || c.created_at || null,
+            };
+          }
+        }
+      } catch { /* snapshot best-effort */ }
+      out.push({ ...r, snapshot });
+    } catch { /* skip bad rows */ }
+    if (out.length >= n) break;
+  }
+  return out;
+}

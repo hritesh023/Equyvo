@@ -11,6 +11,9 @@ import {
   resolvePlan, planQuota, getUsage, addUsage, PLAN_CATALOG, PLATFORM_FEE_BPS, sha256Hex, cloudinaryVariants,
   r2KeyFor, extFromFile, r2DeliveryUrl, validMediaKey,
   nameQuotaState, prepareProfileUpdate,
+  readIdList, profileSummary, isFollowingPair, getViewer,
+  readChatMessages, writeChatMessages, pushUserNotification, canChat,
+  generateId, fileReport, listReports, fanOutUpload,
 } from './kv';
 export { Env };
 
@@ -361,6 +364,375 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       }
       const saved = await upsertProfile(env, profile);
       return respond({ data: saved, error: null });
+    }
+
+    // ---- FOLLOW GRAPH (mirrors Pages Functions; server-side source of truth) ----
+    // POST /api/follow { target } — public accounts follow directly;
+    // private accounts get a pending request instead.
+    if (path === '/api/follow' && method === 'POST') {
+      const raw = await request.json() as any;
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const body = sanitizeBody(raw);
+      const target = String(body.target || body.userId || '').slice(0, 200);
+      if (!target || target === (actor as any).id) return respondError('Invalid target', 400);
+      const rl = await rateLimit(env, 'engagement', (actor as any).id, 60);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      const targetProfile: any = await getProfile(env, target);
+      if (targetProfile && targetProfile.isPrivate === true) {
+        const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
+        if (!reqs.some((x) => x === (actor as any).id)) {
+          reqs.unshift((actor as any).id);
+          await env.EQUYVO_KV.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.slice(0, 1000)));
+        }
+        return respond({ data: { isFollowing: false, pending: true, isPrivate: true }, error: null });
+      }
+      const [following, followers] = await Promise.all([
+        readIdList(env, KEYS.FOLLOWING((actor as any).id)),
+        readIdList(env, KEYS.FOLLOWERS(target)),
+      ]);
+      if (!following.some((x) => x === target)) {
+        following.unshift(target);
+        await env.EQUYVO_KV.put(KEYS.FOLLOWING((actor as any).id), JSON.stringify(following.slice(0, 5000)));
+      }
+      if (!followers.some((x) => x === (actor as any).id)) {
+        followers.unshift((actor as any).id);
+        await env.EQUYVO_KV.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.slice(0, 50000)));
+      }
+      return respond({ data: { isFollowing: true, pending: false }, error: null });
+    }
+
+    if (path.startsWith('/api/follow/') && !path.startsWith('/api/follow/requests') && !path.startsWith('/api/follow/status') && !path.startsWith('/api/follow/accept') && !path.startsWith('/api/follow/decline') && method === 'DELETE') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const target = decodeURIComponent(path.split('/api/follow/')[1] || '').split('?')[0];
+      if (!target) return respondError('Invalid target', 400);
+      const [following, followers, reqs] = await Promise.all([
+        readIdList(env, KEYS.FOLLOWING((actor as any).id)),
+        readIdList(env, KEYS.FOLLOWERS(target)),
+        readIdList(env, KEYS.FOLLOW_REQ(target)),
+      ]);
+      await env.EQUYVO_KV.put(KEYS.FOLLOWING((actor as any).id), JSON.stringify(following.filter((x) => x !== target)));
+      await env.EQUYVO_KV.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.filter((x) => x !== (actor as any).id)));
+      if (reqs.some((x) => x === (actor as any).id)) {
+        await env.EQUYVO_KV.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.filter((x) => x !== (actor as any).id)));
+      }
+      return respond({ data: { isFollowing: false, pending: false }, error: null });
+    }
+
+    if (path === '/api/follow/status' && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const target = String(url.searchParams.get('target') || '').slice(0, 200);
+      if (!target) return respondError('target required', 400);
+      const following = await readIdList(env, KEYS.FOLLOWING((actor as any).id));
+      const isFollowing = following.some((x) => x === target);
+      let pending = false;
+      if (!isFollowing) {
+        const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
+        pending = reqs.some((x) => x === (actor as any).id);
+      }
+      return respond({ data: { isFollowing, pending }, error: null });
+    }
+
+    // GET /api/followers/:id + /api/following/:id with lightweight profiles.
+    // Private accounts expose lists only to owners/followers (restricted:true otherwise).
+    if ((path.startsWith('/api/followers/') || path.startsWith('/api/following/')) && method === 'GET') {
+      const isFollowers = path.startsWith('/api/followers/');
+      const userId = decodeURIComponent((isFollowers ? path.split('/api/followers/')[1] : path.split('/api/following/')[1] || '').split('?')[0]);
+      const viewer = await getViewer(request, env);
+      const target: any = await getProfile(env, userId);
+      if (target && target.isPrivate === true) {
+        const isOwner = !!(viewer && viewer.id === userId);
+        const ok = isOwner || (viewer ? await isFollowingPair(env, viewer.id, userId) : false);
+        if (!ok) {
+          const c = await Promise.all([readIdList(env, KEYS.FOLLOWERS(userId)), readIdList(env, KEYS.FOLLOWING(userId))]);
+          return respond({ data: { count: isFollowers ? c[0].length : c[1].length, ids: [], profiles: [], restricted: true }, error: null });
+        }
+      }
+      const ids = await readIdList(env, isFollowers ? KEYS.FOLLOWERS(userId) : KEYS.FOLLOWING(userId));
+      const profiles: any[] = [];
+      try {
+        const head = ids.slice(0, 100);
+        for (let i = 0; i < head.length; i += 20) {
+          const rows = await Promise.all(head.slice(i, i + 20).map(async (pid) => {
+            try {
+              const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(pid));
+              return profileSummary(raw ? JSON.parse(raw) : null, pid);
+            } catch { return profileSummary(null, pid); }
+          }));
+          profiles.push(...rows);
+        }
+      } catch { /* ids stay authoritative */ }
+      return respond({ data: { count: ids.length, ids: ids.slice(0, 500), profiles }, error: null });
+    }
+
+    if (path === '/api/follow/requests' && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const reqs = await readIdList(env, KEYS.FOLLOW_REQ((actor as any).id));
+      return respond({ data: { requests: reqs }, error: null });
+    }
+
+    if ((path === '/api/follow/accept' || path === '/api/follow/decline') && method === 'POST') {
+      const raw = await request.json() as any;
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const clean = sanitizeBody(raw);
+      const requester = String(clean.requester || clean.userId || '').slice(0, 200);
+      if (!requester) return respondError('requester required', 400);
+      const reqs = await readIdList(env, KEYS.FOLLOW_REQ((actor as any).id));
+      await env.EQUYVO_KV.put(KEYS.FOLLOW_REQ((actor as any).id), JSON.stringify(reqs.filter((x) => x !== requester)));
+      if (path === '/api/follow/accept') {
+        const [following, followers] = await Promise.all([
+          readIdList(env, KEYS.FOLLOWING(requester)),
+          readIdList(env, KEYS.FOLLOWERS((actor as any).id)),
+        ]);
+        if (!following.some((x) => x === (actor as any).id)) {
+          following.unshift((actor as any).id);
+          await env.EQUYVO_KV.put(KEYS.FOLLOWING(requester), JSON.stringify(following.slice(0, 5000)));
+        }
+        if (!followers.some((x) => x === requester)) {
+          followers.unshift(requester);
+          await env.EQUYVO_KV.put(KEYS.FOLLOWERS((actor as any).id), JSON.stringify(followers.slice(0, 50000)));
+        }
+        try {
+          const me: any = await getProfile(env, (actor as any).id);
+          const name = (me && (me.username || me.name)) || (actor as any).id;
+          await pushUserNotification(env, requester, {
+            kind: 'follow_accepted', title: 'Follow request accepted',
+            body: name + ' accepted your follow request. You can now see their posts and chat.',
+            actorId: (actor as any).id, actorName: String(name),
+          });
+        } catch { /* best-effort */ }
+        return respond({ data: { accepted: true }, error: null });
+      }
+      return respond({ data: { declined: true }, error: null });
+    }
+
+    // ---- REPORTS (mirrors Pages Functions; checkbox reasons[] supported) ----
+    if (path === '/api/report' && method === 'POST') {
+      const raw = await request.json() as any;
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const clean = sanitizeBody(raw);
+      const kind = String(clean.kind || clean.type || '').toLowerCase().replace(/s$/, '');
+      const id = String(clean.id || clean.contentId || '').slice(0, 64);
+      const picked = Array.isArray(clean.reasons) ? clean.reasons.map((r: any) => String(r).slice(0, 40)).filter(Boolean).slice(0, 10) : [];
+      const reason = String(clean.reason || picked[0] || 'other').slice(0, 40);
+      if (!['post', 'thought', 'story', 'moment'].includes(kind) || !id) {
+        return respondError('Invalid report', 400);
+      }
+      const rl = await rateLimit(env, 'engagement', (actor as any).id, 30);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      await fileReport(env, {
+        kind, id, reason, reasons: picked.length ? picked : [reason],
+        details: String(clean.details || clean.additionalInfo || ''),
+        reporter: (actor as any).id,
+      });
+      return respond({ data: { ok: true }, error: null });
+    }
+
+    // GET /api/reports?limit= — admin-gated dashboard ledger with snapshots.
+    if (path === '/api/reports' && method === 'GET') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String((env as any).REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return respondError('Forbidden', 403);
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
+      const reports = await listReports(env, limit);
+      return respond({ data: { reports }, error: null });
+    }
+
+    // ---- CHAT TRANSPORT (WhatsApp-style ticks, follow-gated) ----
+    if (path.startsWith('/api/chat/') && path.endsWith('/send') && method === 'POST') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/send', '')).split('?')[0];
+      if (!peer || peer === (actor as any).id) return respondError('Invalid peer', 400);
+      const rl = await rateLimit(env, 'engagement', (actor as any).id, 60);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      if (!(await canChat(env, (actor as any).id, peer))) {
+        return respondError('You can only message accounts you follow or that follow you.', 403);
+      }
+      const raw = await request.json() as any;
+      const clean = sanitizeBody(raw);
+      const text = String(clean.text || '').slice(0, 2000);
+      const type = clean.type === 'image' || clean.type === 'file' ? clean.type : 'text';
+      if (!text && !clean.fileUrl) return respondError('Empty message', 400);
+      const msg = {
+        id: generateId(), from: (actor as any).id, to: peer, text,
+        type, fileUrl: String(clean.fileUrl || '').slice(0, 2000),
+        fileName: String(clean.fileName || '').slice(0, 200),
+        status: 'sent', createdAt: new Date().toISOString(),
+      };
+      const all = await readChatMessages(env, (actor as any).id, peer, 300);
+      all.push(msg);
+      await writeChatMessages(env, (actor as any).id, peer, all);
+      try {
+        const me: any = await getProfile(env, (actor as any).id);
+        const name = (me && (me.username || me.name)) || (actor as any).id;
+        await pushUserNotification(env, peer, {
+          kind: 'chat', title: 'New message from ' + name,
+          body: text.slice(0, 120) || 'Sent you an attachment.',
+          actorId: (actor as any).id, actorName: String(name),
+        });
+      } catch { /* ignore */ }
+      return respond({ data: { id: msg.id, delivered: false }, error: null });
+    }
+
+    if (path.startsWith('/api/chat/') && path.endsWith('/messages') && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/messages', '')).split('?')[0];
+      if (!peer) return respondError('Invalid peer', 400);
+      if (!(await canChat(env, (actor as any).id, peer))) return respondError('Forbidden', 403);
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
+      const all = await readChatMessages(env, (actor as any).id, peer, 300);
+      let touched = false;
+      for (const m of all) {
+        if (m && m.to === (actor as any).id && m.status === 'sent') { m.status = 'delivered'; touched = true; }
+      }
+      if (touched) await writeChatMessages(env, (actor as any).id, peer, all);
+      const out = all.slice(-limit).map((m) => ({
+        id: m.id, threadId: peer, text: m.text, fromMe: m.from === (actor as any).id,
+        status: m.from === (actor as any).id ? m.status : undefined,
+        timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
+        createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
+        type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
+      }));
+      return respond({ data: { messages: out }, error: null });
+    }
+
+    if (path.startsWith('/api/chat/') && path.endsWith('/seen') && method === 'POST') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/seen', '')).split('?')[0];
+      if (!peer) return respondError('Invalid peer', 400);
+      const all = await readChatMessages(env, (actor as any).id, peer, 300);
+      for (const m of all) {
+        if (m && m.to === (actor as any).id) m.status = 'seen';
+      }
+      await writeChatMessages(env, (actor as any).id, peer, all);
+      return respond({ data: { ok: true }, error: null });
+    }
+
+    if (path.startsWith('/api/chat/') && path.endsWith('/delivered') && method === 'POST') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delivered', '')).split('?')[0];
+      if (!peer) return respondError('Invalid peer', 400);
+      const raw = await request.json().catch(() => ({})) as any;
+      const id = String((raw && raw.id) || '').slice(0, 64);
+      const all = await readChatMessages(env, (actor as any).id, peer, 300);
+      const m = all.find((x) => x && x.id === id);
+      if (m && m.status === 'sent') { m.status = 'delivered'; await writeChatMessages(env, (actor as any).id, peer, all); }
+      return respond({ data: { ok: true }, error: null });
+    }
+
+    if (path === '/api/chat/threads' && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const [following, followers] = await Promise.all([
+        readIdList(env, KEYS.FOLLOWING((actor as any).id)),
+        readIdList(env, KEYS.FOLLOWERS((actor as any).id)),
+      ]);
+      const seen = new Set<string>();
+      const threads: any[] = [];
+      const pushPeer = (pid: string, relation: string) => {
+        const k = String(pid).toLowerCase();
+        if (!pid || seen.has(k)) return;
+        seen.add(k);
+        threads.push({ id: pid, peerId: pid, relation });
+      };
+      followers.forEach((f) => pushPeer(f, following.some((x) => String(x).toLowerCase() === String(f).toLowerCase()) ? 'mutual' : 'follower'));
+      following.forEach((f) => pushPeer(f, 'following'));
+      return respond({ data: { threads: threads.slice(0, 300) }, error: null });
+    }
+
+    // ---- NOTIFICATIONS ----
+    if (path === '/api/notifications' && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      let stored: any[] = [];
+      try {
+        const r = await env.EQUYVO_KV.get(KEYS.NOTIF((actor as any).id));
+        const a = r ? JSON.parse(r) : [];
+        stored = Array.isArray(a) ? a : [];
+      } catch { stored = []; }
+      const reqs = await readIdList(env, KEYS.FOLLOW_REQ((actor as any).id));
+      const items = [...stored];
+      for (const req of reqs.slice(0, 20)) {
+        if (!items.some((n) => n && n.id === 'followreq-' + req)) {
+          items.unshift({
+            id: 'followreq-' + req, kind: 'follow_request', title: 'New follow request',
+            body: req + ' requested to follow you. Approve or decline from notifications.',
+            at: new Date().toISOString(), read: false, actorId: req, actorName: req,
+          });
+        }
+      }
+      return respond({ data: { items: items.slice(0, 100) }, error: null });
+    }
+
+    if (path === '/api/notifications/read' && method === 'POST') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const raw = await request.json().catch(() => ({})) as any;
+      const ids = Array.isArray(raw.ids) ? raw.ids.map(String) : null;
+      try {
+        const r = await env.EQUYVO_KV.get(KEYS.NOTIF((actor as any).id));
+        const arr = r ? JSON.parse(r) : [];
+        const next = (Array.isArray(arr) ? arr : []).map((n: any) => (
+          !ids || ids.includes(String(n.id)) ? { ...n, read: true } : n
+        ));
+        await env.EQUYVO_KV.put(KEYS.NOTIF((actor as any).id), JSON.stringify(next.slice(0, 100)));
+      } catch { /* ignore */ }
+      return respond({ data: { ok: true }, error: null });
+    }
+
+    // ---- LIVE PRESENCE ----
+    if ((path === '/api/live/start' || path === '/api/live/stop') && method === 'POST') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const starting = path === '/api/live/start';
+      try {
+        const me: any = (await getProfile(env, (actor as any).id)) || { id: (actor as any).id };
+        me.isLive = starting;
+        me.liveAt = starting ? new Date().toISOString() : null;
+        await upsertProfile(env, me);
+      } catch { /* ignore */ }
+      if (starting) {
+        const fan = (async () => {
+          try {
+            const followers = await readIdList(env, KEYS.FOLLOWERS((actor as any).id));
+            const me: any = await getProfile(env, (actor as any).id);
+            const name = (me && (me.username || me.name)) || (actor as any).id;
+            await Promise.all(followers.slice(0, 50).map((fid) =>
+              pushUserNotification(env, fid, {
+                kind: 'live', title: name + ' is live now',
+                body: 'Tap to watch ' + name + ' live.',
+                actorId: (actor as any).id, actorName: String(name),
+              }).catch(() => {})));
+          } catch { /* ignore */ }
+        })();
+        if (ctx && ctx.waitUntil) ctx.waitUntil(fan);
+        else void fan;
+      }
+      return respond({ data: { live: starting }, error: null });
+    }
+
+    if (path === '/api/live/now' && method === 'GET') {
+      const viewer = await getViewer(request, env);
+      if (!viewer) return respond({ data: { live: [] }, error: null });
+      const following = await readIdList(env, KEYS.FOLLOWING(viewer.id));
+      const live: any[] = [];
+      for (const pid of following.slice(0, 200)) {
+        try {
+          const p: any = await getProfile(env, pid);
+          if (p && p.isLive === true) live.push(profileSummary(p, pid));
+        } catch { /* ignore */ }
+        if (live.length >= 20) break;
+      }
+      return respond({ data: { live }, error: null });
     }
 
     if (path === '/api/search' && method === 'GET') {

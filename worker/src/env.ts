@@ -16,4 +16,6 @@ export interface Env {
   // Contabo shared brain for AI search/feed suggestions (best-effort proxy).
   BRAIN_URL?: string;
   BRAIN_BASE_URL?: string;
+  // Admin token for GET /api/reports (dashboard.acronous.com monitor).
+  REPORTS_ADMIN_TOKEN?: string;
 }
