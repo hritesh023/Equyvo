@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useRef } from 'react';
+import AppLogo from './AppLogo';
 
 const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
     const [isVisible, setIsVisible] = useState(true);
@@ -62,8 +63,7 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
                 {/* Logo with enhanced animation */}
                 <div className="relative mb-8">
                     <div className="w-24 h-24 sm:w-32 sm:h-32 md:w-40 md:h-40 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(34,211,238,0.5)] animate-bounce">
-                        <img
-                            src="/Equyvo_logo.png"
+                        <AppLogo
                             alt="Equyvo Logo"
                             className="w-full h-full object-cover"
                         />

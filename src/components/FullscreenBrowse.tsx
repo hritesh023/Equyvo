@@ -8,6 +8,7 @@ import { showSuccess } from '@/utils/toast';
 import { avatarOf } from '@/utils/avatar';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
+import AppLogo from '@/components/AppLogo';
 
 interface FullscreenBrowseProps {
   isOpen: boolean;
@@ -116,7 +117,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
       <div className="bg-black/90 backdrop-blur-md border-b border-white/10 p-4">
         <div className="flex items-center justify-between max-w-7xl mx-auto">
           <div className="flex items-center gap-4">
-            <img src="/Equyvo_logo.png" alt="Equyvo" className="h-8 w-8" />
+            <AppLogo alt="Equyvo" className="h-8 w-8" />
             <h1 className="text-white text-xl font-bold">Equyvo</h1>
           </div>
           <div className="flex items-center gap-2">

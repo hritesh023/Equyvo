@@ -7,6 +7,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs'
 import { Input } from '../components/ui/input';
 import { Label } from '../components/ui/label';
 import { Eye, EyeOff, Globe, Lock } from 'lucide-react';
+import AppLogo from '../components/AppLogo';
 import type { User } from '../lib/auth';
 
 interface AuthPageProps {
@@ -94,7 +95,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     <Card className="w-full max-w-md border-border/50 bg-card/50 backdrop-blur-xl mx-auto">
       <CardHeader className="text-center space-y-1">
         <div className="mx-auto mb-2 w-16 h-16 rounded-2xl bg-gradient-to-br from-pink-500 to-purple-600 flex items-center justify-center overflow-hidden">
-          <img src="/Equyvo_logo.png" alt="Equyvo" className="w-full h-full object-cover" />
+          <AppLogo alt="Equyvo" className="w-full h-full object-cover" />
         </div>
         <CardTitle className="text-2xl font-bold">Welcome to Equyvo</CardTitle>
         <CardDescription className="text-muted-foreground">

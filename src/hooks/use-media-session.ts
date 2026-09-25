@@ -26,11 +26,20 @@ export function useMediaSession({
   const updateMetadata = useCallback(() => {
     if (!('mediaSession' in navigator)) return;
 
+    const defaultArtworkSrc =
+      typeof window !== 'undefined' &&
+      (localStorage.getItem('vite-ui-theme') === 'light' ||
+        (localStorage.getItem('vite-ui-theme') !== 'dark' &&
+          localStorage.getItem('vite-ui-theme') !== 'light' &&
+          window.matchMedia('(prefers-color-scheme: light)').matches))
+        ? '/Equyvo_logo_light.png'
+        : '/Equyvo_logo.png';
+
     navigator.mediaSession.metadata = new MediaMetadata({
       title: title || 'Video',
       artist: artist || 'Equyvo',
       artwork: artwork || [
-        { src: '/Equyvo_logo.png', sizes: '512x512', type: 'image/png' },
+        { src: defaultArtworkSrc, sizes: '512x512', type: 'image/png' },
       ],
     });
   }, [title, artist, artwork]);

@@ -47,6 +47,7 @@ export function ThemeProvider({
 
     root.classList.remove("light", "dark")
 
+    let effectiveTheme: string = theme
     if (theme === "system") {
       const systemTheme = window.matchMedia("(prefers-color-scheme: dark)")
         .matches
@@ -54,10 +55,27 @@ export function ThemeProvider({
         : "light"
 
       root.classList.add(systemTheme)
-      return
+      effectiveTheme = systemTheme
+    } else {
+      root.classList.add(theme)
     }
 
-    root.classList.add(theme)
+    // Keep favicon / touch icon in sync: light logo in light mode,
+    // dark logo in dark mode.
+    try {
+      const logoSrc =
+        effectiveTheme === "light" ? "/Equyvo_logo_light.png" : "/Equyvo_logo.png";
+      const iconLink = window.document.querySelector<HTMLLinkElement>(
+        'link[rel="icon"]',
+      );
+      if (iconLink) iconLink.href = logoSrc;
+      const appleIconLink = window.document.querySelector<HTMLLinkElement>(
+        'link[rel="apple-touch-icon"]',
+      );
+      if (appleIconLink) appleIconLink.href = logoSrc;
+    } catch {
+      // ignore (SSR / privacy modes)
+    }
   }, [theme])
 
   const value = {

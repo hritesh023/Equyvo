@@ -7,6 +7,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ThemeToggle } from './ThemeToggle';
 import SearchSuggest from './SearchSuggest';
+import AppLogo from './AppLogo';
 import { showSuccess } from '@/utils/toast';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
@@ -95,7 +96,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             {/* Logo and Search */}
             <div className="flex items-center gap-2 flex-1">
               <Link to="/" className="flex items-center gap-2">
-                <img src="/Equyvo_logo.png" alt="Equyvo Logo" className="h-6 w-6" />
+                <AppLogo className="h-6 w-6" />
                 <span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>Equyvo</span>
               </Link>
             </div>
@@ -135,7 +136,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             {/* Logo */}
             <div className="flex items-center gap-1 sm:gap-2">
               <Link to="/" className="flex items-center gap-1 sm:gap-2">
-                <img src="/Equyvo_logo.png" alt="Equyvo Logo" className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8" />
+                <AppLogo className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8" />
                 <span className="text-sm sm:text-base md:text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 hidden sm:block leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>Equyvo</span>
               </Link>
             </div>
