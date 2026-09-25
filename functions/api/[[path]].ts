@@ -41,6 +41,9 @@ export interface Env {
   // Contabo shared brain for AI search/feed suggestions (best-effort proxy).
   BRAIN_URL?: string;
   BRAIN_BASE_URL?: string;
+  // Admin token for GET /api/reports (dashboard.acronous.com monitor).
+  // Set via `wrangler pages secret put REPORTS_ADMIN_TOKEN`. Never public.
+  REPORTS_ADMIN_TOKEN?: string;
 }
 
 const KEYS = {
@@ -82,7 +85,11 @@ const KEYS = {
   REPORTS_LIST: 'reports:list',
   REPORT: (id) => 'report:' + id,
   FLAGS: (kind, id) => 'flags:' + kind + ':' + id,
-  MOD_QUEUE: 'mod:queue',
+
+  // Chat transport (WhatsApp-style ticks) + per-user notifications + live.
+  CHAT: (a, b) => 'chat:' + a + ':' + b,
+  NOTIF: (userId) => 'notif:' + userId,
+  LIVE: 'live:now',  MOD_QUEUE: 'mod:queue',
 };
 
 // ── Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
@@ -532,6 +539,84 @@ async function moderateContent(env, fields) {
   return 'allow';
 }
 
+
+// ── Chat + notifications helpers (bounded, lag-free) ─────────────────────
+// Chat pairs use a canonical key so A→B and B→A share one ledger (max 300
+// messages, trimmed on write). Ticks: sent = reached server, delivered =
+// reached peer device, seen = peer opened the thread. Notifications are
+// per-user capped lists (max 100) written best-effort, never blocking reads.
+
+function chatPairKey(a, b) {
+  const x = String(a || ''), y = String(b || '');
+  return (x < y ? KEYS.CHAT(x, y) : KEYS.CHAT(y, x));
+}
+
+async function readChatMessages(env, a, b, limit) {
+  try {
+    const raw = await env.EQUYVO_KV.get(chatPairKey(a, b));
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr : [];
+    const n = Math.min(200, Math.max(1, Number(limit) || 100));
+    return list.slice(-n);
+  } catch { return []; }
+}
+
+async function writeChatMessages(env, a, b, list) {
+  try {
+    await env.EQUYVO_KV.put(chatPairKey(a, b), JSON.stringify(list.slice(-300)));
+  } catch { /* best-effort */ }
+}
+
+async function pushUserNotification(env, userId, item) {
+  if (!userId || !item) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.NOTIF(userId));
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr : [];
+    list.unshift({ id: generateId(), at: new Date().toISOString(), read: false, ...item });
+    await env.EQUYVO_KV.put(KEYS.NOTIF(userId), JSON.stringify(list.slice(0, 100)));
+  } catch { /* never block on notify */ }
+}
+
+function profileSummary(p, fallbackId) {
+  if (!p || typeof p !== 'object') {
+    const f = String(fallbackId || '');
+    return { id: f, name: f.replace(/^@/, ''), username: f.startsWith('@') ? f : '@' + f, avatar: '' };
+  }
+  const id = String(p.id || fallbackId || '');
+  const username = String(p.username || p.name || id);
+  return {
+    id,
+    name: String(p.name || username),
+    username: username.startsWith('@') ? username : '@' + username,
+    avatar: String(p.avatar || ''),
+    isPrivate: p.isPrivate === true,
+    verified: p.verified === true,
+  };
+}
+
+// Gated 1:1 chat: allowed when EITHER side follows the other (followers tab +
+// following tab coverage). Strangers (neither direction) get 403.
+async function canChat(env, viewerId, peerId) {
+  if (!viewerId || !peerId || viewerId === peerId) return viewerId === peerId;
+  try {
+    const [a, b] = await Promise.all([
+      readIdList(env, KEYS.FOLLOWING(viewerId)),
+      readIdList(env, KEYS.FOLLOWERS(viewerId)),
+    ]);
+    const t = String(peerId).toLowerCase();
+    if (a.some((x) => String(x).toLowerCase() === t)) return true;
+    if (b.some((x) => String(x).toLowerCase() === t)) return true;
+    const [c, d] = await Promise.all([
+      readIdList(env, KEYS.FOLLOWING(peerId)),
+      readIdList(env, KEYS.FOLLOWERS(peerId)),
+    ]);
+    const v = String(viewerId).toLowerCase();
+    if (c.some((x) => String(x).toLowerCase() === v)) return true;
+    if (d.some((x) => String(x).toLowerCase() === v)) return true;
+    return false;
+  } catch { return false; }
+}
 async function enqueueModeration(env, entry) {
   try {
     const raw = await env.EQUYVO_KV.get(KEYS.MOD_QUEUE);
@@ -1439,6 +1524,25 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     if (ex >= 0) idx[ex] = entry; else idx.unshift(entry);
     await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx.slice(0, 1000)));
   } catch {}
+  // New-upload fan-out: followers get an in-app (+push) notification.
+  // Bounded to 50 followers, background via waitUntil when available so
+  // uploads stay fast (lag-free) even for large audiences.
+  try {
+    const fan = (async () => {
+      try {
+        const followers = await readIdList(env, KEYS.FOLLOWERS(actor.id));
+        const head = followers.slice(0, 50);
+        const title = String(item.content || item.title || item.description || '').slice(0, 120) || 'New post';
+        const author = String(item.user || item.creator || actor.id).slice(0, 80);
+        await Promise.all(head.map((fid) => pushUserNotification(env, fid, {
+          kind: 'upload', title: 'New from ' + author, body: title,
+          actorId: actor.id, actorName: author,
+        }).catch(() => {})));
+      } catch { /* ignore */ }
+    })();
+    if (context && typeof context.waitUntil === 'function') { try { context.waitUntil(fan); } catch {} }
+    else { void fan; }
+  } catch { /* ignore */ }
   // New content boosts the author's interest graph (zero frontend changes).
   try {
     if (actor && actor.id) await aiRecordEngagement(env, actor.id, { category: String(item.category || ''), tags: Array.isArray(item.tags) ? item.tags : [], creator: String(item.user || ''), action: 'create' });
@@ -2123,7 +2227,24 @@ export const onRequest = async (context) => {
         }
       }
       const ids = await readIdList(env, isFollowers ? KEYS.FOLLOWERS(userId) : KEYS.FOLLOWING(userId));
-      return json({ data: { count: ids.length, ids: ids.slice(0, 500) }, error: null }, 200, cors);
+      // Lightweight profiles (bounded to 100) so sheets render names/avatars
+      // without N+1 client fetches. Best-effort; ids are always authoritative.
+      let profiles = [];
+      try {
+        const head = ids.slice(0, 100);
+        const batch = 20;
+        for (let i = 0; i < head.length; i += batch) {
+          const slice = head.slice(i, i + batch);
+          const rows = await Promise.all(slice.map(async (pid) => {
+            try {
+              const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(pid));
+              return profileSummary(raw ? JSON.parse(raw) : null, pid);
+            } catch { return profileSummary(null, pid); }
+          }));
+          profiles.push(...rows);
+        }
+      } catch { profiles = []; }
+      return json({ data: { count: ids.length, ids: ids.slice(0, 500), profiles }, error: null }, 200, cors);
     }
 
     // GET /api/follow/requests — pending follow requests for the caller
@@ -2159,6 +2280,16 @@ export const onRequest = async (context) => {
           followers.unshift(requester);
           await kv.put(KEYS.FOLLOWERS(actor.id), JSON.stringify(followers.slice(0, 50000)));
         }
+        // Notify the requester (in-app + system push on their device).
+        try {
+          const me = await getStoredProfile(env, actor.id);
+          const name = (me && (me.username || me.name)) || actor.id;
+          await pushUserNotification(env, requester, {
+            kind: 'follow_accepted', title: 'Follow request accepted',
+            body: name + ' accepted your follow request. You can now see their posts and chat.',
+            actorId: actor.id, actorName: String(name),
+          });
+        } catch { /* best-effort */ }
         return json({ data: { accepted: true }, error: null }, 200, cors);
       }
       return json({ data: { declined: true }, error: null }, 200, cors);
@@ -2253,7 +2384,9 @@ export const onRequest = async (context) => {
       const clean = sanitizeBody(body);
       const kind = String(clean.kind || clean.type || '').toLowerCase().replace(/s$/, '');
       const id = String(clean.id || clean.contentId || '').slice(0, 64);
-      const reason = String(clean.reason || 'other').slice(0, 40);
+      const picked = Array.isArray(clean.reasons) ? clean.reasons.map((r) => String(r).slice(0, 40)).filter(Boolean).slice(0, 10) : [];
+      const reason = String(clean.reason || picked[0] || 'other').slice(0, 40);
+      const reasons = picked.length ? picked : [reason];
       if (!['post', 'thought', 'story', 'moment'].includes(kind) || !id) {
         return json({ error: 'Invalid report' }, 400, cors);
       }
@@ -2267,7 +2400,7 @@ export const onRequest = async (context) => {
       // Owners cannot report their own content into removal; they can delete it.
       if (owns(parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
       const report = {
-        id: generateId(), kind, contentId: id, reason,
+        id: generateId(), kind, contentId: id, reason, reasons,
         details: String(clean.details || clean.additionalInfo || '').slice(0, 1000),
         reporter: actor.id, createdAt: new Date().toISOString(),
       };
@@ -2849,6 +2982,267 @@ export const onRequest = async (context) => {
       });
       if (!data) return json({ data: { response: '' }, error: null }, 200, cors);
       return json({ data, error: null }, 200, cors);
+    }
+
+    // ── CHAT TRANSPORT (WhatsApp-style ticks, follow-gated) ────────────────
+    // POST /api/chat/:peer/send { text?, type?, fileUrl?, fileName? }
+    //   → { id, delivered:false } + status `sent` (single tick = on server).
+    //   Delivery (`delivered`, double tick) + read (`seen`, Seen label) are
+    //   confirmed via GET messages / POST seen polling below.
+    //   Gate: either side must follow the other, else 403 (strangers blocked).
+    if (path.match(/^\/api\/chat\//) && path.endsWith('/send') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/send', '')).split('?')[0];
+      if (!peer || peer === actor.id) return json({ error: 'Invalid peer' }, 400, cors);
+      const rl = await rateLimit(kv, 'engagement', actor.id, 60);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      if (!(await canChat(env, actor.id, peer))) {
+        return json({ error: 'You can only message accounts you follow or that follow you.' }, 403, cors);
+      }
+      let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+      const clean = sanitizeBody(raw);
+      const text = String(clean.text || '').slice(0, 2000);
+      const type = clean.type === 'image' || clean.type === 'file' ? clean.type : 'text';
+      if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
+      const msg = {
+        id: generateId(), from: actor.id, to: peer, text,
+        type, fileUrl: String(clean.fileUrl || '').slice(0, 2000),
+        fileName: String(clean.fileName || '').slice(0, 200),
+        status: 'sent', createdAt: new Date().toISOString(),
+      };
+      const all = await readChatMessages(env, actor.id, peer, 300);
+      all.push(msg);
+      await writeChatMessages(env, actor.id, peer, all);
+      // Nudge the peer (unread badge + push) — best-effort, never blocks send.
+      try {
+        const me = await getStoredProfile(env, actor.id);
+        const name = (me && (me.username || me.name)) || actor.id;
+        await pushUserNotification(env, peer, {
+          kind: 'chat', title: 'New message from ' + name,
+          body: text.slice(0, 120) || 'Sent you an attachment.',
+          actorId: actor.id, actorName: String(name),
+        });
+      } catch { /* ignore */ }
+      return json({ data: { id: msg.id, delivered: false }, error: null }, 200, cors);
+    }
+
+    // GET /api/chat/:peer/messages?limit= — merged ledger; marks messages
+    // addressed TO the caller as `delivered` (double tick for the sender).
+    if (path.match(/^\/api\/chat\//) && path.endsWith('/messages') && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/messages', '')).split('?')[0];
+      if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
+      if (!(await canChat(env, actor.id, peer))) {
+        return json({ error: 'Forbidden' }, 403, cors);
+      }
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
+      const all = await readChatMessages(env, actor.id, peer, 300);
+      let touched = false;
+      for (const m of all) {
+        if (m && m.to === actor.id && m.status === 'sent') { m.status = 'delivered'; touched = true; }
+      }
+      if (touched) await writeChatMessages(env, actor.id, peer, all);
+      const out = all.slice(-limit).map((m) => ({
+        id: m.id, threadId: peer, text: m.text, fromMe: m.from === actor.id,
+        status: m.from === actor.id ? m.status : undefined,
+        timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
+        createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
+        type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
+      }));
+      return json({ data: { messages: out }, error: null }, 200, cors);
+    }
+
+    // POST /api/chat/:peer/seen — caller opened the thread: all messages TO
+    // them become `delivered`, and their own pending messages TO the peer
+    // stay until the peer polls; peer's messages to caller become `seen`.
+    if (path.match(/^\/api\/chat\//) && path.endsWith('/seen') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/seen', '')).split('?')[0];
+      if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
+      const all = await readChatMessages(env, actor.id, peer, 300);
+      for (const m of all) {
+        if (m && m.to === actor.id) m.status = 'seen';
+      }
+      await writeChatMessages(env, actor.id, peer, all);
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    // POST /api/chat/:peer/delivered { id } — peer-device ack (double tick).
+    if (path.match(/^\/api\/chat\//) && path.endsWith('/delivered') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delivered', '')).split('?')[0];
+      if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
+      let raw; try { raw = await readJson(request); } catch { raw = {}; }
+      const id = String((raw && raw.id) || '').slice(0, 64);
+      const all = await readChatMessages(env, actor.id, peer, 300);
+      const m = all.find((x) => x && x.id === id);
+      if (m && m.status === 'sent') { m.status = 'delivered'; await writeChatMessages(env, actor.id, peer, all); }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    // GET /api/chat/threads — follow-based thread list with unread counts.
+    if (path === '/api/chat/threads' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const [following, followers] = await Promise.all([
+        readIdList(env, KEYS.FOLLOWING(actor.id)),
+        readIdList(env, KEYS.FOLLOWERS(actor.id)),
+      ]);
+      const seen = new Set();
+      const threads = [];
+      const pushPeer = (pid, relation) => {
+        const k = String(pid).toLowerCase();
+        if (!pid || seen.has(k)) return;
+        seen.add(k);
+        threads.push({ id: pid, peerId: pid, relation });
+      };
+      followers.forEach((f) => pushPeer(f, following.some((x) => String(x).toLowerCase() === String(f).toLowerCase()) ? 'mutual' : 'follower'));
+      following.forEach((f) => pushPeer(f, 'following'));
+      return json({ data: { threads: threads.slice(0, 300) }, error: null }, 200, cors);
+    }
+
+    // ── NOTIFICATIONS ──────────────────────────────────────────────────────
+    // GET /api/notifications — pending follow requests (as items) + stored
+    // per-user items (accepts, chat nudges, uploads, live). Bounded ≤100.
+    if (path === '/api/notifications' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const [stored, reqs] = await Promise.all([
+        (async () => { try { const r = await kv.get(KEYS.NOTIF(actor.id)); const a = r ? JSON.parse(r) : []; return Array.isArray(a) ? a : []; } catch { return []; } })(),
+        readIdList(env, KEYS.FOLLOW_REQ(actor.id)),
+      ]);
+      const items = [...stored];
+      for (const r of reqs.slice(0, 20)) {
+        if (!items.some((n) => n && n.id === 'followreq-' + r)) {
+          items.unshift({
+            id: 'followreq-' + r, kind: 'follow_request', title: 'New follow request',
+            body: r + ' requested to follow you. Approve or decline from notifications.',
+            at: new Date().toISOString(), read: false, actorId: r, actorName: r,
+          });
+        }
+      }
+      return json({ data: { items: items.slice(0, 100) }, error: null }, 200, cors);
+    }
+
+    // POST /api/notifications/read { ids? } — mark read (all when omitted).
+    if (path === '/api/notifications/read' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let raw; try { raw = await readJson(request); } catch { raw = {}; }
+      const ids = Array.isArray(raw.ids) ? raw.ids.map(String) : null;
+      try {
+        const r = await kv.get(KEYS.NOTIF(actor.id));
+        const arr = r ? JSON.parse(r) : [];
+        const next = (Array.isArray(arr) ? arr : []).map((n) => (
+          !ids || ids.includes(String(n.id)) ? { ...n, read: true } : n
+        ));
+        await kv.put(KEYS.NOTIF(actor.id), JSON.stringify(next.slice(0, 100)));
+      } catch { /* ignore */ }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    // ── REPORTS LEDGER (dashboard.acronous.com monitor) ────────────────────
+    // GET /api/reports?limit= — admin-gated via X-Admin-Token matching
+    // REPORTS_ADMIN_TOKEN. Returns newest reports with content snapshots so
+    // developers can identify the account + basis. Never public.
+    if (path === '/api/reports' && method === 'GET') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String(env.REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return json({ error: 'Forbidden' }, 403, cors);
+      const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
+      let ids = [];
+      try {
+        const raw = await kv.get(KEYS.REPORTS_LIST);
+        ids = raw ? JSON.parse(raw) : [];
+        if (!Array.isArray(ids)) ids = [];
+      } catch { ids = []; }
+      const out = [];
+      for (const rid of ids.slice(0, limit)) {
+        try {
+          const rraw = await kv.get(KEYS.REPORT(rid));
+          if (!rraw) continue;
+          const r = JSON.parse(rraw);
+          // Attach a content snapshot (bounded fields only).
+          let snapshot = null;
+          try {
+            const k = r.kind === 'post' ? KEYS.POST : r.kind === 'thought' ? KEYS.THOUGHT : r.kind === 'story' ? KEYS.STORY : KEYS.MOMENT;
+            const craw = await kv.get(k(r.contentId));
+            if (craw) {
+              const c = JSON.parse(craw);
+              snapshot = {
+                owner: c.ownerId || c.userId || c.user_id || c.creator || c.user || '?',
+                text: String(c.content || c.title || c.description || '').slice(0, 300),
+                visibility: c.visibility || 'public',
+                moderation: c.moderation || null,
+                createdAt: c.createdAt || c.created_at || null,
+              };
+            }
+          } catch { /* snapshot best-effort */ }
+          out.push({ ...r, snapshot });
+        } catch { /* skip bad rows */ }
+        if (out.length >= limit) break;
+      }
+      return json({ data: { reports: out }, error: null }, 200, cors);
+    }
+
+    // ── LIVE PRESENCE ──────────────────────────────────────────────────────
+    // POST /api/live/start|stop — owner toggles their live flag; followers
+    // get a "X is live now" notification (bounded 50, background).
+    if ((path === '/api/live/start' || path === '/api/live/stop') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const starting = path === '/api/live/start';
+      try {
+        const me = (await getStoredProfile(env, actor.id)) || { id: actor.id };
+        me.isLive = starting;
+        me.liveAt = starting ? new Date().toISOString() : null;
+        await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(me));
+      } catch { /* ignore */ }
+      if (starting) {
+        const fan = (async () => {
+          try {
+            const followers = await readIdList(env, KEYS.FOLLOWERS(actor.id));
+            const me = await getStoredProfile(env, actor.id);
+            const name = (me && (me.username || me.name)) || actor.id;
+            await Promise.all(followers.slice(0, 50).map((fid) => pushUserNotification(env, fid, {
+              kind: 'live', title: name + ' is live now',
+              body: 'Tap to watch ' + name + ' live.',
+              actorId: actor.id, actorName: String(name),
+            }).catch(() => {})));
+          } catch { /* ignore */ }
+        })();
+        if (context && typeof context.waitUntil === 'function') { try { context.waitUntil(fan); } catch {} }
+        else { void fan; }
+      }
+      return json({ data: { live: starting }, error: null }, 200, cors);
+    }
+
+    // GET /api/live/now — who among the caller's following is live (bounded).
+    if (path === '/api/live/now' && method === 'GET') {
+      const viewer = await getViewer(request, env);
+      if (!viewer) return json({ data: { live: [] }, error: null }, 200, cors);
+      const following = await readIdList(env, KEYS.FOLLOWING(viewer.id));
+      const live = [];
+      for (const pid of following.slice(0, 200)) {
+        try {
+          const p = await getStoredProfile(env, pid);
+          if (p && p.isLive === true) live.push(profileSummary(p, pid));
+        } catch { /* ignore */ }
+        if (live.length >= 20) break;
+      }
+      return json({ data: { live }, error: null }, 200, cors);
     }
 
     if (path === '/api/trending/topics' && method === 'GET') {

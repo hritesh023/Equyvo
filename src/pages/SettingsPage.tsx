@@ -26,6 +26,7 @@ import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@/components/theme-provider';
+import { requestPushPermission, syncNotificationsFromServer } from '@/lib/notifications';
 import api from '@/lib/api';
 
 const SettingsPage = () => {
@@ -54,6 +55,12 @@ const SettingsPage = () => {
   });
   const [emailNotifications, setEmailNotifications] = useState(() => {
     return localStorage.getItem('emailNotifications') !== 'false';
+  });
+  const [pushUploads, setPushUploads] = useState(() => {
+    return localStorage.getItem('pushUploads') !== 'false';
+  });
+  const [liveAlerts, setLiveAlerts] = useState(() => {
+    return localStorage.getItem('liveAlerts') !== 'false';
   });
   const [messageRequests, setMessageRequests] = useState(() => {
     return localStorage.getItem('messageRequests') !== 'false';
@@ -141,6 +148,27 @@ const SettingsPage = () => {
   useEffect(() => {
     localStorage.setItem('emailNotifications', emailNotifications.toString());
   }, [emailNotifications]);
+
+  useEffect(() => {
+    localStorage.setItem('pushUploads', pushUploads.toString());
+  }, [pushUploads]);
+
+  useEffect(() => {
+    localStorage.setItem('liveAlerts', liveAlerts.toString());
+  }, [liveAlerts]);
+
+  const handlePushToggle = async (next: boolean) => {
+    setNotifications(next);
+    if (next) {
+      const granted = await requestPushPermission();
+      if (!granted) {
+        showError('System notifications are blocked in the browser. Enable them to get follow/live/upload alerts.');
+      } else {
+        showSuccess('Push notifications on — you will get follow, live and new-upload alerts.');
+      }
+      syncNotificationsFromServer().catch(() => {});
+    }
+  };
 
   useEffect(() => {
     localStorage.setItem('messageRequests', messageRequests.toString());
@@ -309,12 +337,42 @@ const SettingsPage = () => {
             <div>
               <Label>Push Notifications</Label>
               <p className="text-sm text-muted-foreground">
-                Receive notifications on your device
+                Follow requests, accepts, live alerts + new uploads (system notification)
               </p>
             </div>
-            <Switch 
+            <Switch
               checked={notifications}
-              onCheckedChange={setNotifications}
+              onCheckedChange={handlePushToggle}
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>New-upload alerts</Label>
+              <p className="text-sm text-muted-foreground">
+                Notify me when accounts I follow post (requires Push on)
+              </p>
+            </div>
+            <Switch
+              checked={pushUploads}
+              onCheckedChange={setPushUploads}
+            />
+          </div>
+
+          <Separator />
+
+          <div className="flex items-center justify-between">
+            <div>
+              <Label>Live alerts</Label>
+              <p className="text-sm text-muted-foreground">
+                Notify me when someone I follow goes live
+              </p>
+            </div>
+            <Switch
+              checked={liveAlerts}
+              onCheckedChange={setLiveAlerts}
             />
           </div>
 

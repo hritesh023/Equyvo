@@ -43,6 +43,9 @@ import { getStoredUser } from '@/lib/auth';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
 import ReportModal from '@/components/ReportModal';
+import FollowListModal from '@/components/FollowListModal';
+import FollowButton from '@/components/FollowButton';
+import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
 import api from '@/lib/api';
 
 const ownerIdOf = (post: unknown): string => {
@@ -820,6 +823,77 @@ const ProfilePage = () => {
   const [reportPostId, setReportPostId] = useState<string | null>(null);
   const [reportPostType, setReportPostType] = useState<'post' | 'thought' | 'moment' | 'comment'>('post');
 
+  // Followers / following sheets (Instagram-ish, privacy-gated server-side).
+  const [showFollowers, setShowFollowers] = useState(false);
+  const [showFollowing, setShowFollowing] = useState(false);
+  const [followerList, setFollowerList] = useState<SocialProfile[]>([]);
+  const [followingList, setFollowingList] = useState<SocialProfile[]>([]);
+  const [restrictedFollowers, setRestrictedFollowers] = useState(false);
+  const [restrictedFollowing, setRestrictedFollowing] = useState(false);
+  const [listsLoading, setListsLoading] = useState(false);
+
+  const targetProfileId: string = (() => {
+    try {
+      const u = getStoredUser();
+      return String((userId as string) || (username as string) || u?.id || (userProfile as { id?: string })?.id || '');
+    } catch {
+      return String((userProfile as { id?: string })?.id || '');
+    }
+  })();
+
+  const openFollowers = async () => {
+    setShowFollowers(true);
+    setListsLoading(true);
+    try {
+      const me = myId();
+      // Client-side pre-gate for instant feedback; server re-gates for truth.
+      let viewerFollows = me === targetProfileId;
+      if (!viewerFollows && targetProfileId) {
+        try {
+          const st = await api.followStatus(targetProfileId);
+          viewerFollows = !!(st as { data?: { isFollowing?: boolean } }).data?.isFollowing;
+        } catch { /* ignore */ }
+      }
+      const isPrivate = (userProfile as { isPrivate?: boolean })?.isPrivate === true;
+      if (!canViewFollowLists(me, { id: targetProfileId, isPrivate }, viewerFollows)) {
+        setRestrictedFollowers(true);
+        setFollowerList([]);
+      } else {
+        const { list, restricted } = await getFollowers(targetProfileId);
+        setFollowerList(list);
+        setRestrictedFollowers(restricted);
+      }
+    } finally {
+      setListsLoading(false);
+    }
+  };
+
+  const openFollowing = async () => {
+    setShowFollowing(true);
+    setListsLoading(true);
+    try {
+      const me = myId();
+      let viewerFollows = me === targetProfileId;
+      if (!viewerFollows && targetProfileId) {
+        try {
+          const st = await api.followStatus(targetProfileId);
+          viewerFollows = !!(st as { data?: { isFollowing?: boolean } }).data?.isFollowing;
+        } catch { /* ignore */ }
+      }
+      const isPrivate = (userProfile as { isPrivate?: boolean })?.isPrivate === true;
+      if (!canViewFollowLists(me, { id: targetProfileId, isPrivate }, viewerFollows)) {
+        setRestrictedFollowing(true);
+        setFollowingList([]);
+      } else {
+        const { list, restricted } = await getFollowing(targetProfileId);
+        setFollowingList(list);
+        setRestrictedFollowing(restricted);
+      }
+    } finally {
+      setListsLoading(false);
+    }
+  };
+
   const handleReport = (postId: string) => {
     const post = userProfile.posts.find(p => p.id === postId);
     const t = String(post?.type || 'post').toLowerCase();
@@ -1037,14 +1111,14 @@ const ProfilePage = () => {
           <p className="text-muted-foreground mb-2 text-sm md:text-base">{userProfile.username}</p>
           <p className="text-center max-w-md mb-3 md:mb-4 text-sm md:text-base px-2">{userProfile.bio}</p>
           <div className="flex gap-3 md:gap-4 mb-3 md:mb-4">
-            <div className="flex flex-col items-center">
+            <button type="button" onClick={openFollowers} className="flex flex-col items-center rounded-lg px-3 py-1 hover:bg-secondary/40" title="See followers">
               <span className="font-bold text-sm md:text-base">{userProfile.followers}</span>
-              <span className="text-xs md:text-sm text-muted-foreground">Followers</span>
-            </div>
-            <div className="flex flex-col items-center">
+              <span className="text-xs md:text-sm text-muted-foreground underline-offset-2 hover:underline">Followers</span>
+            </button>
+            <button type="button" onClick={openFollowing} className="flex flex-col items-center rounded-lg px-3 py-1 hover:bg-secondary/40" title="See following">
               <span className="font-bold text-sm md:text-base">{userProfile.following}</span>
-              <span className="text-xs md:text-sm text-muted-foreground">Following</span>
-            </div>
+              <span className="text-xs md:text-sm text-muted-foreground underline-offset-2 hover:underline">Following</span>
+            </button>
           </div>
           <div className="flex gap-2 flex-wrap justify-center">
             <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleEditProfile}>
@@ -1896,6 +1970,26 @@ const ProfilePage = () => {
           contentType={reportPostType}
         />
       )}
+
+      {/* Followers / Following sheets */}
+      <FollowListModal
+        open={showFollowers}
+        onOpenChange={setShowFollowers}
+        title={`Followers · ${followerList.length || userProfile.followers || 0}`}
+        list={followerList}
+        restricted={restrictedFollowers}
+        loading={listsLoading}
+        emptyHint="No followers yet. Share your profile to grow."
+      />
+      <FollowListModal
+        open={showFollowing}
+        onOpenChange={setShowFollowing}
+        title={`Following · ${followingList.length || userProfile.following || 0}`}
+        list={followingList}
+        restricted={restrictedFollowing}
+        loading={listsLoading}
+        emptyHint="Not following anyone yet."
+      />
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (

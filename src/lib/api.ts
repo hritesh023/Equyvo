@@ -179,11 +179,65 @@ export const api = {
 
   // Reports (community safety). Any signed-in account can report any content
   // except its own. Returns a generic acknowledgement only.
-  reportContent: (data: { kind: string; id: string; reason?: string; details?: string }) =>
+  // `reasons` supports the checkbox multi-select UI; `reason` stays for compat.
+  reportContent: (data: { kind: string; id: string; reason?: string; reasons?: string[]; details?: string }) =>
     request<{ data: { ok: boolean }; error: null }>('/report', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  // Social graph sheets (Instagram-ish). Private accounts return
+  // { restricted: true, ids: [] } for strangers — enforced server-side.
+  followers: (userId: string) =>
+    request<{ data: { count: number; ids: string[]; restricted?: boolean; profiles?: any[] }; error: null }>(
+      `/followers/${encodeURIComponent(userId)}`,
+    ),
+
+  following: (userId: string) =>
+    request<{ data: { count: number; ids: string[]; restricted?: boolean; profiles?: any[] }; error: null }>(
+      `/following/${encodeURIComponent(userId)}`,
+    ),
+
+  // Notifications (follow requests/accepts, live, uploads). Server merge is
+  // best-effort; the local center always works offline.
+  notifications: () =>
+    request<{ data: { items: any[] }; error: null }>('/notifications'),
+
+  notificationsRead: (ids?: string[]) =>
+    request<{ data: { ok: boolean }; error: null }>('/notifications/read', {
+      method: 'POST',
+      body: JSON.stringify({ ids: ids || [] }),
+    }),
+
+  // Chat transport. Ticks: sent = reached server, delivered/seen via polling.
+  // Gating (followers ↔ following) is enforced server-side; strangers get 403.
+  chatSend: (peer: string, data: { text?: string; type?: string; fileUrl?: string; fileName?: string }) =>
+    request<{ data: { id: string; delivered: boolean }; error: null }>(`/chat/${encodeURIComponent(peer)}/send`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  chatMessages: (peer: string, limit = 100) =>
+    request<{ data: { messages: any[] }; error: null }>(`/chat/${encodeURIComponent(peer)}/messages?limit=${limit}`),
+
+  chatSeen: (peer: string) =>
+    request<{ data: { ok: boolean }; error: null }>(`/chat/${encodeURIComponent(peer)}/seen`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  chatDelivered: (peer: string, id: string) =>
+    request<{ data: { ok: boolean }; error: null }>(`/chat/${encodeURIComponent(peer)}/delivered`, {
+      method: 'POST',
+      body: JSON.stringify({ id }),
+    }),
+
+  chatThreads: () =>
+    request<{ data: { threads: any[] }; error: null }>('/chat/threads'),
+
+  // Who is live now (best-effort; empty when nobody is live).
+  liveNow: () =>
+    request<{ data: { live: any[] }; error: null }>('/live/now'),
 
   // Follow graph (server-side source of truth; works across devices).
   follow: (target: string) =>

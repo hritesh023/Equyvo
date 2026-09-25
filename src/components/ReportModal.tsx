@@ -8,10 +8,10 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { AlertTriangle, X } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import api from '@/lib/api';
 import { evalReport } from '@/lib/human-eval';
@@ -20,7 +20,7 @@ interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
   contentId: string;
-  contentType: 'post' | 'video' | 'thought' | 'moment' | 'comment';
+  contentType: 'post' | 'video' | 'thought' | 'moment' | 'comment' | 'story';
 }
 
 const ReportModal: React.FC<ReportModalProps> = ({
@@ -29,42 +29,49 @@ const ReportModal: React.FC<ReportModalProps> = ({
   contentId,
   contentType
 }) => {
-  const [reportReason, setReportReason] = useState('');
+  const [reasons, setReasons] = useState<string[]>([]);
   const [additionalInfo, setAdditionalInfo] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const reportReasons = [
     { value: 'spam', label: 'Spam or misleading content' },
-    { value: 'inappropriate', label: 'Inappropriate content' },
+    { value: 'inappropriate', label: 'Inappropriate / sexual content' },
     { value: 'harassment', label: 'Harassment or bullying' },
-    { value: 'copyright', label: 'Copyright infringement' },
-    { value: 'violence', label: 'Violent or dangerous content' },
     { value: 'hate', label: 'Hate speech' },
+    { value: 'violence', label: 'Violent or dangerous content' },
+    { value: 'self-harm', label: 'Self-harm or suicide' },
+    { value: 'copyright', label: 'Copyright infringement' },
     { value: 'privacy', label: 'Privacy violation' },
-    { value: 'other', label: 'Other' }
+    { value: 'scam', label: 'Scam or fraud' },
+    { value: 'other', label: 'Other' },
   ];
 
+  const toggleReason = (value: string, checked: boolean) => {
+    setReasons((prev) => (checked ? [...prev, value] : prev.filter((r) => r !== value)));
+  };
+
   const handleSubmit = async () => {
-    if (!reportReason) {
-      showError('Please select a reason for reporting');
+    if (!reasons.length) {
+      showError('Please tick at least one reason for reporting');
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      const kind = contentType === 'video' ? 'post' : contentType === 'comment' ? 'post' : contentType;
+      const kind = contentType === 'video' ? 'post' : contentType === 'comment' ? 'post' : contentType === 'story' ? 'story' : contentType;
       const { error } = await api.reportContent({
         kind,
         id: contentId,
-        reason: reportReason,
+        reason: reasons[0],
+        reasons,
         details: additionalInfo,
       });
       if (error) throw new Error(error);
       // Human eval: reports are strong negative labels for the shared brain
       // (fire-and-forget — never blocks the safety flow).
-      try { evalReport(contentId, reportReason); } catch { /* ignore */ }
-      showSuccess('Report submitted successfully. We will review this content.');
+      try { evalReport(contentId, reasons.join(',')); } catch { /* ignore */ }
+      showSuccess('Report submitted. Our team will review it in the Acronous dashboard.');
       handleClose();
     } catch {
       showError('Failed to submit report. Please try again.');
@@ -74,7 +81,7 @@ const ReportModal: React.FC<ReportModalProps> = ({
   };
 
   const handleClose = () => {
-    setReportReason('');
+    setReasons([]);
     setAdditionalInfo('');
     onClose();
   };
@@ -88,23 +95,25 @@ const ReportModal: React.FC<ReportModalProps> = ({
             Report Content
           </DialogTitle>
           <DialogDescription>
-            Help us keep the community safe by reporting content that violates our guidelines.
+            Tick all reasons that apply. Reports go straight to the Acronous safety queue for review.
           </DialogDescription>
         </DialogHeader>
-        
+
         <div className="space-y-4 py-4">
           <div className="space-y-2">
-            <Label className="text-sm font-medium">Reason for report</Label>
-            <RadioGroup value={reportReason} onValueChange={setReportReason}>
+            <Label className="text-sm font-medium">Why are you reporting this? (tick all that apply)</Label>
+            <div className="grid gap-2">
               {reportReasons.map((reason) => (
-                <div key={reason.value} className="flex items-center space-x-2">
-                  <RadioGroupItem value={reason.value} id={reason.value} />
-                  <Label htmlFor={reason.value} className="text-sm cursor-pointer">
-                    {reason.label}
-                  </Label>
-                </div>
+                <label key={reason.value} className="flex cursor-pointer items-center space-x-2.5 rounded-lg border border-border/50 px-3 py-2 hover:bg-secondary/30">
+                  <Checkbox
+                    checked={reasons.includes(reason.value)}
+                    onCheckedChange={(c) => toggleReason(reason.value, c === true)}
+                    aria-label={reason.label}
+                  />
+                  <span className="text-sm">{reason.label}</span>
+                </label>
               ))}
-            </RadioGroup>
+            </div>
           </div>
 
           <div className="space-y-2">
@@ -113,7 +122,7 @@ const ReportModal: React.FC<ReportModalProps> = ({
             </Label>
             <Textarea
               id="additional-info"
-              placeholder="Provide any additional details that might help us review this content..."
+              placeholder="Add any extra context that helps review — e.g. timestamps, what exactly is wrong…"
               value={additionalInfo}
               onChange={(e) => setAdditionalInfo(e.target.value)}
               rows={3}
@@ -126,12 +135,12 @@ const ReportModal: React.FC<ReportModalProps> = ({
           <Button variant="outline" onClick={handleClose} disabled={isSubmitting}>
             Cancel
           </Button>
-          <Button 
-            onClick={handleSubmit} 
-            disabled={!reportReason || isSubmitting}
+          <Button
+            onClick={handleSubmit}
+            disabled={!reasons.length || isSubmitting}
             className="bg-red-600 hover:bg-red-700"
           >
-            {isSubmitting ? 'Submitting...' : 'Submit Report'}
+            {isSubmitting ? 'Submitting…' : `Submit Report${reasons.length > 1 ? ` (${reasons.length})` : ''}`}
           </Button>
         </DialogFooter>
       </DialogContent>

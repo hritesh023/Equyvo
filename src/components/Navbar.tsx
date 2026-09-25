@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useIsMobile } from "@/hooks/use-mobile";
 import { ThemeToggle } from './ThemeToggle';
+import { NotificationBell } from './NotificationBell';
 import SearchSuggest from './SearchSuggest';
 import AppLogo from './AppLogo';
 import { showSuccess } from '@/utils/toast';
@@ -111,7 +112,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
               <Search className="h-4 w-4" />
             </Button>
             
-            {/* Theme Toggle */}
+            {/* Theme Toggle + Notifications */}
+            <NotificationBell />
             <ThemeToggle />
             
             {/* User Avatar */}
@@ -168,7 +170,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                 ))}
               </div>
 
-              {/* Theme Toggle */}
+              {/* Notifications + Theme Toggle */}
+              <NotificationBell />
               <ThemeToggle />
 
               {/* User Section */}
