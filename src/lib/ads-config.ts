@@ -19,11 +19,13 @@ export const TEST_BANNER_AD_UNIT_ID = 'ca-app-pub-3940256099942544/6300978111';
 /**
  * Banner ad unit for the adaptive feed banner (the format that actually
  * earns: the community Capacitor plugin supports banner/interstitial/
- * rewarded/app-open, but NOT Native Advanced). Create a *Banner* unit in
- * AdMob console and set VITE_ADMOB_BANNER_AD_UNIT. Empty = banner stays off.
+ * rewarded/app-open, but NOT Native Advanced). Defaults to the owner's
+ * production banner unit; override with VITE_ADMOB_BANNER_AD_UNIT.
+ * Empty = banner stays off.
  */
 export const ADMOB_BANNER_AD_UNIT_ID =
-  import.meta.env.VITE_ADMOB_BANNER_AD_UNIT || '';
+  import.meta.env.VITE_ADMOB_BANNER_AD_UNIT ||
+  'ca-app-pub-8929153950560106/2244247233';
 
 /** Advertising test-device IDs (comma-separated) for real-device testing. */
 export function admobTestDevices(): string[] {
