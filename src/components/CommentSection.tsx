@@ -138,7 +138,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({ isOpen, onClose, postId
     showSuccess('Comment deleted successfully!');
   };
 
-  const handleKeyPress = (e: React.KeyboardEvent) => {
+  const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSendComment();
@@ -265,7 +265,13 @@ const CommentSection: React.FC<CommentSectionProps> = ({ isOpen, onClose, postId
 
           {/* Comment Input */}
           <div className="border-t p-4">
-            <div className="flex gap-2">
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                handleSendComment();
+              }}
+            >
               <Avatar className="h-8 w-8 flex-shrink-0">
                 <AvatarImage src="" />
                 <AvatarFallback>YU</AvatarFallback>
@@ -275,19 +281,23 @@ const CommentSection: React.FC<CommentSectionProps> = ({ isOpen, onClose, postId
                   ref={inputRef}
                   value={newComment}
                   onChange={(e) => setNewComment(e.target.value)}
-                  onKeyPress={handleKeyPress}
+                  onKeyDown={handleKeyDown}
                   placeholder={`Comment on ${postUser}'s post...`}
+                  aria-label={`Comment on ${postUser}'s post`}
                   className="flex-1"
+                  maxLength={1000}
                 />
-                <Button 
-                  onClick={handleSendComment}
+                <Button
+                  type="submit"
                   disabled={!newComment.trim()}
                   size="icon"
+                  aria-label="Post comment"
+                  title={!newComment.trim() ? 'Write a comment first' : 'Post comment'}
                 >
                   <Send className="h-4 w-4" />
                 </Button>
               </div>
-            </div>
+            </form>
           </div>
         </CardContent>
       </Card>

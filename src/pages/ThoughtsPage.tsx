@@ -45,7 +45,7 @@ import { getThoughts, voteOnThought, getThoughtVotes, likeThought } from '@/lib/
 import { evalVote, evalLike } from '@/lib/human-eval';
 import { Thought, ThoughtMedia } from '@/types/thoughts';
 import FullscreenViewer from '@/components/FullscreenViewer';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile } from '@/utils/profile-navigation';
@@ -554,8 +554,10 @@ const ThoughtsPage = memo(() => {
       setSharing(thoughtId);
       const thought = thoughts.find(t => t.id === thoughtId);
       if (thought) {
-        const shareUrl = `${window.location.origin}/thoughts/${thoughtId}`;
-        
+        // Deep-link into the real list route (query param) so shared links
+        // never land on a 404 — there is no /thoughts/:id route.
+        const shareUrl = `${window.location.origin}/app/thoughts?post=${encodeURIComponent(thoughtId)}`;
+
         if (navigator.share) {
           await navigator.share({
             title: `Thought by ${thought.user?.username}`,
@@ -565,11 +567,11 @@ const ThoughtsPage = memo(() => {
         } else {
           // Fallback: copy to clipboard
           await navigator.clipboard.writeText(shareUrl);
-          alert('Link copied to clipboard!');
+          showSuccess('Link copied to clipboard!');
         }
       }
-    } catch {
-      // Handle share error
+    } catch (e) {
+      if ((e as Error)?.name !== 'AbortError') showError('Could not share this thought.');
     } finally {
       setSharing(null);
     }
@@ -602,11 +604,11 @@ const ThoughtsPage = memo(() => {
 
   const handleCopyLink = async (thoughtId: string) => {
     try {
-      const shareUrl = `${window.location.origin}/thoughts/${thoughtId}`;
+      const shareUrl = `${window.location.origin}/app/thoughts?post=${encodeURIComponent(thoughtId)}`;
       await navigator.clipboard.writeText(shareUrl);
-      alert('Link copied to clipboard!');
+      showSuccess('Link copied to clipboard!');
     } catch {
-      // Handle copy link error
+      showError('Could not copy the link.');
     }
   };
 

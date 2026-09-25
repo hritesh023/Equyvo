@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft } from 'lucide-react';
+import { showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 import { ChatThemeSelector } from './ChatThemeSelector';
 import { useChatTheme } from '@/contexts/ChatThemeContext';
@@ -33,9 +34,18 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [message, setMessage] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [sending, setSending] = useState(false);
   const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const stickToBottomRef = useRef(true);
+
+  const handleScroll = () => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  };
   const { chatTheme } = useChatTheme();
   const navigate = useNavigate();
 
@@ -100,65 +110,105 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
-  // Open thread → pull server messages + mark seen (drives peer "Seen").
+  // Mark seen on open AND when new messages arrive while the thread is open.
   useEffect(() => {
     if (!activeId) return;
     refreshMsgs(activeId);
     markThreadSeen(activeId);
+    refreshThreads();
     pullThreadMessages(activeId).catch(() => {});
-    const t = window.setInterval(() => pullThreadMessages(activeId).catch(() => {}), 8000);
+    const t = window.setInterval(() => {
+      pullThreadMessages(activeId)
+        .then(() => {
+          refreshMsgs(activeId);
+          markThreadSeen(activeId);
+          refreshThreads();
+        })
+        .catch(() => {});
+    }, 8000);
     return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    markThreadSeen(activeId ?? '');
+    if (activeId) refreshThreads();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [msgs.length]);
+
+  useEffect(() => {
+    if (stickToBottomRef.current) {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    }
   }, [msgs.length, activeId]);
 
   const visibleThreads = threads
     .filter((t) => (tab === 'followers' ? t.relation === 'follower' || t.relation === 'mutual' : t.relation === 'following' || t.relation === 'mutual'))
-    .filter((t) => !searchQuery || t.peerName.toLowerCase().includes(searchQuery.toLowerCase()) || t.lastMessage.toLowerCase().includes(searchQuery.toLowerCase()))
-    .sort((a, b) => b.unread - a.unread);
+    .filter((t) => {
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.trim().toLowerCase();
+      return (t.peerName || '').toLowerCase().includes(q) || (t.lastMessage || '').toLowerCase().includes(q);
+    })
+    .sort((a, b) => (b.unread - a.unread) || b.timestamp.localeCompare(a.timestamp));
 
-  const getChatBackgroundStyle = () => {
+  const getChatBackgroundStyle = (): React.CSSProperties => {
+    const opacity = typeof chatTheme.opacity === 'number' && Number.isFinite(chatTheme.opacity)
+      ? Math.min(1, Math.max(0.05, chatTheme.opacity))
+      : 1;
     if (chatTheme.type === 'color' && chatTheme.value) {
-      return { backgroundColor: chatTheme.value, opacity: chatTheme.opacity || 1 };
+      return { backgroundColor: chatTheme.value, opacity };
     } else if (chatTheme.type === 'image' && chatTheme.value) {
-      return { backgroundImage: `url(${chatTheme.value})`, backgroundSize: 'cover', backgroundPosition: 'center', opacity: chatTheme.opacity || 1 };
+      const safeUrl = String(chatTheme.value).replace(/"/g, '%22');
+      return { backgroundImage: `url("${safeUrl}")`, backgroundSize: 'cover', backgroundPosition: 'center', opacity };
     }
     return {};
   };
 
   const handleSendMessage = async () => {
-    if ((!message.trim() && !attachedFile) || !activeChat) return;
-    const attach = attachedFile
+    if ((!message.trim() && !attachedFile) || !activeChat || sending) return;
+    const threadId = activeChat.id;
+    const textToSend = message.trim();
+    const fileToSend = attachedFile;
+    const attach = fileToSend
       ? {
-          fileUrl: URL.createObjectURL(attachedFile),
-          fileName: attachedFile.name,
-          type: (attachedFile.type.startsWith('image/') ? 'image' : 'file') as 'image' | 'file',
+          fileUrl: URL.createObjectURL(fileToSend),
+          fileName: fileToSend.name,
+          type: (fileToSend.type.startsWith('image/') ? 'image' : 'file') as 'image' | 'file',
         }
       : undefined;
-    setMessage('');
-    setAttachedFile(null);
-    if (fileInputRef.current) fileInputRef.current.value = '';
-    await sendChatMessage(activeChat.id, message.trim(), attach);
-    refreshMsgs(activeChat.id);
-    refreshThreads();
+    setSending(true);
+    try {
+      const sent = await sendChatMessage(threadId, textToSend, attach);
+      if (!sent) {
+        showError('Message could not be sent. Try again.');
+        if (attach?.fileUrl) URL.revokeObjectURL(attach.fileUrl);
+        return;
+      }
+      // Only clear the composer after the message is safely stored.
+      if (threadId === activeChat?.id) {
+        setMessage('');
+        setAttachedFile(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+      refreshMsgs(threadId);
+      refreshThreads();
+    } catch {
+      showError('Message could not be sent. Try again.');
+      if (attach?.fileUrl) URL.revokeObjectURL(attach.fileUrl);
+    } finally {
+      setSending(false);
+    }
   };
 
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) {
-      if (file.size > 10 * 1024 * 1024) return;
-      setAttachedFile(file);
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      showError('Attachment must be smaller than 10MB.');
+      e.target.value = '';
+      return;
     }
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSendMessage();
-    }
+    setAttachedFile(file);
   };
 
   const shell = isMobile
@@ -173,12 +223,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <MessageCircle className="w-5 h-5 text-primary" /> Chats
           </h2>
           <ChatThemeSelector>
-            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Chat theme">
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Customize chat background" title="Customize chat background">
               <Palette className="w-4 h-4" />
             </Button>
           </ChatThemeSelector>
         </div>
-        <Tabs value={tab} onValueChange={(v) => setTab(v as 'followers' | 'following')} className="w-full">
+        <Tabs value={tab} onValueChange={(v) => { setTab(v as 'followers' | 'following'); setSearchQuery(''); }} className="w-full">
           <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="followers">Followers</TabsTrigger>
             <TabsTrigger value="following">Following</TabsTrigger>
@@ -192,13 +242,26 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       </div>
 
       <div className="relative p-4 pb-2">
-        <Search className="absolute left-6 top-[26px] h-4 w-4 text-muted-foreground" />
+        <Search aria-hidden className="absolute left-6 top-[26px] h-4 w-4 text-muted-foreground" />
         <Input
           placeholder={tab === 'followers' ? 'Search followers…' : 'Search following…'}
-          className="pl-8 bg-background/50"
+          aria-label={tab === 'followers' ? 'Search followers' : 'Search following'}
+          className="pl-8 pr-8 bg-background/50"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
+          maxLength={100}
         />
+        {searchQuery && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="absolute right-5 top-[20px] h-6 w-6"
+            onClick={() => setSearchQuery('')}
+            aria-label="Clear search"
+          >
+            <X className="h-3.5 w-3.5" />
+          </Button>
+        )}
       </div>
 
       {!activeChat && (
@@ -210,8 +273,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               visibleThreads.map((contact) => (
                 <div
                   key={contact.id}
-                  className="flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Open chat with ${contact.peerName}${contact.unread > 0 ? `, ${contact.unread} unread` : ''}`}
+                  className="flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => setActiveId(contact.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault();
+                      setActiveId(contact.id);
+                    }
+                  }}
                 >
                   <div className="relative">
                     <Avatar
@@ -222,11 +294,11 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                       }}
                       title={`${contact.peerName}'s Profile`}
                     >
-                      <AvatarImage src={contact.peerAvatar} />
-                      <AvatarFallback>{contact.peerName[0]?.toUpperCase()}</AvatarFallback>
+                      <AvatarImage src={contact.peerAvatar} alt={`${contact.peerName} avatar`} />
+                      <AvatarFallback>{(contact.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
                     </Avatar>
                     {contact.online && (
-                      <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-background" />
+                      <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-background" aria-label="Online" role="status" />
                     )}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -237,7 +309,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs text-muted-foreground truncate">{contact.lastMessage || (contact.relation === 'mutual' ? 'You follow each other — say hi' : tab === 'followers' ? 'Follows you' : 'You follow them')}</p>
                       {contact.unread > 0 && (
-                        <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white">
+                        <span
+                          aria-label={`${contact.unread} unread messages`}
+                          className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white"
+                        >
                           {contact.unread}
                         </span>
                       )}
@@ -261,12 +336,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       {activeChat && (
         <div className={isMobile ? 'flex flex-1 flex-col min-h-0' : 'absolute inset-0 bg-background z-10 flex flex-col'}>
           <div className="p-3 border-b flex items-center gap-3 bg-secondary/30 backdrop-blur-md sticky top-0 z-10">
-            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); refreshThreads(); }} aria-label="Back to chats">
-              <X className="w-4 h-4" />
+            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); refreshThreads(); }} aria-label="Back to chat list" title="Back to chat list">
+              <ArrowLeft className="w-4 h-4" />
             </Button>
             <Avatar className="h-8 w-8">
-              <AvatarImage src={activeChat.peerAvatar} />
-              <AvatarFallback>{activeChat.peerName[0]?.toUpperCase()}</AvatarFallback>
+              <AvatarImage src={activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
+              <AvatarFallback>{(activeChat.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
             </Avatar>
             <div className="flex-1 min-w-0">
               <p className="font-semibold text-sm truncate">{activeChat.peerName}</p>
@@ -278,9 +353,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           </div>
 
           {/* WhatsApp-style message area */}
-          <div className="flex-1 p-4 space-y-1.5 overflow-y-auto relative bg-[#0b141a] dark:bg-[#0b141a]">
+          <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 p-4 space-y-1.5 overflow-y-auto relative bg-[#0b141a] dark:bg-[#0b141a]">
             {chatTheme.type !== 'default' && (
-              <div className="absolute inset-0 pointer-events-none rounded-lg" style={getChatBackgroundStyle()} />
+              <div className="absolute inset-0 pointer-events-none" style={getChatBackgroundStyle()} />
             )}
             <div className="relative z-10 flex flex-col gap-1.5">
               {msgs.length === 0 && (
@@ -302,14 +377,16 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     >
                       {msg.type === 'image' && msg.fileUrl ? (
                         <div className="space-y-1.5">
-                          <img src={msg.fileUrl} alt="Shared image" className="max-w-full rounded-lg" />
+                          <img src={msg.fileUrl} alt="Shared image" loading="lazy" className="max-w-full rounded-lg" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                           {msg.text && <p className="whitespace-pre-wrap break-words">{msg.text}</p>}
                         </div>
                       ) : msg.type === 'file' && msg.fileUrl ? (
                         <div className="flex items-center gap-2">
                           <Paperclip className="w-4 h-4 shrink-0" />
                           <div className="min-w-0">
-                            <p className="truncate font-medium">{msg.fileName}</p>
+                            <a href={msg.fileUrl} download={msg.fileName || 'attachment'} className="truncate font-medium underline underline-offset-2 hover:opacity-80" onClick={(e) => e.stopPropagation()}>
+                              {msg.fileName || 'Attachment'}
+                            </a>
                             {msg.text && <p className="text-xs opacity-80">{msg.text}</p>}
                           </div>
                         </div>
@@ -345,31 +422,55 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 </Button>
               </div>
             )}
-            <div className="flex gap-2">
+            <form
+              className="flex gap-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void handleSendMessage();
+              }}
+            >
               <div className="relative">
                 <input
                   ref={fileInputRef}
                   type="file"
                   accept="image/*,.pdf,.doc,.docx,.txt"
                   onChange={handleFileAttach}
-                  className="absolute inset-0 opacity-0 cursor-pointer"
+                  className="sr-only"
                   aria-label="Attach file"
+                  tabIndex={-1}
                 />
-                <Button variant="ghost" size="icon" className="h-10 w-10 text-muted-foreground" aria-label="Attach">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="h-10 w-10 text-muted-foreground"
+                  aria-label="Attach file"
+                  title="Attach file (images, PDF, DOC, TXT up to 10MB)"
+                  onClick={() => fileInputRef.current?.click()}
+                >
                   <Paperclip className="w-5 h-5" />
                 </Button>
               </div>
               <Input
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                onKeyDown={handleKeyDown}
                 placeholder={`Message ${activeChat.peerName}…`}
+                aria-label={`Message ${activeChat.peerName}`}
                 className="bg-secondary/50"
+                maxLength={2000}
+                disabled={sending}
               />
-              <Button size="icon" className="h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-500" onClick={handleSendMessage} disabled={!message.trim() && !attachedFile} aria-label="Send">
+              <Button
+                type="submit"
+                size="icon"
+                className="h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-500"
+                disabled={(!message.trim() && !attachedFile) || sending}
+                aria-label={sending ? 'Sending…' : 'Send message'}
+                title={sending ? 'Sending…' : 'Send message (Enter)'}
+              >
                 <Send className="w-4 h-4" />
               </Button>
-            </div>
+            </form>
           </div>
         </div>
       )}

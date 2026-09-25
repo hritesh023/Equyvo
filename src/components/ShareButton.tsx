@@ -38,7 +38,9 @@ const ShareButton: React.FC<ShareButtonProps> = ({
       const shareData = {
         title: `Post by ${post.user}`,
         text: post.content || 'Check out this post!',
-        url: `${window.location.origin}/post/${post.id}`
+        // There is no /post/:id route — link to the real feed with a query
+        // param so shared links open the app instead of a 404.
+        url: `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`
       };
 
       // Check if Web Share API is available

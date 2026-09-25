@@ -79,7 +79,9 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
 
   const handleCopyLink = async () => {
     try {
-      const shareUrl = `${window.location.origin}/posts/${postId}`;
+      // No /posts/:id route exists — use the real feed route with a query
+      // param so copied links open the app instead of a 404.
+      const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
       await navigator.clipboard.writeText(shareUrl);
       showSuccess('Link copied to clipboard!');
       onCopyLink?.(postId);
@@ -93,7 +95,7 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
 
     setIsSharing(true);
     try {
-      const shareUrl = `${window.location.origin}/posts/${postId}`;
+      const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
 
       if (navigator.share) {
         try {

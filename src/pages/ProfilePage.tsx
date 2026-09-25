@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useLocation } from 'react-router-dom';
+import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -90,6 +90,7 @@ const createDefaultProfile = (user?: { email?: string; fullName?: string; userna
 const ProfilePage = () => {
   const { userId, username } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
 
   // Bot profiles removed — app only shows the authenticated user's profile
 
@@ -1124,11 +1125,14 @@ const ProfilePage = () => {
             <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleEditProfile}>
               <Edit className="h-3 w-3 md:h-4 md:w-4" /> <span className="hidden xs:inline">Edit Profile</span><span className="xs:hidden">Edit</span>
             </Button>
-            <Button variant="ghost" size="sm" className="h-8 w-8 md:h-10 md:w-10" onClick={() => {
-              if (typeof window !== 'undefined') {
-                window.location.href = '/app/settings';
-              }
-            }}>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-8 w-8 md:h-10 md:w-10"
+              onClick={() => navigate('/app/settings')}
+              aria-label="Open settings"
+              title="Open settings"
+            >
               <Settings className="h-3 w-3 md:h-4 md:w-4" />
             </Button>
             <Button variant="destructive" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleDeleteAllData}>
@@ -1765,10 +1769,24 @@ const ProfilePage = () => {
                           <Repeat className="h-4 w-4 fill-current" />
                           <span className="font-medium">{(post as any).reacts || 0}</span>
                         </Button>
-                        <Button variant="ghost" size="sm" className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex items-center gap-1"
+                          onClick={() => handleComment(post.id, (post as any).user || (post as any).username || 'Unknown')}
+                          aria-label={`Comment on this thought (${post.comments} comments)`}
+                          title="View comments"
+                        >
                           <MessageCircle className="h-4 w-4" /> <span className="font-medium">{post.comments}</span>
                         </Button>
-                        <Button variant="ghost" size="sm" className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex items-center gap-1"
+                          onClick={() => handleShare(post as unknown as Post)}
+                          aria-label={`Share this thought (${post.shares} shares)`}
+                          title="Share this thought"
+                        >
                           <Share2 className="h-4 w-4" /> <span className="font-medium">{post.shares}</span>
                         </Button>
                       </>
@@ -1893,12 +1911,26 @@ const ProfilePage = () => {
                         <Bookmark className={`h-4 w-4 ${savedPosts.has(post.id) ? 'fill-current' : ''}`} />
                       </Button>
                       {post.likes && (
-                        <Button variant="ghost" size="sm" className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex items-center gap-1"
+                          onClick={() => handleFullscreen(post as unknown as Post)}
+                          aria-label={`View post with ${post.likes} likes`}
+                          title="Open post details"
+                        >
                           <ThumbsUp className="h-4 w-4" /> {post.likes}
                         </Button>
                       )}
                       {post.comments && (
-                        <Button variant="ghost" size="sm" className="flex items-center gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="flex items-center gap-1"
+                          onClick={() => handleComment(post.id, (post as any).user || (post as any).creator || 'Unknown')}
+                          aria-label={`View ${post.comments} comments`}
+                          title="View comments"
+                        >
                           <MessageCircle className="h-4 w-4" /> {post.comments}
                         </Button>
                       )}

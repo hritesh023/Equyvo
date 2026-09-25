@@ -44,6 +44,8 @@ const EditPostModal: React.FC<EditPostModalProps> = ({
 
   const handleMediaChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Reset so re-picking the same file still fires onChange.
+    e.target.value = '';
     if (file) {
       const maxSize = currentPost.type === 'moment' ? 50 * 1024 * 1024 : 300 * 1024 * 1024; // 50MB for moments, 300MB for thoughts
       

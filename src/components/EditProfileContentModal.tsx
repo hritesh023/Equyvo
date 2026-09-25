@@ -33,6 +33,8 @@ const EditProfileContentModal: React.FC<EditProfileContentModalProps> = ({
 
   const handleMediaChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    // Always reset so the same file can be picked again.
+    e.target.value = '';
     if (file) {
       const maxSize = currentContent.type === 'moment' ? 50 * 1024 * 1024 : 300 * 1024 * 1024;
       

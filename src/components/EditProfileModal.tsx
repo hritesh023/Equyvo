@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { createPortal } from 'react-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,6 +40,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   currentProfile,
   onSave,
 }) => {
+  const navigate = useNavigate();
   const [name, setName] = useState(currentProfile.name);
   const [username, setUsername] = useState(currentProfile.username);
   const [bio, setBio] = useState(currentProfile.bio);
@@ -243,7 +245,7 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
                     <Button
                       type="button"
                       size="sm"
-                      onClick={() => { window.location.href = '/pricing'; }}
+                      onClick={() => { onClose(); navigate('/pricing'); }}
                     >
                       Buy Premium
                     </Button>

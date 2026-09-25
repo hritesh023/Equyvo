@@ -551,9 +551,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const handleVolumeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const video = videoRef.current;
     if (!video) return;
-    
-    const newVolume = parseFloat(e.target.value);
-    video.volume = newVolume;
+
+    const parsed = parseFloat(e.target.value);
+    if (!Number.isFinite(parsed)) return;
+    const newVolume = Math.min(1, Math.max(0, parsed));
+    try {
+      video.volume = newVolume;
+    } catch {
+      return;
+    }
     setVolume(newVolume);
     setIsMuted(newVolume === 0);
   };

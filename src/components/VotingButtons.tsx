@@ -58,6 +58,9 @@ const VotingButtons: React.FC<VotingButtonsProps> = ({
         variant="ghost"
         size="sm"
         disabled={disabled}
+        title={disabled ? 'Please wait…' : userHasLiked ? 'Unlike' : 'Like'}
+        aria-label={userHasLiked ? `Unlike (${likesCount} likes)` : `Like (${likesCount} likes)`}
+        aria-pressed={userHasLiked}
         className={`${sizeClasses[size]} ${
           userHasLiked 
             ? 'text-blue-500 hover:text-blue-600 bg-blue-50 dark:bg-blue-950/20' 
@@ -76,6 +79,9 @@ const VotingButtons: React.FC<VotingButtonsProps> = ({
         variant="ghost"
         size="sm"
         disabled={disabled}
+        title={disabled ? 'Please wait…' : 'Upvote'}
+        aria-label={`Upvote (${upvotesCount} upvotes)`}
+        aria-pressed={userVote === 'upvote'}
         className={`${sizeClasses[size]} ${
           userVote === 'upvote' 
             ? 'text-green-500 hover:text-green-600 bg-green-50 dark:bg-green-950/20' 
@@ -94,6 +100,9 @@ const VotingButtons: React.FC<VotingButtonsProps> = ({
         variant="ghost"
         size="sm"
         disabled={disabled}
+        title={disabled ? 'Please wait…' : 'Downvote'}
+        aria-label={`Downvote (${downvotesCount} downvotes)`}
+        aria-pressed={userVote === 'downvote'}
         className={`${sizeClasses[size]} ${
           userVote === 'downvote' 
             ? 'text-red-500 hover:text-red-600 bg-red-50 dark:bg-red-950/20' 

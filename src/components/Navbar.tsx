@@ -14,7 +14,9 @@ import { navigateToProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
 import {
   Dialog,
+  DialogClose,
   DialogContent,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -215,6 +217,11 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                 maxSuggestions={5}
               />
             </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button variant="outline" className="w-full sm:w-auto">Done</Button>
+              </DialogClose>
+            </DialogFooter>
           </DialogContent>
         </Dialog>
       )}

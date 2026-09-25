@@ -47,6 +47,15 @@ const PricingPage: React.FC = () => {
     navigate('/auth?next=' + encodeURIComponent('/pricing'));
   };
 
+  const chooseFree = () => {
+    setActivePlan('free');
+    try {
+      localStorage.setItem(PLAN_KEY, 'free');
+    } catch { /* ignore */ }
+    window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: 'free' } }));
+    toast.success('You are on the Free plan.');
+  };
+
   const buy = async (planId: string) => {
     setBusy(planId);
     try {
@@ -132,7 +141,9 @@ const PricingPage: React.FC = () => {
                 </ul>
                 <div className="mt-5">
                   {p.priceInr === 0 ? (
-                    <Button variant="outline" className="w-full" disabled={active}>{active ? 'Current plan' : 'Free forever'}</Button>
+                    <Button variant="outline" className="w-full" disabled={active} onClick={active ? undefined : chooseFree} title={active ? 'Your current plan' : 'Stay on the Free plan'}>
+                      {active ? 'Current plan' : 'Free forever'}
+                    </Button>
                   ) : (
                     <Button className="w-full" variant={active ? 'outline' : 'default'} disabled={busy !== null || active} onClick={() => buy(p.id)}>
                       {busy === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : active ? 'Current plan' : `Choose ${p.label}`}
