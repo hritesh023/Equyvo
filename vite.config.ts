@@ -87,7 +87,6 @@ export default defineConfig(({ mode }) => ({
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-router-dom', '@radix-ui/react-slot', 'lucide-react', 'date-fns', 'clsx', 'tailwind-merge', 'class-variance-authority'],
-    exclude: ['@supabase/supabase-js'],
   },
   define: {
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV || mode),

@@ -29,7 +29,9 @@ A modern, cross-platform social media application built with React, TypeScript, 
 - **Lucide React** for icons
 
 ### Backend & Services
-- **Supabase** for authentication and database
+- **Cloudflare Pages Functions** (`functions/api/[[path]].ts`) — entire API
+- **Cloudflare KV + R2** — data + media warehouse
+- **AWS Cognito** for authentication
 - **Capacitor** for cross-platform deployment
 
 ### Development Tools
@@ -76,8 +78,8 @@ A modern, cross-platform social media application built with React, TypeScript, 
 ## 🔧 Installation & Setup
 
 ### Prerequisites
-- Node.js 18+ 
-- npm or pnpm
+- Node.js 18+
+- npm
 - Git
 
 ### Local Development
@@ -87,40 +89,38 @@ git clone https://github.com/hritesh023/equyvo.git
 cd equyvo
 
 # Install dependencies
-pnpm install
+npm install
 
-# Copy environment variables
-cp .env.example .env
-# Edit .env with your Supabase credentials
+# Start the app (needs the API too — see below)
+npm run dev
 
-# Start development server
-pnpm dev
+# Terminal 2 — Cloudflare Pages Functions on :8788
+npm run build
+npm run dev:api
 ```
 
-### Environment Variables
-```env
-VITE_SUPABASE_URL=your_supabase_url
-VITE_SUPABASE_ANON_KEY=your_supabase_anon_key
-```
+No `VITE_*` secrets — the frontend only ever sees its own Cognito JWT.
+Server secrets live in Cloudflare Pages (`wrangler pages secret put`).
+See `DEPLOYMENT.md` — Cloudflare Pages is the only deploy target.
 
 ## 📦 Build & Deployment
 
 ### Web Build
 ```bash
 # Production build
-pnpm build
+npm run build
 
 # Preview build
-pnpm preview
+npm run preview
 
 # Bundle analysis
-pnpm build:analyze
+npm run build:analyze
 ```
 
 ### Mobile Build
 ```bash
 # Build for production first
-pnpm build
+npm run build
 
 # Android
 npx cap sync android
@@ -135,18 +135,18 @@ npx cap open ios
 
 ### Type Checking
 ```bash
-pnpm type-check
+npm run type-check
 ```
 
 ### Linting
 ```bash
-pnpm lint
-pnpm lint:fix
+npm run lint
+npm run lint:fix
 ```
 
 ### Build Testing
 ```bash
-pnpm build
+npm run build
 ```
 
 ## 📊 Performance Metrics
