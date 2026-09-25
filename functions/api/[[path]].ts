@@ -1970,6 +1970,22 @@ export const onRequest = async (context) => {
         creator: String(body.creator || ''), action: String(body.action || 'view'),
       });
       if (body.itemId) await aiBumpPop(env, String(body.itemId).slice(0, 64), String(body.action || 'view').toLowerCase() === 'view' ? 1 : 3);
+      // Human-eval fan-out to the shared brain (best-effort, never blocks):
+      // the engagement that just ranked this feed also becomes a labelled
+      // preference for continual learning. Equyvo hosts no model itself.
+      try {
+        const act = String(body.action || 'view').slice(0, 20);
+        void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: String(body.itemId || body.category || act).slice(0, 300),
+            response: `user ${act}`,
+            route_type: 'equyvo-feed',
+            session_id: String(userId).slice(0, 100),
+            source: 'equyvo',
+          }),
+        }, 2500).catch(() => null);
+      } catch { /* ignore */ }
       return json({ data: { ok: true, interests: Object.keys(interests).length } }, 200, cors);
     }
 
@@ -2274,6 +2290,17 @@ export const onRequest = async (context) => {
       try {
         brainVerdict = await brainSafetyCheck(env, String(parsed.content || parsed.title || parsed.description || ''));
       } catch { /* fail-open */ }
+      // Human eval: a report is a strong negative label for the shared brain
+      // (best-effort — safety flow never blocks on it).
+      try {
+        void brainProxy('/v1/feedback', {
+          session_id: String(actor.id).slice(0, 100),
+          query: String(id).slice(0, 300),
+          rating: -1,
+          response: `report:${reason}`,
+          source: 'equyvo',
+        }).catch(() => null);
+      } catch { /* ignore */ }
       const now = new Date().toISOString();
       if (brainVerdict === 'block' || count >= 5) {
         parsed.moderation = { status: 'removed', at: now, reason: 'community' };

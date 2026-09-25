@@ -38,6 +38,7 @@ import WatchHistorySection from '@/components/WatchHistorySection';
 import Moments from '@/components/Moments';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
+import { evalLike, evalVote } from '@/lib/human-eval';
 import { getStoredUser } from '@/lib/auth';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
@@ -437,6 +438,9 @@ const ProfilePage = () => {
   }, []);
 
   const handleLike = (postId: string) => {
+    const liking = !likedPosts.has(postId);
+    // Human eval first (fire-and-forget).
+    try { evalLike(postId, liking); } catch { /* never block */ }
     const newLikedPosts = new Set(likedPosts);
     const newPostLikes = { ...postLikes };
 
@@ -453,6 +457,8 @@ const ProfilePage = () => {
   };
 
   const handleVote = async (thoughtId: string, voteType: 'upvote' | 'downvote') => {
+    // Human eval first (fire-and-forget): votes are explicit labels.
+    try { evalVote(thoughtId, voteType); } catch { /* never block */ }
     try {
       setVoting(thoughtId);
       

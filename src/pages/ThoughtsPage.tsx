@@ -42,6 +42,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import VotingButtons from '@/components/VotingButtons';
 import { getThoughts, voteOnThought, getThoughtVotes, likeThought } from '@/lib/thoughts';
+import { evalVote, evalLike } from '@/lib/human-eval';
 import { Thought, ThoughtMedia } from '@/types/thoughts';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import { showSuccess } from '@/utils/toast';
@@ -379,6 +380,11 @@ const ThoughtsPage = memo(() => {
   const handleVote = async (thoughtId: string, voteType: 'upvote' | 'downvote') => {
     try {
       setVoting(thoughtId);
+      // Human eval first (fire-and-forget): votes are explicit labels.
+      try {
+        const t = thoughts.find(x => x.id === thoughtId);
+        evalVote(thoughtId, voteType, (t as any)?.content?.slice(0, 120));
+      } catch { /* never block voting */ }
       
       const thoughtIndex = thoughts.findIndex(t => t.id === thoughtId);
       if (thoughtIndex === -1) return;
@@ -455,6 +461,12 @@ const ThoughtsPage = memo(() => {
   const handleLike = async (thoughtId: string) => {
     try {
       setLiking(thoughtId);
+      // Human eval first (fire-and-forget).
+      try {
+        const t = thoughts.find(x => x.id === thoughtId);
+        const liked = !(t as any)?.user_has_liked;
+        evalLike(thoughtId, liked, (t as any)?.content?.slice(0, 120));
+      } catch { /* never block */ }
       
       // For mock data, just update local state
       const thoughtIndex = thoughts.findIndex(t => t.id === thoughtId);

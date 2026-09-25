@@ -14,6 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { AlertTriangle, X } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import api from '@/lib/api';
+import { evalReport } from '@/lib/human-eval';
 
 interface ReportModalProps {
   isOpen: boolean;
@@ -60,6 +61,9 @@ const ReportModal: React.FC<ReportModalProps> = ({
         details: additionalInfo,
       });
       if (error) throw new Error(error);
+      // Human eval: reports are strong negative labels for the shared brain
+      // (fire-and-forget — never blocks the safety flow).
+      try { evalReport(contentId, reportReason); } catch { /* ignore */ }
       showSuccess('Report submitted successfully. We will review this content.');
       handleClose();
     } catch {

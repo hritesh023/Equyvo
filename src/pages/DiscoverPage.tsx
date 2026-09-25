@@ -25,6 +25,7 @@ import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
 import { fetchMoments, fetchPosts } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
+import { evalLike } from '@/lib/human-eval';
 
 /** Image that never shows a broken-image icon: renders a neutral placeholder
  *  when the URL is empty or fails to load (production hardening). */
@@ -148,6 +149,9 @@ const DiscoverPage = () => {
   };
 
   const handleLike = (contentId: string) => {
+    const liking = !likedPosts.has(contentId);
+    // Human eval first (fire-and-forget).
+    try { evalLike(contentId, liking); } catch { /* never block */ }
     setLikedPosts(prev => {
       const newSet = new Set(prev);
       const isCurrentlyLiked = newSet.has(contentId);

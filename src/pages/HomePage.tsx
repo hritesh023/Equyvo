@@ -29,6 +29,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
+import { sendHumanEval, evalVote } from '@/lib/human-eval';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 
 const HomePage = () => {
@@ -422,6 +423,7 @@ const HomePage = () => {
   };
 
   const handleLikeMoment = (momentId: string) => {
+    const liking = !likedMoments.has(momentId);
     setLikedMoments(prev => {
       const newSet = new Set(prev);
       if (newSet.has(momentId)) {
@@ -434,6 +436,8 @@ const HomePage = () => {
       }
       return newSet;
     });
+    // Human eval: every like/unlike labels the feed ranking algorithm.
+    evalLike(momentId, liking, `moment:${momentId}`);
   };
 
   const handleCloseFullscreen = () => {
@@ -442,6 +446,9 @@ const HomePage = () => {
 
   // Post action handlers
   const handleLikePost = (postId: string) => {
+    const liking = !likedPosts.has(postId);
+    const p = enhancedPosts.find(x => x.id === postId);
+    const snapshot = p?.content?.slice(0, 120) || (p as any)?.type || postId;
     setLikedPosts(prev => {
       const newSet = new Set(prev);
       if (newSet.has(postId)) {
@@ -450,10 +457,18 @@ const HomePage = () => {
       } else {
         newSet.add(postId);
         showSuccess('❤️ Post liked!');
-        const p = enhancedPosts.find(x => x.id === postId);
-        teachBrain(p?.content?.slice(0, 120) || p?.type || postId);
+        teachBrain(snapshot);
       }
       return newSet;
+    });
+    // Human eval for the shared brain (ranking + preference label).
+    sendHumanEval({
+      itemId: postId,
+      action: liking ? 'like' : 'unlike',
+      text: snapshot,
+      tags: (p as any)?.tags,
+      category: (p as any)?.category || (Array.isArray((p as any)?.categories) ? (p as any).categories[0] : ''),
+      creator: (p as any)?.user,
     });
     
     // Update the post likes count
@@ -466,6 +481,14 @@ const HomePage = () => {
 
   const handleCommentPost = (postId: string, postUser?: string) => {
     const post = enhancedPosts.find(p => p.id === postId);
+    // Human eval: opening comments = interest signal (weak positive).
+    sendHumanEval({
+      itemId: postId,
+      action: 'comment',
+      rating: 0.3,
+      text: (post as any)?.content?.slice(0, 120) || postId,
+      creator: postUser || (post as any)?.user,
+    });
     setSelectedPostId(postId);
     setSelectedPostUser(postUser || post?.user || 'Unknown');
     setCommentedPosts(prev => {
@@ -477,6 +500,17 @@ const HomePage = () => {
   };
 
   const handleReactPost = (postId: string) => {
+    const p = enhancedPosts.find(x => x.id === postId);
+    const snapshot = p?.content?.slice(0, 120) || (p as any)?.type || postId;
+    const reacting = !commentedPosts.has(postId);
+    // Human eval: reactions are positive engagement labels.
+    sendHumanEval({
+      itemId: postId,
+      action: 'like',
+      rating: reacting ? 0.4 : -0.2,
+      text: snapshot,
+      creator: (p as any)?.user,
+    });
     setCommentedPosts(prev => {
       const newSet = new Set(prev);
       if (newSet.has(postId)) {
@@ -485,8 +519,7 @@ const HomePage = () => {
       } else {
         newSet.add(postId);
         showSuccess('🔄 Post reacted!');
-        const p = enhancedPosts.find(x => x.id === postId);
-        teachBrain(p?.content?.slice(0, 120) || p?.type || postId);
+        teachBrain(snapshot);
       }
       return newSet;
     });
@@ -506,6 +539,14 @@ const HomePage = () => {
       return newSet;
     });
     teachBrain(post?.content?.slice(0, 120) || post?.type || post.id);
+    // Human eval: share = strong positive preference.
+    sendHumanEval({
+      itemId: post.id,
+      action: 'share',
+      text: post?.content?.slice(0, 120) || post?.type || post.id,
+      tags: (post as any)?.tags,
+      creator: (post as any)?.user,
+    });
     if (navigator.share) {
       navigator.share({
         title: 'Check out this post!',
@@ -522,10 +563,20 @@ const HomePage = () => {
   };
 
   const handleSavePost = (postId: string) => {
+    const post = enhancedPosts.find(p => p.id === postId);
+    const saving = !savedPosts.has(postId);
+    const snapshot = post?.content?.slice(0, 120) || (post as any)?.type || postId;
+    // Human eval: saves are strong positive preference labels.
+    sendHumanEval({
+      itemId: postId,
+      action: saving ? 'save' : 'unsave',
+      text: snapshot,
+      tags: (post as any)?.tags,
+      creator: (post as any)?.user,
+    });
     setSavedPosts(prev => {
       const newSet = new Set(prev);
-      const post = enhancedPosts.find(p => p.id === postId);
-      
+
       if (newSet.has(postId)) {
         newSet.delete(postId);
         showSuccess('🗑️ Post removed from saved');
@@ -579,10 +630,15 @@ const HomePage = () => {
   };
 
   const handleVote = (postId: string, voteType: 'upvote' | 'downvote') => {
-    // Handle voting functionality
+    const p = enhancedPosts.find(x => x.id === postId);
+    const snapshot = (p as any)?.content?.slice(0, 120) || (p as any)?.type || postId;
+    teachBrain(snapshot, { feedback: voteType === 'upvote' ? 1 : -1 });
+    // Human eval: votes are explicit preference labels for the shared brain.
+    evalVote(postId, voteType, snapshot);
   };
 
   const handleFollow = (creatorId: string) => {
+    const following = !followedCreators.has(creatorId);
     setFollowedCreators(prev => {
       const newSet = new Set(prev);
       if (newSet.has(creatorId)) {
@@ -593,6 +649,13 @@ const HomePage = () => {
         showSuccess(`Following creator!`);
       }
       return newSet;
+    });
+    // Human eval: follow graph is a strong interest signal.
+    sendHumanEval({
+      itemId: creatorId,
+      action: following ? 'follow' : 'unfollow',
+      text: `creator:${creatorId}`,
+      creator: creatorId,
     });
   };
 

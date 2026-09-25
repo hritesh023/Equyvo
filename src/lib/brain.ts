@@ -1,4 +1,12 @@
-// Recommendations client for Equyvo.
+// Thin shared-brain client for Equyvo.
+//
+// Equyvo does NOT contain, vendor, or host Acronous LLM. There is no model,
+// no Ollama endpoint, and no training loop in this app. This module is the
+// ONLY bridge to the shared brain (hosted by the Acronous AI side):
+//   - search / feed ranking: brainSearchSuggest, brainFeedSuggest,
+//     brainTrendingTopics (+ /api/search, /api/feed under the hood)
+//   - human eval in: brainLearn, brainFeedback (every user input becomes a
+//     labelled signal — see src/lib/human-eval.ts for the unified sender)
 //
 // All calls go to first-party /api routes on this app's own origin. The
 // server forwards them where needed — the app never contacts any other host
@@ -67,6 +75,8 @@ export async function brainFeedSuggest(
 }
 
 // ── Explicit learning: share an interaction signal ────────────────────────
+// Human-eval entry point: every Equyvo input (like/vote/save/share/comment/
+// view/follow/report/search) funnels here via src/lib/human-eval.ts.
 export async function brainLearn(opts: {
   query: string;
   response?: string;
@@ -80,10 +90,14 @@ export async function brainLearn(opts: {
     response: opts.response ?? '',
     session_id: opts.sessionId ?? 'default',
     feedback: opts.feedback ?? undefined,
+    source: opts.source ?? 'equyvo',
+    route_type: opts.routeType ?? undefined,
   });
 }
 
 // ── Explicit feedback (thumbs up/down) ────────────────────────────────────
+// Human-eval ratings: +1 upvote … -1 downvote/report. Prefer
+// sendHumanEval()/evalVote()/evalLike() from src/lib/human-eval.ts.
 export async function brainFeedback(opts: {
   sessionId?: string;
   query: string;
@@ -96,10 +110,15 @@ export async function brainFeedback(opts: {
     query: opts.query,
     rating: opts.rating,
     response: opts.response ?? '',
+    source: opts.source ?? 'equyvo',
   });
 }
 
 // ── Generic text generation (captions, ideas, replies) ────────────────────
+// @deprecated Equyvo hosts no LLM and uses the shared brain for search/feed
+// ranking only. These helpers remain for backward-compat but new code must
+// NOT add generation features to Equyvo — keep it a thin ranking client +
+// human-eval producer.
 export interface BrainGenerateOptions {
   prompt: string;
   system?: string;
