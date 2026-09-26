@@ -14,6 +14,8 @@ import {
   readIdList, profileSummary, isFollowingPair, getViewer,
   readChatMessages, writeChatMessages, pushUserNotification, canChat,
   generateId, fileReport, listReports, fanOutUpload,
+  findContentById, getCommentSettings, resolveCommentAuthor, toPublicComment,
+  readCommentList, syncContentCommentCount, cleanCommentAvatar, cleanCommentName,
 } from './kv';
 export { Env };
 
@@ -1055,6 +1057,230 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if ((actor as any).id !== userId) return respondError('Forbidden', 403);
       const result = await deleteUserData(env, userId);
       return respond({ data: { success: true, ...result }, error: null });
+    }
+
+    // ---- COMMENTS (mirrors Pages Functions) ----
+    // Persistent per-media discussions with real server-resolved identity,
+    // replies, likes, shares, pins + owner enable/disable switch.
+    if (path === '/api/comments' && method === 'GET') {
+      const contentId = String(url.searchParams.get('contentId') || url.searchParams.get('content_id') || url.searchParams.get('postId') || '').slice(0, 64);
+      if (!contentId) return respondError('contentId required', 400);
+      const found = await findContentById(env, contentId);
+      if (!found) return respondError('Content not found', 404);
+      const viewer = await getViewer(request, env);
+      const settings = await getCommentSettings(env, contentId, found.item);
+      const ownerId = String(found.item.ownerId || found.item.userId || found.item.user_id || '');
+      const ids = await readCommentList(env, contentId);
+      const rows: any[] = [];
+      for (const cid of ids.slice(0, 200)) {
+        try {
+          const raw = await env.EQUYVO_KV.get(KEYS.COMMENT(cid));
+          if (raw) {
+            const c = JSON.parse(raw);
+            if (c && c.contentId === contentId) rows.push(c);
+          }
+        } catch { /* skip */ }
+      }
+      for (const c of rows) {
+        try {
+          const p: any = await getProfile(env, String(c.authorId));
+          if (p) {
+            const nm = cleanCommentName(p.username || p.name, { username: c.authorUsername, email: '' });
+            if (nm) { c.authorName = nm; c.authorUsername = nm; }
+            c.authorAvatar = cleanCommentAvatar(p.avatar);
+          } else {
+            c.authorAvatar = cleanCommentAvatar(c.authorAvatar);
+          }
+        } catch { /* keep stored identity */ }
+      }
+      const byId = new Map(rows.map((c) => [String(c.id), c]));
+      const tops: any[] = [];
+      for (const c of rows) {
+        const pid = c.parentId ? String(c.parentId) : '';
+        if (pid && byId.has(pid) && pid !== String(c.id)) {
+          const parent = byId.get(pid);
+          parent.replies = parent.replies || [];
+          parent.replies.push(c);
+        } else tops.push(c);
+      }
+      for (const t of tops) {
+        if (Array.isArray(t.replies)) {
+          t.replies.sort((a: any, b: any) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+          t.repliesCount = t.replies.length;
+        }
+      }
+      tops.sort((a, b) => ((!!a.isPinned === !!b.isPinned) ? String(b.createdAt || '').localeCompare(String(a.createdAt || '')) : (a.isPinned ? -1 : 1)));
+      const vid = viewer ? viewer.id : '';
+      const pub = tops.map((t) => {
+        const o = toPublicComment(t, vid);
+        if (o && Array.isArray(t.replies)) o.replies = t.replies.map((r: any) => toPublicComment(r, vid));
+        return o;
+      }).filter(Boolean);
+      return respond({ data: { comments: pub, totalCount: rows.length, commentsEnabled: settings.commentsEnabled, ownerId, isOwner: !!(viewer && ownerId && viewer.id === ownerId) }, error: null });
+    }
+
+    if (path === '/api/comments' && method === 'POST') {
+      let raw: any = {};
+      try { raw = await request.json(); } catch { return respondError('Invalid JSON body', 400); }
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const rl = await rateLimit(env, 'engagement', (actor as any).id, 30);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      const body = sanitizeBody(raw);
+      const contentId = String(body.contentId || body.content_id || body.postId || '').slice(0, 64);
+      const text = String(body.text || body.content || '').trim().slice(0, 1000);
+      if (!contentId) return respondError('contentId required', 400);
+      if (!text) return respondError('Comment text required', 400);
+      const found = await findContentById(env, contentId);
+      if (!found) return respondError('Content not found', 404);
+      const ownerId = String(found.item.ownerId || found.item.userId || found.item.user_id || '');
+      const isOwner = !!(ownerId && ownerId === (actor as any).id);
+      const settings = await getCommentSettings(env, contentId, found.item);
+      if (!settings.commentsEnabled && !isOwner) return respondError('Comments are turned off for this post.', 403);
+      let parentId: string | null = null;
+      let parent: any = null;
+      const wantParent = String(body.parentId || body.parent_id || '').slice(0, 64);
+      if (wantParent) {
+        try {
+          const praw = await env.EQUYVO_KV.get(KEYS.COMMENT(wantParent));
+          parent = praw ? JSON.parse(praw) : null;
+        } catch { parent = null; }
+        if (!parent || parent.contentId !== contentId) return respondError('Reply target not found', 404);
+        parentId = parent.parentId ? String(parent.parentId) : String(parent.id);
+      }
+      const author = await resolveCommentAuthor(env, actor);
+      const now = new Date().toISOString();
+      const comment = {
+        id: generateId(), contentId, contentKind: found.kind, parentId,
+        authorId: author.id, authorName: author.name, authorUsername: author.username, authorAvatar: author.avatar,
+        text, createdAt: now, updatedAt: now, likes: 0, likedBy: [], shares: 0,
+        repliesCount: 0, isPinned: false, isEdited: false,
+      };
+      await env.EQUYVO_KV.put(KEYS.COMMENT(comment.id), JSON.stringify(comment));
+      const ids = await readCommentList(env, contentId);
+      ids.unshift(comment.id);
+      await env.EQUYVO_KV.put(KEYS.COMMENTS(contentId), JSON.stringify(ids.slice(0, 1000)));
+      if (parentId) {
+        try {
+          const rraw = await env.EQUYVO_KV.get(KEYS.COMMENT(parentId));
+          if (rraw) {
+            const root = JSON.parse(rraw);
+            root.repliesCount = Number(root.repliesCount || 0) + 1;
+            await env.EQUYVO_KV.put(KEYS.COMMENT(parentId), JSON.stringify(root));
+          }
+        } catch { /* ignore */ }
+      }
+      const total = await readCommentList(env, contentId);
+      await syncContentCommentCount(env, found, total.length);
+      try { await bumpPopularity(env, contentId, 3); } catch {}
+      try { await recordEngagement(env, (actor as any).id, { action: 'comment' }); } catch {}
+      try {
+        if (ownerId && ownerId !== (actor as any).id) {
+          await pushUserNotification(env, ownerId, { kind: 'comment', title: 'New comment', body: author.name + ' commented: ' + text.slice(0, 120), actorId: (actor as any).id, actorName: author.name, contentId });
+        }
+      } catch { /* ignore */ }
+      return respond({ data: { comment: toPublicComment(comment, (actor as any).id) }, error: null }, 201);
+    }
+
+    const wCommentMatch = path.match(/^\/api\/comments\/([^/]+)(\/(like|share|pin))?$/);
+    if (wCommentMatch && (method === 'PUT' || method === 'DELETE' || method === 'POST')) {
+      const cid = decodeURIComponent(wCommentMatch[1] || '').split('?')[0].slice(0, 64);
+      const wAction = wCommentMatch[3] || '';
+      let craw: string | null = null;
+      try { craw = await env.EQUYVO_KV.get(KEYS.COMMENT(cid)); } catch { craw = null; }
+      if (!craw) return respondError('Comment not found', 404);
+      let wComment: any = null;
+      try { wComment = JSON.parse(craw); } catch { return respondError('Comment not found', 404); }
+      const wFound = await findContentById(env, wComment.contentId);
+      const wOwnerId = wFound ? String(wFound.item.ownerId || wFound.item.userId || wFound.item.user_id || '') : '';
+      if (method === 'PUT' && !wAction) {
+        let praw: any = {};
+        try { praw = await request.json(); } catch { return respondError('Invalid JSON body', 400); }
+        const { actor, error } = await requireActor(praw);
+        if (error) return error;
+        if (String(wComment.authorId) !== String((actor as any).id)) return respondError('Only the author can edit this comment.', 403);
+        const clean = sanitizeBody(praw);
+        const text = String(clean.text || clean.content || '').trim().slice(0, 1000);
+        if (!text) return respondError('Comment text required', 400);
+        wComment.text = text;
+        wComment.isEdited = true;
+        wComment.updatedAt = new Date().toISOString();
+        await env.EQUYVO_KV.put(KEYS.COMMENT(cid), JSON.stringify(wComment));
+        return respond({ data: { comment: toPublicComment(wComment, (actor as any).id) }, error: null });
+      }
+      if (method === 'DELETE' && !wAction) {
+        const { actor, error } = await requireActor();
+        if (error) return error;
+        const isAuthor = String(wComment.authorId) === String((actor as any).id);
+        const isContentOwner = !!(wOwnerId && wOwnerId === String((actor as any).id));
+        if (!isAuthor && !isContentOwner) return respondError('Only the author or the post owner can delete this comment.', 403);
+        const ids = await readCommentList(env, wComment.contentId);
+        const toDelete = [cid];
+        for (const oid of ids) {
+          if (oid === cid) continue;
+          try {
+            const oraw = await env.EQUYVO_KV.get(KEYS.COMMENT(oid));
+            const o = oraw ? JSON.parse(oraw) : null;
+            if (o && String(o.parentId || '') === String(cid)) toDelete.push(oid);
+          } catch { /* ignore */ }
+        }
+        for (const d of toDelete) {
+          try { await env.EQUYVO_KV.delete(KEYS.COMMENT(d)); } catch { /* ignore */ }
+        }
+        const gone = new Set(toDelete);
+        await env.EQUYVO_KV.put(KEYS.COMMENTS(wComment.contentId), JSON.stringify(ids.filter((x) => !gone.has(x)).slice(0, 1000)));
+        const remaining = await readCommentList(env, wComment.contentId);
+        await syncContentCommentCount(env, await findContentById(env, wComment.contentId), remaining.length);
+        return respond({ data: { ok: true, deleted: toDelete.length }, error: null });
+      }
+      if (method === 'POST' && wAction === 'like') {
+        const { actor, error } = await requireActor();
+        if (error) return error;
+        const likedBy: string[] = Array.isArray(wComment.likedBy) ? wComment.likedBy.map(String) : [];
+        const has = likedBy.some((x) => x === String((actor as any).id));
+        wComment.likedBy = has ? likedBy.filter((x) => x !== String((actor as any).id)) : [String((actor as any).id), ...likedBy].slice(0, 5000);
+        wComment.likes = wComment.likedBy.length;
+        await env.EQUYVO_KV.put(KEYS.COMMENT(cid), JSON.stringify(wComment));
+        return respond({ data: { comment: toPublicComment(wComment, (actor as any).id) }, error: null });
+      }
+      if (method === 'POST' && wAction === 'share') {
+        const { actor, error } = await requireActor();
+        if (error) return error;
+        wComment.shares = Number(wComment.shares || 0) + 1;
+        await env.EQUYVO_KV.put(KEYS.COMMENT(cid), JSON.stringify(wComment));
+        const shareUrl = new URL(request.url).origin + '/app/home?comment=' + encodeURIComponent(cid);
+        return respond({ data: { comment: toPublicComment(wComment, (actor as any).id), shareUrl, shareText: String(wComment.text || '').slice(0, 200) }, error: null });
+      }
+      if (method === 'POST' && wAction === 'pin') {
+        const { actor, error } = await requireActor();
+        if (error) return error;
+        if (!wOwnerId || wOwnerId !== String((actor as any).id)) return respondError('Only the post owner can pin comments.', 403);
+        wComment.isPinned = !wComment.isPinned;
+        await env.EQUYVO_KV.put(KEYS.COMMENT(cid), JSON.stringify(wComment));
+        return respond({ data: { comment: toPublicComment(wComment, (actor as any).id) }, error: null });
+      }
+      return respondError('Not found: ' + path, 404);
+    }
+
+    const wCsetMatch = path.match(/^\/api\/content\/([^/]+)\/comment-settings$/);
+    if (wCsetMatch && method === 'PUT') {
+      let sraw: any = {};
+      try { sraw = await request.json(); } catch { return respondError('Invalid JSON body', 400); }
+      const { actor, error } = await requireActor(sraw);
+      if (error) return error;
+      const contentId = decodeURIComponent(wCsetMatch[1] || '').split('?')[0].slice(0, 64);
+      const wFound = await findContentById(env, contentId);
+      if (!wFound) return respondError('Content not found', 404);
+      const wOwner = String(wFound.item.ownerId || wFound.item.userId || wFound.item.user_id || '');
+      if (!wOwner || wOwner !== String((actor as any).id)) return respondError('Only the account that posted this can change comment settings.', 403);
+      const clean = sanitizeBody(sraw);
+      const enabled = clean.enabled !== false && clean.commentsEnabled !== false && clean.disabled !== true;
+      await env.EQUYVO_KV.put(KEYS.CSETTINGS(contentId), JSON.stringify({ commentsEnabled: enabled, updatedAt: new Date().toISOString() }));
+      try {
+        const it = { ...wFound.item, commentsEnabled: enabled };
+        await env.EQUYVO_KV.put(wFound.getKey(wFound.id), JSON.stringify(it));
+      } catch { /* settings key stays authoritative */ }
+      return respond({ data: { contentId, commentsEnabled: enabled }, error: null });
     }
 
     if (path === '/api/health') {

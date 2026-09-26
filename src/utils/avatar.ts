@@ -18,7 +18,13 @@ export function resolveAvatar(...candidates: Array<unknown>): string {
       low.includes('pravatar') ||
       low.includes('dicebear') ||
       low.includes('robohash') ||
-      low.includes('unsplash')
+      low.includes('unsplash') ||
+      low.includes('placehold.co') ||
+      low.includes('via.placeholder') ||
+      low.includes('dummyimage') ||
+      low.includes('loremflickr') ||
+      low.includes('fakeimg') ||
+      low.includes('thispersondoesnotexist')
     ) {
       continue;
     }

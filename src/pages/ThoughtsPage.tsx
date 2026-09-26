@@ -56,8 +56,8 @@ import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { resolveAvatar } from '@/utils/avatar';
 
-// Real author avatar for locally-created reacted copies: the signed-in
-// user's uploaded profile icon, or '' (initials shown) — never fake art.
+// Real author identity for locally-created reacted copies: the signed-in
+// user's id, display name and uploaded profile icon — never fake art/names.
 function realAuthorAvatar(): string {
   try {
     const rawUser = localStorage.getItem('equyvo_cognito_user');
@@ -67,6 +67,22 @@ function realAuthorAvatar(): string {
     return resolveAvatar(p?.avatar, u?.avatar);
   } catch {
     return '';
+  }
+}
+
+function realAuthorField(): { id: string; username: string } {
+  try {
+    const rawUser = localStorage.getItem('equyvo_cognito_user');
+    const u = rawUser ? JSON.parse(rawUser) : null;
+    const rawProfile = localStorage.getItem('userProfile');
+    const p = rawProfile ? JSON.parse(rawProfile) : null;
+    const username = String(
+      p?.username || p?.name || u?.username || u?.fullName ||
+      (u?.email ? String(u.email).split('@')[0] : '') || 'User',
+    ).slice(0, 80);
+    return { id: String(u?.id || u?.email || ''), username };
+  } catch {
+    return { id: '', username: 'User' };
   }
 }
 
@@ -667,14 +683,15 @@ const ThoughtsPage = memo(() => {
       newThoughtReacts[thoughtId] = (newThoughtReacts[thoughtId] || 0) + 1;
 
       if (thought) {
+        const author = realAuthorField();
         const userReactedThought: Thought & { originalThoughtId: string; originalAuthor: string } = {
           ...thought,
           id: `user-reacted-${thoughtId}`,
           originalThoughtId: thoughtId,
           originalAuthor: thought.user?.username || 'Unknown',
           user: {
-            id: 'current-user',
-            username: 'You',
+            id: author.id,
+            username: author.username,
             avatar_url: realAuthorAvatar(),
           },
           content: `🔄 Reacted to: ${thought.content}`,

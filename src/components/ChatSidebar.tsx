@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop } from 'lucide-react';
 import { showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 import { ChatThemeSelector } from './ChatThemeSelector';
+import MediaCropper from './MediaCropper';
 import { useChatTheme } from '@/contexts/ChatThemeContext';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
@@ -35,6 +36,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
+  // Image-attachment preview + crop/adjust step (same editor as thumbnails).
+  const [attachPreview, setAttachPreview] = useState<string | null>(null);
+  const [attachCropSrc, setAttachCropSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -164,6 +168,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     return {};
   };
 
+  const clearAttachment = () => {
+    setAttachedFile(null);
+    if (attachPreview) {
+      try { URL.revokeObjectURL(attachPreview); } catch { /* ignore */ }
+      setAttachPreview(null);
+    }
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
   const handleSendMessage = async () => {
     if ((!message.trim() && !attachedFile) || !activeChat || sending) return;
     const threadId = activeChat.id;
@@ -187,8 +200,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       // Only clear the composer after the message is safely stored.
       if (threadId === activeChat?.id) {
         setMessage('');
-        setAttachedFile(null);
-        if (fileInputRef.current) fileInputRef.current.value = '';
+        clearAttachment();
       }
       refreshMsgs(threadId);
       refreshThreads();
@@ -208,14 +220,52 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       e.target.value = '';
       return;
     }
+    if (attachPreview) {
+      try { URL.revokeObjectURL(attachPreview); } catch { /* ignore */ }
+      setAttachPreview(null);
+    }
     setAttachedFile(file);
+    if (file.type.startsWith('image/')) {
+      try {
+        const url = URL.createObjectURL(file);
+        setAttachPreview(url);
+        // Every image opens the crop/adjust editor (same as thumbnails).
+        // GIFs keep their animation when confirmed untouched; adjusting
+        // one exports a still frame instead (editor explains this inline).
+        setAttachCropSrc(url);
+      } catch { /* preview is best-effort */ }
+    }
   };
+
+  const handleAttachCropComplete = (file: File) => {
+    const original = attachedFile?.name || 'chat-image.jpg';
+    // An adjusted GIF exports as a JPEG still — fix the extension so the
+    // message renders as an image instead of a misnamed GIF.
+    const name = file.type === 'image/jpeg' && /\.gif$/i.test(original)
+      ? original.replace(/\.gif$/i, '.jpg')
+      : original;
+    const adjusted = new File([file], name, { type: file.type || 'image/jpeg' });
+    if (attachPreview) {
+      try { URL.revokeObjectURL(attachPreview); } catch { /* ignore */ }
+    }
+    setAttachedFile(adjusted);
+    try {
+      setAttachPreview(URL.createObjectURL(adjusted));
+    } catch {
+      setAttachPreview(null);
+    }
+    setAttachCropSrc(null);
+  };
+
+  const isAttachedImage = !!attachedFile && attachedFile.type.startsWith('image/');
+  const isAttachedGif = !!attachedFile && attachedFile.type === 'image/gif';
 
   const shell = isMobile
     ? 'h-full w-full flex flex-col bg-background'
     : 'h-[calc(100vh-80px)] w-80 fixed right-4 top-24 bg-card/95 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden hidden lg:flex flex-col z-40';
 
   return (
+    <>
     <div className={shell}>
       <div className="p-4 border-b border-border bg-muted/30">
         <div className="flex items-center justify-between mb-3">
@@ -412,14 +462,42 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
           <div className="p-3 border-t bg-background/50 backdrop-blur-md">
             {attachedFile && (
-              <div className="mb-3 p-3 bg-secondary/50 rounded-lg border flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Paperclip className="w-4 h-4" />
-                  <span className="text-sm truncate max-w-[200px]">{attachedFile.name}</span>
+              <div className="mb-3 p-3 bg-secondary/50 rounded-lg border">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {isAttachedImage && attachPreview ? (
+                      <img
+                        src={attachPreview}
+                        alt="Attachment preview"
+                        className="h-12 w-12 shrink-0 rounded-md border object-cover"
+                        onError={() => setAttachPreview(null)}
+                      />
+                    ) : (
+                      <Paperclip className="w-4 h-4 shrink-0" />
+                    )}
+                    <span className="text-sm truncate max-w-[160px]">{attachedFile.name}</span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-1">
+                    {isAttachedImage && attachPreview && (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs"
+                        onClick={() => setAttachCropSrc(attachPreview)}
+                        aria-label="Crop or adjust attached image"
+                        title={isAttachedGif ? 'Adjust GIF (keeps animation when unchanged)' : 'Crop or adjust attached image'}
+                      >
+                        <Crop className="w-3 h-3 mr-1" /> Adjust
+                      </Button>
+                    )}
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={clearAttachment} aria-label="Remove attachment">
+                      <X className="w-3 h-3" />
+                    </Button>
+                  </div>
                 </div>
-                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => { setAttachedFile(null); if (fileInputRef.current) fileInputRef.current.value = ''; }} aria-label="Remove attachment">
-                  <X className="w-3 h-3" />
-                </Button>
+                {isAttachedGif && (
+                  <p className="mt-1.5 text-[11px] text-muted-foreground">GIF stays animated when sent as-is.</p>
+                )}
               </div>
             )}
             <form
@@ -475,6 +553,23 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         </div>
       )}
     </div>
+    {/* Image/GIF crop/adjust editor — same tool as thumbnails. Untouched
+        GIFs stay animated; adjusting one exports a still frame. */}
+    {attachCropSrc && (
+      <MediaCropper
+        imageSrc={attachCropSrc}
+        preserveAspect
+        isGif={isAttachedGif}
+        keepOriginalLabel="Send GIF as-is"
+        title="Adjust image"
+        confirmLabel="Use image"
+        fileName={attachedFile?.name || 'chat-image.jpg'}
+        onCancel={() => setAttachCropSrc(null)}
+        onKeepOriginal={() => setAttachCropSrc(null)}
+        onCropComplete={handleAttachCropComplete}
+      />
+    )}
+    </>
   );
 };
 

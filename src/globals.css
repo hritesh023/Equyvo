@@ -1267,6 +1267,69 @@
     border: none !important;
   }
 
+  /* ── Full-bleed footers / nav bars that max-fill any display ──────────
+     Phones, foldables (folded + unfolded), tablets, landscape, portrait,
+     desktop and external monitors: bars span the full dynamic viewport
+     incl. left/right cutout insets; inner content stays centered + readable.
+     `.mobile-nav-safe` / `.mobile-top-safe` keep their vertical rhythm and
+     only gain the horizontal fill here. */
+  .mobile-bottom-nav-fill {
+    width: 100vw;
+    width: 100dvw;
+    max-width: none;
+    margin: 0;
+    padding-top: 0.25rem;
+    padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.25rem);
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+    box-sizing: border-box;
+  }
+
+  .mobile-top-nav-fill {
+    width: 100vw;
+    width: 100dvw;
+    max-width: none;
+    margin: 0;
+    padding-top: calc(env(safe-area-inset-top, 0px) + 0.25rem);
+    padding-left: max(0.5rem, env(safe-area-inset-left));
+    padding-right: max(0.5rem, env(safe-area-inset-right));
+    box-sizing: border-box;
+  }
+
+  .app-footer-fill {
+    width: 100%;
+    max-width: none;
+    margin-left: 0;
+    margin-right: 0;
+    padding-left: max(0px, env(safe-area-inset-left));
+    padding-right: max(0px, env(safe-area-inset-right));
+    padding-bottom: max(0px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+  }
+
+  /* Landscape phones / foldables: slimmer footer + nav so content keeps room */
+  @media (max-height: 500px) and (orientation: landscape) {
+    .mobile-bottom-nav-fill {
+      padding-top: 0.125rem;
+      padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 0.125rem);
+    }
+
+    .app-footer-fill {
+      display: none;
+    }
+  }
+
+  /* Large external displays / ultrawide: keep bars full-bleed while inner
+     rows stay centered via their max-w-* wrappers (no stretched text). */
+  @media (min-width: 1920px) {
+    .mobile-bottom-nav-fill,
+    .mobile-top-nav-fill,
+    .app-footer-fill {
+      left: 0;
+      right: 0;
+    }
+  }
+
   /* Enhanced story indicators */
   .story-ring {
     @apply bg-gradient-to-tr from-yellow-400 via-pink-500 to-purple-500 p-0.5 rounded-full;

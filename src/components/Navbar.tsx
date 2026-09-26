@@ -42,8 +42,9 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const navigate = useNavigate();
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
-  // Handle null user gracefully: check stored user as fallback
-  const effectiveUser = user || getStoredUser() || { email: 'dev@equyvo.app', user_metadata: { avatar_url: null } };
+  // Handle null user gracefully: check stored user as fallback.
+  // No invented fallback identity — without a real account nothing renders.
+  const effectiveUser = user || getStoredUser() || null;
 
   const [profileAvatar, setProfileAvatar] = useState<string | null>(null);
 
@@ -92,9 +93,9 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
 
   return (
     <>
-      {/* Mobile Top Bar */}
+      {/* Mobile Top Bar — full-bleed incl. left/right display cutouts */}
       {isMobile && (
-        <div className="fixed top-0 left-0 right-0 bg-background/95 backdrop-blur-xl border-b border-border/50 z-50 mobile-top-safe">
+        <div className="mobile-top-nav-fill fixed inset-x-0 top-0 z-50 border-b border-border/50 bg-background/95 backdrop-blur-xl">
           <div className="flex items-center justify-between px-3 py-2">
             {/* Logo and Search */}
             <div className="flex items-center gap-2 flex-1">
@@ -133,10 +134,10 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         </div>
       )}
       
-      {/* Desktop Navigation */}
+      {/* Desktop Navigation — full-bleed bar, readable centered content */}
       {!isMobile && (
-        <nav className="bg-background/95 backdrop-blur-xl border-b border-border/50 sticky top-0 z-50 shadow-lg">
-          <div className="container mx-auto px-2 sm:px-3 md:px-4 py-2 sm:py-2 md:py-3 flex items-center justify-between">
+        <nav className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 shadow-lg backdrop-blur-xl">
+          <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-2 py-2 sm:px-3 md:px-4 md:py-3">
             {/* Logo */}
             <div className="flex items-center gap-1 sm:gap-2">
               <Link to="/" className="flex items-center gap-1 sm:gap-2">
@@ -226,35 +227,40 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         </Dialog>
       )}
 
-      {/* Mobile Bottom Navigation */}
+      {/* Mobile Bottom Navigation — full-bleed footer that max-fills every
+          display: phones, foldables, tablets, landscape and external screens.
+          Outer bar spans 100dvw incl. cutout insets; inner row centers content
+          with a readable cap while each tab flex-fills its share. */}
       {isMobile && (
-        <div className="fixed bottom-0 left-0 right-0 bg-background/95 backdrop-blur-xl border-t border-border/50 flex justify-around py-2 px-2 shadow-lg z-50 mobile-nav-safe">
+        <div className="mobile-bottom-nav-fill fixed inset-x-0 bottom-0 z-50 border-t border-border/50 bg-background/95 shadow-lg backdrop-blur-xl">
+          <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2">
           {navItems.slice(0, 5).map((item) => (
             <Link
               key={item.name}
               to={item.path}
-              className={`flex flex-col items-center gap-1 text-xs transition-all duration-200 hover:scale-105 py-2 px-2 rounded-lg touch-target mobile-nav-item ${location.pathname === item.path
+              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
                 ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
                 : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
                 }`}
             >
-              <item.icon className="h-5 w-5" />
-              <span className="text-[10px] font-medium">{item.name}</span>
+              <item.icon className="h-5 w-5 shrink-0" />
+              <span className="max-w-full truncate text-[10px] font-medium">{item.name}</span>
               <span className="sr-only">{item.name}</span>
             </Link>
           ))}
           {/* More options button */}
           <Link
             to="/app/settings"
-            className={`flex flex-col items-center gap-1 text-xs transition-all duration-200 hover:scale-105 py-2 px-2 rounded-lg touch-target mobile-nav-item ${location.pathname === '/app/settings'
+            className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === '/app/settings'
               ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
               : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
               }`}
           >
-            <Settings className="h-5 w-5" />
-            <span className="text-[10px] font-medium">More</span>
+            <Settings className="h-5 w-5 shrink-0" />
+            <span className="max-w-full truncate text-[10px] font-medium">More</span>
             <span className="sr-only">More options</span>
           </Link>
+          </div>
         </div>
       )}
     </>

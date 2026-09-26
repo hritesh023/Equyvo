@@ -623,17 +623,20 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                 </>
               )}
             </>
-          ) : (
+          ) : storyImgSrc ? (
             <img
-              src={storyImgSrc || '/placeholder.svg'}
+              src={storyImgSrc}
               alt={currentStory.user}
               className="story-image"
               onError={(e) => {
-                if (e.currentTarget.src.indexOf('placeholder.svg') === -1) {
-                  e.currentTarget.src = '/placeholder.svg';
-                }
+                // Real media only: hide broken art, never swap in fake art.
+                e.currentTarget.style.display = 'none';
               }}
             />
+          ) : (
+            <div className="story-image flex items-center justify-center bg-black">
+              <span className="text-white/60 text-sm">Media unavailable</span>
+            </div>
           )}
           
           {currentStory.audio && (

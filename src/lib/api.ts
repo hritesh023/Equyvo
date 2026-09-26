@@ -370,6 +370,65 @@ export const api = {
   adsEligibility: () =>
     request<{ data: { planId: string; ads: string; showAds: boolean }; error: null }>('/ads/eligibility'),
 
+  // ---- Comments (persistent per-media discussions) ----
+  // Tapping a media's comment button lists that media's comments via
+  // getComments; posting, replying, liking, sharing, pinning (owner) and the
+  // owner's enable/disable switch are below. Identity always comes from the
+  // signed-in account + stored profile — never invented on the client.
+  getComments: (contentId: string) =>
+    request<{
+      data: {
+        comments: any[];
+        totalCount: number;
+        commentsEnabled: boolean;
+        ownerId: string;
+        isOwner: boolean;
+      };
+      error: null;
+    }>(`/comments?contentId=${encodeURIComponent(contentId)}`),
+
+  postComment: (data: { contentId: string; text: string; parentId?: string | null }) =>
+    request<{ data: { comment: any }; error: null }>('/comments', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  updateComment: (id: string, data: { text: string }) =>
+    request<{ data: { comment: any }; error: null }>(`/comments/${encodeURIComponent(id)}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  deleteComment: (id: string) =>
+    request<{ data: { ok: boolean; deleted: number }; error: null }>(
+      `/comments/${encodeURIComponent(id)}`,
+      { method: 'DELETE' },
+    ),
+
+  likeComment: (id: string) =>
+    request<{ data: { comment: any }; error: null }>(`/comments/${encodeURIComponent(id)}/like`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  shareComment: (id: string) =>
+    request<{ data: { comment: any; shareUrl: string; shareText: string }; error: null }>(
+      `/comments/${encodeURIComponent(id)}/share`,
+      { method: 'POST', body: JSON.stringify({}) },
+    ),
+
+  pinComment: (id: string) =>
+    request<{ data: { comment: any }; error: null }>(`/comments/${encodeURIComponent(id)}/pin`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  setCommentSettings: (contentId: string, enabled: boolean) =>
+    request<{ data: { contentId: string; commentsEnabled: boolean }; error: null }>(
+      `/content/${encodeURIComponent(contentId)}/comment-settings`,
+      { method: 'PUT', body: JSON.stringify({ enabled }) },
+    ),
+
   // Health check
   health: () => request<{ status: string }>('/health'),
 };

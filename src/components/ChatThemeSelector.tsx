@@ -13,9 +13,10 @@ import {
   DialogFooter,
   DialogTrigger,
 } from '@/components/ui/dialog';
-import { Palette, Upload, RotateCcw, Check, X, Trash2 } from 'lucide-react';
+import { Palette, Upload, RotateCcw, Check, X, Trash2, Crop } from 'lucide-react';
 import { useChatTheme, CHAT_THEME_DEFAULT } from '@/contexts/ChatThemeContext';
 import { showSuccess, showError } from '@/utils/toast';
+import MediaCropper from './MediaCropper';
 
 interface ChatThemeSelectorProps {
   children: React.ReactNode;
@@ -44,6 +45,10 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
   const [hexError, setHexError] = useState('');
   const [fileError, setFileError] = useState('');
   const [dragOver, setDragOver] = useState(false);
+  // Crop/adjust step for still images (same editor as create-page
+  // thumbnails). GIFs skip it so animation is preserved.
+  const [cropSrc, setCropSrc] = useState<string | null>(null);
+  const [cropName, setCropName] = useState('chat-background.jpg');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync drafts every time the dialog opens so it never shows stale values.
@@ -101,9 +106,16 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         setFileError('That file is not a readable image.');
         return;
       }
-      setDraftImage(url);
-      setDraftType('image');
-      showSuccess('Background image ready — press Done to apply.');
+      if (file.type === 'image/gif') {
+        // GIFs open the same crop/adjust editor as stills: confirming
+        // untouched keeps the animation, adjusting exports a still frame.
+        setCropName((file.name || 'chat-background').replace(/\.[^.]+$/, '') + '.gif');
+        setCropSrc(url);
+        return;
+      }
+      // Still image: open the crop/adjust editor first (same as thumbnails).
+      setCropName((file.name || 'chat-background').replace(/\.[^.]+$/, '') + '.jpg');
+      setCropSrc(url);
     };
     reader.readAsDataURL(file);
     // Reset the input so the same file can be picked again.
@@ -112,6 +124,43 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
 
   const handleFileInput = (e: React.ChangeEvent<HTMLInputElement>) => {
     processFile(e.target.files?.[0]);
+  };
+
+  const handleCropComplete = (file: File) => {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      setFileError('Could not apply the adjusted image. Try again.');
+      setCropSrc(null);
+    };
+    reader.onload = (event) => {
+      const url = event.target?.result as string | undefined;
+      setCropSrc(null);
+      if (!url || !url.startsWith('data:image/')) {
+        setFileError('Could not apply the adjusted image. Try again.');
+        return;
+      }
+      setDraftImage(url);
+      setDraftType('image');
+      showSuccess(
+        url.startsWith('data:image/gif')
+          ? 'Background ready — press Done to apply.'
+          : 'Background adjusted — press Done to apply.',
+      );
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Untouched GIF confirmed as-is: keep the animated data URL (a canvas
+  // export would silently reduce it to a still frame).
+  const handleKeepOriginalGif = () => {
+    if (!cropSrc || !cropSrc.startsWith('data:image/')) {
+      setCropSrc(null);
+      return;
+    }
+    setDraftImage(cropSrc);
+    setDraftType('image');
+    setCropSrc(null);
+    showSuccess('GIF ready — press Done to apply. (Animated as-is.)');
   };
 
   const handleReset = () => {
@@ -332,18 +381,41 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <Label>Preview</Label>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 text-xs text-destructive hover:text-destructive"
-                    onClick={() => {
-                      setDraftImage(null);
-                      if (draftType === 'image') setDraftType('color');
-                    }}
-                  >
-                    <Trash2 className="w-3 h-3 mr-1" /> Remove image
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs"
+                      onClick={() => {
+                        setCropName(
+                          draftImage.startsWith('data:image/gif')
+                            ? 'chat-background.gif'
+                            : 'chat-background.jpg',
+                        );
+                        setCropSrc(draftImage);
+                      }}
+                      title={
+                        draftImage.startsWith('data:image/gif')
+                          ? 'Adjust GIF (keeps animation when unchanged)'
+                          : 'Crop or adjust background image'
+                      }
+                    >
+                      <Crop className="w-3 h-3 mr-1" /> Adjust
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 text-xs text-destructive hover:text-destructive"
+                      onClick={() => {
+                        setDraftImage(null);
+                        if (draftType === 'image') setDraftType('color');
+                      }}
+                    >
+                      <Trash2 className="w-3 h-3 mr-1" /> Remove image
+                    </Button>
+                  </div>
                 </div>
                 <div className="relative rounded-lg overflow-hidden border">
                   <img
@@ -354,7 +426,11 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
                     onError={() => setFileError('Could not display that image.')}
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">Press Done to apply this image to your chats.</p>
+                {draftImage.startsWith('data:image/gif') ? (
+                  <p className="text-xs text-muted-foreground">GIF stays animated. Use Adjust for a still crop.</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">Press Done to apply this image to your chats.</p>
+                )}
               </div>
             )}
 
@@ -416,6 +492,22 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
           </Button>
         </DialogFooter>
       </DialogContent>
+      {/* Crop/adjust editor — same tool as thumbnails, now for GIFs too.
+          Untouched GIFs stay animated; adjusting one exports a still. */}
+      {cropSrc && (
+        <MediaCropper
+          imageSrc={cropSrc}
+          preserveAspect
+          isGif={cropSrc.startsWith('data:image/gif')}
+          keepOriginalLabel="Use GIF as-is"
+          title="Adjust chat background"
+          confirmLabel="Use background"
+          fileName={cropName}
+          onCancel={() => setCropSrc(null)}
+          onKeepOriginal={handleKeepOriginalGif}
+          onCropComplete={handleCropComplete}
+        />
+      )}
     </Dialog>
   );
 }

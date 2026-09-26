@@ -23,12 +23,12 @@
   <div id="root">
   </div>
   <script>
+    // Production-safe global error hook: log for diagnostics only.
+    // Never render error internals into the UI (no debug overlays).
     window.onerror = function (message, source, lineno, colno, error) {
-      var errorDiv = document.createElement('div');
-      errorDiv.style.cssText = 'position:fixed; top:0; left:0; right:0; background:red; color:white; padding:20px; z-index:9999; font-family:monospace; white-space:pre-wrap;';
-      errorDiv.innerHTML = 'Global Error: ' + message + '\nAt: ' + source + ':' + lineno + ':' + colno;
-      document.body.appendChild(errorDiv);
-      console.error('Global Debug Error:', error);
+      try {
+        console.error('Global Error:', message, 'At:', source + ':' + lineno + ':' + colno, error);
+      } catch { /* ignore */ }
     };
   </script>
   <script type="module" src="/src/main.tsx"></script>

@@ -307,26 +307,6 @@ export function markMyMessagesSeen(threadId: string): void {
   }
 }
 
-/** Dev/demo helper: simulate an incoming reply (used when server has none). */
-export function simulateIncoming(threadId: string, text: string, peerName?: string): void {
-  const msg: ChatMessage = {
-    id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
-    threadId,
-    text: String(text || '').slice(0, 2000),
-    fromMe: false,
-    timestamp: nowTime(),
-    createdAt: Date.now(),
-    type: 'text',
-  };
-  void peerName;
-  appendMessage(msg);
-  try {
-    window.dispatchEvent(new CustomEvent('chatIncoming', { detail: { threadId, message: msg } }));
-  } catch {
-    /* ignore */
-  }
-}
-
 /** Pull server messages for a thread and merge (server wins on id clash). */
 export async function pullThreadMessages(threadId: string): Promise<ChatMessage[]> {
   try {

@@ -211,13 +211,10 @@ const HomePage = () => {
     };
   }, []);
 
-  // Check if user has uploaded stories (simulated for demo)
+  // Whether the signed-in account has uploaded stories yet (real check
+  // against locally recorded uploads until the next stories fetch).
   useEffect(() => {
-    // In a real app, this would check against a database or context
-    // For demo purposes, we'll simulate that the user has no stories initially
-    // You can change this to true to test the behavior when user has stories
     const checkUserStories = () => {
-      // Check localStorage or context for user stories
       const userStories = localStorage.getItem('userUploadedStories');
       setUserHasStories(!!userStories && JSON.parse(userStories).length > 0);
     };
@@ -238,7 +235,7 @@ const HomePage = () => {
     };
   }, []);
 
-  // Real stories data from mock data
+  // Real stories data from the API.
   const [stories, setStories] = useState<Story[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(true);
 
@@ -268,7 +265,7 @@ const HomePage = () => {
     };
   }, []);
 
-  // Real moments data from mock data
+  // Real moments data from the API.
   const [moments, setMoments] = useState<any[]>([]);
   const [isLoadingMoments, setIsLoadingMoments] = useState(true);
 
@@ -762,11 +759,13 @@ const HomePage = () => {
                               className="w-full h-full object-cover"
                               loading="lazy"
                               onError={(e) => {
+                                // Real media only: fall back within the item's
+                                // own art, then hide — never swap in fake art.
                                 const t = e.currentTarget;
                                 if (story.image && art !== story.image && t.src !== story.image) {
                                   t.src = story.image;
-                                } else if (t.src.indexOf('placeholder.svg') === -1) {
-                                  t.src = '/placeholder.svg';
+                                } else {
+                                  t.style.display = 'none';
                                 }
                               }}
                             />

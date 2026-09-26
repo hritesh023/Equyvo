@@ -12,6 +12,28 @@ interface MediaCropperProps {
   /** Output pixel size, e.g. [1280, 720]. */
   output?: [number, number];
   title?: string;
+  /** Label for the confirm button, e.g. 'Use thumbnail'. */
+  confirmLabel?: string;
+  /** Export file name for the cropped result. */
+  fileName?: string;
+  /**
+   * Preserve the source image's own aspect instead of forcing `aspect`:
+   * the stage follows the loaded image and the export keeps its framing
+   * (scaled to max 1600px on the long edge). Used for chat backgrounds and
+   * chat attachments where any forced crop would lose content.
+   */
+  preserveAspect?: boolean;
+  /**
+   * GIF-aware mode (same editor as thumbnails, now for GIFs too): canvas
+   * export can't preserve animation, so while the framing is untouched the
+   * confirm button keeps the original via `onKeepOriginal`; once the user
+   * zooms/pans/switches to Fill it exports a still frame instead.
+   */
+  isGif?: boolean;
+  /** Label for the keep-original confirm, e.g. 'Send GIF as-is'. */
+  keepOriginalLabel?: string;
+  /** Called instead of exporting when a GIF is confirmed untouched. */
+  onKeepOriginal?: () => void;
   onCancel: () => void;
   onCropComplete: (file: File) => void;
 }
@@ -32,12 +54,18 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   aspect = 16 / 9,
   output = [1280, 720],
   title = 'Adjust thumbnail',
+  confirmLabel = 'Use thumbnail',
+  fileName = 'thumbnail.jpg',
+  preserveAspect = false,
+  isGif = false,
+  keepOriginalLabel = 'Use original GIF',
+  onKeepOriginal,
   onCancel,
   onCropComplete,
 }) => {
   const safeAspect = typeof aspect === 'number' && !isNaN(aspect) && aspect > 0 ? aspect : 16 / 9;
-  const outW = output && output[0] > 0 ? output[0] : 1280;
-  const outH = output && output[1] > 0 ? output[1] : 720;
+  const propOutW = output && output[0] > 0 ? output[0] : 1280;
+  const propOutH = output && output[1] > 0 ? output[1] : 720;
 
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
@@ -49,7 +77,23 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   const [working, setWorking] = useState(false);
   const dragRef = useRef<{ startX: number; startY: number; origX: number; origY: number; id: number } | null>(null);
 
-  const stageH = stageW > 0 ? stageW / safeAspect : 0;
+  const hasNatural = imgSize.w > 0 && imgSize.h > 0;
+  // Preserve mode: the frame follows the source image's own aspect once it
+  // loads; otherwise the fixed aspect/output props apply (create-page flow).
+  const effAspect = preserveAspect && hasNatural ? imgSize.w / imgSize.h : safeAspect;
+  // Preserve mode exports the source framing scaled so the long edge fits
+  // 1600px (keeps chat backgrounds + attachments crisp but storage-safe).
+  const preserveScale = preserveAspect && hasNatural
+    ? Math.min(1, 1600 / Math.max(imgSize.w, imgSize.h))
+    : 1;
+  const outW = preserveAspect && hasNatural
+    ? Math.max(1, Math.round(imgSize.w * preserveScale))
+    : propOutW;
+  const outH = preserveAspect && hasNatural
+    ? Math.max(1, Math.round(imgSize.h * preserveScale))
+    : propOutH;
+
+  const stageH = stageW > 0 ? stageW / effAspect : 0;
 
   const resetFraming = useCallback(() => {
     setZoom(1);
@@ -127,6 +171,14 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   };
 
   const handleConfirm = async () => {
+    // Untouched GIF: keep the original file/data so animation survives —
+    // a canvas export would silently reduce it to a still frame.
+    if (isGif && zoom === 1 && pos.x === 0 && pos.y === 0 && fitMode === 'fit') {
+      if (onKeepOriginal) {
+        onKeepOriginal();
+        return;
+      }
+    }
     const img = imgRef.current;
     if (!img || imgSize.w === 0 || stageW === 0 || working) return;
     setWorking(true);
@@ -175,7 +227,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
         }
       });
       if (!blob) throw new Error('crop failed');
-      onCropComplete(new File([blob], 'thumbnail.jpg', { type: 'image/jpeg' }));
+      onCropComplete(new File([blob], fileName, { type: 'image/jpeg' }));
     } catch {
       showError("Couldn't crop this image. Please try another one.");
     } finally {
@@ -236,9 +288,13 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
         </div>
 
         <p className="mt-3 text-center text-xs text-muted-foreground">
-          {fitMode === 'fit'
-            ? 'Fit shows the whole image with no auto-crop. Switch to Fill to crop, or zoom/drag to adjust.'
-            : 'Fill crops to the frame — drag to position, zoom to choose the crop.'}
+          {isGif
+            ? (fitMode === 'fit' && zoom === 1
+              ? 'GIF stays animated when used as-is. Zoom or switch to Fill to create a still.'
+              : 'Adjusting a GIF creates a still image — animation is lost.')
+            : (fitMode === 'fit'
+              ? 'Fit shows the whole image with no auto-crop. Switch to Fill to crop, or zoom/drag to adjust.'
+              : 'Fill crops to the frame — drag to position, zoom to choose the crop.')}
         </p>
 
         <div className="mt-3 flex items-center gap-2">
@@ -290,8 +346,12 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
           <Button onClick={handleConfirm} disabled={working || imgSize.w === 0} className="flex-1">
             {working ? (
               <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Saving...</>
+            ) : isGif && fitMode === 'fit' && zoom === 1 ? (
+              <><Check className="mr-2 h-4 w-4" /> {keepOriginalLabel}</>
+            ) : isGif ? (
+              <><Check className="mr-2 h-4 w-4" /> Use still image</>
             ) : (
-              <><Check className="mr-2 h-4 w-4" /> Use thumbnail</>
+              <><Check className="mr-2 h-4 w-4" /> {confirmLabel}</>
             )}
           </Button>
         </div>

@@ -90,6 +90,14 @@ const KEYS = {
   CHAT: (a, b) => 'chat:' + a + ':' + b,
   NOTIF: (userId) => 'notif:' + userId,
   LIVE: 'live:now',  MOD_QUEUE: 'mod:queue',
+  // Comments: per-content ledgers with replies, likes, pins + owner settings.
+  // COMMENTS:<contentId> holds the ordered id list (newest first, capped).
+  // COMMENT:<id> holds the comment object. CSETTINGS:<contentId> holds owner
+  // controls ({ commentsEnabled }). All identity comes from the verified
+  // caller + stored profile — never invented on the client.
+  COMMENTS: (contentId) => 'comments:' + contentId,
+  COMMENT: (id) => 'comment:' + id,
+  CSETTINGS: (contentId) => 'csettings:' + contentId,
 };
 
 // ── Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
@@ -627,6 +635,157 @@ async function enqueueModeration(env, entry) {
 }
 
 // ---------------------------------------------------------------------------
+// Comments — persistent per-content discussions with replies, likes, shares,
+// pins and owner controls. Real identity only: author display fields are
+// resolved server-side from the verified caller + stored profile, so a
+// comment can never carry a bot/fake avatar or name.
+// ---------------------------------------------------------------------------
+
+// Locate a content item across all collections by id.
+async function findContentById(env, contentId) {
+  const id = String(contentId || '').slice(0, 64);
+  if (!id) return null;
+  const kinds = [
+    { kind: 'post', getKey: KEYS.POST },
+    { kind: 'thought', getKey: KEYS.THOUGHT },
+    { kind: 'story', getKey: KEYS.STORY },
+    { kind: 'moment', getKey: KEYS.MOMENT },
+  ];
+  for (const k of kinds) {
+    try {
+      const raw = await env.EQUYVO_KV.get(k.getKey(id));
+      if (raw) {
+        let item = null;
+        try { item = JSON.parse(raw); } catch { continue; }
+        if (item && typeof item === 'object') return { ...k, id, item };
+      }
+    } catch { /* try next collection */ }
+  }
+  return null;
+}
+
+// Owner controls for a content item. Defaults to enabled; the owner can turn
+// comments off via PUT /api/content/:id/comment-settings.
+async function getCommentSettings(env, contentId, item) {
+  let enabled = true;
+  if (item && item.commentsEnabled === false) enabled = false;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.CSETTINGS(contentId));
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && s.commentsEnabled === false) enabled = false;
+      if (s && s.commentsEnabled === true) enabled = true;
+    }
+  } catch { /* default stands */ }
+  return { commentsEnabled: enabled };
+}
+
+async function setCommentSettings(env, contentId, enabled) {
+  const next = { commentsEnabled: enabled !== false, updatedAt: new Date().toISOString() };
+  await env.EQUYVO_KV.put(KEYS.CSETTINGS(contentId), JSON.stringify(next));
+  return next;
+}
+
+// Fresh author identity for a comment: stored profile wins (renames + avatar
+// changes propagate), falling back to the verified caller. Never invents art.
+//
+// Real-data-only gate: legacy seed/demo/bot avatar hosts (picsum, pravatar,
+// dicebear, robohash, placeholder services) are stripped to '' so the client
+// renders the account's real initials instead of a fake/bot picture.
+const FAKE_AVATAR_HOSTS = [
+  'picsum.photos',
+  'pravatar',
+  'dicebear',
+  'robohash',
+  'unsplash',
+  'placehold.co',
+  'via.placeholder',
+  'dummyimage',
+  'loremflickr',
+  'fakeimg',
+  'thispersondoesnotexist',
+];
+
+function cleanCommentAvatar(url) {
+  const s = String(url || '').trim();
+  if (!s) return '';
+  const low = s.toLowerCase();
+  if (low.startsWith('data:image/')) return s;
+  for (const h of FAKE_AVATAR_HOSTS) {
+    if (low.includes(h)) return '';
+  }
+  return s;
+}
+
+function cleanCommentName(name, actor) {
+  const n = String(name || '').trim().slice(0, 80);
+  if (n && n.toLowerCase() !== 'user') return n;
+  const a = String((actor && (actor.username || (actor.email ? String(actor.email).split('@')[0] : ''))) || '').trim().slice(0, 80);
+  return a || 'User';
+}
+
+async function resolveCommentAuthor(env, actor, stored) {
+  let profile = null;
+  try { profile = await getStoredProfile(env, actor.id); } catch { profile = null; }
+  const username = cleanCommentName(
+    (profile && (profile.username || profile.name)) || actor.username,
+    actor,
+  );
+  const avatar = cleanCommentAvatar((profile && profile.avatar) || (stored && stored.avatar) || '');
+  return { id: actor.id, name: username, username, avatar };
+}
+
+// Public comment shape. likedBy stays server-side; viewers get hasLiked.
+function toPublicComment(c, viewerId) {
+  if (!c || typeof c !== 'object') return null;
+  const likedBy = Array.isArray(c.likedBy) ? c.likedBy : [];
+  const { likedBy: _drop, ...rest } = c;
+  return {
+    ...rest,
+    likes: Number(c.likes || 0) || 0,
+    hasLiked: viewerId ? likedBy.some((x) => String(x) === String(viewerId)) : false,
+  };
+}
+
+async function readCommentList(env, contentId) {
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.COMMENTS(contentId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+async function writeCommentList(env, contentId, ids) {
+  try {
+    await env.EQUYVO_KV.put(KEYS.COMMENTS(contentId), JSON.stringify(ids.slice(0, 1000)));
+  } catch { /* best-effort */ }
+}
+
+// Keep the parent content's comment counter in sync (all type variants).
+async function syncContentCommentCount(env, found, count) {
+  if (!found) return;
+  const n = Math.max(0, Number(count) || 0);
+  try {
+    const it = { ...found.item };
+    if ('comments_count' in it) it.comments_count = n;
+    if ('comments' in it) it.comments = n;
+    if (!('comments' in it) && !('comments_count' in it)) it.comments = n;
+    await env.EQUYVO_KV.put(found.getKey(found.id), JSON.stringify(it));
+  } catch { /* counter is best-effort */ }
+  try {
+    const idxJson = await env.EQUYVO_KV.get(KEYS.CONTENT_INDEX);
+    if (idxJson) {
+      const idx = JSON.parse(idxJson);
+      const ix = idx.findIndex((i) => i && i.id === found.id);
+      if (ix >= 0) {
+        idx[ix] = { ...idx[ix], comments: n };
+        await env.EQUYVO_KV.put(KEYS.CONTENT_INDEX, JSON.stringify(idx));
+      }
+    }
+  } catch { /* ignore */ }
+}
+
+// ---------------------------------------------------------------------------
 // Plan catalog — SERVER-SIDE source of truth. Frontend plans.ts is display-only
 // and must never be trusted for enforcement. Prices in INR/month.
 // Storage quotas enforce the "free is affordable, power users pay" model:
@@ -1113,6 +1272,7 @@ const RATE_LIMITS = {
   subs: 10,
   engagement: 60,
   suggest: 60,
+  comments: 30,
 };
 
 function rateLimitFor(planId, kind) {
@@ -3254,6 +3414,323 @@ export const onRequest = async (context) => {
         ? data.topics.filter((t) => t && typeof t.name === 'string').slice(0, 10)
         : [];
       return json({ data: { topics }, error: null }, 200, cors);
+    }
+
+    // ── COMMENTS ─────────────────────────────────────────────────────────
+    // Persistent per-media discussions. Every comment carries real identity
+    // (verified caller + stored profile); the client never supplies names or
+    // avatars. Tapping a media's comment button calls GET /api/comments to
+    // list that media's comments; posting/replying/liking/sharing/pinning and
+    // the owner's enable/disable switch are the routes below.
+    if (path === '/api/comments' && method === 'GET') {
+      const contentId = String(url.searchParams.get('contentId') || url.searchParams.get('content_id') || url.searchParams.get('postId') || '').slice(0, 64);
+      if (!contentId) return json({ error: 'contentId required' }, 400, cors);
+      const found = await findContentById(env, contentId);
+      if (!found) return json({ error: 'Content not found' }, 404, cors);
+      const viewer = await getViewer(request, env);
+      const settings = await getCommentSettings(env, contentId, found.item);
+      const ownerId = itemOwnerId(found.item);
+      const ids = await readCommentList(env, contentId);
+      const rows = await Promise.all(ids.slice(0, 200).map(async (cid) => {
+        try {
+          const raw = await kv.get(KEYS.COMMENT(cid));
+          return raw ? JSON.parse(raw) : null;
+        } catch { return null; }
+      }));
+      // Refresh author identity from stored profiles (real data only) and
+      // nest single-level replies under their parents. Pinned first.
+      // Placeholder/demo avatar hosts are stripped so no comment can ever
+      // carry a bot/fake picture; the client renders real initials instead.
+      const fresh = [];
+      for (const c of rows) {
+        if (!c || typeof c !== 'object' || c.contentId !== contentId) continue;
+        try {
+          const p = await getStoredProfile(env, c.authorId);
+          if (p) {
+            const nm = cleanCommentName(p.username || p.name, { username: c.authorUsername, email: '' });
+            if (nm) { c.authorName = nm; c.authorUsername = nm; }
+            c.authorAvatar = cleanCommentAvatar(p.avatar);
+          } else {
+            c.authorAvatar = cleanCommentAvatar(c.authorAvatar);
+          }
+        } catch { /* keep stored identity */ }
+        fresh.push(c);
+      }
+      const byId = new Map(fresh.map((c) => [String(c.id), c]));
+      const tops = [];
+      for (const c of fresh) {
+        const pid = c.parentId ? String(c.parentId) : '';
+        if (pid && byId.has(pid) && pid !== String(c.id)) {
+          const parent = byId.get(pid);
+          parent.replies = parent.replies || [];
+          parent.replies.push(c);
+        } else {
+          tops.push(c);
+        }
+      }
+      for (const t of tops) {
+        if (Array.isArray(t.replies)) {
+          t.replies.sort((a, b) => String(a.createdAt || '').localeCompare(String(b.createdAt || '')));
+          t.repliesCount = t.replies.length;
+        }
+      }
+      tops.sort((a, b) => {
+        if (!!a.isPinned !== !!b.isPinned) return a.isPinned ? -1 : 1;
+        return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+      });
+      const pub = tops.map((t) => {
+        const o = toPublicComment(t, viewer ? viewer.id : '');
+        if (o && Array.isArray(t.replies)) o.replies = t.replies.map((r) => toPublicComment(r, viewer ? viewer.id : ''));
+        return o;
+      }).filter(Boolean);
+      return json({ data: {
+        comments: pub,
+        totalCount: fresh.length,
+        commentsEnabled: settings.commentsEnabled,
+        ownerId,
+        isOwner: !!(viewer && ownerId && viewer.id === ownerId),
+      }, error: null }, 200, cors);
+    }
+
+    if (path === '/api/comments' && method === 'POST') {
+      let raw;
+      try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+      const actor = await getActor(request, env, raw);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+      const rl = await rateLimit(kv, 'comments', actor.id, rateLimitFor(planId, 'comments'));
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const clean = sanitizeBody(raw);
+      const contentId = String(clean.contentId || clean.content_id || clean.postId || '').slice(0, 64);
+      const text = String(clean.text || clean.content || '').trim().slice(0, 1000);
+      if (!contentId) return json({ error: 'contentId required' }, 400, cors);
+      if (!text) return json({ error: 'Comment text required' }, 400, cors);
+      const found = await findContentById(env, contentId);
+      if (!found) return json({ error: 'Content not found' }, 404, cors);
+      const ownerId = itemOwnerId(found.item);
+      const isOwner = !!(ownerId && actor.id === ownerId);
+      const settings = await getCommentSettings(env, contentId, found.item);
+      if (!settings.commentsEnabled && !isOwner) {
+        return json({ error: 'Comments are turned off for this post.' }, 403, cors);
+      }
+      // Optional reply target: must belong to the same content; collapse to root.
+      let parentId = null;
+      let parent = null;
+      const wantParent = String(clean.parentId || clean.parent_id || '').slice(0, 64);
+      if (wantParent) {
+        try {
+          const praw = await kv.get(KEYS.COMMENT(wantParent));
+          parent = praw ? JSON.parse(praw) : null;
+        } catch { parent = null; }
+        if (!parent || parent.contentId !== contentId) return json({ error: 'Reply target not found' }, 404, cors);
+        parentId = parent.parentId ? String(parent.parentId) : String(parent.id);
+        try {
+          const rraw = await kv.get(KEYS.COMMENT(parentId));
+          const root = rraw ? JSON.parse(rraw) : null;
+          if (!root || root.contentId !== contentId) parentId = String(parent.id);
+        } catch { parentId = String(parent.id); }
+      }
+      try {
+        await moderateContent(env, { text });
+      } catch (e) {
+        return json({ error: (e && e.message) || 'Comment violates community guidelines.' }, (e && e.status) || 400, cors);
+      }
+      const author = await resolveCommentAuthor(env, actor, null);
+      const now = new Date().toISOString();
+      const comment = {
+        id: generateId(),
+        contentId,
+        contentKind: found.kind,
+        parentId,
+        authorId: author.id,
+        authorName: author.name,
+        authorUsername: author.username,
+        authorAvatar: author.avatar,
+        text,
+        createdAt: now,
+        updatedAt: now,
+        likes: 0,
+        likedBy: [],
+        shares: 0,
+        repliesCount: 0,
+        isPinned: false,
+        isEdited: false,
+      };
+      await kv.put(KEYS.COMMENT(comment.id), JSON.stringify(comment));
+      const ids = await readCommentList(env, contentId);
+      ids.unshift(comment.id);
+      await writeCommentList(env, contentId, ids);
+      if (parentId) {
+        try {
+          const rraw = await kv.get(KEYS.COMMENT(parentId));
+          if (rraw) {
+            const root = JSON.parse(rraw);
+            root.repliesCount = Number(root.repliesCount || 0) + 1;
+            await kv.put(KEYS.COMMENT(parentId), JSON.stringify(root));
+          }
+        } catch { /* ignore */ }
+      }
+      const totalIds = await readCommentList(env, contentId);
+      await syncContentCommentCount(env, found, totalIds.length);
+      try { await aiBumpPop(env, contentId, 3); } catch {}
+      try { await aiRecordEngagement(env, actor.id, { action: 'comment' }); } catch {}
+      // Notify the content owner + the replied-to author (best-effort).
+      try {
+        if (ownerId && ownerId !== actor.id) {
+          await pushUserNotification(env, ownerId, {
+            kind: 'comment', title: 'New comment',
+            body: author.name + ' commented: ' + text.slice(0, 120),
+            actorId: actor.id, actorName: author.name, contentId,
+          });
+        }
+        if (parent && parent.authorId && parent.authorId !== actor.id && parent.authorId !== ownerId) {
+          await pushUserNotification(env, parent.authorId, {
+            kind: 'reply', title: 'New reply',
+            body: author.name + ' replied: ' + text.slice(0, 120),
+            actorId: actor.id, actorName: author.name, contentId,
+          });
+        }
+      } catch { /* ignore */ }
+      return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 201, cors);
+    }
+
+    // PUT /api/comments/:id — edit own comment. POST .../like|share|pin and
+    // DELETE ... live alongside (exact-id match guarded to those suffixes).
+    const commentIdMatch = path.match(/^\/api\/comments\/([^/]+)(\/(like|share|pin))?$/);
+    if (commentIdMatch && (method === 'PUT' || method === 'DELETE' || method === 'POST')) {
+      const cid = decodeURIComponent(commentIdMatch[1] || '').split('?')[0].slice(0, 64);
+      const action = commentIdMatch[3] || '';
+      let craw = null;
+      try { craw = await kv.get(KEYS.COMMENT(cid)); } catch { craw = null; }
+      if (!craw) return json({ error: 'Comment not found' }, 404, cors);
+      let comment = null;
+      try { comment = JSON.parse(craw); } catch { return json({ error: 'Comment not found' }, 404, cors); }
+      const found = await findContentById(env, comment.contentId);
+      const ownerId = found ? itemOwnerId(found.item) : '';
+
+      if (method === 'PUT' && !action) {
+        let raw;
+        try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+        const actor = await getActor(request, env, raw);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        if (String(comment.authorId) !== String(actor.id)) return json({ error: 'Only the author can edit this comment.' }, 403, cors);
+        const clean = sanitizeBody(raw);
+        const text = String(clean.text || clean.content || '').trim().slice(0, 1000);
+        if (!text) return json({ error: 'Comment text required' }, 400, cors);
+        try {
+          await moderateContent(env, { text });
+        } catch (e) {
+          return json({ error: (e && e.message) || 'Comment violates community guidelines.' }, (e && e.status) || 400, cors);
+        }
+        comment.text = text;
+        comment.isEdited = true;
+        comment.updatedAt = new Date().toISOString();
+        await kv.put(KEYS.COMMENT(cid), JSON.stringify(comment));
+        return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 200, cors);
+      }
+
+      if (method === 'DELETE' && !action) {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const isAuthor = String(comment.authorId) === String(actor.id);
+        const isContentOwner = !!(ownerId && String(ownerId) === String(actor.id));
+        if (!isAuthor && !isContentOwner) return json({ error: 'Only the author or the post owner can delete this comment.' }, 403, cors);
+        // Delete the comment + its direct replies (single-level threads).
+        const ids = await readCommentList(env, comment.contentId);
+        const toDelete = [cid];
+        for (const otherId of ids) {
+          if (otherId === cid) continue;
+          try {
+            const oraw = await kv.get(KEYS.COMMENT(otherId));
+            const o = oraw ? JSON.parse(oraw) : null;
+            if (o && String(o.parentId || '') === String(cid)) toDelete.push(otherId);
+          } catch { /* ignore */ }
+        }
+        for (const d of toDelete) {
+          try { await kv.delete(KEYS.COMMENT(d)); } catch { /* ignore */ }
+        }
+        const gone = new Set(toDelete);
+        await writeCommentList(env, comment.contentId, ids.filter((x) => !gone.has(x)));
+        if (comment.parentId) {
+          try {
+            const rraw = await kv.get(KEYS.COMMENT(String(comment.parentId)));
+            if (rraw) {
+              const root = JSON.parse(rraw);
+              root.repliesCount = Math.max(0, Number(root.repliesCount || 1) - 1);
+              await kv.put(KEYS.COMMENT(String(comment.parentId)), JSON.stringify(root));
+            }
+          } catch { /* ignore */ }
+        }
+        const remaining = await readCommentList(env, comment.contentId);
+        const refound = await findContentById(env, comment.contentId);
+        await syncContentCommentCount(env, refound, remaining.length);
+        return json({ data: { ok: true, deleted: toDelete.length }, error: null }, 200, cors);
+      }
+
+      if (method === 'POST' && action === 'like') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const likedBy = Array.isArray(comment.likedBy) ? comment.likedBy.map(String) : [];
+        const has = likedBy.some((x) => x === String(actor.id));
+        const next = has ? likedBy.filter((x) => x !== String(actor.id)) : [String(actor.id), ...likedBy].slice(0, 5000);
+        comment.likedBy = next;
+        comment.likes = next.length;
+        await kv.put(KEYS.COMMENT(cid), JSON.stringify(comment));
+        try { await aiBumpPop(env, comment.contentId, has ? -1 : 1); } catch {}
+        return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 200, cors);
+      }
+
+      if (method === 'POST' && action === 'share') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        comment.shares = Number(comment.shares || 0) + 1;
+        await kv.put(KEYS.COMMENT(cid), JSON.stringify(comment));
+        const shareUrl = new URL(request.url).origin + '/app/home?comment=' + encodeURIComponent(cid);
+        return json({ data: { comment: toPublicComment(comment, actor.id), shareUrl, shareText: String(comment.text || '').slice(0, 200) }, error: null }, 200, cors);
+      }
+
+      if (method === 'POST' && action === 'pin') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        // Flexible: the account the media belongs to can pin ANY comment
+        // (their own or anyone else's) and unpin it again.
+        if (!ownerId || String(ownerId) !== String(actor.id)) {
+          return json({ error: 'Only the post owner can pin comments.' }, 403, cors);
+        }
+        comment.isPinned = !comment.isPinned;
+        await kv.put(KEYS.COMMENT(cid), JSON.stringify(comment));
+        return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 200, cors);
+      }
+
+      return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
+    }
+
+    // PUT /api/content/:id/comment-settings { enabled } — owner-only toggle.
+    const csetMatch = path.match(/^\/api\/content\/([^/]+)\/comment-settings$/);
+    if (csetMatch && method === 'PUT') {
+      const contentId = decodeURIComponent(csetMatch[1] || '').split('?')[0].slice(0, 64);
+      let raw;
+      try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+      const actor = await getActor(request, env, raw);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const found = await findContentById(env, contentId);
+      if (!found) return json({ error: 'Content not found' }, 404, cors);
+      if (!owns(found.item, actor)) return json({ error: 'Only the account that posted this can change comment settings.' }, 403, cors);
+      const clean = sanitizeBody(raw);
+      const enabled = clean.enabled !== false && clean.commentsEnabled !== false && clean.disabled !== true;
+      const saved = await setCommentSettings(env, contentId, enabled);
+      try {
+        const it = { ...found.item, commentsEnabled: enabled };
+        await kv.put(found.getKey(found.id), JSON.stringify(it));
+      } catch { /* settings key stays authoritative */ }
+      return json({ data: { contentId, commentsEnabled: saved.commentsEnabled }, error: null }, 200, cors);
     }
 
     return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);

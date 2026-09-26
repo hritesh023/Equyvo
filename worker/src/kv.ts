@@ -35,6 +35,11 @@ const KEYS = {
   CHAT: (a: string, b: string) => `chat:${a}:${b}`,
   NOTIF: (userId: string) => `notif:${userId}`,
   LIVE: 'live:now',
+  // Comments: per-content ledgers with replies, likes, shares, pins + owner
+  // settings. Mirrors Pages Functions; identity is always server-resolved.
+  COMMENTS: (contentId: string) => `comments:${contentId}`,
+  COMMENT: (id: string) => `comment:${id}`,
+  CSETTINGS: (contentId: string) => `csettings:${contentId}`,
 };
 
 export { KEYS };
@@ -1895,4 +1900,123 @@ export async function listReports(env: Env, limit = 100): Promise<any[]> {
     if (out.length >= n) break;
   }
   return out;
+}
+
+// --- Comments (mirrors Pages Functions) ------------------------------------
+// Persistent per-content discussions with replies, likes, shares, pins and
+// owner controls. Identity is always resolved server-side from the verified
+// caller + stored profile — never trusted from the client.
+
+export interface CommentRecord {
+  id: string; contentId: string; contentKind: string; parentId: string | null;
+  authorId: string; authorName: string; authorUsername: string; authorAvatar: string;
+  text: string; createdAt: string; updatedAt: string;
+  likes: number; likedBy: string[]; shares: number; repliesCount: number;
+  isPinned: boolean; isEdited: boolean;
+}
+
+export async function findContentById(env: Env, contentId: string): Promise<{ kind: string; id: string; item: any; getKey: (id: string) => string } | null> {
+  const id = String(contentId || '').slice(0, 64);
+  if (!id) return null;
+  const kinds = [
+    { kind: 'post', getKey: KEYS.POST },
+    { kind: 'thought', getKey: KEYS.THOUGHT },
+    { kind: 'story', getKey: KEYS.STORY },
+    { kind: 'moment', getKey: KEYS.MOMENT },
+  ];
+  for (const k of kinds) {
+    try {
+      const raw = await env.EQUYVO_KV.get(k.getKey(id));
+      if (raw) {
+        const item = JSON.parse(raw);
+        if (item && typeof item === 'object') return { ...k, id, item };
+      }
+    } catch { /* try next collection */ }
+  }
+  return null;
+}
+
+export async function getCommentSettings(env: Env, contentId: string, item: any): Promise<{ commentsEnabled: boolean }> {
+  let enabled = !(item && item.commentsEnabled === false);
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.CSETTINGS(contentId));
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (s && typeof s.commentsEnabled === 'boolean') enabled = s.commentsEnabled;
+    }
+  } catch { /* default stands */ }
+  return { commentsEnabled: enabled };
+}
+
+// Real-data-only gate for comment identity: legacy seed/demo/bot avatar
+// hosts are stripped to '' so no comment can ever carry a fake/bot picture;
+// the client renders the account's real initials instead.
+const FAKE_AVATAR_HOSTS = [
+  'picsum.photos',
+  'pravatar',
+  'dicebear',
+  'robohash',
+  'unsplash',
+  'placehold.co',
+  'via.placeholder',
+  'dummyimage',
+  'loremflickr',
+  'fakeimg',
+  'thispersondoesnotexist',
+];
+
+export function cleanCommentAvatar(url: unknown): string {
+  const s = String(url || '').trim();
+  if (!s) return '';
+  const low = s.toLowerCase();
+  if (low.startsWith('data:image/')) return s;
+  for (const h of FAKE_AVATAR_HOSTS) {
+    if (low.includes(h)) return '';
+  }
+  return s;
+}
+
+export function cleanCommentName(name: unknown, actor: any): string {
+  const n = String(name || '').trim().slice(0, 80);
+  if (n && n.toLowerCase() !== 'user') return n;
+  const a = String((actor && (actor.username || (actor.email ? String(actor.email).split('@')[0] : ''))) || '').trim().slice(0, 80);
+  return a || 'User';
+}
+
+export async function resolveCommentAuthor(env: Env, actor: any): Promise<{ id: string; name: string; username: string; avatar: string }> {
+  let profile: any = null;
+  try { profile = await getProfile(env, String(actor.id)); } catch { profile = null; }
+  const username = cleanCommentName(
+    (profile && (profile.username || profile.name)) || actor.username,
+    actor,
+  );
+  return { id: String(actor.id), name: username, username, avatar: cleanCommentAvatar(profile && profile.avatar) };
+}
+
+export function toPublicComment(c: any, viewerId: string): any {
+  if (!c || typeof c !== 'object') return null;
+  const likedBy = Array.isArray(c.likedBy) ? c.likedBy.map(String) : [];
+  const { likedBy: _drop, ...rest } = c;
+  void _drop;
+  return { ...rest, likes: Number(c.likes || 0) || 0, hasLiked: viewerId ? likedBy.some((x) => x === String(viewerId)) : false };
+}
+
+export async function readCommentList(env: Env, contentId: string): Promise<string[]> {
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.COMMENTS(contentId));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
+  } catch { return []; }
+}
+
+export async function syncContentCommentCount(env: Env, found: { id: string; item: any; getKey: (id: string) => string } | null, count: number): Promise<void> {
+  if (!found) return;
+  const n = Math.max(0, Number(count) || 0);
+  try {
+    const it = { ...found.item };
+    if ('comments_count' in it) (it as any).comments_count = n;
+    if ('comments' in it) (it as any).comments = n;
+    if (!('comments' in it) && !('comments_count' in it)) (it as any).comments = n;
+    await env.EQUYVO_KV.put(found.getKey(found.id), JSON.stringify(it));
+  } catch { /* counter is best-effort */ }
 }

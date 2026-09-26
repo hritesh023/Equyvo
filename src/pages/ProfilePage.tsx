@@ -553,10 +553,14 @@ const ProfilePage = () => {
       newPostReacts[postId] += 1;
 
       if (post) {
+        // Real identity of the signed-in account — never a placeholder name.
+        const displayName = String(
+          userProfile.username || userProfile.name || 'User',
+        ).slice(0, 80);
         const userReactedPost: Post = {
           id: `user-reacted-${postId}`,
           originalPostId: postId,
-          user: 'You',
+          user: displayName,
           avatar: userProfile.avatar || '',
           time: 'Just now',
           content: `🔄 Reacted to: ${post.content}`,
