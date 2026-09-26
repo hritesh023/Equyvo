@@ -1,26 +1,24 @@
-﻿import React, { useState, useEffect, useCallback } from 'react';
+﻿import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
-import { Search, Filter, Grid, List, TrendingUp, Clock, Sparkles, Eye, Monitor, MessageCircle, Share2, Bookmark, X } from 'lucide-react';
+import { Search, Grid, List, Sparkles, Eye, Monitor, MessageCircle, X, Users, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import SearchSuggest from '@/components/SearchSuggest';
 import SEOHead from '@/components/SEOHead';
 import SplitScreenView from '@/components/SplitScreenView';
-import ReportButton from '@/components/ReportButton';
-import SaveButton from '@/components/SaveButton';
-import ShareButton from '@/components/ShareButton';
 import CommentSection from '@/components/CommentSection';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import FullscreenViewer from '@/components/FullscreenViewer';
+import FollowButton from '@/components/FollowButton';
 import { cn } from '@/lib/utils';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
-import { searchContentAsync, ContentIndexItem, getTrendingContent, getAllContent } from '@/lib/content-index';
+import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
 
 type SearchItem = ContentIndexItem;
 
@@ -30,7 +28,9 @@ const SearchPage: React.FC = () => {
   const [viewMode, setViewMode] = useState<'grid' | 'list' | 'split'>('grid');
   const [sortBy, setSortBy] = useState('relevance');
   const [filterCategory, setFilterCategory] = useState('all');
+  const [activeTab, setActiveTab] = useState<'all' | 'people' | 'content'>('all');
   const [results, setResults] = useState<SearchItem[]>(getAllContent().slice(0, 12));
+  const [userResults, setUserResults] = useState<SearchedUser[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [isAiRecommended, setIsAiRecommended] = useState(false);
@@ -43,6 +43,7 @@ const SearchPage: React.FC = () => {
   const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image'>('image');
   const [showTagBar, setShowTagBar] = useState(false);
   const [currentTag, setCurrentTag] = useState<string>('');
+  const requestIdRef = useRef(0);
 
   const query = searchParams.get('q') || '';
   const category = searchParams.get('category') || '';
@@ -122,37 +123,50 @@ const SearchPage: React.FC = () => {
     showSuccess('🔗 Link copied to clipboard!');
   };
 
-  // Search using content index (sync + async refresh)
-  const filterResults = useCallback(async (searchQuery: string) => {
-    // 1. Try sync search with cached data first
-    const { results: syncResults, isAiRecommended: aiRec } = searchContent(searchQuery);
-    setIsAiRecommended(aiRec);
-    if (syncResults.length > 0) return syncResults;
-
-    // 2. Fall back to async search (waits for API)
+  // Unified people + content search (real data only, honest empty, race-safe)
+  const filterResults = useCallback(async (searchQuery: string, reqId: number) => {
+    // 1. Instant sync content results from cache
     try {
-      const { results, isAiRecommended: aiRec2 } = await searchContentAsync(searchQuery);
-      setIsAiRecommended(aiRec2);
-      return results;
+      const sync = searchContent(searchQuery);
+      if (reqId === requestIdRef.current && sync.results.length > 0) {
+        setResults(sync.results);
+      }
+    } catch { /* ignore sync errors */ }
+
+    // 2. Authoritative async search (people + content from server)
+    try {
+      const { results, users, isAiRecommended: aiRec } = await searchContentAsync(searchQuery);
+      if (reqId !== requestIdRef.current) return;
+      setResults(results);
+      setUserResults(users || []);
+      setIsAiRecommended(aiRec);
     } catch {
-      return [];
+      if (reqId !== requestIdRef.current) return;
+      setResults([]);
+      setUserResults([]);
+      setIsAiRecommended(false);
     }
   }, []);
 
-  // Perform search when query changes
+  // Perform search when query changes (debounced, lag-free)
   useEffect(() => {
     if (query) {
       setIsLoading(true);
+      const reqId = ++requestIdRef.current;
       const timer = setTimeout(async () => {
-        const filteredResults = await filterResults(query);
-        setResults(filteredResults);
-        setIsLoading(false);
-        setIsInitialLoad(false);
-      }, 400);
+        await filterResults(query, reqId);
+        if (reqId === requestIdRef.current) {
+          setIsLoading(false);
+          setIsInitialLoad(false);
+        }
+      }, 300);
       return () => clearTimeout(timer);
     } else {
+      requestIdRef.current++;
       setResults(getAllContent().slice(0, 12));
+      setUserResults([]);
       setIsAiRecommended(false);
+      setIsLoading(false);
       setIsInitialLoad(false);
     }
   }, [query, filterResults]);
@@ -177,13 +191,17 @@ const SearchPage: React.FC = () => {
     setSearchParams({ q: searchQuery });
   };
 
+  const handleOpenProfile = (u: SearchedUser) => {
+    if (!u?.id) return;
+    navigate(`/profile/${encodeURIComponent(u.id)}`);
+  };
+
   const handleSortChange = (value: string) => {
     setSortBy(value);
-    // Implement sorting logic
     const sortedResults = [...results].sort((a, b) => {
       switch (value) {
         case 'views':
-          return parseInt(b.views) - parseInt(a.views);
+          return (parseInt(String(b.views).replace(/[^0-9]/g, '')) || 0) - (parseInt(String(a.views).replace(/[^0-9]/g, '')) || 0);
         case 'newest':
           return new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime();
         case 'oldest':
@@ -195,25 +213,23 @@ const SearchPage: React.FC = () => {
     setResults(sortedResults);
   };
 
-  const handleRelatedSearch = (searchQuery: string) => {
-    setSearchParams({ q: searchQuery });
-  };
-
+  // Category is a display filter over the current real search results —
+  // it never replaces the query with unrelated content.
   const handleCategoryFilter = (value: string) => {
     setFilterCategory(value);
-    const all = getAllContent();
-    if (value === 'all') {
-      setResults(all.slice(0, 20));
-    } else {
-      const filtered = all.filter(result => result.category === value);
-      setResults(filtered);
+    if (!query && value === 'all') {
+      setResults(getAllContent().slice(0, 20));
     }
   };
 
+  const visibleResults = filterCategory === 'all'
+    ? results
+    : results.filter((r) => r.category === filterCategory);
+
   const handleSplitScreenToggle = () => {
     setShowSplitScreen(!showSplitScreen);
-    if (!showSplitScreen && results.length > 0) {
-      setSelectedItem(results[0]);
+    if (!showSplitScreen && visibleResults.length > 0) {
+      setSelectedItem(visibleResults[0]);
     }
   };
 
@@ -234,7 +250,7 @@ const SearchPage: React.FC = () => {
         title={query ? `Search results for "${query}"` : undefined}
         searchQuery={query}
         category={category}
-        resultsCount={results.length}
+        resultsCount={results.length + userResults.length}
         canonicalUrl={typeof window !== 'undefined' ? window.location.href : undefined}
       />
       
@@ -315,46 +331,91 @@ const SearchPage: React.FC = () => {
         <div className="container mx-auto px-4 py-6">
           {/* Results Header */}
           <div className="mb-6">
-            <div className="flex items-center justify-between">
-              <div>
-                <h1 className="text-2xl font-bold mb-2">
-                  {query ? `Search results for "${query}"` : 'Discover Content'}
-                </h1>
-                <p className="text-muted-foreground">
-                  {isLoading ? 'Searching...' : `Found ${results.length} results${query ? ` for "${query}"` : ''}`}
-                  {isAiRecommended && !isLoading && (
-                    <span className="ml-2 inline-flex items-center gap-1 text-xs bg-gradient-to-r from-purple-100 to-blue-100 dark:from-purple-900/30 dark:to-blue-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full font-medium">
-                      <Sparkles className="h-3 w-3" />
-                      AI Recommended
-                    </span>
-                  )}
-                </p>
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center justify-between flex-wrap gap-3">
+                <div>
+                  <h1 className="text-2xl font-bold mb-2">
+                    {query ? `Search results for "${query}"` : 'Discover Content'}
+                  </h1>
+                  <p className="text-muted-foreground">
+                    {isLoading
+                      ? 'Searching people and content...'
+                      : query
+                        ? `Found ${userResults.length} ${userResults.length === 1 ? 'person' : 'people'} and ${results.length} ${results.length === 1 ? 'post' : 'posts'} for "${query}"`
+                        : `Showing ${results.length} posts`}
+                    {isAiRecommended && !isLoading && (results.length > 0 || userResults.length > 0) && (
+                      <span className="ml-2 inline-flex items-center gap-1 text-xs bg-gradient-to-r from-purple-100 to-blue-100 dark:from-purple-900/30 dark:to-blue-900/30 text-purple-700 dark:text-purple-300 px-2 py-0.5 rounded-full font-medium">
+                        <Sparkles className="h-3 w-3" />
+                        Personalized
+                      </span>
+                    )}
+                  </p>
+                </div>
               </div>
-              
-                {/* Search Suggestions - Simplified */}
-                {query && (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">Try:</span>
-                    <div className="flex gap-2">
-                      <Badge 
-                        variant="secondary" 
-                        className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
-                        onClick={() => handleRelatedSearch(`${query} tutorial`)}
-                      >
-                        {query} tutorial
-                      </Badge>
-                      <Badge 
-                        variant="secondary" 
-                        className="cursor-pointer hover:bg-primary hover:text-primary-foreground"
-                        onClick={() => handleRelatedSearch(`best ${query}`)}
-                      >
-                        best {query}
-                      </Badge>
-                    </div>
-                  </div>
-                )}
+              {/* People / Content tabs */}
+              {query && (
+                <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as 'all' | 'people' | 'content')}>
+                  <TabsList className="w-fit">
+                    <TabsTrigger value="all" className="flex items-center gap-1.5">
+                      <Search className="h-3.5 w-3.5" /> All ({userResults.length + results.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="people" className="flex items-center gap-1.5">
+                      <Users className="h-3.5 w-3.5" /> People ({userResults.length})
+                    </TabsTrigger>
+                    <TabsTrigger value="content" className="flex items-center gap-1.5">
+                      <FileText className="h-3.5 w-3.5" /> Content ({results.length})
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
+              )}
             </div>
           </div>
+
+          {/* People results */}
+          {!isLoading && !isInitialLoad && query && (activeTab === 'all' || activeTab === 'people') && userResults.length > 0 && (
+            <div className="mb-8">
+              <h2 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                <Users className="h-4 w-4" /> People
+              </h2>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {userResults.map((u) => (
+                  <Card key={u.id} className="hover:shadow-md transition-shadow">
+                    <CardContent className="p-4 flex items-center gap-3">
+                      <Avatar
+                        className="h-12 w-12 cursor-pointer shrink-0"
+                        onClick={() => handleOpenProfile(u)}
+                      >
+                        <AvatarImage src={u.avatar || undefined} alt={u.username || u.name || 'User'} />
+                        <AvatarFallback>{(u.username || u.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div
+                          className="font-semibold truncate cursor-pointer hover:text-primary"
+                          onClick={() => handleOpenProfile(u)}
+                        >
+                          {u.username || u.name || 'User'}
+                          {u.verified && <span className="ml-1 text-primary">✓</span>}
+                        </div>
+                        {u.name && u.username && u.name !== u.username && (
+                          <div className="text-sm text-muted-foreground truncate">{u.name}</div>
+                        )}
+                        {u.bio && <div className="text-xs text-muted-foreground truncate mt-0.5">{u.bio}</div>}
+                        <div className="text-xs text-muted-foreground mt-0.5">
+                          {(u.followers ?? 0)} followers{u.isPrivate ? ' • Private' : ''}
+                        </div>
+                      </div>
+                      <div className="flex flex-col gap-2 shrink-0">
+                        <FollowButton userId={u.id} userName={u.username || u.name || 'user'} size="sm" />
+                        <Button variant="ghost" size="sm" onClick={() => handleOpenProfile(u)}>
+                          View
+                        </Button>
+                      </div>
+                    </CardContent>
+                  </Card>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Tag Bar */}
           {showTagBar && currentTag && (
@@ -430,38 +491,38 @@ const SearchPage: React.FC = () => {
           {/* Split Screen View */}
           {showSplitScreen && (
             <SplitScreenView
-              items={results}
+              items={visibleResults}
               selectedItem={selectedItem}
               onSelectItem={handleSelectItem}
               onClose={handleCloseSplitScreen}
             />
           )}
 
-          {/* AI Recommendation Banner */}
-          {!isLoading && !isInitialLoad && isAiRecommended && query && results.length > 0 && (
+          {/* AI Recommendation Banner — only when real matches exist */}
+          {!isLoading && !isInitialLoad && isAiRecommended && query && (results.length > 0 || userResults.length > 0) && (
             <div className="mb-6 p-4 bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-950/30 dark:to-blue-950/30 border border-purple-200/50 dark:border-purple-800/30 rounded-lg">
               <div className="flex items-start gap-3">
                 <Sparkles className="h-5 w-5 text-purple-500 mt-0.5 shrink-0" />
                 <div>
                   <p className="text-sm font-medium text-purple-700 dark:text-purple-300">
-                    AI Recommendation for "{query}"
+                    Personalized results for "{query}"
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Showing popular and trending content that matches your search. Try refining your search for more specific results.
+                    Ranked for you based on your interests. Only real Equyvo people and posts are shown.
                   </p>
                 </div>
               </div>
             </div>
           )}
 
-          {/* Results Grid/List */}
-          {!isLoading && !isInitialLoad && !showSplitScreen && results.length > 0 && (
+          {/* Results Grid/List — respects People/Content tabs */}
+          {!isLoading && !isInitialLoad && !showSplitScreen && visibleResults.length > 0 && (activeTab === 'all' || activeTab === 'content') && (
             <div className={cn(
               viewMode === 'grid' 
                 ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6' 
                 : 'space-y-4'
             )}>
-              {results.map((result) => (
+              {visibleResults.map((result) => (
                 <Card key={result.id} className="group hover:shadow-lg transition-all duration-300 cursor-pointer" onClick={() => handleOpenFullscreen(result, getFullscreenType(result.type))}>
                   {viewMode === 'grid' ? (
                     // Grid View
@@ -655,13 +716,13 @@ const SearchPage: React.FC = () => {
             </div>
           )}
 
-          {/* No Results */}
-          {!isLoading && !isInitialLoad && results.length === 0 && (
+          {/* No Results — honest empty state for people + content */}
+          {!isLoading && !isInitialLoad && ((activeTab === 'all' && visibleResults.length === 0 && userResults.length === 0) || (activeTab === 'people' && userResults.length === 0) || (activeTab === 'content' && visibleResults.length === 0)) && (
             <div className="text-center py-12">
               <Search className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-semibold mb-2">No exact matches found</h3>
+              <h3 className="text-lg font-semibold mb-2">No results found</h3>
               <p className="text-muted-foreground mb-4">
-                {query ? `No content matches "${query}" exactly` : 'No content available'}
+                {query ? `No people or content on Equyvo match "${query}"` : 'No content available yet — be the first to post!'}
               </p>
               <div className="space-y-2">
                 <p className="text-sm text-muted-foreground">Try:</p>

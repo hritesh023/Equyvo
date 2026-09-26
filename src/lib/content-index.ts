@@ -92,29 +92,54 @@ function characterFuzzyScore(query: string, text: string): number {
 }
 
 // Search content using API with client-side fallback
+export interface SearchedUser {
+  id: string;
+  name?: string;
+  username?: string;
+  avatar?: string;
+  bio?: string;
+  isPrivate?: boolean;
+  restricted?: boolean;
+  followers?: number;
+  following?: number;
+  verified?: boolean;
+}
+
+export interface UnifiedSearchResult {
+  results: ContentIndexItem[];
+  users: SearchedUser[];
+  totalCount: number;
+  userCount: number;
+  isAiRecommended: boolean;
+}
+
 export async function searchContentAsync(query: string): Promise<{
   results: ContentIndexItem[];
+  users: SearchedUser[];
   totalCount: number;
+  userCount: number;
   isAiRecommended: boolean;
 }> {
   const trimmed = query.trim();
   
-  // Try API search first
+  // Try API search first (unified people + content, real data only)
   try {
     const { data, error } = await api.search(trimmed);
     if (!error && data) {
       return {
         results: data.results || [],
+        users: (data as any).users || [],
         totalCount: data.totalCount || 0,
+        userCount: (data as any).userCount || ((data as any).users || []).length,
         isAiRecommended: data.isAiRecommended || false,
       };
     }
   } catch {}
   
-  // Fallback to client-side search on cached index
+  // Fallback to client-side search on cached index (honest empty — never invent)
   const index = await getIndex();
   if (!trimmed) {
-    return { results: index.slice(0, 12), totalCount: index.length, isAiRecommended: true };
+    return { results: index.slice(0, 12), users: [], totalCount: index.length, userCount: 0, isAiRecommended: false };
   }
   
   const q = trimmed.toLowerCase();
@@ -155,18 +180,21 @@ export async function searchContentAsync(query: string): Promise<{
   const matching = scored.filter(s => s.score >= threshold);
   matching.sort((a, b) => b.score - a.score);
   
+  // Honest empty: no filler content when nothing matches.
   if (matching.length === 0) {
-    const sorted = [...scored].sort((a, b) => b.score - a.score);
-    return { results: sorted.slice(0, 12).map(s => s.item), totalCount: index.length, isAiRecommended: true };
+    return { results: [], users: [], totalCount: 0, userCount: 0, isAiRecommended: false };
   }
   
-  return { results: matching.slice(0, 20).map(s => s.item), totalCount: matching.length, isAiRecommended: false };
+  return { results: matching.slice(0, 20).map(s => s.item), users: [], totalCount: matching.length, userCount: 0, isAiRecommended: false };
 }
 
 // Sync search function - returns cached data immediately, refreshes async
+// Honest empty: never returns filler content for non-matching queries.
 export function searchContent(query: string): {
   results: ContentIndexItem[];
+  users: SearchedUser[];
   totalCount: number;
+  userCount: number;
   isAiRecommended: boolean;
 } {
   const trimmed = query.trim();
@@ -174,7 +202,7 @@ export function searchContent(query: string): {
   // Try cached index first
   if (cachedIndex && cachedIndex.length > 0) {
     if (!trimmed) {
-      return { results: cachedIndex.slice(0, 12), totalCount: cachedIndex.length, isAiRecommended: false };
+      return { results: cachedIndex.slice(0, 12), users: [], totalCount: cachedIndex.length, userCount: 0, isAiRecommended: false };
     }
 
     const q = trimmed.toLowerCase();
@@ -201,18 +229,17 @@ export function searchContent(query: string): {
     matching.sort((a, b) => b.score - a.score);
 
     if (matching.length === 0) {
-      scored.sort((a, b) => b.score - a.score);
-      return { results: scored.slice(0, 12).map(s => s.item), totalCount: scored.length, isAiRecommended: true };
+      return { results: [], users: [], totalCount: 0, userCount: 0, isAiRecommended: false };
     }
 
-    return { results: matching.slice(0, 20).map(s => s.item), totalCount: matching.length, isAiRecommended: false };
+    return { results: matching.slice(0, 20).map(s => s.item), users: [], totalCount: matching.length, userCount: 0, isAiRecommended: false };
   }
 
   // No cache yet - kick off async fetch
   if (trimmed) {
     searchContentAsync(trimmed).catch(() => {});
   }
-  return { results: [], totalCount: 0, isAiRecommended: true };
+  return { results: [], totalCount: 0, users: [], userCount: 0, isAiRecommended: false };
 }
 
 export function getContentByCategory(category: string): ContentIndexItem[] {

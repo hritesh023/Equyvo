@@ -1,5 +1,5 @@
 import { useState, useCallback, useMemo } from 'react';
-import { searchContent, getTrendingContent, getAllContent } from './content-index';
+import { searchContent, getAllContent } from './content-index';
 import { brainSearchSuggest, brainLearn } from './brain';
 
 // Types for search suggestions
@@ -100,7 +100,7 @@ class AISearchService {
       suggestions.push(...backendSuggestions);
     }
 
-    // 2. Local contextual suggestions (always generate as supplement/fallback)
+    // 2. Local contextual suggestions grounded in real content (supplement)
     const localSuggestions = this.generateContextualSuggestions(queryLower);
     suggestions.push(...localSuggestions);
 
@@ -112,9 +112,9 @@ class AISearchService {
     const trendingSuggestions = this.getTrendingSuggestions(queryLower);
     suggestions.push(...trendingSuggestions);
 
-    // 5. SEO-optimized autocomplete suggestions
-    const seoSuggestions = this.generateSEOSuggestions(queryLower);
-    suggestions.push(...seoSuggestions);
+    // 5. Real tag/category completions from actual Equyvo content (never invented)
+    const realSuggestions = this.generateRealCompletions(queryLower);
+    suggestions.push(...realSuggestions);
 
     // Deduplicate by label
     const seen = new Set<string>();
@@ -243,6 +243,8 @@ class AISearchService {
     }
 
     // If no keyword pattern matched, try content-index-based suggestions
+    // (real Equyvo content only). Honest empty when nothing matches — the
+    // search page will show "No results found" instead of invented filler.
     if (matchedSuggestions.length === 0) {
       const indexResults = searchContent(query);
       if (indexResults.results.length > 0 && !indexResults.isAiRecommended) {
@@ -259,48 +261,51 @@ class AISearchService {
       }
     }
 
-    // Always return suggestions for any input, including random strings
-    if (matchedSuggestions.length === 0) {
-      return this.generateGeneralSuggestions(query);
-    }
-
     return matchedSuggestions;
   }
 
-  // Generate general suggestions when no specific pattern matches
-  private generateGeneralSuggestions(query: string): SearchSuggestion[] {
-    // For any input (including random strings like "nghxftg"), generate creative suggestions
-    const generalSuggestions = [
-      { label: `${query} tutorials`, category: 'Education', description: `Learn everything about ${query}` },
-      { label: `${query} explained`, category: 'Education', description: `What is ${query}? Complete guide` },
-      { label: `${query} tips`, category: 'Lifestyle', description: `Tips and tricks for ${query}` },
-      { label: `best ${query}`, category: 'Top Picks', description: `Best ${query} recommendations` },
-      { label: `${query} review`, category: 'Reviews', description: `Honest review of ${query}` },
-      { label: `${query} moments`, category: 'Moments', description: `Share your ${query} moments` },
-      { label: `thoughts on ${query}`, category: 'Thoughts', description: `Deep thoughts about ${query}` },
-      { label: `${query} videos`, category: 'Video', description: `Watch ${query} video content` }
-    ];
+  // Real completions from actual Equyvo content (tags/categories/titles).
+  // Never invents `${query} tutorials`-style filler.
+  private generateRealCompletions(query: string): SearchSuggestion[] {
+    try {
+      const all = getAllContent();
+      if (!all.length || !query) return [];
+      const q = query.toLowerCase();
+      const seen = new Set<string>();
+      const out: SearchSuggestion[] = [];
+      for (const item of all) {
+        const candidates = [
+          ...(item.tags || []),
+          item.category || '',
+        ].filter(Boolean);
+        for (const cand of candidates) {
+          const c = String(cand).trim();
+          const cl = c.toLowerCase();
+          if (c && cl.includes(q) && !seen.has(cl) && out.length < 4) {
+            seen.add(cl);
+            out.push({
+              id: `real-${cl}`,
+              label: c,
+              category: item.category || 'Tag',
+              description: `Real Equyvo ${item.category || 'content'}`,
+              type: 'trending',
+              confidence: 0.65,
+            });
+          }
+        }
+        if (out.length >= 4) break;
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
 
-    const result = generalSuggestions.map(suggestion => ({
-      id: `general-${Math.random().toString(36).substr(2, 9)}`,
-      ...suggestion,
-      type: 'ai-generated' as const,
-      confidence: 0.6
-    }));
-
-    // Also mix in trending content from the app for better discovery
-    const trending = getTrendingContent().slice(0, 3);
-    const trendingSuggestions = trending.map(item => ({
-      id: `trending-${item.id}`,
-      label: item.title,
-      category: item.category,
-      description: item.description.slice(0, 60) + '...',
-      type: 'trending' as const,
-      confidence: 0.75,
-      metadata: { contentId: item.id }
-    }));
-
-    return [...result, ...trendingSuggestions];
+  // Legacy invented-suggestion generator removed: returning fake
+  // `${query} tutorials`-style rows for random strings is bot-like data.
+  // Kept as an empty stub so older callers don't break.
+  private generateGeneralSuggestions(_query: string): SearchSuggestion[] {
+    return [];
   }
 
   // Get recent search suggestions
@@ -401,71 +406,11 @@ class AISearchService {
     return Math.min(score / queryWords.length, 1);
   }
 
-  // Generate SEO-optimized autocomplete suggestions
-  private generateSEOSuggestions(query: string): SearchSuggestion[] {
-    const seoPatterns = [
-      // High-intent commercial keywords
-      { suffix: 'tutorial', category: 'Education', description: 'Step-by-step guides and tutorials' },
-      { suffix: 'guide', category: 'Education', description: 'Comprehensive guides and walkthroughs' },
-      { suffix: 'tips', category: 'Lifestyle', description: 'Helpful tips and tricks' },
-      { suffix: 'ideas', category: 'Creative', description: 'Creative ideas and inspiration' },
-      { suffix: 'examples', category: 'Education', description: 'Real-world examples and case studies' },
-      { suffix: 'best', category: 'Reviews', description: 'Best recommendations and reviews' },
-      { suffix: 'top', category: 'Reviews', description: 'Top-rated content and services' },
-      { suffix: 'free', category: 'Lifestyle', description: 'Free resources and tools' },
-      { suffix: 'online', category: 'Technology', description: 'Online courses and resources' },
-      { suffix: 'course', category: 'Education', description: 'Educational courses and programs' },
-      { suffix: 'how to', category: 'Education', description: 'How-to guides and instructions' },
-      { suffix: 'for beginners', category: 'Education', description: 'Beginner-friendly content' },
-      { suffix: 'advanced', category: 'Education', description: 'Advanced techniques and methods' },
-      { suffix: 'vs', category: 'Reviews', description: 'Comparisons and alternatives' },
-      { suffix: 'review', category: 'Reviews', description: 'In-depth reviews and analysis' }
-    ];
-
-    const seoSuggestions: SearchSuggestion[] = [];
-
-    // Generate combinations with SEO-friendly suffixes
-    for (const pattern of seoPatterns) {
-      if (query.length >= 1) {
-        const suggestion1 = `${query} ${pattern.suffix}`;
-        const suggestion2 = `${pattern.suffix} ${query}`;
-        
-        seoSuggestions.push({
-          id: `seo-${Math.random().toString(36).substr(2, 9)}`,
-          label: suggestion1,
-          category: pattern.category,
-          description: pattern.description,
-          type: 'ai-generated',
-          confidence: 0.7
-        });
-
-        if (pattern.suffix !== 'vs' && pattern.suffix !== 'for beginners') {
-          seoSuggestions.push({
-            id: `seo-${Math.random().toString(36).substr(2, 9)}`,
-            label: suggestion2,
-            category: pattern.category,
-            description: pattern.description,
-            type: 'ai-generated',
-            confidence: 0.65
-          });
-        }
-      }
-    }
-
-    // Add location-based suggestions for better local SEO
-    const locations = ['near me', 'in 2024', 'for students', 'for professionals'];
-    for (const location of locations) {
-      seoSuggestions.push({
-        id: `seo-${Math.random().toString(36).substr(2, 9)}`,
-        label: `${query} ${location}`,
-        category: 'Local',
-        description: `Local ${query} options and services`,
-        type: 'ai-generated',
-        confidence: 0.6
-      });
-    }
-
-    return seoSuggestions.slice(0, 6); // Limit SEO suggestions
+  // Removed: invented SEO autocomplete (`${query} tutorial`, `${query} near me`,
+  // etc.) is fake data for random strings. Suggestions now come only from real
+  // Equyvo content, backend suggestions, recent searches, and trending topics.
+  private generateSEOSuggestions(_query: string): SearchSuggestion[] {
+    return [];
   }
 
   // Get relative time for display

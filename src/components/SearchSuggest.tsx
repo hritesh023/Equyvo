@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, TrendingUp, Clock, Sparkles, Brain, ArrowRight, X } from 'lucide-react';
+import { Search, TrendingUp, Clock, Sparkles, Brain, ArrowRight, X, Users } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { useAISearch, SearchSuggestion } from '@/lib/ai-search';
+import api from '@/lib/api';
 
 interface SearchSuggestProps {
   onSearch?: (query: string) => void;
@@ -31,6 +33,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   const [isOpen, setIsOpen] = useState(false);
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [isSearching, setIsSearching] = useState(false);
+  const [people, setPeople] = useState<Array<{ id: string; username?: string; name?: string; avatar?: string; bio?: string; verified?: boolean }>>([]);
   
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -63,16 +66,31 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     localStorage.setItem('search_events', JSON.stringify(events.slice(-100))); // Keep last 100 events
   }, []);
 
-  // Generate suggestions with debouncing
+  // Generate suggestions with debouncing (content) + real people matches
   useEffect(() => {
+    let cancelled = false;
     const timeoutId = setTimeout(() => {
-      if (query.trim()) {
-        generateSuggestions(query.trim());
-        trackSearchEvent(query.trim(), 'suggestion_request');
+      const q = query.trim();
+      if (q) {
+        generateSuggestions(q);
+        trackSearchEvent(q, 'suggestion_request');
+        // Real people matches from the server (bounded, best-effort).
+        api.search(q, 5).then(({ data, error }) => {
+          if (cancelled || error || !data) return;
+          const users = ((data as unknown as { users?: Array<{ id: string; username?: string; name?: string; avatar?: string; bio?: string; verified?: boolean }> }).users) || [];
+          setPeople(users.slice(0, 3));
+        }).catch(() => {
+          if (!cancelled) setPeople([]);
+        });
+      } else {
+        setPeople([]);
       }
-    }, 100); // Reduced debounce to 100ms for instant real-time response
+    }, 200);
 
-    return () => clearTimeout(timeoutId);
+    return () => {
+      cancelled = true;
+      clearTimeout(timeoutId);
+    };
   }, [query, generateSuggestions, trackSearchEvent]);
 
   // Close dropdown when clicking outside
@@ -285,14 +303,51 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                 <Brain className="h-5 w-5 mx-auto mb-2 text-primary" />
                 <p>AI is thinking...</p>
               </div>
-            ) : suggestions.length === 0 && query ? (
+            ) : suggestions.length === 0 && people.length === 0 && query ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 <Search className="h-5 w-5 mx-auto mb-2 text-muted-foreground" />
                 <p>No suggestions found for "{query}"</p>
-                <p className="text-xs mt-1">Try a different search term</p>
+                <p className="text-xs mt-1">Press Enter to search — we will show an honest "No results found" if nothing exists.</p>
               </div>
             ) : (
               <>
+                {/* People — real matching Equyvo accounts */}
+                {people.length > 0 && (
+                  <div className="p-2">
+                    <div className="px-3 py-2 text-xs font-medium text-muted-foreground flex items-center gap-2">
+                      <Users className="h-3 w-3 text-primary" />
+                      People
+                    </div>
+                    {people.map((p) => (
+                      <button
+                        key={`person-${p.id}`}
+                        onClick={() => {
+                          setIsOpen(false);
+                          saveSearch(query.trim());
+                          navigate(`/profile/${encodeURIComponent(p.id)}`);
+                        }}
+                        className="w-full flex items-center gap-3 p-2.5 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group"
+                        role="option"
+                        aria-selected={false}
+                      >
+                        <Avatar className="h-8 w-8 shrink-0">
+                          <AvatarImage src={p.avatar || undefined} alt={p.username || p.name || 'User'} />
+                          <AvatarFallback className="text-xs">{(p.username || p.name || 'U').charAt(0).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        <div className="flex-1 min-w-0">
+                          <div className="font-medium text-sm group-hover:text-primary truncate">
+                            {p.username || p.name || 'User'}
+                            {p.verified && <span className="ml-1 text-primary">✓</span>}
+                          </div>
+                          {p.bio && (
+                            <div className="text-xs text-muted-foreground truncate">{p.bio}</div>
+                          )}
+                        </div>
+                        <ArrowRight className="h-3 w-3 text-muted-foreground group-hover:text-primary shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* AI-Generated Suggestions */}
                 {groupedSuggestions['ai-generated'] && groupedSuggestions['ai-generated'].length > 0 && (
                   <div className="p-2">

@@ -10,14 +10,12 @@ import {
   Bell,
   Shield,
   Palette,
-  HelpCircle,
   LogOut,
   Globe,
   Lock,
   Eye,
   EyeOff,
   Trash2,
-  Download,
   User,
   Mail,
   Megaphone
@@ -159,6 +157,12 @@ const SettingsPage = () => {
 
   const handlePushToggle = async (next: boolean) => {
     setNotifications(next);
+    try {
+      localStorage.setItem('notifications', String(next));
+    } catch { /* ignore */ }
+    try {
+      window.dispatchEvent(new CustomEvent('settingsChanged', { detail: { key: 'notifications', value: next } }));
+    } catch { /* ignore */ }
     if (next) {
       const granted = await requestPushPermission();
       if (!granted) {
@@ -167,15 +171,47 @@ const SettingsPage = () => {
         showSuccess('Push notifications on — you will get follow, live and new-upload alerts.');
       }
       syncNotificationsFromServer().catch(() => {});
+    } else {
+      showSuccess('Push notifications off — you will no longer get system alerts. In-app notifications still work.');
     }
   };
 
-  useEffect(() => {
-    localStorage.setItem('messageRequests', messageRequests.toString());
-  }, [messageRequests]);
+  // Every toggle persists immediately, notifies the rest of the app, and
+  // confirms visibly — no dead switches.
+  const applyToggle = (key: string, value: boolean, onMsg: string, offMsg: string) => {
+    try {
+      localStorage.setItem(key, String(value));
+    } catch { /* ignore */ }
+    try {
+      window.dispatchEvent(new CustomEvent('settingsChanged', { detail: { key, value } }));
+    } catch { /* ignore */ }
+    showSuccess(value ? onMsg : offMsg);
+  };
 
+  const handleShowEmailChange = async (next: boolean) => {
+    setShowEmail(next);
+    applyToggle('showEmail', next, 'Your email will be shown on your profile.', 'Your email is hidden from your profile.');
+    // Persist to the server profile too so it applies on every device.
+    try {
+      if (user?.id) {
+        await api.updateProfile({ id: user.id, showEmail: next });
+      }
+    } catch { /* local flag is the fallback */ }
+  };
+
+  const handleCompactChange = (next: boolean) => {
+    setCompactView(next);
+    try {
+      document.documentElement.classList.toggle('equyvo-compact', next);
+    } catch { /* ignore */ }
+    applyToggle('compactView', next, 'Compact view on — denser feeds.', 'Comfortable view restored.');
+  };
+
+  // Apply compact mode class on mount so the toggle visibly changes the app.
   useEffect(() => {
-    localStorage.setItem('compactView', compactView.toString());
+    try {
+      document.documentElement.classList.toggle('equyvo-compact', compactView);
+    } catch { /* ignore */ }
   }, [compactView]);
 
   useEffect(() => {
@@ -234,42 +270,24 @@ const SettingsPage = () => {
     }
   };
 
-  const handleExportData = async () => {
+  const handleContactSupport = async () => {
+    const email = 'support@equyvo.app';
     try {
-      // Get user profile data from localStorage
-      const userProfile = localStorage.getItem('userProfile');
-      const settings = {
-        notifications,
-        darkMode,
-        privateProfile,
-        showEmail,
-        emailNotifications,
-        messageRequests,
-        compactView
-      };
-      
-      const exportData = {
-        profile: userProfile ? JSON.parse(userProfile) : null,
-        settings,
-        exportDate: new Date().toISOString()
-      };
-      
-      // Create and download JSON file
-      const dataStr = JSON.stringify(exportData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const url = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = `equyvo-data-export-${new Date().toISOString().split('T')[0]}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-      
-      showSuccess("Your data has been exported successfully!");
-    } catch (error) {
-      showError('Failed to export data');
-    }
+      await navigator.clipboard.writeText(email);
+    } catch { /* clipboard may be unavailable */ }
+    showSuccess(`Support email copied: ${email}`);
+    try {
+      window.open(`mailto:${email}?subject=${encodeURIComponent('Equyvo support request')}`, '_blank');
+    } catch { /* ignore */ }
+  };
+
+  const handleViewProfile = () => {
+    showSuccess('Opening your profile…');
+    navigate('/app/profile');
+  };
+
+  const handleSeePlans = () => {
+    navigate('/app/pricing');
   };
 
   return (
@@ -315,7 +333,7 @@ const SettingsPage = () => {
             </div>
             <Switch 
               checked={showEmail}
-              onCheckedChange={setShowEmail}
+              onCheckedChange={handleShowEmailChange}
             />
           </div>
         </CardContent>
@@ -357,7 +375,10 @@ const SettingsPage = () => {
             </div>
             <Switch
               checked={pushUploads}
-              onCheckedChange={setPushUploads}
+              onCheckedChange={(next) => {
+                setPushUploads(next);
+                applyToggle('pushUploads', next, 'New-upload alerts on.', 'New-upload alerts off.');
+              }}
             />
           </div>
 
@@ -372,7 +393,10 @@ const SettingsPage = () => {
             </div>
             <Switch
               checked={liveAlerts}
-              onCheckedChange={setLiveAlerts}
+              onCheckedChange={(next) => {
+                setLiveAlerts(next);
+                applyToggle('liveAlerts', next, 'Live alerts on.', 'Live alerts off.');
+              }}
             />
           </div>
 
@@ -387,7 +411,10 @@ const SettingsPage = () => {
             </div>
             <Switch 
               checked={emailNotifications}
-              onCheckedChange={setEmailNotifications}
+              onCheckedChange={(next) => {
+                setEmailNotifications(next);
+                applyToggle('emailNotifications', next, 'Email updates on.', 'Email updates off.');
+              }}
             />
           </div>
 
@@ -402,7 +429,10 @@ const SettingsPage = () => {
             </div>
             <Switch 
               checked={messageRequests}
-              onCheckedChange={setMessageRequests}
+              onCheckedChange={(next) => {
+                setMessageRequests(next);
+                applyToggle('messageRequests', next, 'Message requests allowed from anyone.', 'Message requests limited to people you follow.');
+              }}
             />
           </div>
         </CardContent>
@@ -429,7 +459,10 @@ const SettingsPage = () => {
             </div>
             <Switch 
               checked={darkMode}
-              onCheckedChange={setDarkMode}
+              onCheckedChange={(next) => {
+                setDarkMode(next);
+                showSuccess(next ? 'Dark mode on.' : 'Light mode on.');
+              }}
             />
           </div>
 
@@ -444,7 +477,7 @@ const SettingsPage = () => {
             </div>
             <Switch 
               checked={compactView}
-              onCheckedChange={setCompactView}
+              onCheckedChange={handleCompactChange}
             />
           </div>
         </CardContent>
@@ -472,7 +505,10 @@ const SettingsPage = () => {
             </div>
             <Switch
               checked={personalizedAds}
-              onCheckedChange={setPersonalizedAds}
+              onCheckedChange={(next) => {
+                setPersonalizedAds(next);
+                applyToggle('equyvo_ads_personalized', next, 'Personalized sponsored cards on.', 'Generic sponsored cards only.');
+              }}
             />
           </div>
 
@@ -485,39 +521,28 @@ const SettingsPage = () => {
                 Premium and Creator plans remove all sponsored cards.
               </p>
             </div>
-            <Button variant="outline" size="sm" onClick={() => navigate('/pricing')}>
+            <Button variant="outline" size="sm" onClick={handleSeePlans}>
               See plans
             </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Data & Account */}
+      {/* Account */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
-            <Download className="h-5 w-5" />
-            Data & Account
+            <User className="h-5 w-5" />
+            Account
           </CardTitle>
           <CardDescription>
-            Manage your data and account
+            Manage your profile and account
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <Button 
             variant="outline" 
-            onClick={handleExportData}
-            className="w-full justify-start"
-          >
-            <Download className="h-4 w-4 mr-2" />
-            Export Your Data
-          </Button>
-
-          <Separator />
-
-          <Button 
-            variant="outline" 
-            onClick={() => navigate('/app/profile')}
+            onClick={handleViewProfile}
             className="w-full justify-start"
           >
             <User className="h-4 w-4 mr-2" />
@@ -528,7 +553,7 @@ const SettingsPage = () => {
 
           <Button 
             variant="outline" 
-            onClick={() => window.open('mailto:support@equyvo.app', '_blank')}
+            onClick={handleContactSupport}
             className="w-full justify-start"
           >
             <Mail className="h-4 w-4 mr-2" />

@@ -1495,3 +1495,11 @@
     padding-bottom: 150px !important;
   }
 }
+
+/* Compact view (Settings toggle) — denser feeds, real effect. */
+.equyvo-compact main .grid {
+  gap: 0.75rem !important;
+}
+.equyvo-compact main .container {
+  max-width: 72rem;
+}

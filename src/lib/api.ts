@@ -138,10 +138,10 @@ export const api = {
       '/profile/name-quota'
     ),
 
-  // Search
-  search: (query: string) =>
-    request<{ data: { results: any[]; totalCount: number; isAiRecommended: boolean }; error: null }>(
-      `/search?q=${encodeURIComponent(query)}`
+  // Search — unified people + content search (real data only, honest empty).
+  search: (query: string, limit = 20) =>
+    request<{ data: { results: any[]; users?: any[]; totalCount: number; userCount?: number; isAiRecommended: boolean }; error: null }>(
+      `/search?q=${encodeURIComponent(query)}&limit=${limit}`
     ),
 
   // Content indexing (called after media upload)

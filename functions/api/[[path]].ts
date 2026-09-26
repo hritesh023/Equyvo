@@ -2132,7 +2132,8 @@ export const onRequest = async (context) => {
         ...e,
         ownerId: e.authorId || e.ownerId || e.userId,
       })));
-      if (!base.length) return json({ data: { results: [], totalCount: 0, isAiRecommended: false, personalized: false } }, 200, cors);
+      // NOTE: do not early-return on empty content here — people results are
+      // resolved below and must still be returned when there is no content.
       const pops = {};
       await Promise.all(base.slice(0, 100).map(async (it) => {
         try { const r = await kv.get(KEYS.POP(it.id)); if (r) pops[it.id] = parseInt(r, 10) || 0; } catch {}
@@ -2176,15 +2177,83 @@ export const onRequest = async (context) => {
       };
       const ranked = base.map((item) => ({ item, s: scoreItem(item) })).sort((a, b) => b.s - a.s);
       const personalized = Object.keys(interests).length > 0;
+      // ── People search: match real user profiles (username / name / bio) ──
+      // Bounded KV scan (max 200 profiles) so search stays lag-free. Seed and
+      // test profiles are never returned. Private accounts are included as
+      // people results (public-safe subset) — their media stays gated by
+      // filterVisibleItems on content, mirroring Instagram-style search.
+      let matchedUsers = [];
+      try {
+        const ql = query.toLowerCase().trim();
+        if (ql) {
+          let listed = null;
+          try {
+            listed = await kv.list({ prefix: 'profile:', limit: 200 });
+          } catch { listed = null; }
+          const keys = listed && Array.isArray(listed.keys) ? listed.keys.map((k) => k.name) : [];
+          const head = keys.slice(0, 200);
+          const profiles = [];
+          for (let i = 0; i < head.length; i += 20) {
+            const slice = head.slice(i, i + 20);
+            const rows = await Promise.all(slice.map(async (k) => {
+              try {
+                const raw = await kv.get(k);
+                return raw ? JSON.parse(raw) : null;
+              } catch { return null; }
+            }));
+            for (const r of rows) if (r) profiles.push(r);
+          }
+          const scoredUsers = [];
+          for (const p of profiles) {
+            if (!p || typeof p !== 'object') continue;
+            const pid = String(p.id || '');
+            if (!pid || SEED_PROFILE_IDS.has(pid)) continue;
+            if (p.isSeed === true) continue;
+            const email = String(p.email || '');
+            if (/@test\.com$/i.test(email) || /^pwsrc_/i.test(pid)) continue;
+            const username = String(p.username || p.name || '').toLowerCase();
+            const name = String(p.name || '').toLowerCase();
+            const bio = String(p.bio || '').toLowerCase();
+            const idl = pid.toLowerCase();
+            const handle = username.startsWith('@') ? username : '@' + username;
+            let s = 0;
+            if (username === ql || handle === ql || idl === ql) s += 200;
+            else if (username === ql.replace(/^@/, '')) s += 180;
+            if (username.includes(ql) || ql.includes(username) && username) s += 120;
+            if (handle.includes(ql)) s += 110;
+            if (name && (name.includes(ql) || ql.includes(name))) s += 100;
+            if (idl.includes(ql) && ql.length >= 3) s += 60;
+            if (bio && bio.includes(ql)) s += 40;
+            const qtoks = ql.split(/\s+/).filter((w) => w.length > 1);
+            for (const tok of qtoks) {
+              if (username.includes(tok)) s += 25;
+              else if (name.includes(tok)) s += 20;
+              else if (bio.includes(tok)) s += 10;
+            }
+            if (s > 0) {
+              const isPrivate = p.isPrivate === true;
+              scoredUsers.push({
+                s,
+                user: isPrivate
+                  ? { id: pid, name: p.name, username: p.username, avatar: p.avatar || '', bio: typeof p.bio === 'string' ? String(p.bio).slice(0, 160) : '', isPrivate: true, restricted: true, followers: Number(p.followers || 0) || 0, following: Number(p.following || 0) || 0, verified: !!p.verified }
+                  : { id: pid, name: p.name || p.username || pid, username: p.username || p.name || pid, avatar: cleanCommentAvatar(p.avatar || ''), bio: typeof p.bio === 'string' ? String(p.bio).slice(0, 160) : '', isPrivate: false, followers: Number(p.followers || 0) || 0, following: Number(p.following || 0) || 0, verified: !!p.verified },
+              });
+            }
+          }
+          scoredUsers.sort((a, b) => b.s - a.s);
+          matchedUsers = scoredUsers.slice(0, limit).map((x) => x.user);
+        }
+      } catch { matchedUsers = []; }
       if (!query.trim()) {
-        return json({ data: { results: ranked.slice(0, limit).map((x) => transformItem(x.item)), totalCount: base.length, isAiRecommended: personalized, personalized } }, 200, cors);
+        return json({ data: { results: ranked.slice(0, limit).map((x) => transformItem(x.item)), users: [], totalCount: base.length, userCount: 0, isAiRecommended: personalized, personalized } }, 200, cors);
       }
       const matching = ranked.filter((x) => x.s >= 15);
-      if (!matching.length) {
-        const fb = ranked.slice(0, Math.min(12, limit)).map((x) => transformItem(x.item));
-        return json({ data: { results: fb, totalCount: 0, isAiRecommended: true, personalized } }, 200, cors);
+      // Honest empty: when nothing matches, return empty (no fallback filler)
+      // so the app can show "No results found". Never invent results.
+      if (!matching.length && !matchedUsers.length) {
+        return json({ data: { results: [], users: [], totalCount: 0, userCount: 0, isAiRecommended: false, personalized } }, 200, cors);
       }
-      return json({ data: { results: matching.slice(0, limit).map((x) => transformItem(x.item)), totalCount: matching.length, isAiRecommended: personalized || matching.length === 0, personalized } }, 200, cors);
+      return json({ data: { results: matching.slice(0, limit).map((x) => transformItem(x.item)), users: matchedUsers, totalCount: matching.length, userCount: matchedUsers.length, isAiRecommended: personalized, personalized } }, 200, cors);
     }
 
     // FEED — personalized across posts+thoughts+moments (new; old clients unaffected).

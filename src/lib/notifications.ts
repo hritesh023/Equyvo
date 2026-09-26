@@ -91,6 +91,22 @@ function pushEnabled(): boolean {
   }
 }
 
+function uploadsEnabled(): boolean {
+  try {
+    return localStorage.getItem('pushUploads') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+function liveEnabled(): boolean {
+  try {
+    return localStorage.getItem('liveAlerts') !== 'false';
+  } catch {
+    return true;
+  }
+}
+
 /** Fire a real OS-level notification when permission was granted. */
 export function sendSystemNotification(title: string, body: string): void {
   try {
@@ -162,7 +178,8 @@ export function notifyFollowAccepted(byName: string, byId?: string): AppNotifica
   });
 }
 
-export function notifyLive(name: string, actorId?: string): AppNotification {
+export function notifyLive(name: string, actorId?: string): AppNotification | null {
+  if (!liveEnabled()) return null;
   return pushNotification({
     kind: 'live',
     title: `${name} is live now`,
@@ -173,9 +190,9 @@ export function notifyLive(name: string, actorId?: string): AppNotification {
   });
 }
 
-/** New-upload alerts only fire when Push is ON (Settings → Notifications). */
+/** New-upload alerts only fire when Push is ON and upload alerts are enabled. */
 export function notifyUpload(author: string, title: string, actorId?: string): void {
-  if (!pushEnabled()) return;
+  if (!pushEnabled() || !uploadsEnabled()) return;
   pushNotification({
     kind: 'upload',
     title: `New from ${author}`,

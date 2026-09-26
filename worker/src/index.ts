@@ -767,10 +767,10 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if (hasReal === 'true') {
         filtered = results.filter(i => !(i.isSeed || (i.id && typeof i.id === 'string' && i.id.startsWith('seed-'))));
       }
-      // isAiRecommended is now honest: true when interest/AI ranking applied
-      // or when we served the popular fallback for a zero-match query.
-      const isAiRecommended = personalized || totalCount === 0;
-      return respond({ data: { results: filtered, totalCount, isAiRecommended, personalized } });
+      // isAiRecommended is honest: true only when interest ranking applied.
+      // Zero-match queries return empty (the app shows "No results found").
+      const isAiRecommended = personalized;
+      return respond({ data: { results: filtered, users: [], totalCount, userCount: 0, isAiRecommended, personalized } });
     }
 
     // Personalized feed across posts+thoughts+moments, ranked by interests +

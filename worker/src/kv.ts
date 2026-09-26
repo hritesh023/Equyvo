@@ -1319,9 +1319,8 @@ export async function searchContent(
 
   const matching = scored.filter((s) => s.score >= 15).sort((a, b) => b.score - a.score);
   if (!matching.length) {
-    // Honest popular fallback (never a blank page): top popular+fresh items.
-    const fb = [...scored].sort((a, b) => b.score - a.score).slice(0, Math.min(12, limit)).map((s) => s.item);
-    return { results: fb, totalCount: 0, personalized: Object.keys(interests).length > 0 };
+    // Honest empty: no invented fallback results (the app shows "No results found").
+    return { results: [], totalCount: 0, personalized: Object.keys(interests).length > 0 };
   }
   return { results: matching.slice(0, limit).map((s) => s.item), totalCount: matching.length, personalized: Object.keys(interests).length > 0 };
 }
