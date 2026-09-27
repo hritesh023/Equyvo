@@ -25,7 +25,31 @@ async function authHeaders(): Promise<Record<string, string>> {
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API_BASE + path, { ...init, headers: await authHeaders() });
   const j = await r.json().catch(() => ({ error: 'bad_response' }));
-  if (!r.ok) throw new Error((j as { error?: string }).error || `Request failed (${r.status})`);
+  if (!r.ok) {
+    // Friendly messages for common auth/billing failures.
+    if (r.status === 401) {
+      const err = new Error('Your session expired. Please sign in again.');
+      (err as any).status = 401;
+      throw err;
+    }
+    if (r.status === 402) {
+      const err = new Error((j as { response?: string }).response || 'Quota exceeded. Please upgrade your plan.');
+      (err as any).status = 402;
+      (err as any).body = j;
+      throw err;
+    }
+    if (r.status === 503) {
+      const err = new Error('Payments are being switched on. Please try again in a bit.');
+      (err as any).status = 503;
+      throw err;
+    }
+    if (r.status >= 500) {
+      const err = new Error('Payment service is temporarily unavailable. Please try again.');
+      (err as any).status = r.status;
+      throw err;
+    }
+    throw new Error((j as { error?: string }).error || `Request failed (${r.status})`);
+  }
   return j as T;
 }
 
