@@ -269,4 +269,38 @@ For issues and questions:
 
 ---
 
+## 💳 Billing & Subscriptions
+
+Equyvo uses the **central Acronous billing system** (Razorpay + KV entitlements). All plans are managed centrally — Equyvo never handles payment secrets.
+
+### Plans
+| Plan | Price | Storage | Ads | AI Tools |
+|---|---|---|---|---|
+| Free | ₹0 | 5 GB | Full | No |
+| Plus | ₹49/mo | 50 GB | Light | No |
+| Premium | ₹149/mo | 250 GB | None | Yes |
+| Creator | ₹399/mo | 500 GB | None | Yes + monetization |
+| Creator Pro | ₹799/mo | 1 TB | None | Yes + API + advanced |
+
+### Flow
+1. User clicks a plan on `/pricing` → `buyPlan(planId)` in `src/lib/billing.ts`
+2. `POST /api/create-order {plan}` → proxied to central `api.acronous.com/v1/billing/order`
+3. Razorpay Checkout opens (UPI/cards/netbanking)
+4. `POST /api/verify-payment` → central verifies HMAC + binds order → grants KV entitlement
+5. `localStorage` updated + `planChanged` event → ads/quotas update instantly
+
+### Paywall
+- Storage/upload limits return HTTP 402 `{type:'paywall', code:'QUOTA_*'}`
+- `handlePaywall(status, body)` in `src/lib/api.ts` redirects to `/pricing` (throttled)
+- Ad-free plans: `ads-config.ts` reads `getBillingStatus().subscriptions.equyvo.plan`
+
+### Key files
+- `src/lib/billing.ts` — checkout flow, friendly error messages
+- `src/lib/api.ts` — `handlePaywall()`, `isPaywallBody()`
+- `src/lib/ads-config.ts` — ad gating by plan
+- `src/pages/PricingPage.tsx` — plan cards + buy flow
+- `functions/api/[[path]].ts` — `/api/create-order`, `/api/verify-payment` proxy to central
+
+---
+
 Built with ❤️ using modern web technologies
