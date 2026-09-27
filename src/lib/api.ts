@@ -28,6 +28,55 @@ function authHeaders(): Record<string, string> {
 
 let localApiWarned = false;
 
+const PAYWALL_CODES = new Set([
+  'QUOTA_STORAGE',
+  'QUOTA_MONTHLY',
+  'QUOTA_FILE_SIZE',
+  'QUOTA_VIDEO_LENGTH',
+  'quota_exceeded',
+  'out_of_credits',
+]);
+
+/** True when a backend body signals a quota/paywall limit. */
+export function isPaywallBody(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const b = body as Record<string, unknown>;
+  if (b.type === 'paywall') return true;
+  const code = b.code ?? b.error;
+  return typeof code === 'string' && (PAYWALL_CODES.has(code) || code.startsWith('QUOTA_'));
+}
+
+let lastPaywallRedirect = 0;
+
+/**
+ * Global paywall funnel: any 402/quota response anywhere in the app lands
+ * the user on /pricing (throttled, keeps the reason in sessionStorage).
+ * Returns true when the error was a paywall.
+ */
+export function handlePaywall(status: number, body: unknown): boolean {
+  if (status !== 402 && !isPaywallBody(body)) return false;
+  try {
+    window.dispatchEvent(new CustomEvent('equyvo:paywall', { detail: { status, body } }));
+    try {
+      sessionStorage.setItem('equyvo_paywall', JSON.stringify({ at: new Date().toISOString(), body }));
+    } catch { /* ignore */ }
+  } catch { /* ignore */ }
+  try {
+    const now = Date.now();
+    const path = window.location.pathname || '';
+    if (!path.startsWith('/pricing') && !path.startsWith('/app/pricing') && now - lastPaywallRedirect > 3000) {
+      lastPaywallRedirect = now;
+      // Small delay so the caller can toast the reason first.
+      setTimeout(() => {
+        if (!window.location.pathname.startsWith('/pricing') && !window.location.pathname.startsWith('/app/pricing')) {
+          window.location.href = '/pricing';
+        }
+      }, 1200);
+    }
+  } catch { /* ignore */ }
+  return true;
+}
+
 /**
  * Dev-only, once-per-session hint. In local dev, /api is served by the local
  * API server — when it isn't running every /api call fails and all feeds
@@ -69,6 +118,8 @@ async function request<T = any>(
     // body parsing itself become the reported error.
     const json = await res.json().catch(() => ({} as Record<string, unknown>));
     if (!res.ok) {
+      // Quota/paywall responses redirect to /pricing everywhere (throttled).
+      handlePaywall(res.status, json);
       const bodyError =
         typeof json.error === 'string' && json.error ? json.error : null;
       if (!bodyError) warnLocalApiOnce(path, res.status);

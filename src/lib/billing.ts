@@ -86,5 +86,17 @@ export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string
       razorpay_signature: razor.razorpay_signature,
       plan,
     }),
+  }).then((v) => {
+    // Persist instantly so ads/quotas update without reload, and notify the
+    // whole app (PricingPage also writes equyvo_active_plan + planChanged).
+    try {
+      const out = v as { ok: boolean; plan: string };
+      const active = out.plan || plan;
+      localStorage.setItem('equyvo_active_plan', active);
+      localStorage.setItem('equyvo_last_plan', JSON.stringify({ plan: active, at: new Date().toISOString() }));
+      window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: active } }));
+      window.dispatchEvent(new CustomEvent('equyvo:plan-active', { detail: { plan: active } }));
+    } catch { /* ignore */ }
+    return v;
   });
 }

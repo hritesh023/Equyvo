@@ -1833,11 +1833,13 @@ export const onRequest = async (context) => {
       if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
       let body: any = {};
       try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
-      if (path === '/api/create-order' && body.amount != null && body.plan == null) {
-        const amount = Math.floor(Number(body.amount));
-        if (!Number.isFinite(amount) || amount < 100) {
-          return json({ error: 'Amount must be an integer >= 100 paise.' }, 400, cors);
-        }
+      if (path === '/api/create-order') {
+        // STRICT: a catalog plan id is required. Raw client-supplied amounts
+        // are never forwarded — the central worker prices from its catalog
+        // (and also rejects bare amounts since hardening).
+        const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
+        if (!plan) return json({ error: 'A plan id is required.' }, 400, cors);
+        body = { plan };
       }
       if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
         return json({ ok: false, error: 'Missing payment fields.' }, 400, cors);
