@@ -1168,9 +1168,48 @@ async function verifyCognitoToken(token, env) {
   }
 }
 
+// Central Acronous JWT (HS256 {id,email,name}, issued by acronous.com).
+// Lets one Acronous account use Equyvo: dashboard SSO (?token=), checkout
+// and billing all forward the same Bearer to api.acronous.com, which keys
+// subscriptions by u:<id-or-email>. Requires JWT_SECRET (same value as the
+// landing + api workers) or CENTRAL_JWT_SECRET to be set; when neither is
+// set this step is skipped and Cognito-only behaviour is preserved.
+async function verifyCentralJWT(token, env) {
+  try {
+    const secret = String(env.JWT_SECRET || env.CENTRAL_JWT_SECRET || '');
+    if (!secret) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [headerB64, payloadB64, sigB64] = parts;
+    const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(payloadB64)));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) return null;
+    const id = payload.id || payload.sub || payload.user_id || payload.email;
+    if (!id) return null;
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']
+    );
+    const valid = await crypto.subtle.verify(
+      'HMAC', key, b64urlDecode(sigB64), new TextEncoder().encode(headerB64 + '.' + payloadB64)
+    );
+    if (!valid) return null;
+    const email = String(payload.email || (String(id).includes('@') ? id : ''));
+    return {
+      id: String(id),
+      email,
+      username: String(payload.name || payload.username || (email ? email.split('@')[0] : String(id))),
+      verified: true,
+      via: 'central',
+    };
+  } catch {
+    return null;
+  }
+}
+
 // Resolve the caller identity.
-// 1) Valid Bearer JWT -> verified user (always accepted).
-// 2) X-User-Id / body userId -> UNVERIFIED fallback, only when
+// 1) Valid Cognito JWT -> verified user (always accepted).
+// 2) Valid central Acronous JWT -> verified user (always accepted).
+// 3) X-User-Id / body userId -> UNVERIFIED fallback, only when
 //    REQUIRE_VERIFIED_WRITES !== 'true'. Production sets it to 'true',
 //    so spoofed headers cannot write as someone else.
 // Returns null when no identity can be established.
@@ -1184,6 +1223,8 @@ async function getActor(request, env, body) {
     if (token) {
       const user = await verifyCognitoToken(token, env);
       if (user) return user;
+      const central = await verifyCentralJWT(token, env);
+      if (central) return central;
       // A present-but-invalid Bearer token is an auth failure, not a
       // fallback opportunity: reject rather than trusting headers.
       if (requiresVerifiedWrites(env)) return null;

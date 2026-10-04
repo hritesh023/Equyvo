@@ -150,6 +150,24 @@ async function verifyCognitoToken(token: string, env: Env): Promise<{ id: string
     return { id: payload.sub, email: payload.email || '', username: payload['cognito:username'] || '', verified: true };
   } catch { return null; }
 }
+async function verifyCentralJWT(token: string, env: Env): Promise<{ id: string; email: string; username: string; verified: boolean } | null> {
+  try {
+    const secret = String((env as any).JWT_SECRET || (env as any).CENTRAL_JWT_SECRET || '');
+    if (!secret) return null;
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const [hb, pb, sb] = parts;
+    const payload = JSON.parse(new TextDecoder().decode(b64urlDecode(pb)));
+    if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) return null;
+    const id = payload.id || payload.sub || payload.user_id || payload.email;
+    if (!id) return null;
+    const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['verify']);
+    const ok = await crypto.subtle.verify('HMAC', key, b64urlDecode(sb), new TextEncoder().encode(`${hb}.${pb}`));
+    if (!ok) return null;
+    const email = String(payload.email || (String(id).includes('@') ? id : ''));
+    return { id: String(id), email, username: String(payload.name || payload.username || (email ? email.split('@')[0] : String(id))), verified: true };
+  } catch { return null; }
+}
 export function requiresVerifiedWrites(env: Env): boolean {
   return String(env.REQUIRE_VERIFIED_WRITES || '').toLowerCase() === 'true';
 }
@@ -160,6 +178,8 @@ export async function getActor(request: Request, env: Env, body?: any) {
     if (token) {
       const u = await verifyCognitoToken(token, env);
       if (u) return u;
+      const central = await verifyCentralJWT(token, env);
+      if (central) return central;
       if (requiresVerifiedWrites(env)) return null;
     }
   }

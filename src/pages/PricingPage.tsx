@@ -48,11 +48,14 @@ const PricingPage: React.FC = () => {
   };
 
   const chooseFree = () => {
-    setActivePlan('free');
+    // Catalog id is eq_free (see worker/src/kv.ts PLAN_CATALOG). The old
+    // 'free' value matched nothing server-side, so the ad-gate/quotas
+    // disagreed with the UI after choosing Free.
+    setActivePlan('eq_free');
     try {
-      localStorage.setItem(PLAN_KEY, 'free');
+      localStorage.setItem(PLAN_KEY, 'eq_free');
     } catch { /* ignore */ }
-    window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: 'free' } }));
+    window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: 'eq_free' } }));
     toast.success('You are on the Free plan.');
   };
 

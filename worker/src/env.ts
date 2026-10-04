@@ -8,6 +8,8 @@ export interface Env {
   CLOUDINARY_API_KEY?: string;
   CLOUDINARY_API_SECRET?: string;
   AWS_USER_POOL_ID?: string;
+  JWT_SECRET?: string;
+  CENTRAL_JWT_SECRET?: string;
   MAX_UPLOAD_MB?: string;
   BILLING_BASE_URL?: string;
   REQUIRE_VERIFIED_WRITES?: string;

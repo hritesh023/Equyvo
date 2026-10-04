@@ -91,6 +91,33 @@ export function clearStoredUser(): void {
   localStorage.removeItem(USER_KEY);
 }
 
+function decodeCentralJWT(token: string): User | null {
+  // Central Acronous JWT from dashboard SSO (?token=): HS256 {id,email,name}.
+  // Accepted without a Cognito session so one account works everywhere.
+  // Signature is verified server-side on every /api call; here we only check
+  // shape + expiry for UI state (never for authorization).
+  try {
+    const parts = token.split('.');
+    if (parts.length !== 3) return null;
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
+    const payload = JSON.parse(atob(padded));
+    const now = Math.floor(Date.now() / 1000);
+    if (payload.exp && payload.exp < now) return null;
+    const id = payload.id || payload.sub || payload.user_id || payload.email;
+    if (!id) return null;
+    const email = String(payload.email || (String(id).includes('@') ? id : ''));
+    return {
+      id: String(id),
+      email,
+      fullName: String(payload.name || payload.username || ''),
+      username: String(payload.username || payload.name || (email ? email.split('@')[0] : String(id))),
+    };
+  } catch {
+    return null;
+  }
+}
+
 export async function checkAuthStatus(): Promise<AuthState> {
   try {
     const session: any = await getCurrentSession();
@@ -103,6 +130,21 @@ export async function checkAuthStatus(): Promise<AuthState> {
       }
     }
   } catch {
+  }
+
+  // Central SSO token (?token= from acronous.com dashboard): no Cognito
+  // session exists, but the Bearer is valid for all /api + billing calls.
+  try {
+    const t = getToken();
+    if (t) {
+      const centralUser = decodeCentralJWT(t);
+      if (centralUser) {
+        storeUser(centralUser);
+        return { user: centralUser, isLoading: false, isAuthenticated: true };
+      }
+    }
+  } catch {
+    // fall through to stored-user fallback
   }
 
   const stored = getStoredUser();
