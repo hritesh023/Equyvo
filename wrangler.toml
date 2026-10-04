@@ -37,7 +37,9 @@ BILLING_BASE_URL = "https://api.acronous.com"
 # Reject unverified X-User-Id writes: callers must present a valid Cognito or
 # central Acronous JWT. Prevents account spoofing ("bad authentication" caused
 # by silently accepting forged headers, then failing billing as another user).
-REQUIRE_VERIFIED_WRITES = "true"
+# NOTE: set as a Pages dashboard variable / secret (same name), NOT here —
+# wrangler rejects deploys when a [vars] name collides with a secret name.
+# REQUIRE_VERIFIED_WRITES = "true"
 # Contabo shared brain for AI search/feed suggestions (best-effort, 2.5s cap).
 BRAIN_URL = "https://brain.acronous.com"
 # NOTE: Pages Functions have no cron triggers. Keep the stack warm with an
