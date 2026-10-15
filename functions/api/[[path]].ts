@@ -3468,6 +3468,104 @@ export const onRequest = async (context) => {
       return json({ data: { reports: out }, error: null }, 200, cors);
     }
 
+    // ── REPORT MODERATION (dashboard.acronous.com actions) ───────────────
+    // POST /api/reports/action { reportId?, kind?, contentId?, owner?,
+    //   action: 'quarantine'|'remove'|'restore'|'delete'|'restrict-account'|'unrestrict-account'|'delete-account-content' }
+    // Admin-gated via X-Admin-Token. Lets developers remove, restrict
+    // (private account), or restore reported media/accounts instantly.
+    if (path === '/api/reports/action' && method === 'POST') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String(env.REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return json({ error: 'Forbidden' }, 403, cors);
+      let body = {};
+      try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
+      const action = String(body.action || '').toLowerCase().replace(/[^a-z-]/g, '');
+      const valid = ['quarantine', 'remove', 'restore', 'delete', 'restrict-account', 'unrestrict-account', 'delete-account-content'];
+      if (!valid.includes(action)) return json({ error: 'Unknown action. Use: ' + valid.join(', ') }, 400, cors);
+      // Resolve target content: explicit kind+contentId wins, else via reportId.
+      let kind = String(body.kind || body.type || '').toLowerCase().replace(/s$/, '');
+      let contentId = String(body.contentId || body.id || '').slice(0, 64);
+      let owner = String(body.owner || '').slice(0, 200);
+      if ((!kind || !contentId) && body.reportId) {
+        try {
+          const rraw = await kv.get(KEYS.REPORT(String(body.reportId).slice(0, 64)));
+          if (rraw) {
+            const rr = JSON.parse(rraw);
+            kind = String(rr.kind || '').toLowerCase();
+            contentId = String(rr.contentId || '');
+          }
+        } catch { /* fall through */ }
+      }
+      const now = new Date().toISOString();
+      const getKey = kind === 'post' ? KEYS.POST : kind === 'thought' ? KEYS.THOUGHT : kind === 'story' ? KEYS.STORY : kind === 'moment' ? KEYS.MOMENT : null;
+      // Account-level actions need only an owner id (from snapshot or body).
+      if ((action === 'restrict-account' || action === 'unrestrict-account' || action === 'delete-account-content')) {
+        if (!owner) return json({ error: 'owner is required for account actions.' }, 400, cors);
+        try {
+          const praw = await kv.get(KEYS.PROFILE(owner));
+          const prof = praw ? JSON.parse(praw) : { id: owner };
+          if (action === 'restrict-account') {
+            prof.isPrivate = true; prof.accountType = 'private';
+            prof.moderation = { status: 'restricted', at: now, reason: 'admin' };
+            await kv.put(KEYS.PROFILE(owner), JSON.stringify(prof));
+          } else if (action === 'unrestrict-account') {
+            prof.isPrivate = false; prof.accountType = 'public';
+            prof.moderation = { status: 'cleared', at: now, reason: 'admin' };
+            await kv.put(KEYS.PROFILE(owner), JSON.stringify(prof));
+          } else {
+            // delete-account-content: purge all content items owned by account.
+            let deleted = 0;
+            for (const [listKey, getK, delK] of [[KEYS.POSTS, KEYS.POST, KEYS.POST], [KEYS.THOUGHTS, KEYS.THOUGHT, KEYS.THOUGHT], [KEYS.STORIES, KEYS.STORY, KEYS.STORY], [KEYS.MOMENTS, KEYS.MOMENT, KEYS.MOMENT]]) {
+              try {
+                const listJson = await kv.get(listKey);
+                if (!listJson) continue;
+                const ids = JSON.parse(listJson);
+                const remaining = [];
+                for (const cid of ids) {
+                  try {
+                    const craw = await kv.get(getK(cid));
+                    if (!craw) continue;
+                    const c = JSON.parse(craw);
+                    const oid = String(c.ownerId || c.userId || c.user_id || '');
+                    if (oid === owner) { await kv.delete(delK(cid)); deleted++; }
+                    else remaining.push(cid);
+                  } catch { remaining.push(cid); }
+                }
+                await kv.put(listKey, JSON.stringify(remaining));
+              } catch { /* best-effort per list */ }
+            }
+            prof.moderation = { status: 'content-purged', at: now, reason: 'admin', deleted };
+            await kv.put(KEYS.PROFILE(owner), JSON.stringify(prof));
+            return json({ data: { ok: true, action, owner, deleted }, error: null }, 200, cors);
+          }
+          return json({ data: { ok: true, action, owner }, error: null }, 200, cors);
+        } catch (e) { return json({ error: 'Account action failed.' }, 500, cors); }
+      }
+      // Content-level actions.
+      if (!getKey || !contentId) return json({ error: 'kind (post|thought|story|moment) + contentId (or reportId) required.' }, 400, cors);
+      try {
+        const craw = await kv.get(getKey(contentId));
+        if (!craw) return json({ error: 'Content not found (already deleted).' }, 404, cors);
+        const c = JSON.parse(craw);
+        if (action === 'delete') {
+          await kv.delete(getKey(contentId));
+          try {
+            const idxJson = await kv.get(KEYS.CONTENT_INDEX);
+            if (idxJson) {
+              const idx = JSON.parse(idxJson);
+              await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx.filter((x) => x && x.id !== contentId)));
+            }
+          } catch { /* index best-effort */ }
+          return json({ data: { ok: true, action, kind, contentId }, error: null }, 200, cors);
+        }
+        if (action === 'quarantine') { c.moderation = { status: 'quarantined', at: now, reason: 'admin' }; c.visibility = 'private'; }
+        else if (action === 'remove') { c.moderation = { status: 'removed', at: now, reason: 'admin' }; c.visibility = 'private'; }
+        else if (action === 'restore') { c.moderation = { status: 'cleared', at: now, reason: 'admin' }; c.visibility = 'public'; }
+        await kv.put(getKey(contentId), JSON.stringify(c));
+        return json({ data: { ok: true, action, kind, contentId, visibility: c.visibility }, error: null }, 200, cors);
+      } catch { return json({ error: 'Moderation action failed.' }, 500, cors); }
+    }
+
     // ── LIVE PRESENCE ──────────────────────────────────────────────────────
     // POST /api/live/start|stop — owner toggles their live flag; followers
     // get a "X is live now" notification (bounded 50, background).

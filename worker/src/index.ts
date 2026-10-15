@@ -545,6 +545,78 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       return respond({ data: { reports }, error: null });
     }
 
+    // POST /api/reports/action — admin moderation (mirrors Pages Functions).
+    if (path === '/api/reports/action' && method === 'POST') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String((env as any).REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return respondError('Forbidden', 403);
+      let body: any = {};
+      try { body = (await request.json()) || {}; } catch { return respondError('Invalid JSON body.', 400); }
+      const action = String(body.action || '').toLowerCase().replace(/[^a-z-]/g, '');
+      const valid = ['quarantine', 'remove', 'restore', 'delete', 'restrict-account', 'unrestrict-account', 'delete-account-content'];
+      if (!valid.includes(action)) return respondError('Unknown action. Use: ' + valid.join(', '), 400);
+      const now = new Date().toISOString();
+      let kind = String(body.kind || body.type || '').toLowerCase().replace(/s$/, '');
+      let contentId = String(body.contentId || body.id || '').slice(0, 64);
+      const owner = String(body.owner || '').slice(0, 200);
+      if ((!kind || !contentId) && body.reportId) {
+        try {
+          const all = await listReports(env, 2000);
+          const rr = (all as any[]).find((x) => String(x.id) === String(body.reportId));
+          if (rr) { kind = String(rr.kind || '').toLowerCase(); contentId = String(rr.contentId || ''); }
+        } catch { /* fall through */ }
+      }
+      if (action === 'restrict-account' || action === 'unrestrict-account') {
+        if (!owner) return respondError('owner is required for account actions.', 400);
+        const { getStoredProfile } = await import('./kv');
+        const prof = (await (getStoredProfile as any)(env, owner)) || { id: owner };
+        prof.isPrivate = action === 'restrict-account';
+        prof.accountType = prof.isPrivate ? 'private' : 'public';
+        prof.moderation = { status: action === 'restrict-account' ? 'restricted' : 'cleared', at: now, reason: 'admin' };
+        await env.EQUYVO_KV.put('profile:' + owner, JSON.stringify(prof));
+        return respond({ data: { ok: true, action, owner } });
+      }
+      if (action === 'delete-account-content') {
+        if (!owner) return respondError('owner is required for account actions.', 400);
+        let deleted = 0;
+        for (const [listKey, prefix] of [['posts:list', 'post:'], ['thoughts:list', 'thought:'], ['stories:list', 'story:'], ['moments:list', 'moment:']] as const) {
+          try {
+            const lj = await env.EQUYVO_KV.get(listKey);
+            if (!lj) continue;
+            const ids = JSON.parse(lj);
+            const remaining: string[] = [];
+            for (const cid of ids) {
+              try {
+                const cr = await env.EQUYVO_KV.get(prefix + cid);
+                if (!cr) continue;
+                const c = JSON.parse(cr);
+                if (String(c.ownerId || c.userId || c.user_id || '') === owner) { await env.EQUYVO_KV.delete(prefix + cid); deleted++; }
+                else remaining.push(cid);
+              } catch { remaining.push(cid); }
+            }
+            await env.EQUYVO_KV.put(listKey, JSON.stringify(remaining));
+          } catch { /* best-effort */ }
+        }
+        return respond({ data: { ok: true, action, owner, deleted } });
+      }
+      if (!['post', 'thought', 'story', 'moment'].includes(kind) || !contentId) {
+        return respondError('kind (post|thought|story|moment) + contentId (or reportId) required.', 400);
+      }
+      const prefix = kind === 'post' ? 'post:' : kind === 'thought' ? 'thought:' : kind === 'story' ? 'story:' : 'moment:';
+      const craw = await env.EQUYVO_KV.get(prefix + contentId);
+      if (!craw) return respondError('Content not found (already deleted).', 404);
+      if (action === 'delete') {
+        await env.EQUYVO_KV.delete(prefix + contentId);
+        return respond({ data: { ok: true, action, kind, contentId } });
+      }
+      const c = JSON.parse(craw);
+      if (action === 'quarantine') { c.moderation = { status: 'quarantined', at: now, reason: 'admin' }; c.visibility = 'private'; }
+      else if (action === 'remove') { c.moderation = { status: 'removed', at: now, reason: 'admin' }; c.visibility = 'private'; }
+      else { c.moderation = { status: 'cleared', at: now, reason: 'admin' }; c.visibility = 'public'; }
+      await env.EQUYVO_KV.put(prefix + contentId, JSON.stringify(c));
+      return respond({ data: { ok: true, action, kind, contentId, visibility: c.visibility } });
+    }
+
     // ---- CHAT TRANSPORT (WhatsApp-style ticks, follow-gated) ----
     if (path.startsWith('/api/chat/') && path.endsWith('/send') && method === 'POST') {
       const { actor, error } = await requireActor();
@@ -884,6 +956,51 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
     }
 
     // Plans + usage: public catalog, authenticated usage.
+    // RAZORPAY CHECKOUT (same-origin proxy to central billing) — mirrors
+    // functions/api/[[path]].ts so Worker deploys never 404 on payments.
+    if ((path === '/api/create-order' || path === '/api/verify-payment') && method === 'POST') {
+      const bearer = bearerFrom(request);
+      if (!bearer) return respondError('Please sign in first.', 401);
+      let body: any = {};
+      try { body = (await request.json()) || {}; } catch { return respondError('Invalid JSON body.', 400); }
+      if (path === '/api/create-order') {
+        const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
+        if (!plan) return respondError('A plan id is required.', 400);
+        body = { plan };
+      }
+      if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
+        return respond({ ok: false, error: 'Missing payment fields.' }, 400);
+      }
+      const base = String((env as any).BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
+      const target = base + (path === '/api/create-order' ? '/v1/billing/order' : '/v1/billing/verify');
+      try {
+        const upstream = await fetch(target, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
+          body: JSON.stringify(body),
+        });
+        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        return respond(data, upstream.status);
+      } catch {
+        return respondError('Billing service unreachable. Please try again.', 502);
+      }
+    }
+
+    if (path === '/api/billing/status' && method === 'GET') {
+      const bearer = bearerFrom(request);
+      if (!bearer) return respondError('Please sign in first.', 401);
+      const base = String((env as any).BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
+      try {
+        const upstream = await fetch(base + '/v1/billing/status?product=equyvo', {
+          headers: { Authorization: 'Bearer ' + bearer },
+        });
+        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        return respond(data, upstream.status);
+      } catch {
+        return respondError('Billing service unreachable. Please try again.', 502);
+      }
+    }
+
     if (path === '/api/plans' && method === 'GET') {
       const plans = Object.values(PLAN_CATALOG).map((p) => ({
         id: p.id, label: p.label, priceInr: p.priceInr,

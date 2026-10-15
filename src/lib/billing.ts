@@ -13,7 +13,49 @@ export class AuthRequiredError extends Error {
 }
 
 // Same-origin API only — the server talks to the payment provider.
+// Falls back to central billing if the same-origin function is missing
+// (stale dist / Worker deploy without Functions) so payment buttons never
+// dead-end on 404.
 const API_BASE = '/api';
+const CENTRAL_BILLING = 'https://api.acronous.com';
+
+function centralPath(path: string): string | null {
+  if (path.startsWith('/create-order')) return '/v1/billing/order';
+  if (path.startsWith('/verify-payment')) return '/v1/billing/verify';
+  if (path.startsWith('/billing/status')) return '/v1/billing/status?product=equyvo';
+  return null;
+}
+
+async function centralReq<T>(path: string, init?: RequestInit): Promise<T> {
+  const c = centralPath(path);
+  if (!c) throw new Error('Request failed (404)');
+  const t = (await getAuthToken()) || getToken();
+  const r = await fetch(CENTRAL_BILLING + c, {
+    ...init,
+    headers: {
+      'Content-Type': 'application/json',
+      ...(t ? { Authorization: 'Bearer ' + t } : {}),
+    },
+  });
+  const ct = r.headers.get('content-type') || '';
+  const txt = await r.text();
+  let j: unknown = null;
+  try { j = JSON.parse(txt); } catch { j = null; }
+  if (!j || (!ct.includes('json') && /<\s*html|<\s*!doctype/i.test(txt))) {
+    throw new Error('Payment service is temporarily unavailable. Please try again.');
+  }
+  if (!r.ok) {
+    throw new Error((j as { error?: string; response?: string }).error
+      || (j as { response?: string }).response
+      || `Request failed (${r.status})`);
+  }
+  // Guard: 200 HTML/empty order from a stale SPA fallback must not open Razorpay.
+  if (path.startsWith('/create-order')) {
+    const o = j as { order_id?: string; key_id?: string };
+    if (!o.order_id || !o.key_id) throw new Error('Could not start checkout. Please try again.');
+  }
+  return j as T;
+}
 
 async function authHeaders(): Promise<Record<string, string>> {
   const t = (await getAuthToken()) || getToken();
@@ -24,7 +66,26 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(API_BASE + path, { ...init, headers: await authHeaders() });
-  const j = await r.json().catch(() => ({ error: 'bad_response' }));
+  const ct = r.headers.get('content-type') || '';
+  const txt = await r.text();
+  let j: unknown = null;
+  try { j = JSON.parse(txt); } catch { j = null; }
+  // Stale SPA fallback serves index.html with 200 for missing /api routes —
+  // that surfaced as "payment button → 404/blank". Retry central once.
+  const isHtml = !j || (!ct.includes('json') && /<\s*html|<\s*!doctype/i.test(txt));
+  if (isHtml) {
+    try { return await centralReq<T>(path, init); }
+    catch (e) { throw e instanceof Error ? e : new Error('Request failed (404)'); }
+  }
+  if (r.status === 404) {
+    // Same-origin function missing (dev without dev:api, Worker deploy
+    // without Functions, or BILLING_BASE_URL down). Try central directly.
+    const cp = centralPath(path);
+    if (cp) {
+      try { return await centralReq<T>(path, init); }
+      catch (e) { /* fall through to friendly 404 below */ }
+    }
+  }
   if (!r.ok) {
     // Friendly messages for common auth/billing failures.
     if (r.status === 401) {
@@ -47,6 +108,11 @@ async function req<T>(path: string, init?: RequestInit): Promise<T> {
       const err = new Error('Payment service is temporarily unavailable. Please try again.');
       (err as any).status = r.status;
       throw err;
+    }
+    if (r.status === 404) {
+      const err404 = new Error('Checkout service updating — please retry. If it persists, use acronous.com/pricing.html#eq.');
+      (err404 as unknown as Record<string, unknown>).status = 404;
+      throw err404;
     }
     throw new Error((j as { error?: string }).error || `Request failed (${r.status})`);
   }
@@ -102,7 +168,7 @@ export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string
     rzp.on('payment.failed', (r) => reject(new Error(r?.error?.description || 'Payment failed.')));
     rzp.open();
   });
-  return req('/verify-payment', {
+  return req<{ ok: boolean; plan: string; nameGrant?: { granted: number; quota: number; used: number; remaining: number } }>('/verify-payment', {
     method: 'POST',
     body: JSON.stringify({
       razorpay_order_id: razor.razorpay_order_id,
