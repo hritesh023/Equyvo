@@ -568,12 +568,11 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       }
       if (action === 'restrict-account' || action === 'unrestrict-account') {
         if (!owner) return respondError('owner is required for account actions.', 400);
-        const { getStoredProfile } = await import('./kv');
-        const prof = (await (getStoredProfile as any)(env, owner)) || { id: owner };
+        const prof = (await getProfile(env, owner)) || { id: owner } as any;
         prof.isPrivate = action === 'restrict-account';
         prof.accountType = prof.isPrivate ? 'private' : 'public';
         prof.moderation = { status: action === 'restrict-account' ? 'restricted' : 'cleared', at: now, reason: 'admin' };
-        await env.EQUYVO_KV.put('profile:' + owner, JSON.stringify(prof));
+        await upsertProfile(env, prof as any);
         return respond({ data: { ok: true, action, owner } });
       }
       if (action === 'delete-account-content') {
