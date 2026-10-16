@@ -87,7 +87,19 @@ const PricingPage: React.FC = () => {
         return;
       }
       const msg = e instanceof Error ? e.message : 'Payment failed.';
-      if (msg !== 'payment_cancelled') toast.error(msg);
+      if (msg === 'payment_cancelled') return;
+      // Same-origin + central both unreachable (stale deploy / 404): fall
+      // through to the hosted Razorpay checkout on acronous.com so the
+      // payment button NEVER dead-ends on 404 — it always reaches Razorpay.
+      if (/404|updating|unavailable|Bad payment response|Could not start checkout/i.test(msg)) {
+        try {
+          const t = localStorage.getItem('equyvo_cognito_token') || '';
+          const url = 'https://acronous.com/checkout.html?plan=' + encodeURIComponent(planId) + (t ? '&token=' + encodeURIComponent(t) : '');
+          toast.info('Opening secure checkout on acronous.com…');
+          window.open(url, '_blank', 'noopener');
+        } catch { /* ignore */ }
+      }
+      toast.error(msg);
     } finally {
       setBusy(null);
     }
