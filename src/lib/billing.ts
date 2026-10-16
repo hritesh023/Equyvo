@@ -3,15 +3,7 @@
 // app's own /api routes. The app never handles card/UPI data or secrets.
 import { getAuthToken, getToken } from './auth';
 
-/** Thrown when checkout needs a fresh sign-in (never a dead-end toast).
- *  Kept for compat — buyPlan no longer requires sign-in (guest email works). */
-export class AuthRequiredError extends Error {
-  code = 'AUTH_REQUIRED';
-  constructor(message = 'Please sign in again to continue with your subscription.') {
-    super(message);
-    this.name = 'AuthRequiredError';
-  }
-}
+// Same-origin API only — the server talks to the payment provider.
 
 // Same-origin API only — the server talks to the payment provider.
 // Falls back to central billing if the same-origin function is missing
