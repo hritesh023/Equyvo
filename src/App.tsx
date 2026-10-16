@@ -11,6 +11,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
 import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, setToken, User } from './lib/auth';
+import { claimBilling } from './lib/billing';
 import HomePage from './pages/HomePage';
 import AuthPage from './pages/AuthPage';
 import CreatePage from './pages/CreatePage';
@@ -74,6 +75,12 @@ const AppContent = () => {
       const authStatus = await checkAuthStatus();
       if (authStatus.isAuthenticated && authStatus.user) {
         setUser(authStatus.user);
+        // Link any guest-paid plan (same email) to this account.
+        claimBilling().then((c) => {
+          if (c && c.granted.length) {
+            window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
+          }
+        });
       } else {
         const storedUser = getStoredUser();
         if (storedUser) {
@@ -131,7 +138,15 @@ const AppContent = () => {
   if (isAuthPage) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
-        <AuthPage onAuthSuccess={(u) => setUser(u)} />
+        <AuthPage onAuthSuccess={(u) => {
+          setUser(u);
+          // Guest paid earlier with this email? Link it now.
+          claimBilling().then((c) => {
+            if (c && c.granted.length) {
+              window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
+            }
+          });
+        }} />
         <Toaster />
       </div>
     );

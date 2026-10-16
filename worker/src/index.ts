@@ -959,13 +959,17 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
     // functions/api/[[path]].ts so Worker deploys never 404 on payments.
     if ((path === '/api/create-order' || path === '/api/verify-payment') && method === 'POST') {
       const bearer = bearerFrom(request);
-      if (!bearer) return respondError('Please sign in first.', 401);
       let body: any = {};
       try { body = (await request.json()) || {}; } catch { return respondError('Invalid JSON body.', 400); }
+      // Guest checkout: no sign-in needed with a valid email (central links
+      // the grant by email — instant or claimed on first sign-in).
+      const guestEmail = !bearer && typeof body.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email.trim())
+        ? body.email.trim().toLowerCase().slice(0, 254) : null;
+      if (!bearer && !guestEmail) return respondError('Please sign in first.', 401);
       if (path === '/api/create-order') {
         const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
         if (!plan) return respondError('A plan id is required.', 400);
-        body = { plan };
+        body = guestEmail ? { plan, email: guestEmail } : { plan };
       }
       if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
         return respond({ ok: false, error: 'Missing payment fields.' }, 400);
@@ -975,8 +979,27 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       try {
         const upstream = await fetch(target, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
+          headers: bearer
+            ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer }
+            : { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
+        });
+        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        return respond(data, upstream.status);
+      } catch {
+        return respondError('Billing service unreachable. Please try again.', 502);
+      }
+    }
+
+    if (path === '/api/claim-billing' && method === 'POST') {
+      const bearer = bearerFrom(request);
+      if (!bearer) return respondError('Please sign in first.', 401);
+      const base = String((env as any).BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
+      try {
+        const upstream = await fetch(base + '/v1/billing/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
+          body: JSON.stringify({}),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
         return respond(data, upstream.status);

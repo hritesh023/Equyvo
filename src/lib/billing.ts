@@ -3,7 +3,8 @@
 // app's own /api routes. The app never handles card/UPI data or secrets.
 import { getAuthToken, getToken } from './auth';
 
-/** Thrown when checkout needs a fresh sign-in (never a dead-end toast). */
+/** Thrown when checkout needs a fresh sign-in (never a dead-end toast).
+ *  Kept for compat — buyPlan no longer requires sign-in (guest email works). */
 export class AuthRequiredError extends Error {
   code = 'AUTH_REQUIRED';
   constructor(message = 'Please sign in again to continue with your subscription.') {
@@ -144,14 +145,25 @@ export function getBillingStatus(): Promise<BillingStatus> {
   return req<BillingStatus>('/billing/status?product=equyvo');
 }
 
-/** Full checkout: create order -> Razorpay (UPI/cards/netbanking) -> verify. */
-export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string; nameGrant?: { granted: number; quota: number; used: number; remaining: number } }> {
-  // Silent-refresh the session first: a signed-in user whose token expired
-  // must sail into checkout, not hit "Please sign in first".
+/** Link a guest-paid plan to this account (same email). Silent no-op otherwise. */
+export async function claimBilling(): Promise<{ granted: string[] } | null> {
+  try {
+    const r = await req<{ ok: boolean; granted: string[] }>('/claim-billing', { method: 'POST', body: JSON.stringify({}) });
+    return { granted: r.granted || [] };
+  } catch {
+    return null;
+  }
+}
+
+/** Full checkout: create order -> Razorpay (UPI/cards/netbanking) -> verify.
+ *  No sign-in wall: signed-out buyers pay as guests with an email; the plan
+ *  links when they sign in with the same email (claimed automatically). */
+export async function buyPlan(plan: string, email?: string): Promise<{ ok: boolean; plan: string; guest?: boolean; claimed?: boolean; nameGrant?: { granted: number; quota: number; used: number; remaining: number } }> {
   const token = (await getAuthToken()) || getToken();
-  if (!token) throw new AuthRequiredError();
+  const cleanEmail = !token && email && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim()) ? email.trim() : undefined;
+  if (!token && !cleanEmail) throw new Error('EMAIL_REQUIRED');
   const order = await req<{ order_id: string; amount: number; currency: string; key_id: string }>(
-    '/create-order', { method: 'POST', body: JSON.stringify({ plan }) });
+    '/create-order', { method: 'POST', body: JSON.stringify(cleanEmail ? { plan, email: cleanEmail } : { plan }) });
   await loadRazorpay();
   const razor = await new Promise<{ razorpay_order_id: string; razorpay_payment_id: string; razorpay_signature: string }>((resolve, reject) => {
     const rzp = new window.Razorpay!({
@@ -168,13 +180,14 @@ export async function buyPlan(plan: string): Promise<{ ok: boolean; plan: string
     rzp.on('payment.failed', (r) => reject(new Error(r?.error?.description || 'Payment failed.')));
     rzp.open();
   });
-  return req<{ ok: boolean; plan: string; nameGrant?: { granted: number; quota: number; used: number; remaining: number } }>('/verify-payment', {
+  return req<{ ok: boolean; plan: string; guest?: boolean; claimed?: boolean; nameGrant?: { granted: number; quota: number; used: number; remaining: number } }>('/verify-payment', {
     method: 'POST',
     body: JSON.stringify({
       razorpay_order_id: razor.razorpay_order_id,
       razorpay_payment_id: razor.razorpay_payment_id,
       razorpay_signature: razor.razorpay_signature,
       plan,
+      ...(cleanEmail ? { email: cleanEmail } : {}),
     }),
   }).then((v) => {
     // Persist instantly so ads/quotas update without reload, and notify the

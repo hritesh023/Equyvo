@@ -3,8 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { Crown, Check, Loader2, LogIn } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EQUYVO_PLANS, formatINR } from '@/lib/plans';
-import { AuthRequiredError, buyPlan, getBillingStatus } from '@/lib/billing';
-import { getStoredUser } from '@/lib/auth';
+import { buyPlan, claimBilling, getBillingStatus } from '@/lib/billing';
+import { getAuthToken, getStoredUser, getToken } from '@/lib/auth';
 import { toast } from 'sonner';
 
 const PLAN_KEY = 'equyvo_active_plan';
@@ -41,6 +41,15 @@ const PricingPage: React.FC = () => {
         // page stays useful, and let checkout decide about re-auth.
       })
       .finally(() => setLoading(false));
+    // Link guest-paid plans (paid without sign-in, same email) on arrival.
+    claimBilling().then((c) => {
+      if (c && c.granted.length) {
+        setActivePlan(c.granted[0]);
+        try { localStorage.setItem(PLAN_KEY, c.granted[0]); } catch { /* ignore */ }
+        window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
+        toast.success('Your plan is now active. Welcome back.');
+      }
+    });
   }, []);
 
   const goSignIn = () => {
@@ -60,6 +69,16 @@ const PricingPage: React.FC = () => {
   };
 
   const buy = async (planId: string) => {
+    // No sign-in wall: signed-out buyers go straight to the hosted Razorpay
+    // checkout (email links the plan when they sign in next).
+    try {
+      const t = (await getAuthToken()) || getToken();
+      if (!t) {
+        window.open('https://acronous.com/checkout.html?plan=' + encodeURIComponent(planId), '_blank', 'noopener');
+        toast.info('Opening secure Razorpay checkout…');
+        return;
+      }
+    } catch { /* fall through to in-app checkout */ }
     setBusy(planId);
     try {
       toast.info('Opening secure Razorpay checkout…');
@@ -78,14 +97,6 @@ const PricingPage: React.FC = () => {
         toast.success(`+${v.nameGrant.granted} profile name changes added (${v.nameGrant.remaining} available).`);
       }
     } catch (e: unknown) {
-      if (e instanceof AuthRequiredError) {
-        // Signed-in user with an expired session, or signed-out visitor:
-        // route to sign-in and bring them back to finish checkout.
-        setNeedsAuth(true);
-        const who = getStoredUser() ? 'Your session expired. Sign in again to continue.' : 'Sign in to continue with your subscription.';
-        toast.info(who);
-        return;
-      }
       const msg = e instanceof Error ? e.message : 'Payment failed.';
       if (msg === 'payment_cancelled') return;
       // Same-origin + central both unreachable (stale deploy / 404): fall

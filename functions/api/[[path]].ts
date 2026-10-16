@@ -1871,16 +1871,20 @@ export const onRequest = async (context) => {
     // sees key_id + order_id, and returns payment_id + signature for verify.
     if ((path === '/api/create-order' || path === '/api/verify-payment') && method === 'POST') {
       const bearer = bearerFrom(request);
-      if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
       let body: any = {};
       try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
+      // Guest checkout: no sign-in needed when a valid email is supplied —
+      // central billing links the grant by email (instant or claimed later).
+      const guestEmail = !bearer && typeof body.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email.trim())
+        ? body.email.trim().toLowerCase().slice(0, 254) : null;
+      if (!bearer && !guestEmail) return json({ error: 'Please sign in first.' }, 401, cors);
       if (path === '/api/create-order') {
         // STRICT: a catalog plan id is required. Raw client-supplied amounts
         // are never forwarded — the central worker prices from its catalog
         // (and also rejects bare amounts since hardening).
         const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
         if (!plan) return json({ error: 'A plan id is required.' }, 400, cors);
-        body = { plan };
+        body = guestEmail ? { plan, email: guestEmail } : { plan };
       }
       if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
         return json({ ok: false, error: 'Missing payment fields.' }, 400, cors);
@@ -1890,7 +1894,9 @@ export const onRequest = async (context) => {
       try {
         const upstream = await fetch(target, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
+          headers: bearer
+            ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer }
+            : { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
@@ -3201,6 +3207,26 @@ export const onRequest = async (context) => {
       try {
         const upstream = await fetch(base + '/v1/billing/status?product=equyvo', {
           headers: { Authorization: 'Bearer ' + bearer },
+        });
+        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        return json(data, upstream.status, cors);
+      } catch {
+        return json({ error: 'Billing service unreachable. Please try again.' }, 502, cors);
+      }
+    }
+
+    // ---- BILLING CLAIM (guest purchase linking) ----
+    // POST /api/claim-billing — links a guest-paid plan (same email) to the
+    // caller's account. Same-origin proxy to central /v1/billing/claim.
+    if (path === '/api/claim-billing' && method === 'POST') {
+      const bearer = bearerFrom(request);
+      if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
+      const base = (env.BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
+      try {
+        const upstream = await fetch(base + '/v1/billing/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
+          body: JSON.stringify({}),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
         return json(data, upstream.status, cors);
