@@ -340,10 +340,16 @@ export const api = {
     request<{ data: { success: boolean }; error: null }>(`/user/${userId}/data`, { method: 'DELETE' }),
 
   // Upload a file via the app's own API. secureUrl is always the best
-  // delivery URL — render it directly.
-  uploadFile: (file: File | Blob, folder?: string) => {
+  // delivery URL — render it directly. Media is compressed client-side first
+  // (images -> WebP) to keep R2 storage costs flat.
+  uploadFile: async (file: File | Blob, folder?: string) => {
+    let payload: File | Blob = file;
+    try {
+      const { compressMedia } = await import('./compress');
+      payload = await compressMedia(file);
+    } catch { /* fall back to original on any compression error */ }
     const formData = new FormData();
-    formData.append('file', file);
+    formData.append('file', payload);
     if (folder) formData.append('folder', folder);
     return request<{
       publicId: string | null;

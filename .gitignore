@@ -34,3 +34,9 @@ dist-ssr
 
 # Local debug/tmp files
 bisect-tmp.tsx
+
+# Build artifacts
+*.apk
+*.keystore
+app-icon.png
+

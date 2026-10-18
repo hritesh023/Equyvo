@@ -23,7 +23,7 @@ const config: CapacitorConfig = {
   android: {
     allowMixedContent: true,
     captureInput: true,
-    webContentsDebuggingEnabled: true,
+    webContentsDebuggingEnabled: isDev,
     backgroundColor: '#000000'
   },
   ios: {
