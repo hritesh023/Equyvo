@@ -1516,10 +1516,12 @@ async function serveR2(request, env, key, cors, method) {
   if (!head) return json({ error: 'Not found' }, 404, cors);
 
   const contentType = (head.httpMetadata && head.httpMetadata.contentType) || 'application/octet-stream';
+  const contentEncoding = (head.httpMetadata && head.httpMetadata.contentEncoding) || '';
   const baseHeaders = {
     'Content-Type': contentType,
     'Accept-Ranges': 'bytes',
     'Cache-Control': 'public, max-age=31536000, immutable',
+    ...(contentEncoding ? { 'Content-Encoding': contentEncoding } : {}),
     ...cors,
     ...SECURITY_HEADERS,
   };
@@ -2890,12 +2892,24 @@ export const onRequest = async (context) => {
       if (hasR2 && bytes) {
         r2Key = r2KeyFor(actor.id, hash, extFromFile(file));
         try {
-          await env.EQUYVO_R2.put(r2Key, bytes, {
+          let toStore = bytes;
+          let encoding = '';
+          try {
+            const cs = new CompressionStream('gzip');
+            const stream = new Blob([bytes]).stream().pipeThrough(cs);
+            const buf = await new Response(stream).arrayBuffer();
+            if (buf && buf.byteLength > 0 && buf.byteLength < bytes.byteLength) {
+              toStore = new Uint8Array(buf);
+              encoding = 'gzip';
+            }
+          } catch { /* fall back to uncompressed */ }
+          await env.EQUYVO_R2.put(r2Key, toStore, {
             httpMetadata: {
               contentType: file.type || 'application/octet-stream',
+              contentEncoding: encoding || undefined,
               cacheControl: 'public, max-age=31536000, immutable',
             },
-            customMetadata: { uploader: String(actor.id).slice(0, 128), sha256: hash },
+            customMetadata: { uploader: String(actor.id).slice(0, 128), sha256: hash, encoding: encoding || 'none' },
           });
         } catch (err) {
           // R2 write failed: fall through to Cloudinary-only rather than
