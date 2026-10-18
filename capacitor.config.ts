@@ -3,7 +3,9 @@ import type { CapacitorConfig } from '@capacitor/cli';
 // Live-reload URL is DEV ONLY. Release builds must load the bundled dist/;
 // leaving `server.url` set ships an app that points at the phone's own
 // localhost and renders nothing on real devices.
-const isDev = process.env.NODE_ENV !== 'production' && !process.env.CAPACITOR_RELEASE;
+// Production-safe by default. Dev live-reload only when explicitly opted in
+// via CAPACITOR_DEV=1, so a normal `npx cap sync` always ships bundled dist/.
+const isDev = process.env.CAPACITOR_DEV === '1' || process.env.CAPACITOR_DEV === 'true';
 
 const config: CapacitorConfig = {
   appId: 'com.equyvo.app',
