@@ -1750,6 +1750,24 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   try {
     if (actor && actor.id) await aiRecordEngagement(env, actor.id, { category: String(item.category || ''), tags: Array.isArray(item.tags) ? item.tags : [], creator: String(item.user || ''), action: 'create' });
   } catch {}
+  // Human-eval fan-out: every upload becomes a labelled preference for the
+  // shared Acronous brain (Contabo). Backend-only, never surfaced to client.
+  try {
+    const evalText = String(item.content || item.title || item.description || '').slice(0, 500);
+    if (evalText.trim()) {
+      void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: evalText,
+          response: 'user uploaded ' + kind + ': ' + String(item.id),
+          session_id: String(actor.id).slice(0, 100),
+          source: 'equyvo',
+          route_type: 'equyvo-upload',
+          feedback: 0.5,
+        }),
+      }, 2500).catch(() => null);
+    }
+  } catch { /* ignore */ }
   return json({ data: transformItem(item), error: null }, 201, cors);
 }
 
@@ -2972,6 +2990,22 @@ export const onRequest = async (context) => {
           await kv.put(KEYS.MEDIA(payload.publicId), JSON.stringify({ bytes: payload.bytes, r2Key }), { expirationTtl: 60 * 60 * 24 * 365 });
         }
       } catch { /* ignore */ }
+      // Human-eval fan-out: every media upload becomes a labelled preference
+      // for the shared Acronous brain (Contabo). Backend-only.
+      try {
+        const hint = String(folder || '') + ' ' + String(file.type || '') + ' ' + String(file.name || '');
+        void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: hint.slice(0, 300),
+            response: 'user uploaded media: ' + String(payload.resourceType || 'media'),
+            session_id: String(actor.id).slice(0, 100),
+            source: 'equyvo',
+            route_type: 'equyvo-upload',
+            feedback: 0.4,
+          }),
+        }, 2500).catch(() => null);
+      } catch { /* ignore */ }
       const nextUsage = await addUsage(env, actor.id, Number(payload.bytes || 0));
 
       return json({
@@ -3327,6 +3361,23 @@ export const onRequest = async (context) => {
       const all = await readChatMessages(env, actor.id, peer, 300);
       all.push(msg);
       await writeChatMessages(env, actor.id, peer, all);
+      // Human-eval fan-out: every message becomes a labelled preference for
+      // the shared Acronous brain (Contabo). Backend-only.
+      try {
+        if (text && text.trim()) {
+          void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              query: text.slice(0, 500),
+              response: 'user message to ' + peer,
+              session_id: String(actor.id).slice(0, 100),
+              source: 'equyvo',
+              route_type: 'equyvo-chat',
+              feedback: 0.3,
+            }),
+          }, 2500).catch(() => null);
+        }
+      } catch { /* ignore */ }
       // Nudge the peer (unread badge + push) — best-effort, never blocks send.
       try {
         const me = await getStoredProfile(env, actor.id);
