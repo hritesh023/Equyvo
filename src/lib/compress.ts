@@ -13,8 +13,11 @@ export interface CompressOptions {
 }
 
 const DEFAULTS: Required<CompressOptions> = {
-  maxDimension: 1920,
-  quality: 0.82,
+  // Keep visuals essentially original (high quality, large max dimension) while
+  // still shrinking bytes for R2 storage. Lossless gzip on the server handles
+  // the rest.
+  maxDimension: 2560,
+  quality: 0.92,
   mimeType: 'image/webp',
 };
 
