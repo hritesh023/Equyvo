@@ -133,6 +133,15 @@ export function spacingForPlan(plan?: string | null): {
 
 /** Use Google test IDs on localhost / dev builds (AdMob policy). */
 export function isDevEnvironment(): boolean {
+  // Native app builds (Capacitor APK/iOS) are never "dev" for ad purposes,
+  // even though their WebView origin is https://localhost. Real ad units must
+  // be used on device; test units are only for browser/localhost development.
+  try {
+    const cap = (window as any)?.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+      return false;
+    }
+  } catch { /* ignore */ }
   if (import.meta.env.DEV) return true;
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;
