@@ -143,8 +143,36 @@ const ProfilePage = () => {
   // Load saved profile from localStorage on client side
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
-      const savedProfile = localStorage.getItem('userProfile');
       const currentUser = getStoredUser();
+      const targetId = userId || username;
+
+      if (targetId && (!currentUser || targetId !== currentUser.id)) {
+        api.getProfile(targetId).then((serverProfile) => {
+          if (serverProfile?.data) {
+            setUserProfile((prev: any) => ({
+              ...prev,
+              ...serverProfile.data,
+              posts: prev?.posts || [],
+            }));
+          }
+        }).catch(() => {});
+
+        api.getUserContent(targetId).then(({ data, error }) => {
+          if (error || !data || typeof data !== 'object') return;
+          const serverItems = [
+            ...((data as any).posts || []),
+            ...((data as any).thoughts || []).map((t: any) => ({ ...t, type: t.type || 'thought' })),
+            ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
+            ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
+          ];
+          if (!serverItems.length) return;
+          setUserProfile((prev: any) => ({ ...prev, posts: serverItems }));
+        }).catch(() => {});
+
+        return;
+      }
+
+      const savedProfile = localStorage.getItem('userProfile');
 
       if (savedProfile && currentUser) {
         const parsed = JSON.parse(savedProfile);

@@ -39,6 +39,7 @@ interface NavbarProps {
 const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const location = useLocation();
   const isMobile = useIsMobile();
+  const isSearchPage = location.pathname === '/app/search' || location.pathname === '/search';
   const navigate = useNavigate();
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
 
@@ -234,11 +235,9 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         </Dialog>
       )}
 
-      {/* Mobile Bottom Navigation — full-bleed footer that max-fills every
-          display: phones, foldables, tablets, landscape and external screens.
-          Outer bar spans 100dvw incl. cutout insets; inner row centers content
-          with a readable cap while each tab flex-fills its share. */}
-      {isMobile && (
+      {/* Mobile Bottom Navigation — hidden on the search page so search can be
+          full-screen. */}
+      {isMobile && !isSearchPage && (
         <div className="mobile-bottom-nav-fill fixed inset-x-0 bottom-0 z-50 border-t border-border/50 bg-background/95 shadow-lg backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2">
           {navItems.slice(0, 5).map((item) => (
