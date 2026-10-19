@@ -1884,7 +1884,7 @@ export const onRequest = async (context) => {
       const password = String(body.password || '');
       const name = String(body.name || '').trim().slice(0, 80) || (email ? email.split('@')[0] : '');
       const isPrivate = body.isPrivate === true || body.accountType === 'private';
-      if (!email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
+      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
       if (!password || password.length < 6) return json({ error: 'Password must be at least 6 characters.' }, 400, cors);
       const existing = await kv.get('auth:user:' + email);
       if (existing) return json({ error: 'An account with this email already exists. Try signing in.' }, 409, cors);
