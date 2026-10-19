@@ -269,6 +269,12 @@ export const api = {
       body: JSON.stringify({ ids: ids || [] }),
     }),
 
+  notificationsClear: (ids?: string[]) =>
+    request<{ data: { ok: boolean }; error: null }>('/notifications/clear', {
+      method: 'POST',
+      body: JSON.stringify({ ids: ids ? [...ids] : null }),
+    }),
+
   // Chat transport. Ticks: sent = reached server, delivered/seen via polling.
   // Gating (followers ↔ following) is enforced server-side; strangers get 403.
   chatSend: (peer: string, data: { id?: string; text?: string; type?: string; fileUrl?: string; fileName?: string }) =>

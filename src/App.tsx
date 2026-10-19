@@ -4,7 +4,6 @@ import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
-import AppFooter from './components/AppFooter';
 import { Toaster } from './components/ui/sonner';
 import SplashScreen from './components/SplashScreen';
 import ErrorBoundary from './components/ErrorBoundary'; 
@@ -196,7 +195,7 @@ const AppContent = () => {
       {/* Full-width flexible footer (desktop/tablet/large screens; mobile
           uses the bottom nav). Lives inside the content column so it tracks
           the sidebar offset and always max-fills its container. */}
-      {shouldShowNavbar && <AppFooter />}
+      {/* Footer intentionally removed */}
       <Toaster />
     </div>
   </div>

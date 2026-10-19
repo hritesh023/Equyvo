@@ -3695,6 +3695,28 @@ export const onRequest = async (context) => {
     // GET /api/reports?limit= — admin-gated via X-Admin-Token matching
     // REPORTS_ADMIN_TOKEN. Returns newest reports with content snapshots so
     // developers can identify the account + basis. Never public.
+    // POST /api/notifications/clear - wipe the caller's stored notifications
+    // (or a specific id list), so locally dismissed notifications stop
+    // re-appearing after the next sync.
+    if (path === '/api/notifications/clear' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let raw; try { raw = await readJson(request); } catch { raw = {}; }
+      const ids = Array.isArray(raw?.ids) ? raw.ids.map(String).filter(Boolean) : null;
+      try {
+        if (!ids) {
+          await kv.put(KEYS.NOTIF(actor.id), JSON.stringify([]));
+        } else {
+          const r = await kv.get(KEYS.NOTIF(actor.id));
+          const arr = r ? JSON.parse(r) : [];
+          const next = (Array.isArray(arr) ? arr : []).filter((n) => !ids.includes(String(n?.id)));
+          await kv.put(KEYS.NOTIF(actor.id), JSON.stringify(next.slice(0, 100)));
+        }
+      } catch { /* ignore */ }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
     if (path === '/api/reports' && method === 'GET') {
       const token = String(request.headers.get('X-Admin-Token') || '');
       const expected = String(env.REPORTS_ADMIN_TOKEN || '');

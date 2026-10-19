@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell, Check, X, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
@@ -23,6 +24,12 @@ const kindLabel: Record<AppNotification['kind'], string> = {
   system: 'System',
 };
 
+/**
+ * Notification center rendered through a body-level portal so it always
+ * appears correctly on top of ANY page:
+ *  - Mobile  : true full-screen panel (100dvh, safe-area aware, scroll-locked)
+ *  - Desktop : anchored card near the bell (never overlaps off-screen).
+ */
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState<AppNotification[]>(() => listNotifications());
@@ -48,12 +55,17 @@ export function NotificationBell() {
     };
   }, []);
 
-  // Close on Escape for keyboard users.
+  // Escape closes + body scroll lock while open.
   useEffect(() => {
     if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
     const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpen(false); };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      document.body.style.overflow = prev;
+      window.removeEventListener('keydown', onKey);
+    };
   }, [open]);
 
   const handleAccept = async (n: AppNotification) => {
@@ -79,7 +91,7 @@ export function NotificationBell() {
   };
 
   return (
-    <div className="relative">
+    <>
       <Button variant="ghost" size="icon" className="relative" aria-label="Notifications" title="Notifications" onClick={() => setOpen((v) => !v)}>
         <Bell className="h-[1.2rem] w-[1.2rem]" />
         {count > 0 && (
@@ -89,19 +101,29 @@ export function NotificationBell() {
         )}
       </Button>
 
-      {open && (
-        <div className="fixed inset-0 z-[100] flex items-stretch justify-end sm:items-start sm:justify-end">
-          {/* Backdrop */}
+      {open && typeof document !== 'undefined' && createPortal(
+        <div className="fixed inset-0 z-[9999] sm:flex sm:items-start sm:justify-end">
+          {/* Backdrop (mobile: dimmed full screen; desktop: transparent) */}
           <button
             type="button"
             aria-label="Close notifications"
-            className="absolute inset-0 bg-black/40 sm:bg-transparent"
+            className="fixed inset-0 bg-black/45 sm:bg-black/10"
             onClick={() => setOpen(false)}
           />
-          {/* Panel */}
-          <div className="relative ml-auto flex h-full w-full flex-col bg-background shadow-2xl sm:mt-12 sm:mr-2 sm:h-auto sm:max-h-[80vh] sm:w-[360px] sm:rounded-md sm:border sm:border-border">
-            <div className="flex items-center justify-between border-b border-border px-3 py-2">
-              <p className="text-sm font-semibold">Notifications {count > 0 && <span className="text-muted-foreground">({count} new)</span>}</p>
+          {/* Panel: TRUE fullscreen on mobile, anchored card on desktop */}
+          <section
+            role="dialog"
+            aria-modal="true"
+            aria-label="Notifications"
+            className="
+              relative ml-auto flex h-[100dvh] w-full flex-col bg-background text-foreground
+              sm:mt-14 sm:mr-4 sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border sm:shadow-2xl
+            "
+          >
+            <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
+              <p className="text-sm font-semibold">
+                Notifications {count > 0 && <span className="text-muted-foreground">({count} new)</span>}
+              </p>
               <div className="flex items-center gap-1">
                 <Button variant="ghost" size="sm" className="h-7 text-xs" onClick={() => { markAllRead(); refresh(); }}>
                   Mark all read
@@ -109,14 +131,14 @@ export function NotificationBell() {
                 <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => { clearNotifications(); refresh(); }} aria-label="Clear all">
                   <Trash2 className="h-3.5 w-3.5" />
                 </Button>
-                <Button variant="ghost" size="icon" className="h-7 w-7 sm:hidden" onClick={() => setOpen(false)} aria-label="Close">
+                <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setOpen(false)} aria-label="Close notifications">
                   <X className="h-4 w-4" />
                 </Button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto sm:max-h-[70vh]">
+            <div className="flex-1 overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
               {items.length === 0 && (
-                <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+                <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                   <Bell className="mx-auto mb-2 h-8 w-8 opacity-40" />
                   You are all caught up.
                   <p className="mt-1 text-xs opacity-80">Follow requests, accepts, live alerts and new uploads land here.</p>
@@ -154,10 +176,11 @@ export function NotificationBell() {
                 </div>
               ))}
             </div>
-          </div>
-        </div>
+          </section>
+        </div>,
+        document.body,
       )}
-    </div>
+    </>
   );
 }
 

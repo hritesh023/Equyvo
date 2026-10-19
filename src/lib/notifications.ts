@@ -31,12 +31,38 @@ export interface AppNotification {
 }
 
 const KEY = 'equyvo_notifications_v1';
+const DISMISSED_KEY = 'equyvo_notif_dismissed_v1';
+
+function dismissedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(DISMISSED_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function addDismissed(ids: string[]): void {
+  if (!ids.length) return;
+  try {
+    const cur = dismissedIds();
+    for (const id of ids) if (id) cur.add(String(id));
+    localStorage.setItem(DISMISSED_KEY, JSON.stringify([...cur].slice(-500)));
+  } catch {
+    /* ignore */
+  }
+}
 
 function readAll(): AppNotification[] {
   try {
     const raw = localStorage.getItem(KEY);
     const arr = raw ? JSON.parse(raw) : [];
-    return Array.isArray(arr) ? arr : [];
+    if (!Array.isArray(arr)) return [];
+    const dismissed = dismissedIds();
+    // Once read-and-cleared / deleted, notifications never resurface — even
+    // when the server merge re-sends them after a device swap or sync.
+    return arr.filter((n: AppNotification) => !dismissed.has(String(n?.id)));
   } catch {
     return [];
   }
@@ -70,17 +96,22 @@ export function markAllRead(): void {
   const list = readAll().map((n) => ({ ...n, read: true }));
   writeAll(list);
   emitNotificationsUpdated();
+  void api.notificationsRead([...list.map((n) => String(n.id))]).catch(() => {});
 }
 
 export function markRead(id: string): void {
   const list = readAll().map((n) => (n.id === id ? { ...n, read: true } : n));
   writeAll(list);
   emitNotificationsUpdated();
+  void api.notificationsRead([String(id)]).catch(() => {});
 }
 
 export function clearNotifications(): void {
+  const ids = readAll().map((n) => String(n.id));
+  addDismissed(ids);
   writeAll([]);
   emitNotificationsUpdated();
+  void api.notificationsClear(ids).catch(() => {});
 }
 
 function pushEnabled(): boolean {
@@ -146,6 +177,8 @@ export function pushNotification(n: Omit<AppNotification, 'id' | 'at' | 'read'> 
     read: false,
     ...n,
   } as AppNotification;
+  // Never resurrect notifications the user already cleared/ignored.
+  if (dismissedIds().has(String(item.id))) return item;
   const list = [item, ...readAll()].slice(0, 200);
   writeAll(list);
   emitNotificationsUpdated();
@@ -210,10 +243,15 @@ export async function syncNotificationsFromServer(): Promise<AppNotification[]> 
     const items = (res as { data?: { items?: AppNotification[] } }).data?.items;
     if (!res.error && Array.isArray(items) && items.length) {
       const cur = readAll();
-      const ids = new Set(cur.map((n) => n.id));
-      const fresh = items.filter((n) => n && n.id && !ids.has(String(n.id)));
+      const curById = new Map(cur.map((n) => [String(n.id), n] as const));
+      const dismissed = dismissedIds();
+      const fresh = items.filter(
+        (n) => n && n.id && !dismissed.has(String(n.id)) && !curById.has(String(n.id)),
+      );
       if (fresh.length) {
-        writeAll([...fresh.map((n) => ({ ...n, read: false }) as AppNotification), ...cur].slice(0, 200));
+        // Respect whatever the server believes about `read`, but never lower
+        // a locally-marked-read state back to unread.
+        writeAll([...(fresh as AppNotification[]), ...cur].slice(0, 200));
         emitNotificationsUpdated();
       }
     }
@@ -226,8 +264,10 @@ export async function syncNotificationsFromServer(): Promise<AppNotification[]> 
     const reqs = (res as { data?: { requests?: string[] } }).data?.requests;
     if (!res.error && Array.isArray(reqs)) {
       const cur = readAll();
+      const dismissed = dismissedIds();
       for (const r of reqs.slice(0, 20)) {
         const id = `followreq-${r}`;
+        if (dismissed.has(id)) continue;
         if (!cur.some((n) => n.id === id)) {
           cur.unshift({
             id,

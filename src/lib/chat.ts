@@ -46,16 +46,43 @@ const MESSAGES_KEY = 'equyvo_chat_v2_messages';
 // --- Lightweight end-to-end encryption (client-side AES-GCM) ---
 const E2E_PREFIX = 'e2e:';
 
-async function e2eKey(threadId: string): Promise<CryptoKey> {
-  const enc = new TextEncoder().encode('equyvo-e2e-v1::' + String(threadId));
-  const digest = await crypto.subtle.digest('SHA-256', enc);
-  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+const E2E_SALT = 'equyvo-e2e-v1::';
+
+function materialToKey(material: string): Promise<CryptoKey> {
+  const enc = new TextEncoder().encode(E2E_SALT + String(material));
+  return crypto.subtle.digest('SHA-256', enc).then((digest) =>
+    crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']),
+  );
+}
+
+/**
+ * The shared thread key BOTH participants derive the same way:
+ * sorted (self id, peer id) pair. This is what makes incoming E2E payloads
+ * decryptable on the recipient's device — unlike a key derived from only the
+ * thread id (which is the peer id on each side and therefore disagrees).
+ */
+async function sharedPairKey(threadId: string): Promise<CryptoKey> {
+  const me = getStoredUser();
+  const self = String(me?.id || me?.email || '');
+  const pair = [self, String(threadId)].sort().join('::');
+  return materialToKey(pair);
+}
+
+// Legacy keys kept as decrypt fallbacks so messages sent before the pair-key
+// fix can still be decoded when the other side ever used them.
+async function legacyKeys(threadId: string): Promise<CryptoKey[]> {
+  const me = getStoredUser();
+  const self = String(me?.id || me?.email || '');
+  const keys: Promise<CryptoKey>[] = [materialToKey(String(threadId))];
+  if (self) keys.push(materialToKey(self));
+  const out = await Promise.all(keys);
+  return out;
 }
 
 export async function encryptText(threadId: string, plain: string): Promise<string> {
   if (!plain) return '';
   try {
-    const key = await e2eKey(threadId);
+    const key = await sharedPairKey(threadId);
     const iv = crypto.getRandomValues(new Uint8Array(12));
     const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain));
     const buf = new Uint8Array(iv.byteLength + ct.byteLength);
@@ -71,18 +98,27 @@ export async function encryptText(threadId: string, plain: string): Promise<stri
 
 export async function decryptText(threadId: string, value: string): Promise<string> {
   if (!value || !value.startsWith(E2E_PREFIX)) return value;
+  let raw: string;
   try {
-    const raw = atob(value.slice(E2E_PREFIX.length));
-    const buf = new Uint8Array(raw.length);
-    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
-    const iv = buf.slice(0, 12);
-    const ct = buf.slice(12);
-    const key = await e2eKey(threadId);
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
-    return new TextDecoder().decode(pt);
+    raw = atob(value.slice(E2E_PREFIX.length));
   } catch {
-    return value;
+    return '';
   }
+  const buf = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+  const iv = buf.slice(0, 12);
+  const ct = buf.slice(12);
+  const tryKeys: CryptoKey[] = [];
+  try { tryKeys.push(await sharedPairKey(threadId)); } catch { /* ignore */ }
+  try { tryKeys.push(...await legacyKeys(threadId)); } catch { /* ignore */ }
+  for (const key of tryKeys) {
+    try {
+      const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+      return new TextDecoder().decode(pt);
+    } catch { /* try next key */ }
+  }
+  // Unreadable E2E payload: never leak the ciphertext blob to the user.
+  return '[Encrypted message]';
 }
 
 function nowTime(): string {
