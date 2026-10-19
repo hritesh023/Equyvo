@@ -97,7 +97,7 @@ const EN: I18nDict = {
 // Translation rows — one line per language, values follow CORE_ORDER.
 // Empty slot → English fallback at runtime, so partial rows are safe.
 // ---------------------------------------------------------------------------
-// eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+ 
 const ROWS: Record<string, string[]> = {
   //   .---------------0 home
   //   |          .------------1 discover

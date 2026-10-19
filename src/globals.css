@@ -2,56 +2,59 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ── Safe-area single source of truth ("unibody") ─────────────────────────
-   HARD, CONCRETE layout protection — no rule can ever collapse to 0 on a
+/* ── Unibody layout contract (single source of truth) ─────────────────────
+   The mobile app is ONE BODY: [top bar] [scrollable content] [bottom nav]
+   stacked in normal flow inside a 100dvh flex column. No fixed overlay
+   bands anywhere — nothing can ever hide behind the header on any page.
+
+   HARD, CONCRETE inset protection — no value can ever collapse to 0 on a
    phone, whatever insets are reported (0, huge cutout boxes, lost vars…).
 
    TOP    = 48px floor — clears every status bar / punch-hole in existence.
-            Website: env() refines it above 48. App: MainActivity injects
-            --app-content-top (= the device's real status-bar height) via
-            the JS bridge; it refines 48 down to the exact value.
+             Website: env() refines it above 48. App: fixed 48px.
    BOTTOM = 28px floor — clears every gesture bar + curved screen footer.
    SIDES  = 0 — content uses the full width, straight into curved edges.
 
-   In the APP (.cap-native) the shell is edge-to-edge and the web layer owns
-   the TOP pad (native inset listeners proved unreliable on curved devices:
-   top may read 0 — we never depend on it). */
+   The floors are consumed ONLY inside the in-flow bars (their padding).
+   Both bars also publish their exact rendered height to CSS:
+     --equyvo-bar-top / --equyvo-bar-bottom (measured by Navbar.tsx,
+     floored by the fallback values below so layout still resolves on the
+     very first paint or if JS measurement ever failed). */
 :root {
   /* Website / browsers: floor wins over env() (max ≥ 48). */
   --equyvo-safe-top: max(48px, env(safe-area-inset-top, 0px));
   --equyvo-safe-bottom: max(28px, env(safe-area-inset-bottom, 0px));
   --equyvo-safe-left: 0px;
   --equyvo-safe-right: 0px;
+
+  /* Fallback bar heights (JS measurement refines to exact pixels). */
+  --equyvo-bar-top: calc(var(--equyvo-safe-top) + 3.25rem);
+  --equyvo-bar-bottom: calc(4rem + var(--equyvo-safe-bottom));
 }
 html.cap-native {
-  /* App: FIXED 48px top clearance — cannot ever read 0, never mind what the
+  /* App: FIXED clearance floors — cannot ever read 0, never mind what the
      OS/WebView/Capacitor report (all three proved unreliable on curved
      devices). Fixed 28px bottom fill, no side pads. */
   --equyvo-safe-top: 48px;
   --equyvo-safe-bottom: 28px;
 }
 
-/* App main offset (mobile shell): content starts right below the OS status
-   bar (safe top) and stops above the fixed bottom nav (4rem + safe bottom).
-   There is no separate top bar band — page headers are ordinary content,
-   merged seamlessly into the body (unibody). */
-.app-main-offset {
-  padding-top: var(--equyvo-safe-top);
-  padding-bottom: calc(4rem + var(--equyvo-safe-bottom));
-}
-@media (min-width: 768px) {
-  .app-main-offset {
-    padding-top: 0;
-    padding-bottom: 0;
-  }
-}
-
-/* Fixed elements anchored to the shell (notification panel & backdrop). */
+/* Fixed screen overlays anchored to the shell (notification panel &
+   backdrop, full-screen sheets): they start right below the in-flow top
+   bar and end right above the in-flow bottom nav. */
 .nav-top-safe {
-  top: var(--equyvo-safe-top);
+  top: var(--equyvo-bar-top);
 }
 .nav-bottom-safe {
-  bottom: calc(4rem + var(--equyvo-safe-bottom));
+  bottom: var(--equyvo-bar-bottom);
+}
+
+/* Exact unibody content-column height (between the in-flow bars) for
+   viewports that fill the screen edge to edge: moments feed, chat
+   shells… Replaces every hand-guessed 100dvh calc() on mobile. */
+.unibody-viewport {
+  height: calc(100dvh - var(--equyvo-bar-top) - var(--equyvo-bar-bottom));
+  min-height: 0;
 }
 
 @layer base {
@@ -1350,13 +1353,13 @@ html.cap-native {
     box-sizing: border-box;
   }
 
-  /* Mobile chat shell: definite height = viewport minus the fixed bottom nav
-     and the safe insets, so flex-1 message areas, the background layer and
-     the inner scroll region resolve to real pixel heights. */
+  /* Mobile chat shell: exact unibody content-column height (viewport minus
+     the measured in-flow top bar and bottom nav), so flex-1 message areas,
+     the background layer and the inner scroll region resolve to real pixel
+     heights. */
   .chat-mobile-shell {
-    height: calc(100vh - 4rem - var(--equyvo-safe-top) - var(--equyvo-safe-bottom));
-    height: calc(100dvh - 4rem - var(--equyvo-safe-top) - var(--equyvo-safe-bottom));
-    max-height: calc(100dvh - 4rem);
+    height: calc(100dvh - var(--equyvo-bar-top) - var(--equyvo-bar-bottom));
+    max-height: calc(100dvh - var(--equyvo-bar-top));
   }
 
   /* Chat open (mobile): fixed full-screen overlay. Content starts below the

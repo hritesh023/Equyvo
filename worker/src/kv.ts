@@ -1399,7 +1399,7 @@ export function rankFeedItems(items: any[], interests: InterestMap, limit: numbe
     const comments = Number(it?.comments ?? it?.comments_count ?? 0) || 0;
     const engagement = (likes + reacts * 2 + comments * 3) / 10;
     const pop = Number((it as any)?.__pop || 0);
-    let score = engagement + pop / 5 + recencyBoost(it?.createdAt || it?.created_at || it?.publishedAt) + interestBoost({
+    const score = engagement + pop / 5 + recencyBoost(it?.createdAt || it?.created_at || it?.publishedAt) + interestBoost({
       category: it?.category || (it?.categories && it.categories[0]) || '',
       tags: it?.tags || [],
       creator: it?.user || it?.creator || '',

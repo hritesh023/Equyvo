@@ -140,7 +140,10 @@ export function NotificationBell() {
                 </Button>
               </div>
             </div>
-            <div className="flex-1 overflow-y-auto overscroll-contain pt-[env(safe-area-inset-top)]">
+            {/* Panel top & bottom are anchored to the measured unibody bars
+                (.nav-top-safe / .nav-bottom-safe), so no inner safe-area
+                padding is needed here anymore. */}
+            <div className="flex-1 overflow-y-auto overscroll-contain">
               {items.length === 0 && (
                 <div className="px-4 py-10 text-center text-sm text-muted-foreground">
                   <Bell className="mx-auto mb-2 h-8 w-8 opacity-40" />

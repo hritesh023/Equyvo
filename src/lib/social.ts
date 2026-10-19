@@ -168,7 +168,7 @@ export async function getFollowing(userId?: string): Promise<{ list: SocialProfi
   const byId = new Map<string, SocialProfile>();
   for (const p of profiles) byId.set(String(p.id).toLowerCase(), p);
   const cached = readCachedProfiles();
-  let list: SocialProfile[] = ids.map((rawId) => {
+  const list: SocialProfile[] = ids.map((rawId) => {
     const key = String(rawId).toLowerCase();
     return (
       byId.get(key) ||

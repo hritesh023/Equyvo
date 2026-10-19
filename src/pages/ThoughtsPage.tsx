@@ -830,8 +830,10 @@ const ThoughtsPage = memo(() => {
     navigate(`/search?q=${encodeURIComponent(topic)}`);
   };
 
+  // Unibody: fill exactly the scrollable content column (md+ keeps the
+  // classic full-window min-height for the desktop layout).
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-full md:min-h-screen bg-background">
       {/* Header — merged into the body (unibody): no sticky band, it simply
           scrolls as the first block of the page. */}
       <div className="max-w-2xl mx-auto px-4 pt-1">

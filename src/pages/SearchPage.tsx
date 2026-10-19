@@ -254,8 +254,9 @@ const SearchPage: React.FC = () => {
         canonicalUrl={typeof window !== 'undefined' ? window.location.href : undefined}
       />
       
-      <div className="min-h-screen bg-background">
-        {/* Search header — merged into the body (unibody, no sticky band). */}
+      {/* Unibody: fill the scrollable content column; md+ keeps the full-window
+          min-height for the desktop layout. */}
+      <div className="min-h-full md:min-h-screen bg-background">
         <div className="bg-background">
           <div className="container mx-auto px-4 py-4">
             <div className="flex flex-col md:flex-row gap-4 items-center">

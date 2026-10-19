@@ -115,7 +115,7 @@ const HomePage = () => {
       }
     });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [engagementLog.length]);
 
   const teachBrain = (label: string, opts?: { feedback?: number; response?: string }) => {

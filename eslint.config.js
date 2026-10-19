@@ -29,6 +29,9 @@ export default tseslint.config(
       "no-case-declarations": "off",
       "react-hooks/rules-of-hooks": "off",
       "react-hooks/exhaustive-deps": "off",
+      // The codebase deliberately swallows best-effort errors with bare
+      // `catch {}` blocks (toasts/UX stay silent on failures).
+      "no-empty": ["error", { "allowEmptyCatch": true }],
     },
   },
 );

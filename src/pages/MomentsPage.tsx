@@ -573,7 +573,7 @@ const MomentsPage = () => {
 
   if (isLoadingMoments) {
     return (
-      <div className="w-full h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)] bg-black flex flex-col items-center justify-center gap-3">
+      <div className={`w-full bg-black flex flex-col items-center justify-center gap-3 ${isMobile ? 'unibody-viewport' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'}`}>
         <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white"></div>
         <p className="text-white/70 text-sm">Loading moments…</p>
       </div>
@@ -582,7 +582,7 @@ const MomentsPage = () => {
 
   if (moments.length === 0) {
     return (
-      <div className="w-full h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)] bg-black flex flex-col items-center justify-center gap-4 px-6 text-center">
+      <div className={`w-full bg-black flex flex-col items-center justify-center gap-4 px-6 text-center ${isMobile ? 'unibody-viewport' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'}`}>
         <p className="text-white text-lg font-semibold">No moments yet</p>
         <p className="text-white/60 text-sm max-w-sm">Be the first to share a vertical photo or video — it will appear here, in For You, Following (for your followers) and Discover.</p>
         <Button onClick={() => navigate('/app/create')}>Create a moment</Button>
@@ -594,7 +594,7 @@ const MomentsPage = () => {
     <div
       ref={containerRef}
       className={`w-full bg-black snap-y snap-mandatory overflow-y-scroll overflow-x-hidden no-scrollbar ${
-        isMobile ? 'h-[calc(100dvh-7rem)]' : 'h-[calc(100dvh-4rem)]'
+        isMobile ? 'unibody-viewport' : 'h-[calc(100dvh-4rem)]'
       }`}
       style={{
         scrollBehavior: 'smooth',
@@ -609,7 +609,7 @@ const MomentsPage = () => {
           key={moment.id}
           data-index={index}
           className={`moment-slide relative w-full shrink-0 snap-start snap-always bg-black overflow-hidden ${
-            isMobile ? 'h-[calc(100dvh-7rem)]' : 'h-[calc(100dvh-4rem)]'
+            isMobile ? 'unibody-viewport' : 'h-[calc(100dvh-4rem)]'
           }`}
         >
           {/* Portrait stage: any upload dimension is shown in full (no crop,

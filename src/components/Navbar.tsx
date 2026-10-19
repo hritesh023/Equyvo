@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from 'react';
 import { useI18n } from '@/lib/i18n';
 import { Link, useLocation } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
@@ -37,13 +37,51 @@ interface NavbarProps {
   onSignOut: () => Promise<void>;
 }
 
+/**
+ * Unibody bar measurement.
+ *
+ * The mobile shell is ONE BODY: [top bar] [content] [bottom nav] in normal
+ * flow inside a 100dvh flex column — no fixed overlay bands, so no element
+ * can ever be cut off behind the header (the bug that hit every page).
+ *
+ * Each in-flow bar publishes its exact rendered height to a CSS variable so
+ * fixed screen overlays (notification panel, chat shells, moment slides…)
+ * can anchor precisely to the content column on every device.
+ */
+function useFlowBarMeasure(
+  ref: React.RefObject<HTMLElement | null>,
+  cssVar: '--equyvo-bar-top' | '--equyvo-bar-bottom',
+) {
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const publish = () => {
+      const h = Math.round(el.getBoundingClientRect().height);
+      if (h > 0) document.documentElement.style.setProperty(cssVar, `${h}px`);
+    };
+    publish();
+    const ro = new ResizeObserver(publish);
+    ro.observe(el);
+    window.addEventListener('resize', publish);
+    window.visualViewport?.addEventListener('resize', publish);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', publish);
+      window.visualViewport?.removeEventListener('resize', publish);
+    };
+  }, [ref, cssVar]);
+}
+
 const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const { t } = useI18n();
   const location = useLocation();
   const isMobile = useIsMobile();
-  const isSearchPage = location.pathname === '/app/search' || location.pathname === '/search';
   const navigate = useNavigate();
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const topBarRef = useRef<HTMLDivElement>(null);
+
+  // Publish the exact top-bar height (--equyvo-bar-top).
+  useFlowBarMeasure(topBarRef, '--equyvo-bar-top');
 
   // Close the mobile search dialog as soon as navigation happens (e.g. tapping
   // a profile in the suggestions) so it never traps the user on the home screen.
@@ -102,9 +140,14 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
 
   return (
     <>
-      {/* Mobile Top Bar — full-bleed incl. left/right display cutouts */}
+      {/* Mobile Top Bar — IN FLOW at the top of the unibody shell. Content
+          below it can never be covered by this bar (it owns its row), and
+          its safe-area padding keeps it clear of the status bar / notch. */}
       {isMobile && (
-        <div className="mobile-top-nav-fill fixed inset-x-0 top-0 z-50 border-b border-border/50 bg-background/95 backdrop-blur-xl">
+        <div
+          ref={topBarRef}
+          className="mobile-top-nav-fill relative z-50 shrink-0 border-b border-border/50 bg-background"
+        >
           <div className="flex items-center justify-between px-3 py-2">
             {/* Logo and Search */}
             <div className="flex items-center gap-2 flex-1">
@@ -232,43 +275,66 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
           </DialogContent>
         </Dialog>
       )}
-
-      {/* Mobile Bottom Navigation — hidden on the search page so search can be
-          full-screen. */}
-      {isMobile && !isSearchPage && (
-        <div className="mobile-bottom-nav-fill fixed inset-x-0 bottom-0 z-50 border-t border-border/50 bg-background/95 shadow-lg backdrop-blur-xl">
-          <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2">
-          {navItems.slice(0, 5).map((item) => (
-            <Link
-              key={item.name}
-              to={item.path}
-              className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
-                ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
-                : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
-                }`}
-            >
-              <item.icon className="h-5 w-5 shrink-0" />
-              <span className="max-w-full truncate text-[10px] font-medium">{t(item.name)}</span>
-              <span className="sr-only">{t(item.name)}</span>
-            </Link>
-          ))}
-          {/* More options button */}
-          <Link
-            to="/app/settings"
-            className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === '/app/settings'
-              ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
-              : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
-              }`}
-          >
-            <Settings className="h-5 w-5 shrink-0" />
-            <span className="max-w-full truncate text-[10px] font-medium">More</span>
-            <span className="sr-only">More options</span>
-          </Link>
-          </div>
-        </div>
-      )}
     </>
   );
 };
+
+/**
+ * Mobile Bottom Navigation — IN FLOW at the bottom of the unibody shell
+ * (rendered by App.tsx after <main>). Its safe-area padding keeps it clear
+ * of the gesture bar, and it can never overlay page content because it
+ * occupies its own row below the scrollable column.
+ * Hidden on the search page so search stays full-screen.
+ */
+export function MobileBottomNav() {
+  const { t } = useI18n();
+  const location = useLocation();
+  const isMobile = useIsMobile();
+  const barRef = useRef<HTMLDivElement>(null);
+
+  // Publish the exact bottom-nav height (--equyvo-bar-bottom).
+  useFlowBarMeasure(barRef, '--equyvo-bar-bottom');
+
+  const isSearchPage = location.pathname === '/app/search' || location.pathname === '/search';
+
+  if (!isMobile) return null;
+  if (isSearchPage) return null;
+
+  return (
+    <div
+      ref={barRef}
+      className="mobile-bottom-nav-fill relative z-50 shrink-0 border-t border-border/50 bg-background shadow-lg"
+    >
+      <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2">
+      {navItems.slice(0, 5).map((item) => (
+        <Link
+          key={item.name}
+          to={item.path}
+          className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
+            ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
+            : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
+            }`}
+        >
+          <item.icon className="h-5 w-5 shrink-0" />
+          <span className="max-w-full truncate text-[10px] font-medium">{t(item.name)}</span>
+          <span className="sr-only">{t(item.name)}</span>
+        </Link>
+      ))}
+      {/* More options button */}
+      <Link
+        to="/app/settings"
+        className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === '/app/settings'
+          ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
+          : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
+          }`}
+      >
+        <Settings className="h-5 w-5 shrink-0" />
+        <span className="max-w-full truncate text-[10px] font-medium">More</span>
+        <span className="sr-only">More options</span>
+      </Link>
+      </div>
+    </div>
+  );
+}
 
 export default Navbar;

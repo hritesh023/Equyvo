@@ -2244,7 +2244,7 @@ export const onRequest = async (context) => {
       if (await kv.get('auth:blocked:' + email)) {
         return json({ error: 'This account is no longer available.' }, 403, cors);
       }
-      let raw = await kv.get('auth:user:' + email);
+      const raw = await kv.get('auth:user:' + email);
       let user;
       if (!raw) {
         // Auto-provision on login so returning/legacy users are never
@@ -4301,7 +4301,7 @@ export const onRequest = async (context) => {
       // Resolve target content: explicit kind+contentId wins, else via reportId.
       let kind = String(body.kind || body.type || '').toLowerCase().replace(/s$/, '');
       let contentId = String(body.contentId || body.id || '').slice(0, 64);
-      let owner = String(body.owner || '').slice(0, 200);
+      const owner = String(body.owner || '').slice(0, 200);
       if ((!kind || !contentId) && body.reportId) {
         try {
           const rraw = await kv.get(KEYS.REPORT(String(body.reportId).slice(0, 64)));

@@ -2,7 +2,7 @@ import { Post, Moment, Story } from '@/types';
 import api from './api';
 
 // The server filters out placeholder content once real users exist.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+ 
 export function markHasRealContent() {
   // Server-side flag is set automatically when content is created via API
 }

@@ -7,13 +7,13 @@ const NotFound = () => {
   useEffect(() => {
     // Log the bad route for diagnostics; do not throw.
     if (typeof window !== 'undefined') {
-      // eslint-disable-next-line no-console
+       
       console.warn(`404 — no route for ${location.pathname}`);
     }
   }, [location.pathname]);
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-background">
+    <div className="min-h-full md:min-h-screen flex items-center justify-center bg-background">
       <div className="text-center px-4">
         <h1 className="text-4xl font-bold mb-4">404</h1>
         <p className="text-xl text-muted-foreground mb-2">Oops! Page not found</p>

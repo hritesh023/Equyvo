@@ -1,9 +1,9 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
-import Navbar from './components/Navbar';
+import Navbar, { MobileBottomNav } from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
 import SplashScreen from './components/SplashScreen';
@@ -64,9 +64,12 @@ const AppContent = () => {
     }
   }, [isTablet]);
 
-  // Scroll to top when route changes
+  // Scroll to top when route changes (the unibody shell scrolls inside the
+  // <main> column on phones; the window scrolls on desktop).
+  const mainRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     window.scrollTo(0, 0);
+    if (mainRef.current) mainRef.current.scrollTop = 0;
   }, [location.pathname]);
 
   useEffect(() => {
@@ -153,18 +156,25 @@ const AppContent = () => {
   }
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col">
+    /* Unibody shell (phones): ONE body — [top bar] [scrollable content]
+       [bottom nav] stacked in normal flow inside a 100dvh flex column.
+       The bars own their rows, so no page element can ever be cut off
+       behind them (full-viewport overlays keep their safe-area anchoring
+       via measured --equyvo-bar-* vars). Desktop keeps the classic
+       scrolling window. */
+    <div className="flex flex-col overflow-hidden bg-background text-foreground h-screen h-[100dvh] md:h-auto md:min-h-screen md:overflow-visible">
       {shouldShowNavbar && <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />}
       
-      <div className={`flex-1 flex flex-col transition-all duration-300 ease-in-out ${
+      <div className={`flex-1 flex flex-col min-h-0 transition-all duration-300 ease-in-out ${
         isSidebarOpen && !isMobile ? 'lg:ml-64' : 'lg:ml-0'
       }`}>
         {shouldShowNavbar && <Navbar user={user} onSignOut={handleSignOut} />}
-        {/* Edge-to-edge shell: top/bottom offsets grow with the device's
-            notch + home-indicator insets (Dynamic Island, punch-hole,
-            gesture bar) so content never hides under the fixed navs;
-            edge-fill covers curved left/right display edges. */}
-        <main className={`flex-1 overflow-y-auto edge-fill ${shouldShowNavbar ? 'w-full app-main-offset' : 'w-full'}`}>
+        {/* Scrollable content column of the unibody: flex-1 so it exactly
+            fills the space between the in-flow top bar and bottom nav;
+            edge-fill covers curved left/right display edges. Fixed
+            screen overlays (notification panel, fullscreen viewers)
+            anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
+        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain' : ''} edge-fill`}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />
@@ -189,10 +199,9 @@ const AppContent = () => {
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>
-      {/* Full-width flexible footer (desktop/tablet/large screens; mobile
-          uses the bottom nav). Lives inside the content column so it tracks
-          the sidebar offset and always max-fills its container. */}
-      {/* Footer intentionally removed */}
+      {/* Mobile bottom nav: last row of the unibody — in flow, never
+          overlaying content. Desktop/tablet uses the top nav instead. */}
+      {shouldShowNavbar && <MobileBottomNav />}
       <Toaster />
     </div>
   </div>

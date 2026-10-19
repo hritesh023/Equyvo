@@ -131,7 +131,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       }
     } catch { /* ignore */ }
     refreshThreads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, []);
 
   useEffect(() => {
@@ -163,7 +163,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       window.removeEventListener('chatUpdated', onUpdate);
       window.removeEventListener('followChanged', onUpdate);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeId]);
 
   // Mark seen on open AND when new messages arrive while the thread is open.
@@ -187,13 +187,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         .catch(() => {});
     }, 5000);
     return () => window.clearInterval(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [activeId]);
 
   useEffect(() => {
     markThreadSeen(activeId ?? '');
     if (activeId) refreshThreads();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [msgs.length]);
 
   useEffect(() => {
