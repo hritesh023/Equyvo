@@ -218,6 +218,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             <div className="space-y-4">
               <SearchSuggest
                 onSearch={handleMobileSearch}
+                onClose={() => setMobileSearchOpen(false)}
                 placeholder="Search for content, users, tags..."
                 autoFocus={true}
                 showTrending={false}

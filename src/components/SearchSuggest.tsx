@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Search, TrendingUp, Clock, Sparkles, Brain, ArrowRight, X, Users } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -12,6 +11,7 @@ import api from '@/lib/api';
 
 interface SearchSuggestProps {
   onSearch?: (query: string) => void;
+  onClose?: () => void;
   placeholder?: string;
   className?: string;
   showTrending?: boolean;
@@ -22,6 +22,7 @@ interface SearchSuggestProps {
 
 const SearchSuggest: React.FC<SearchSuggestProps> = ({
   onSearch,
+  onClose,
   placeholder = "Search for content, users, tags...",
   className,
   showTrending = true,
@@ -335,10 +336,10 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
         />
       </div>
 
-      {/* Suggestions Dropdown (portal to body to avoid clipping) */}
-      {isOpen && createPortal(
-        <div data-search-dropdown className="bg-background/95 backdrop-blur-lg border border-border/50 rounded-lg shadow-2xl overflow-hidden max-h-[70vh]" style={dropdownStyle}>
-          <div className="max-h-[70vh] overflow-y-auto overscroll-contain">
+      {/* Suggestions Dropdown (inline so it is never clipped and scrolls naturally) */}
+      {isOpen && (
+        <div className="mt-2 bg-background/95 backdrop-blur-lg border border-border/50 rounded-lg shadow-2xl overflow-hidden max-h-[60vh]">
+          <div className="max-h-[60vh] overflow-y-auto overscroll-contain">
             {isLoading ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3"></div>
@@ -366,7 +367,11 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         onClick={() => {
                           setIsOpen(false);
                           saveSearch(query.trim());
-                          navigate(`/profile/${encodeURIComponent(p.id)}`);
+                          onClose?.();
+                          // Defer navigation slightly so the dialog closes cleanly
+                          // on mobile before the route change (prevents a blank
+                          // flash / redirect to home).
+                          setTimeout(() => navigate(`/profile/${encodeURIComponent(p.id)}`), 50);
                         }}
                         className="w-full flex items-center gap-3 p-2.5 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group"
                         role="option"
@@ -529,8 +534,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
               </>
             )}
           </div>
-        </div>,
-        document.body
+        </div>
       )}
     </div>
   );
