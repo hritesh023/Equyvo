@@ -107,7 +107,7 @@ export function NotificationBell() {
           <button
             type="button"
             aria-label="Close notifications"
-            className="pointer-events-auto fixed left-0 right-0 top-[calc(3.25rem+env(safe-area-inset-top,0px))] bottom-[calc(4rem+env(safe-area-inset-bottom,0px))] bg-black/45 sm:inset-0 sm:bg-black/10"
+            className="pointer-events-auto fixed left-0 right-0 nav-top-safe nav-bottom-safe bg-black/45 sm:inset-0 sm:bg-black/10"
             onClick={() => setOpen(false)}
           />
           {/* Panel: sits INSIDE the app layout on mobile (below the top bar,
@@ -120,7 +120,7 @@ export function NotificationBell() {
             aria-label="Notifications"
             className="
               pointer-events-auto fixed left-0 right-0 flex flex-col bg-background text-foreground shadow-2xl
-              top-[calc(3.25rem+env(safe-area-inset-top,0px))] bottom-[calc(4rem+env(safe-area-inset-bottom,0px))]
+              nav-top-safe nav-bottom-safe
               sm:top-14 sm:right-4 sm:bottom-auto sm:left-auto sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border
             "
           >

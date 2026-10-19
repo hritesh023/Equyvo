@@ -32,7 +32,7 @@ bucket_name = "equyvo-media"
 #   MAX_UPLOAD_MB= (optional global cap; per-plan caps always apply)
 #   ALLOWED_ORIGINS=https://equyvo.com,https://www.equyvo.com
 [vars]
-APP_VERSION = "1.4.2"
+APP_VERSION = "1.4.3"
 BILLING_BASE_URL = "https://api.acronous.com"
 # Reject unverified X-User-Id writes: callers must present a valid Cognito or
 # central Acronous JWT. Prevents account spoofing ("bad authentication" caused

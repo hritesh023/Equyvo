@@ -164,11 +164,7 @@ const AppContent = () => {
             notch + home-indicator insets (Dynamic Island, punch-hole,
             gesture bar) so content never hides under the fixed navs;
             edge-fill covers curved left/right display edges. */}
-        <main className={`flex-1 overflow-y-auto edge-fill ${
-          shouldShowNavbar
-            ? 'w-full pt-[calc(3.25rem+env(safe-area-inset-top,0px))] pb-[calc(4rem+env(safe-area-inset-bottom,0px))] md:pt-0 md:pb-0'
-            : 'w-full'
-        }`}>
+        <main className={`flex-1 overflow-y-auto edge-fill ${shouldShowNavbar ? 'w-full app-main-offset' : 'w-full'}`}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />

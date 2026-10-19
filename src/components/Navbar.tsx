@@ -145,7 +145,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
       
       {/* Desktop Navigation — full-bleed bar, readable centered content */}
       {!isMobile && (
-        <nav className="sticky top-0 z-50 w-full border-b border-border/50 bg-background/95 shadow-lg backdrop-blur-xl">
+        <nav className="z-50 w-full border-b border-border/50 bg-background/95 shadow-lg backdrop-blur-xl">
           <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-2 py-2 sm:px-3 md:px-4 md:py-3">
             {/* Logo */}
             <div className="flex items-center gap-1 sm:gap-2">
