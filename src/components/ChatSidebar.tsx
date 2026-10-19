@@ -19,12 +19,13 @@ import {
   type ChatThread, type ChatMessage,
 } from '@/lib/chat';
 
-/** Single tick (server) / double tick (delivered) / blue double + Seen (read). */
+/** Clock (sending) / single tick (sent) / double tick (delivered).
+ *  Seen has NO tick on purpose — the user-facing signal is the "Seen"
+ *  text label rendered under the own bubble (see the read receipt below). */
 function Ticks({ status }: { status: ChatMessage['status'] }) {
   if (status === 'sending') return <Clock className="h-3.5 w-3.5 opacity-70" aria-label="Sending" />;
   if (status === 'sent') return <Check className="h-4 w-4 opacity-80" aria-label="Sent" />;
   if (status === 'delivered') return <CheckCheck className="h-4 w-4 opacity-80" aria-label="Delivered" />;
-  if (status === 'seen') return <CheckCheck className="h-4 w-4 text-sky-400" aria-label="Seen" />;
   return null;
 }
 
@@ -544,10 +545,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         )}
                       </div>
                     )}
-                    {/* Read receipt label: only under MY messages, only when seen.
-                        Incoming bubbles intentionally show nothing underneath. */}
+                    {/* Read receipt label: only under MY messages, only when seen (the
+                        ONLY seen signal — no blue tick). Incoming bubbles show nothing. */}
                     {msg.fromMe && msg.status === 'seen' && (
-                      <p className="mt-0.5 text-right text-[11px] italic text-sky-300/90">Seen</p>
+                      <p className="mt-0.5 text-right text-[11px] text-sky-300/90">Seen</p>
                     )}
                   </div>
                 </div>
