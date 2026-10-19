@@ -1752,7 +1752,7 @@ function cloudinaryVariants(secureUrl, resourceType, quality) {
   }
 }
 
-const ALLOWED_MIME_PREFIXES = ['image/', 'video/'];
+const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
 function mimeAllowed(mime) {
   return typeof mime === 'string' && ALLOWED_MIME_PREFIXES.some((p) => mime.startsWith(p));
 }
@@ -1786,6 +1786,13 @@ function extFromFile(file) {
   if (mime === 'video/mp4') return 'mp4';
   if (mime === 'video/webm') return 'webm';
   if (mime === 'video/quicktime') return 'mov';
+  // Voice notes / audio uploads.
+  if (mime === 'audio/webm') return 'webm';
+  if (mime === 'audio/mp4' || mime === 'audio/x-m4a' || mime === 'audio/m4a') return 'm4a';
+  if (mime === 'audio/mpeg') return 'mp3';
+  if (mime === 'audio/ogg' || mime === 'audio/opus') return 'ogg';
+  if (mime === 'audio/aac') return 'aac';
+  if (mime === 'audio/wav' || mime === 'audio/x-wav') return 'wav';
   return 'bin';
 }
 
@@ -3510,7 +3517,7 @@ export const onRequest = async (context) => {
         .replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
 
       if (!file || typeof file === 'string') return json({ error: 'No file provided' }, 400, cors);
-      if (!mimeAllowed(file.type)) return json({ error: 'Only images and videos are allowed' }, 415, cors);
+      if (!mimeAllowed(file.type)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
 
       // Per-plan size cap wins over the global MAX_UPLOAD_MB env.
       const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
@@ -3603,7 +3610,8 @@ export const onRequest = async (context) => {
       }
 
       const resourceType = result?.resource_type
-        || (String(file.type).startsWith('video/') ? 'video' : 'image');
+        // Audio is filed under the video resource type on Cloudinary.
+        || (String(file.type).startsWith('video/') || String(file.type).startsWith('audio/') ? 'video' : 'image');
       const variants = result ? cloudinaryVariants(result.secure_url, result.resource_type, quota.quality) : null;
       const r2Url = r2Key ? r2DeliveryUrl(request, env, r2Key) : null;
       const payload = {
