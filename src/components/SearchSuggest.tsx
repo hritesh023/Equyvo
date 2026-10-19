@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { Search, TrendingUp, Clock, Sparkles, Brain, ArrowRight, X, Users } from 'lucide-react';
 import { Input } from '@/components/ui/input';
@@ -37,6 +38,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
   
   const { suggestions, isLoading, generateSuggestions, saveSearch } = useAISearch();
 
@@ -96,7 +98,8 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) &&
+          !(event.target as HTMLElement)?.closest?.('[data-search-dropdown]')) {
         setIsOpen(false);
         setSelectedIndex(-1);
       }
@@ -105,6 +108,32 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  // Position the dropdown via a portal so it is never clipped by scroll
+  // containers (main has overflow-y-auto), fixing the "half page cut off".
+  useEffect(() => {
+    if (!isOpen) return;
+    const update = () => {
+      const el = inputRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const width = Math.min(rect.width, window.innerWidth - rect.left - 8);
+      setDropdownStyle({
+        position: 'fixed',
+        top: rect.bottom + 8,
+        left: rect.left,
+        width: Math.max(240, width),
+        zIndex: 1000,
+      });
+    };
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [isOpen]);
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -173,6 +202,19 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
       setIsSearching(true);
       trackSearchEvent(searchQuery, 'search_executed');
       saveSearch(searchQuery);
+
+      // If the query matches a person, go straight to their profile.
+      const normalized = searchQuery.toLowerCase().replace(/^@/, '');
+      const personMatch = people.find((p) => {
+        const uname = String(p.username || p.name || '').toLowerCase().replace(/^@/, '');
+        return uname === normalized;
+      });
+      if (!onSearch && personMatch) {
+        setIsSearching(false);
+        setIsOpen(false);
+        navigate(`/profile/${encodeURIComponent(personMatch.id)}`);
+        return;
+      }
       
       if (onSearch) {
         onSearch(searchQuery);
@@ -186,7 +228,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
         setIsOpen(false);
       }, 300);
     }
-  }, [query, onSearch, trackSearchEvent, saveSearch, navigate]);
+  }, [query, onSearch, trackSearchEvent, saveSearch, navigate, people]);
 
   const handleSuggestionClick = useCallback((suggestion: SearchSuggestion) => {
     setQuery(suggestion.label);
@@ -293,9 +335,9 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
         />
       </div>
 
-      {/* Suggestions Dropdown */}
-      {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-background/95 backdrop-blur-lg border border-border/50 rounded-lg shadow-2xl z-[100] overflow-hidden max-h-[70vh]">
+      {/* Suggestions Dropdown (portal to body to avoid clipping) */}
+      {isOpen && createPortal(
+        <div data-search-dropdown className="bg-background/95 backdrop-blur-lg border border-border/50 rounded-lg shadow-2xl overflow-hidden max-h-[70vh]" style={dropdownStyle}>
           <div className="max-h-[70vh] overflow-y-auto overscroll-contain">
             {isLoading ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
@@ -487,7 +529,8 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
               </>
             )}
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
