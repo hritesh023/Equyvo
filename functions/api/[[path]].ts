@@ -1718,15 +1718,54 @@ async function serveR2(request, env, key, cors, method) {
 
   const contentType = (head.httpMetadata && head.httpMetadata.contentType) || 'application/octet-stream';
   const contentEncoding = (head.httpMetadata && head.httpMetadata.contentEncoding) || '';
+
+  // Legacy gzip objects: decompress BEFORE serving. Browsers do not reliably
+  // decompress manually-announced Content-Encoding for image/video requests,
+  // which made stored photos undecodable (`naturalWidth === 0`) and silently
+  // broke chat backgrounds. Serving plain bytes (with no Content-Encoding
+  // header) makes old and new uploads render everywhere.
+  const isLegacyGzip = contentEncoding === 'gzip';
   const baseHeaders = {
     'Content-Type': contentType,
-    'Accept-Ranges': 'bytes',
+    'Accept-Ranges': isLegacyGzip ? 'none' : 'bytes',
     'Cache-Control': 'public, max-age=31536000, immutable',
-    ...(contentEncoding ? { 'Content-Encoding': contentEncoding } : {}),
     ...cors,
     ...SECURITY_HEADERS,
   };
   if (head.etag) baseHeaders['ETag'] = head.etag;
+  // NOTE: intentionally never advertise Content-Encoding on our responses.
+
+  if (method === 'HEAD' && !isLegacyGzip) {
+    return new Response(null, { status: 200, headers: { ...baseHeaders, 'Content-Length': String(head.size) } });
+  }
+
+  if (isLegacyGzip) {
+    // Decompressed path: HEAD reports the DECOMPRESSED size, GET streams the
+    // plain bytes. Range requests are refused (Accept-Ranges: none) — gzip
+    // objects are small stills, not video.
+    let plain = null;
+    try {
+      const obj = await env.EQUYVO_R2.get(key);
+      if (!obj) return json({ error: 'Not found' }, 404, cors);
+      const gz = await obj.arrayBuffer();
+      const ds = new DecompressionStream('gzip');
+      const out = new Blob([gz]).stream().pipeThrough(ds);
+      const buf = await new Response(out).arrayBuffer();
+      plain = new Uint8Array(buf);
+    } catch {
+      plain = null;
+    }
+    if (!plain) {
+      // Un-decompressible legacy object: serve raw rather than fail.
+      const obj2 = await env.EQUYVO_R2.get(key);
+      if (!obj2) return json({ error: 'Not found' }, 404, cors);
+      return new Response(obj2.body, { status: 200, headers: { ...baseHeaders, 'Content-Length': String(obj2.size) } });
+    }
+    if (method === 'HEAD') {
+      return new Response(null, { status: 200, headers: { ...baseHeaders, 'Content-Length': String(plain.byteLength) } });
+    }
+    return new Response(plain, { status: 200, headers: { ...baseHeaders, 'Content-Length': String(plain.byteLength) } });
+  }
 
   if (method === 'HEAD') {
     return new Response(null, { status: 200, headers: { ...baseHeaders, 'Content-Length': String(head.size) } });
@@ -3232,28 +3271,22 @@ export const onRequest = async (context) => {
 
       // 1) R2 put (primary). Key embeds the content hash, so re-uploads of
       // the same bytes by the same user converge on one object.
+      // NOTE: never gzip-compress here. Browsers do not reliably
+      // auto-decompress manually-announced Content-Encoding for image
+      // requests, which made served photos undecodable ("Could not display
+      // that image.") and broke chat backgrounds. Images/videos are
+      // compressed formats anyway; gzip bought nothing real. Legacy gzip
+      // objects remain readable because serveR2 decompresses on read.
       let r2Key = null;
       if (hasR2 && bytes) {
         r2Key = r2KeyFor(actor.id, hash, extFromFile(file));
         try {
-          let toStore = bytes;
-          let encoding = '';
-          try {
-            const cs = new CompressionStream('gzip');
-            const stream = new Blob([bytes]).stream().pipeThrough(cs);
-            const buf = await new Response(stream).arrayBuffer();
-            if (buf && buf.byteLength > 0 && buf.byteLength < bytes.byteLength) {
-              toStore = new Uint8Array(buf);
-              encoding = 'gzip';
-            }
-          } catch { /* fall back to uncompressed */ }
-          await env.EQUYVO_R2.put(r2Key, toStore, {
+          await env.EQUYVO_R2.put(r2Key, bytes, {
             httpMetadata: {
               contentType: file.type || 'application/octet-stream',
-              contentEncoding: encoding || undefined,
               cacheControl: 'public, max-age=31536000, immutable',
             },
-            customMetadata: { uploader: String(actor.id).slice(0, 128), sha256: hash, encoding: encoding || 'none' },
+            customMetadata: { uploader: String(actor.id).slice(0, 128), sha256: hash, encoding: 'none' },
           });
         } catch (err) {
           // R2 write failed: fall through to Cloudinary-only rather than
