@@ -2109,6 +2109,10 @@ export const onRequest = async (context) => {
       const isPrivate = body.isPrivate === true || body.accountType === 'private';
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
       if (!password || password.length < 6) return json({ error: 'Password must be at least 6 characters.' }, 400, cors);
+      // Deleted/banned emails stay unavailable (tombstone wins over signup).
+      if (await kv.get('auth:blocked:' + email)) {
+        return json({ error: 'This email is no longer available.' }, 403, cors);
+      }
       const existing = await kv.get('auth:user:' + email);
       if (existing) return json({ error: 'An account with this email already exists. Try signing in.' }, 409, cors);
       const salt = crypto.randomUUID();
@@ -2127,6 +2131,11 @@ export const onRequest = async (context) => {
       const email = String(body.email || '').trim().toLowerCase().slice(0, 254);
       const password = String(body.password || '');
       if (!email || !password) return json({ error: 'Email and password are required.' }, 400, cors);
+      // Deleted/banned accounts stay dead: without this tombstone, the
+      // auto-provision fallback below would resurrect them on login.
+      if (await kv.get('auth:blocked:' + email)) {
+        return json({ error: 'This account is no longer available.' }, 403, cors);
+      }
       let raw = await kv.get('auth:user:' + email);
       let user;
       if (!raw) {
