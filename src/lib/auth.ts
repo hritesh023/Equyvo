@@ -3,6 +3,8 @@ import {
   signIn as cognitoSignIn,
   signOut as cognitoSignOut,
   getCurrentSession,
+  confirmRegistration as cognitoConfirmRegistration,
+  resendConfirmationCode as cognitoResendConfirmationCode,
 } from './aws';
 
 export interface User {
@@ -326,6 +328,36 @@ export async function signUpWithEmail(
     }
     // Production safety: do not create a fake session on signup failure.
     return { success: false, error: message || 'Sign up failed. Please try again.' };
+  }
+}
+
+export async function confirmEmail(email: string, code: string) {
+  try {
+    await cognitoConfirmRegistration(email, code);
+    return { success: true };
+  } catch (error: any) {
+    const message = toErrorMessage(error, '');
+    const code2 = errorCode(error);
+    if (message.includes('CodeMismatch') || code2 === 'CodeMismatchException') {
+      return { success: false, error: 'Incorrect confirmation code' };
+    }
+    if (message.includes('ExpiredCode') || code2 === 'ExpiredCodeException') {
+      return { success: false, error: 'Confirmation code expired. Request a new one.' };
+    }
+    if (message.includes('Network') || message.includes('fetch') || message.includes('Failed to fetch')) {
+      return { success: false, error: 'Network error. Check your connection and try again.' };
+    }
+    return { success: false, error: message || 'Confirmation failed. Please try again.' };
+  }
+}
+
+export async function resendConfirmation(email: string) {
+  try {
+    await cognitoResendConfirmationCode(email);
+    return { success: true };
+  } catch (error: any) {
+    const message = toErrorMessage(error, '');
+    return { success: false, error: message || 'Could not resend code.' };
   }
 }
 

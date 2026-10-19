@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { signInWithEmail, signUpWithEmail } from '../lib/auth';
+import { signInWithEmail, signUpWithEmail, confirmEmail, resendConfirmation } from '../lib/auth';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -23,7 +23,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     const n = searchParams.get('next');
     return n && n.startsWith('/') && !n.startsWith('//') ? n : '/app/home';
   })();
-  const [activeTab, setActiveTab] = useState('login');
+  const [activeTab, setActiveTab] = useState('signup');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [showLoginPassword, setShowLoginPassword] = useState(false);
@@ -36,6 +36,12 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   const [signupIsPrivate, setSignupIsPrivate] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Email-confirmation flow (Cognito requires verifying the email before
+  // sign-in works). Shown when sign-up / sign-in reports an unconfirmed account.
+  const [confirmMode, setConfirmMode] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState('');
+  const [confirmCode, setConfirmCode] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
 
   const goHome = (user: User) => {
     onAuthSuccess?.(user);
@@ -51,10 +57,55 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
       if (result.success && result.user) {
         goHome(result.user);
       } else {
-        setError(result.error || 'Sign in failed');
+        const msg = result.error || 'Sign in failed';
+        if (/confirm your email/i.test(msg)) {
+          setConfirmEmail(loginEmail);
+          setConfirmPassword(loginPassword);
+          setConfirmMode(true);
+        } else {
+          setError(msg);
+        }
       }
     } catch {
       setError('Sign in failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleConfirm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const r = await confirmEmail(confirmEmail, confirmCode.trim());
+      if (!r.success) {
+        setError(r.error || 'Confirmation failed');
+        return;
+      }
+      const result = await signInWithEmail(confirmEmail, confirmPassword);
+      if (result.success && result.user) {
+        goHome(result.user);
+      } else {
+        setError(result.error || 'Sign in failed');
+        setConfirmMode(false);
+        setActiveTab('login');
+        setLoginEmail(confirmEmail);
+      }
+    } catch {
+      setError('Confirmation failed. Please try again.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleResend = async () => {
+    setError('');
+    setLoading(true);
+    try {
+      const r = await resendConfirmation(confirmEmail);
+      if (!r.success) setError(r.error || 'Could not resend code');
+      else setError(''); // success; keep quiet
     } finally {
       setLoading(false);
     }
@@ -67,9 +118,35 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     try {
       const result = await signUpWithEmail(signupEmail, signupPassword, signupName, { isPrivate: signupIsPrivate });
       if (result.success && result.user) {
-        goHome(result.user);
+        // Try to sign in immediately (auto-confirm pools). If the account
+        // still needs email verification, fall into the confirm flow instead
+        // of dropping the user into a half-authenticated state.
+        const signIn = await signInWithEmail(signupEmail, signupPassword);
+        if (signIn.success && signIn.user) {
+          goHome(signIn.user);
+        } else if (/confirm your email/i.test(signIn.error || '')) {
+          setConfirmEmail(signupEmail);
+          setConfirmPassword(signupPassword);
+          setConfirmMode(true);
+        } else {
+          // Account created but sign-in unavailable right now; show confirm
+          // flow proactively so the user can verify when the code arrives.
+          setConfirmEmail(signupEmail);
+          setConfirmPassword(signupPassword);
+          setConfirmMode(true);
+        }
       } else {
-        setError(result.error || 'Sign up failed');
+        const msg = result.error || 'Sign up failed';
+        if (/already exists/i.test(msg)) {
+          // The email is already registered: route the user to sign in /
+          // confirm instead of dead-ending.
+          setLoginEmail(signupEmail);
+          setLoginPassword(signupPassword);
+          setActiveTab('login');
+          setError('An account with this email already exists. Try signing in, or confirm your email if you never verified it.');
+        } else {
+          setError(msg);
+        }
       }
     } catch {
       setError('Sign up failed. Please try again.');
@@ -103,10 +180,49 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {confirmMode ? (
+          <form onSubmit={handleConfirm} className="space-y-4">
+            <div className="text-center space-y-1 mb-2">
+              <p className="text-sm font-medium">Confirm your email</p>
+              <p className="text-xs text-muted-foreground">
+                We sent a 6-digit code to <span className="font-medium">{confirmEmail}</span>. Enter it below to activate your account.
+              </p>
+            </div>
+            {error && (
+              <div className="bg-destructive/10 border border-destructive/20 text-destructive text-sm rounded-lg px-4 py-2.5">
+                {error}
+              </div>
+            )}
+            <div className="space-y-2">
+              <Label htmlFor="confirm-code">Confirmation code</Label>
+              <Input
+                id="confirm-code"
+                type="text"
+                inputMode="numeric"
+                placeholder="123456"
+                value={confirmCode}
+                onChange={(e) => setConfirmCode(e.target.value)}
+                required
+                autoComplete="one-time-code"
+              />
+            </div>
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? 'Confirming...' : 'Confirm & Sign In'}
+            </Button>
+            <div className="flex items-center justify-between text-xs">
+              <button type="button" onClick={handleResend} className="text-primary hover:underline" disabled={loading}>
+                Resend code
+              </button>
+              <button type="button" onClick={() => { setConfirmMode(false); setError(''); setActiveTab('login'); setLoginEmail(confirmEmail); }} className="text-muted-foreground hover:text-foreground">
+                Back to sign in
+              </button>
+            </div>
+          </form>
+        ) : (
         <Tabs value={activeTab} onValueChange={handleTabChange} className="w-full">
           <TabsList className="w-full mb-6">
-            <TabsTrigger value="login" className="flex-1">Sign In</TabsTrigger>
             <TabsTrigger value="signup" className="flex-1">Sign Up</TabsTrigger>
+            <TabsTrigger value="login" className="flex-1">Sign In</TabsTrigger>
           </TabsList>
 
           {error && (
@@ -260,6 +376,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
             </form>
           </TabsContent>
         </Tabs>
+        )}
       </CardContent>
     </Card>
   );

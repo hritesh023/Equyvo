@@ -295,8 +295,8 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
 
       {/* Suggestions Dropdown */}
       {isOpen && (
-        <div className="absolute top-full left-0 right-0 mt-2 bg-background/95 backdrop-blur-lg border border-border/50 rounded-lg shadow-xl z-50 overflow-hidden">
-          <div className="max-h-96 overflow-y-auto">
+        <div className="absolute top-full left-0 right-0 mt-2 bg-background/95 backdrop-blur-lg border border-border/50 rounded-lg shadow-2xl z-[100] overflow-hidden max-h-[70vh]">
+          <div className="max-h-[70vh] overflow-y-auto overscroll-contain">
             {isLoading ? (
               <div className="py-8 text-center text-sm text-muted-foreground">
                 <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full mx-auto mb-3"></div>
