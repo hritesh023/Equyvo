@@ -122,15 +122,19 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     markThreadSeen(activeId);
     refreshThreads();
     pullThreadMessages(activeId).catch(() => {});
+    let pollCount = 0;
     const t = window.setInterval(() => {
+      pollCount += 1;
       pullThreadMessages(activeId)
         .then(() => {
           refreshMsgs(activeId);
           markThreadSeen(activeId);
-          refreshThreads();
+          // Threads (unread badges) refresh every other cycle; ticks and
+          // "Seen" labels arrive every poll.
+          if (pollCount % 2 === 0) refreshThreads();
         })
         .catch(() => {});
-    }, 8000);
+    }, 5000);
     return () => window.clearInterval(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeId]);
@@ -164,7 +168,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       return { backgroundColor: chatTheme.value, opacity };
     } else if (chatTheme.type === 'image' && chatTheme.value) {
       const safeUrl = String(chatTheme.value).replace(/"/g, '%22');
-      return { backgroundImage: `url("${safeUrl}")`, backgroundSize: 'cover', backgroundPosition: 'center', opacity };
+      return {
+        backgroundImage: `url("${safeUrl}")`,
+        backgroundSize: 'cover',
+        backgroundPosition: 'center',
+        backgroundRepeat: 'no-repeat',
+        opacity,
+      };
     }
     return {};
   };
@@ -275,7 +285,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const isAttachedGif = !!attachedFile && attachedFile.type === 'image/gif';
 
   const shell = isMobile
-    ? 'h-full w-full flex flex-col bg-background'
+    ? 'chat-mobile-shell w-full flex flex-col bg-background'
     : 'h-[calc(100vh-80px)] w-80 fixed right-4 top-24 bg-card/95 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden hidden lg:flex flex-col z-40';
 
   return (
@@ -414,13 +424,26 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 {activeChat.online ? ' · Online' : ''}
               </p>
             </div>
+            {/* Background selector reachable even while the chat is open
+                (the desktop sidebar header sits under the chat panel overlay). */}
+            <ChatThemeSelector>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label="Customize chat background"
+                title="Customize chat background"
+              >
+                <Palette className="w-4 h-4" />
+              </Button>
+            </ChatThemeSelector>
           </div>
 
           {/* WhatsApp-style message area. Background is a sibling layer of the
               scroll container so it ALWAYS covers the visible area (it never
               scrolls away with content) and renders as soon as an image/GIF
               theme is applied. */}
-          <div className="relative flex-1 min-h-0 bg-[#0b141a] dark:bg-[#0b141a] overflow-hidden">
+          <div className={`relative flex-1 ${isMobile ? 'min-h-[45dvh]' : 'min-h-0'} bg-[#0b141a] dark:bg-[#0b141a] overflow-hidden`}>
             {chatTheme.type !== 'default' && (
               <div
                 className="absolute inset-0 pointer-events-none"

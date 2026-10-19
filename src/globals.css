@@ -1296,6 +1296,16 @@
     box-sizing: border-box;
   }
 
+  /* Mobile chat shell: definite height between the fixed top bar and the
+     bottom nav (mirrors the main content offsets) so flex-1 message areas,
+     the background layer and the inner scroll region resolve to real pixel
+     heights instead of collapsing to zero. */
+  .chat-mobile-shell {
+    height: calc(100vh - 3.25rem - 4rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    height: calc(100dvh - 3.25rem - 4rem - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px));
+    max-height: calc(100dvh - 3.25rem - 4rem);
+  }
+
   .app-footer-fill {
     width: 100%;
     max-width: none;

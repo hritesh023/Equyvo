@@ -269,6 +269,80 @@ async function getStoredProfile(env, userId) {
   } catch { return null; }
 }
 
+// Ensure every auth account has a stored profile so follower/following lists,
+// chat threads and sheets always show a real name (never a bare UUID/userid).
+async function ensureProfile(env, u) {
+  try {
+    const id = String(u?.id || '');
+    if (!id) return null;
+    const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(id));
+    if (raw) return JSON.parse(raw);
+    const name = String(u?.name || u?.username || (u?.email ? String(u.email).split('@')[0] : id));
+    const profile = {
+      id,
+      email: String(u?.email || ''),
+      name,
+      username: name,
+      avatar: '',
+      bio: '',
+      followers: 0,
+      following: 0,
+      isPrivate: u?.isPrivate === true,
+      verified: false,
+      createdAt: new Date().toISOString(),
+    };
+    await env.EQUYVO_KV.put(KEYS.PROFILE(id), JSON.stringify(profile));
+    return profile;
+  } catch { return null; }
+}
+
+// Legacy accounts created before profiles existed: build an id -> name map by
+// scanning auth:user:<email> records once (cached in KV) so follower/following
+// lists and chat threads show real names instead of raw UUIDs. Missing profiles
+// are self-healed by ensureProfile.
+async function legacyNameMap(env) {
+  try {
+    const cached = await env.EQUYVO_KV.get('maint:idname_map_v1');
+    if (cached) {
+      try {
+        const m = JSON.parse(cached);
+        if (m && m.map && m.t && (Date.now() - m.t) < 10 * 60 * 1000) return m.map;
+      } catch { /* fall through */ }
+    }
+    const map = {};
+    let cursor;
+    do {
+      const page = await env.EQUYVO_KV.list({ prefix: 'auth:user:', cursor, limit: 500 });
+      for (const k of (page.keys || [])) {
+        try {
+          const u = JSON.parse(await env.EQUYVO_KV.get(k.name));
+          if (u && u.id) {
+            const nm = String(u.name || (u.email ? String(u.email).split('@')[0] : '')).trim();
+            if (nm && !map[u.id]) map[u.id] = nm;
+          }
+        } catch { /* ignore */ }
+      }
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor);
+    await env.EQUYVO_KV.put('maint:idname_map_v1', JSON.stringify({ t: Date.now(), map }));
+    return map;
+  } catch { return {}; }
+}
+
+async function profileWithFallback(env, pid) {
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(pid));
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p === 'object') return p;
+    }
+  } catch { /* ignore */ }
+  const map = await legacyNameMap(env);
+  const nm = String(map[pid] || '');
+  const created = await ensureProfile(env, { id: pid, name: nm || (pid.slice(0, 8) || 'user') });
+  return created || null;
+}
+
 async function readIdList(env, key) {
   try {
     const raw = await env.EQUYVO_KV.get(key);
@@ -573,6 +647,113 @@ async function writeChatMessages(env, a, b, list) {
   try {
     await env.EQUYVO_KV.put(chatPairKey(a, b), JSON.stringify(list.slice(-300)));
   } catch { /* best-effort */ }
+}
+
+// ---- Chat ledger v2: event-sourced per-message records --------------------
+// KV is eventually consistent. The original design kept the whole thread as
+// ONE array (read → push → write on a single key). Two devices sending within
+// the same few seconds both read the same stale copy and the second write
+// REPLACED the first message — messages could literally disappear across
+// devices. Now every message lives under its own key (chatmsg:...) and each
+// sender appends to a per-sender index (chatidx:...): concurrent senders
+// never touch the same keys, so messages can no longer overwrite each other.
+// The legacy blob stays readable for old history but is no longer written.
+
+function chatPairToken(a, b) {
+  return String(a) < String(b) ? (String(a) + ':' + String(b)) : (String(b) + ':' + String(a));
+}
+
+function normChatMsg(m) {
+  if (!m || typeof m !== 'object') return null;
+  const id = String(m.id || '').slice(0, 64);
+  if (!id) return null;
+  return {
+    id,
+    from: String(m.from || ''),
+    to: String(m.to || ''),
+    text: String(m.text || ''),
+    type: m.type === 'image' || m.type === 'file' ? m.type : 'text',
+    fileUrl: String(m.fileUrl || ''),
+    fileName: String(m.fileName || ''),
+    status: m.status === 'seen' || m.status === 'delivered' ? m.status : 'sent',
+    createdAt: m.createdAt || new Date().toISOString(),
+    deletedForEveryone: m.deletedForEveryone === true,
+    deletedFor: Array.isArray(m.deletedFor)
+      ? m.deletedFor.filter((x) => typeof x === 'string').slice(0, 10)
+      : [],
+  };
+}
+
+async function getChatMessagePer(env, pair, id) {
+  try {
+    const raw = await env.EQUYVO_KV.get('chatmsg:' + pair + ':' + id);
+    if (!raw) return null;
+    return normChatMsg(JSON.parse(raw));
+  } catch { return null; }
+}
+
+async function putChatMessagePer(env, pair, msg) {
+  try {
+    await env.EQUYVO_KV.put('chatmsg:' + pair + ':' + String(msg.id || '').slice(0, 64), JSON.stringify(msg));
+  } catch { /* best-effort */ }
+}
+
+async function readChatIndex(env, pair, from, max) {
+  try {
+    const raw = await env.EQUYVO_KV.get('chatidx:' + pair + ':' + String(from || '').slice(0, 200));
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr.filter((x) => x && typeof x.id === 'string') : [];
+    return list.slice(-Math.min(200, Math.max(1, Number(max) || 150)));
+  } catch { return []; }
+}
+
+// Store a message: per-message record + append to the SENDER's own index.
+// Only the sender ever writes their index key, so A and B sending at the
+// same moment cannot clobber each other's history.
+async function storeChatMessage(env, a, b, msg) {
+  const n = normChatMsg(msg);
+  if (!n) return;
+  const pair = chatPairToken(a, b);
+  await putChatMessagePer(env, pair, n);
+  const entry = { id: n.id, ts: new Date(n.createdAt).getTime() || Date.now() };
+  try {
+    const key = 'chatidx:' + pair + ':' + n.from.slice(0, 200);
+    const raw = await env.EQUYVO_KV.get(key);
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr : [];
+    if (!list.some((x) => x && x.id === n.id)) {
+      list.push(entry);
+      await env.EQUYVO_KV.put(key, JSON.stringify(list.slice(-300)));
+    }
+  } catch { /* best-effort */ }
+}
+
+// Merged ledger for reads: per-message records (authoritative) with the
+// legacy single-blob history folded in for anything stored before v2.
+async function readThreadLedger(env, a, b, limit) {
+  const pair = chatPairToken(a, b);
+  const [idxA, idxB, legacy] = await Promise.all([
+    readChatIndex(env, pair, a, 150),
+    readChatIndex(env, pair, b, 150),
+    readChatMessages(env, a, b, 300),
+  ]);
+  const out = new Map();
+  for (const m of (legacy || [])) {
+    const n = normChatMsg(m);
+    if (n && !out.has(n.id)) out.set(n.id, n);
+  }
+  const ids = [];
+  for (const e of [...idxA, ...idxB]) {
+    if (e && e.id && !out.has(e.id) && !ids.includes(e.id)) { ids.push(e.id); }
+  }
+  const tail = ids.slice(-200);
+  const per = await Promise.all(tail.map((id) => getChatMessagePer(env, pair, id)));
+  for (const m of per) if (m) out.set(m.id, m);
+  const merged = [...out.values()].sort(
+    (x, y) => (new Date(x.createdAt).getTime() || 0) - (new Date(y.createdAt).getTime() || 0),
+  );
+  const n = Math.min(300, Math.max(1, Number(limit) || 100));
+  return merged.slice(-n);
 }
 
 async function pushUserNotification(env, userId, item) {
@@ -1895,6 +2076,7 @@ export const onRequest = async (context) => {
       const hashed = await hashPwLocal(password, salt);
       const user = { id: crypto.randomUUID(), email, name, salt, password: hashed, createdAt: new Date().toISOString(), isPrivate };
       await kv.put('auth:user:' + email, JSON.stringify(user));
+      await ensureProfile(env, user);
       const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
       await kv.put('auth:session:' + token, JSON.stringify({ id: user.id, email, name, username: name, isPrivate }), { expirationTtl: 60 * 60 * 24 * 7 });
       return json({ success: true, token, user: { id: user.id, email, name, username: name, isPrivate } }, 200, cors);
@@ -1934,6 +2116,7 @@ export const onRequest = async (context) => {
       }
       const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
       await kv.put('auth:session:' + token, JSON.stringify({ id: user.id, email: user.email, name: user.name, username: user.name, isPrivate: user.isPrivate === true }), { expirationTtl: 60 * 60 * 24 * 7 });
+      await ensureProfile(env, user);
       return json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, username: user.name, isPrivate: user.isPrivate === true } }, 200, cors);
     }
 
@@ -2657,8 +2840,8 @@ export const onRequest = async (context) => {
           const slice = head.slice(i, i + batch);
           const rows = await Promise.all(slice.map(async (pid) => {
             try {
-              const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(pid));
-              return profileSummary(raw ? JSON.parse(raw) : null, pid);
+              const stored = await profileWithFallback(env, pid);
+              return profileSummary(stored, pid);
             } catch { return profileSummary(null, pid); }
           }));
           profiles.push(...rows);
@@ -3502,9 +3685,9 @@ export const onRequest = async (context) => {
         fileName: String(clean.fileName || '').slice(0, 200),
         status: 'sent', createdAt: new Date().toISOString(),
       };
-      const all = await readChatMessages(env, actor.id, peer, 300);
-      all.push(msg);
-      await writeChatMessages(env, actor.id, peer, all);
+      // Event-sourced store: per-message key + per-sender index append. Two
+      // devices sending at once can no longer overwrite each other's history.
+      await storeChatMessage(env, actor.id, peer, msg);
       // Human-eval fan-out: every message becomes a labelled preference for
       // the shared Acronous brain (Contabo). Backend-only.
       try {
@@ -3547,12 +3730,23 @@ export const onRequest = async (context) => {
         return json({ error: 'Forbidden' }, 403, cors);
       }
       const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
-      const all = await readChatMessages(env, actor.id, peer, 300);
+      const all = await readThreadLedger(env, actor.id, peer, 300);
       let touched = false;
       for (const m of all) {
-        if (m && m.to === actor.id && m.status === 'sent') { m.status = 'delivered'; touched = true; }
+        if (m && m.to === actor.id && m.status === 'sent') {
+          m.status = 'delivered';
+          touched = true;
+        }
       }
-      if (touched) await writeChatMessages(env, actor.id, peer, all);
+      if (touched) {
+        const pair = chatPairToken(actor.id, peer);
+        await Promise.all([
+          ...new Set(all.filter((m) => m && m.to === actor.id && m.status === 'delivered').map((m) => m.id)),
+        ].map((id) => (async () => {
+          const m = all.find((x) => x && x.id === id);
+          if (m) await putChatMessagePer(env, pair, m);
+        })()));
+      }
       const out = all.slice(-limit)
         .filter((m) => !(Array.isArray(m?.deletedFor) && m.deletedFor.includes(actor.id)))
         .map((m) => ({
@@ -3576,11 +3770,16 @@ export const onRequest = async (context) => {
       if (denied) return denied;
       const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/seen', '')).split('?')[0];
       if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
-      const all = await readChatMessages(env, actor.id, peer, 300);
+      const all = await readThreadLedger(env, actor.id, peer, 300);
+      const pair = chatPairToken(actor.id, peer);
+      const flips = [];
       for (const m of all) {
-        if (m && m.to === actor.id) m.status = 'seen';
+        if (m && m.to === actor.id && m.status !== 'seen') {
+          m.status = 'seen';
+          flips.push(m);
+        }
       }
-      await writeChatMessages(env, actor.id, peer, all);
+      if (flips.length) await Promise.all(flips.map((m) => putChatMessagePer(env, pair, m)));
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
@@ -3593,9 +3792,12 @@ export const onRequest = async (context) => {
       if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
       let raw; try { raw = await readJson(request); } catch { raw = {}; }
       const id = String((raw && raw.id) || '').slice(0, 64);
-      const all = await readChatMessages(env, actor.id, peer, 300);
+      const all = await readThreadLedger(env, actor.id, peer, 300);
       const m = all.find((x) => x && x.id === id);
-      if (m && m.status === 'sent') { m.status = 'delivered'; await writeChatMessages(env, actor.id, peer, all); }
+      if (m && m.status === 'sent') {
+        m.status = 'delivered';
+        await putChatMessagePer(env, chatPairToken(actor.id, peer), m);
+      }
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
@@ -3611,7 +3813,7 @@ export const onRequest = async (context) => {
       const id = String((raw && raw.id) || '').slice(0, 64);
       const forEveryone = !!(raw && raw.forEveryone);
       if (!id) return json({ error: 'Invalid id' }, 400, cors);
-      const all = await readChatMessages(env, actor.id, peer, 300);
+      const all = await readThreadLedger(env, actor.id, peer, 300);
       const m = all.find((x) => x && x.id === id);
       if (!m) return json({ error: 'Not found' }, 404, cors);
       if (forEveryone && m.from !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
@@ -3624,7 +3826,7 @@ export const onRequest = async (context) => {
         m.deletedFor = Array.isArray(m.deletedFor) ? m.deletedFor : [];
         if (!m.deletedFor.includes(actor.id)) m.deletedFor.push(actor.id);
       }
-      await writeChatMessages(env, actor.id, peer, all);
+      await putChatMessagePer(env, chatPairToken(actor.id, peer), m);
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 

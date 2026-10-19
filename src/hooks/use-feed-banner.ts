@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { isBannerRoute, shouldShowBanner } from '@/lib/ads-config';
-import { hideFeedBanner, isNativePlatform, showFeedBanner } from '@/lib/admob-service';
+import {
+  hideFeedBanner,
+  isNativePlatform,
+  setBannerWanted,
+  showFeedBanner,
+} from '@/lib/admob-service';
 
 interface FeedBannerOpts {
   pathname: string;
@@ -37,6 +42,9 @@ export function useFeedBanner({ pathname, plan }: FeedBannerOpts): void {
       isBannerRoute(pathname) && shouldShowBanner(plan) && !takeoverOpen;
     if (allowed === lastAllowed.current) return;
     lastAllowed.current = allowed;
+    // Publish the decision so failed-load retries and app-foreground
+    // re-shows only ever run while an allowed screen is active.
+    setBannerWanted(allowed);
     if (allowed) {
       void showFeedBanner();
     } else {
@@ -46,6 +54,7 @@ export function useFeedBanner({ pathname, plan }: FeedBannerOpts): void {
 
   useEffect(() => {
     return () => {
+      setBannerWanted(false);
       void hideFeedBanner();
     };
   }, []);

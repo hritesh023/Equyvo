@@ -217,6 +217,76 @@ export function housePromoAd(placement: string): NativeAdData {
 let bannerState: 'hidden' | 'shown' = 'hidden';
 let bannerAdId: string | null = null;
 let bannerListenersAttached = false;
+// Whether the current screen WANTS a banner (route/plan/takeover decision
+// owned by use-feed-banner). Retries and app-foreground re-shows only ever
+// run while this is true — the banner never reappears on video surfaces,
+// composer/pricing/auth or for paying plans.
+let bannerWanted = false;
+let bannerFailures = 0;
+let bannerRetryTimer: ReturnType<typeof setTimeout> | null = null;
+let bannerVisibilityHooked = false;
+
+const BANNER_RETRY_BASE_MS = 30_000; // first retry after 30s
+const BANNER_RETRY_MAX_MS = 5 * 60_000; // never retry sooner than every 5 min
+
+/** Exponential backoff for failed loads (30s → 60s → 120s → 240s → 5min cap). */
+function bannerRetryDelay(): number {
+  const ms = BANNER_RETRY_BASE_MS * Math.pow(2, Math.max(0, bannerFailures - 1));
+  return Math.min(Number.isFinite(ms) ? ms : BANNER_RETRY_MAX_MS, BANNER_RETRY_MAX_MS);
+}
+
+/**
+ * Tell the service whether the active screen should show the banner. Called
+ * from useFeedBanner on every route/plan change.
+ */
+export function setBannerWanted(wanted: boolean): void {
+  bannerWanted = wanted;
+  if (!wanted && bannerRetryTimer) {
+    clearTimeout(bannerRetryTimer);
+    bannerRetryTimer = null;
+  }
+  hookBannerVisibility();
+}
+
+/**
+ * Re-attach the banner after a failed load — with backoff so repeated
+ * async no-fill cycles can never spam the user with half-loaded bars.
+ * This is what makes the banner reliably come back "every time the user
+ * interacts" without ever turning reload spam into an irritation.
+ */
+function scheduleBannerRetry(): void {
+  if (bannerRetryTimer || !bannerWanted) return;
+  bannerRetryTimer = setTimeout(() => {
+    bannerRetryTimer = null;
+    if (bannerWanted && bannerState !== 'shown') void showFeedBanner();
+  }, bannerRetryDelay());
+}
+
+/**
+ * App lifecycle handling via visibilitychange: hide the banner while the
+ * app is backgrounded (impressions shouldn't accumulate in the background),
+ * and re-show/resume it the instant the user comes back and interacts.
+ */
+function hookBannerVisibility(): void {
+  if (bannerVisibilityHooked || typeof document === 'undefined') return;
+  bannerVisibilityHooked = true;
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      try {
+        document.body.classList.remove('has-ad-banner');
+      } catch { /* ignore */ }
+      if (bannerRetryTimer) { clearTimeout(bannerRetryTimer); bannerRetryTimer = null; }
+      // Hide without destroying the banner (cheap resume when they return).
+      void hideFeedBanner();
+      return;
+    }
+    if (bannerWanted) {
+      // Visible again while on an allowed screen → the banner comes straight
+      // back (resume if it still exists, fresh request otherwise).
+      void showFeedBanner();
+    }
+  });
+}
 
 /** True when a banner unit is available to request (test unit in dev). */
 export function isBannerConfigured(): boolean {
@@ -231,13 +301,20 @@ async function attachBannerListeners(
   try {
     await plugin.addListener('bannerAdFailedToLoad', () => {
       // No fill (common until AdMob approves the unit): collapse the slot
-      // so no blank gap remains.
+      // so no blank gap remains — then retry with backoff so the banner
+      // reliably comes back the next time the user is active.
+      bannerFailures += 1;
       bannerState = 'hidden';
       try {
         document.body.classList.remove('has-ad-banner');
       } catch {
         /* ignore */
       }
+      scheduleBannerRetry();
+    });
+    await plugin.addListener('bannerAdLoaded', () => {
+      // Successful fill — reset the backoff chain.
+      bannerFailures = 0;
     });
   } catch {
     /* listeners are best-effort */
@@ -255,6 +332,7 @@ export async function showFeedBanner(): Promise<boolean> {
     const adId = effectiveBannerAdUnitId();
     if (!adId) return false;
     if (!isDevEnvironment() && !isBannerConfigured()) return false;
+    hookBannerVisibility();
     const { plugin } = await loadPlugin();
     if (!plugin?.showBanner) return false;
     await initializeAds();
@@ -289,6 +367,7 @@ export async function showFeedBanner(): Promise<boolean> {
       });
       bannerState = 'shown';
       bannerAdId = adId;
+      bannerFailures = 0;
       try {
         document.body.classList.add('has-ad-banner');
       } catch {

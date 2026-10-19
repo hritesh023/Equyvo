@@ -349,22 +349,12 @@ export async function sendChatMessage(
   }
   patchMessage(threadId, serverId, { status: serverOk ? 'sent' : 'sending' });
 
-  // 2) Simulated transport to the peer device → double tick.
-  // When the server confirms, delivery follows shortly; when offline the
-  // message stays at `sending`/`sent` honestly instead of faking delivery.
-  if (serverOk) {
-    window.setTimeout(() => {
-      const cur = listMessages(threadId).find((m) => m.id === serverId);
-      if (cur && cur.status === 'sent') {
-        patchMessage(threadId, serverId, { status: 'delivered' });
-        try {
-          void api.chatDelivered(threadId, id).catch(() => {});
-        } catch {
-          /* ignore */
-        }
-      }
-    }, 900);
-  }
+  // 2) The double tick is NOT simulated here — it is earned. 'delivered'
+  //    only lands when the PEER's device actually pulls the message (their
+  //    app is open and online) and the server flips the status; 'seen' lands
+  //    when the peer opens the chat (/seen). Both reach this device through
+  //    the next poll (see ChatSidebar's pull interval), never before the
+  //    peer's device has truly received the message.
   return { ...msg, id: serverId, status: serverOk ? 'sent' : 'sending' };
 }
 

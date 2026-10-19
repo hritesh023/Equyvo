@@ -131,6 +131,11 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         setFileError('That file is not a readable image.');
         return;
       }
+      // Close the selector while the crop/adjust editor is open. An open
+      // Radix dialog applies a body-wide pointer-events lock, which would
+      // leave the cropper's buttons visible but unclickable — the exact
+      // bug that made image backgrounds feel "impossible to apply".
+      setIsOpen(false);
       if (file.type === 'image/gif') {
         // GIFs open the same crop/adjust editor as stills: confirming
         // untouched keeps the animation, adjusting exports a still frame.
@@ -521,6 +526,9 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
                             ? 'chat-background.gif'
                             : 'chat-background.jpg',
                         );
+                        // Close the dialog while adjusting for the same
+                        // pointer-events reason as in processFile.
+                        setIsOpen(false);
                         setCropSrc(draftImage);
                       }}
                       title={
@@ -631,7 +639,11 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
           title="Adjust chat background"
           confirmLabel="Use background"
           fileName={cropName}
-          onCancel={() => setCropSrc(null)}
+          onCancel={() => {
+            setCropSrc(null);
+            // Cancelled the editor: reopen the selector so the draft is still editable.
+            setIsOpen(true);
+          }}
           onKeepOriginal={handleKeepOriginalGif}
           onCropComplete={handleCropComplete}
         />
