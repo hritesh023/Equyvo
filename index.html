@@ -5,6 +5,17 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Equyvo</title>
+  <script>
+    // Native-shell marker: inside the Android/iOS app Capacitor handles the
+    // status-bar / gesture-bar insets natively (MainActivity), so the web
+    // layer must NOT add its own safe-area padding on top (no double gaps).
+    // The desktop/phone-browser site keeps env()-based safe-area padding.
+    try {
+      if (window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform()) {
+        document.documentElement.classList.add('cap-native');
+      }
+    } catch (e) { /* browser — ignore */ }
+  </script>
   <link rel="icon" type="image/png" href="/Equyvo_logo.png" />
   <link rel="apple-touch-icon" href="/Equyvo_logo.png" />
   <meta name="apple-mobile-web-app-capable" content="yes" />

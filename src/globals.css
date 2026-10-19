@@ -3,18 +3,25 @@
 @tailwind utilities;
 
 /* ── Safe-area single source of truth ("unibody") ─────────────────────────
-   In the Android app (targetSdk 35/36), Capacitor's SystemBars plugin strips
-   the OS insets from the WebView and injects them as --safe-area-inset-*
-   inline CSS variables on <html>; plain env(safe-area-inset-*) reads 0
-   there. Every safe-area rule in this file derives from --equyvo-safe-*,
-   which prefers the injected value and falls back to env() for browsers
-   (notched iPhones etc.), so headers/body can never be clipped: the app
-   shell, page headers and bars all shift below the status bar together. */
+   WEBSITE / browsers: env() with HARD FLOORS so no element can ever sit
+   under a status bar, punch-hole, curved edge or gesture bar even if the
+   browser reports 0: top ≥ 2.75rem (44px clears every status bar on the
+   market), bottom ≥ 1.75rem (28px clears every gesture bar + curve).
+   APP (.cap-native): Capacitor/MainActivity pads the shell natively — the
+   web layer uses FIXED values instead of env() (which reads 0 there):
+   top 0 (native pad owns it), bottom 1.75rem so the bottom nav is visually
+   filled into the curved/gesture zone of the screen. */
 :root {
-  --equyvo-safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
-  --equyvo-safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  --equyvo-safe-top: max(2.75rem, var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+  --equyvo-safe-bottom: max(1.75rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
   --equyvo-safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
   --equyvo-safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+}
+html.cap-native {
+  --equyvo-safe-top: 0px;
+  --equyvo-safe-bottom: 1.75rem;
+  --equyvo-safe-left: 0px;
+  --equyvo-safe-right: 0px;
 }
 
 /* App main offset (mobile shell): content starts right below the OS status

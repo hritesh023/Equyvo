@@ -12,22 +12,29 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
 
-        // Deterministic safe-area handling for ALL Android versions.
+        // Deterministic, once-and-for-all safe area handling for EVERY device:
         //
-        // Capacitor 8's SystemBars compensation only pads/we- adjusts on
-        // SDK >= 35; on Android 14 and below Capacitor still lays the app out
-        // edge-to-edge, so page headers ended up under the status bar. Here
-        // we (1) pad the content root by the real system-bar + cutout insets
-        // — works on every API level — and (2) return insets with the system
-        // bars zeroed (IME preserved) so nothing downstream (SystemBars CSS
-        // vars, WebView env(), child padding) applies the SAME inset a
-        // second time. Keyboard/IME insets pass through untouched, so
-        // Capacitor's IME padding keeps the composer above the keyboard.
+        // • Top: pad by the real status-bar + cutout inset, but capped at
+        //   44dp — no device on the market has a taller occupied top strip,
+        //   and curved phones can report absurdly large cutout boxes.
+        // • Sides: never padded — content fills the full width, into the
+        //   curved edges ("fully filled" layout).
+        // • Bottom: never padded — the WebView extends into the gesture/curve
+        //   zone and the bottom nav draws its own fixed interior padding, so
+        //   the footer is visually filled to the physical bottom edge.
+        // • Downstream (SystemBars CSS vars / WebView env()): system-bar
+        //   insets are zeroed so no layer can double-apply. The web app also
+        //   marks <html> with .cap-native and uses fixed safe values there.
+        // • IME (keyboard) insets are preserved untouched so the chat
+        //   composer always rides above the keyboard.
         final View content = findViewById(android.R.id.content);
+        final float density = getResources().getDisplayMetrics().density;
+        final int maxTopPad = Math.round(44f * density);
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, windowInsets) -> {
             Insets bars = windowInsets.getInsets(
                     WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout());
-            v.setPadding(bars.left, bars.top, bars.right, bars.bottom);
+            int top = Math.min(Math.max(bars.top, 0), maxTopPad);
+            v.setPadding(0, top, 0, 0);
             return new WindowInsetsCompat.Builder(windowInsets)
                     .setInsets(
                             WindowInsetsCompat.Type.systemBars() | WindowInsetsCompat.Type.displayCutout(),
