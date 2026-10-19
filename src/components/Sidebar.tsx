@@ -4,16 +4,17 @@ import { Home, Compass, PlusCircle, Video, MessageSquare, User, Settings, Globe,
 import { useIsMobile } from "@/hooks/use-mobile";
 import { useIsTablet } from "@/hooks/use-tablet";
 import { Button } from "@/components/ui/button";
+import { useI18n } from '@/lib/i18n';
 
 const navItems = [
-  { name: 'Home', icon: Home, path: '/app/home' },
-  { name: 'Discover', icon: Globe, path: '/app/discover' },
-  { name: 'Create', icon: PlusCircle, path: '/app/create' },
-  { name: 'Moments', icon: Camera, path: '/app/moments' },
-  { name: 'Thoughts', icon: MessageSquare, path: '/app/thoughts' },
-  { name: 'Profile', icon: User, path: '/app/profile' },
-  { name: 'Go Premium', icon: Crown, path: '/app/pricing' },
-  { name: 'Settings', icon: Settings, path: '/app/settings' },
+  { name: 'nav.home', icon: Home, path: '/app/home' },
+  { name: 'nav.discover', icon: Globe, path: '/app/discover' },
+  { name: 'nav.create', icon: PlusCircle, path: '/app/create' },
+  { name: 'nav.moments', icon: Camera, path: '/app/moments' },
+  { name: 'nav.thoughts', icon: MessageSquare, path: '/app/thoughts' },
+  { name: 'nav.profile', icon: User, path: '/app/profile' },
+  { name: 'nav.premium', icon: Crown, path: '/app/pricing' },
+  { name: 'nav.settings', icon: Settings, path: '/app/settings' },
 ];
 
 interface SidebarProps {
@@ -22,6 +23,7 @@ interface SidebarProps {
 }
 
 const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
+  const { t } = useI18n();
   const location = useLocation();
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
@@ -70,7 +72,7 @@ const Sidebar = ({ isOpen, onToggle }: SidebarProps) => {
                 }}
               >
                 <item.icon className="h-5 w-5" />
-                <span className="font-medium">{item.name}</span>
+                <span className="font-medium">{t(item.name)}</span>
               </Link>
             );
           })}

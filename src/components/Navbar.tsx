@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
+import { useI18n } from '@/lib/i18n';
 import { Link, useLocation } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
 import { Home, Compass, PlusCircle, Video, MessageSquare, User, Search, Bell, LogOut, Settings, Globe, Camera } from 'lucide-react';
@@ -22,13 +23,13 @@ import {
 } from "@/components/ui/dialog";
 
 const navItems = [
-  { name: 'Home', icon: Home, path: '/app/home' },
-  { name: 'Discover', icon: Globe, path: '/app/discover' },
-  { name: 'Create', icon: PlusCircle, path: '/app/create' },
-  { name: 'Moments', icon: Camera, path: '/app/moments' },
-  { name: 'Thoughts', icon: MessageSquare, path: '/app/thoughts' },
-  { name: 'Profile', icon: User, path: '/app/profile' },
-  { name: 'Settings', icon: Settings, path: '/app/settings' },
+  { name: 'nav.home', icon: Home, path: '/app/home' },
+  { name: 'nav.discover', icon: Globe, path: '/app/discover' },
+  { name: 'nav.create', icon: PlusCircle, path: '/app/create' },
+  { name: 'nav.moments', icon: Camera, path: '/app/moments' },
+  { name: 'nav.thoughts', icon: MessageSquare, path: '/app/thoughts' },
+  { name: 'nav.profile', icon: User, path: '/app/profile' },
+  { name: 'nav.settings', icon: Settings, path: '/app/settings' },
 ];
 
 interface NavbarProps {
@@ -37,6 +38,7 @@ interface NavbarProps {
 }
 
 const Navbar = ({ user, onSignOut }: NavbarProps) => {
+  const { t } = useI18n();
   const location = useLocation();
   const isMobile = useIsMobile();
   const isSearchPage = location.pathname === '/app/search' || location.pathname === '/search';
@@ -175,7 +177,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                       }`}
                   >
                     <item.icon className="h-4 w-4" />
-                    <span className="hidden xl:block">{item.name}</span>
+                    <span className="hidden xl:block">{t(item.name)}</span>
                   </Link>
                 ))}
               </div>
@@ -246,8 +248,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                 }`}
             >
               <item.icon className="h-5 w-5 shrink-0" />
-              <span className="max-w-full truncate text-[10px] font-medium">{item.name}</span>
-              <span className="sr-only">{item.name}</span>
+              <span className="max-w-full truncate text-[10px] font-medium">{t(item.name)}</span>
+              <span className="sr-only">{t(item.name)}</span>
             </Link>
           ))}
           {/* More options button */}

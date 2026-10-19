@@ -480,6 +480,7 @@ function publicSafeProfile(profile) {
     followers: Number(profile.followers || 0) || 0,
     following: Number(profile.following || 0) || 0,
     verified: !!profile.verified,
+    verifiedName: normVerifiedName(profile.verifiedName || profile.name || ''),
   };
 }
 
@@ -524,6 +525,106 @@ function quotaErrorBody(used, quota) {
     remaining: 0,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Creator Pro verified badge — global, server-owned registry of verified
+// names. The client can never set these fields; every rule is enforced here.
+//
+// PURCHASE GRANT
+//   A verified Creator Pro payment grants the verified tick to the exact
+//   display name on the profile — granted ONCE per Creator Pro purchase and
+//   held only by that account.
+//
+// EXCLUSIVITY
+//   Active record: verifiedname:<lower> -> { userId, name, grantedAt }
+//   KV keys are case-insensitive ("Riya" == "riya") and permanent-ish. A name
+//   held by one account can NEVER be verified by another account (any plan,
+//   ever) — released names become tombstones that keep blocking forever.
+//   This satisfies "only one name per Creator Pro subscriber; a verified name
+//   can't be repeated to another user paying for Creator Pro".
+//
+// MONTHLY RENAME WINDOW
+//   Renaming a verified name is allowed at most once every 30 days
+//   (nameLockUntil = last grant/rename + 30 days). The client cannot rename
+//   through the lock; the server returns VERIFIED_NAME_LOCK with canChangeAt.
+// ---------------------------------------------------------------------------
+
+const VERIFIED_LOCK_MS = 30 * 24 * 60 * 60 * 1000; // wait another month
+const VERIFIED_TOMBSTONE_TTL = 10 * 365 * 86400;   // permanent uniqueness memory
+
+function verifiedNameKey(lower) { return 'verifiedname:' + lower; }
+function verifiedOwnerKey(userId) { return 'verifiednameowner:' + userId; }
+function normVerifiedName(name) { return String(name || '').trim().slice(0, 80); }
+function lowerVerifiedName(name) { return normVerifiedName(name).toLowerCase(); }
+
+// Read + normalize a registry record. Legacy/plain values tolerated.
+async function verifiedNameRecord(env, lower) {
+  if (!lower) return null;
+  try {
+    const raw = await env.EQUYVO_KV.get(verifiedNameKey(lower));
+    if (!raw) return null;
+    let o = null;
+    try { o = JSON.parse(raw); } catch { o = { userId: raw }; }
+    if (!o || typeof o !== 'object') return null;
+    return { userId: String(o.userId || ''), name: normVerifiedName(o.name || ''), grantedAt: Number(o.grantedAt) || 0, tombstone: o.tombstone === true };
+  } catch { return null; }
+}
+
+function verifiedProfileState(prof) {
+  const p = prof && typeof prof === 'object' ? prof : {};
+  const active = p.verified === true;
+  const name = normVerifiedName(p.verifiedName || p.name || '');
+  const grantedAt = Number(p.verifiedNameAt) || 0;
+  const lockUntil = Number(p.nameLockUntil) || (grantedAt ? grantedAt + VERIFIED_LOCK_MS : 0);
+  return { active, name, lower: name.toLowerCase(), grantedAt, lockUntil, pending: p.verifiedNamePending === true };
+}
+
+/**
+ * Grant (or move / renew) the verified badge for a Creator Pro subscriber.
+ * - Same-name renew is idempotent (no registry churn, keeps original grant date).
+ * - Name changes first tombstone the previous name (permanent block for others).
+ * - Exclusive by construction: the registry key must be free or already this
+ *   user's own record.
+ * Returns { ok, patch?, error?, code?, canChangeAt? } — never throws.
+ */
+async function grantVerifiedName(env, userId, prevProfile, candidateName) {
+  const st = verifiedProfileState(prevProfile);
+  const name = normVerifiedName(candidateName || prevProfile.name || prevProfile.username || '');
+  const lower = name.toLowerCase();
+  if (!lower) {
+    return { ok: false, error: 'Add a profile name first — the verified badge attaches to your name.', code: 'VERIFIED_NAME_EMPTY' };
+  }
+  // Idempotent: same user re-verifying the very same name.
+  if (st.active && st.lower === lower && st.grantedAt) {
+    return { ok: true, patch: { verified: true, verifiedName: st.name, verifiedNameAt: st.grantedAt, nameLockUntil: st.lockUntil }, renewed: true };
+  }
+  // Exclusive claim: registry must be free OR this same user's record.
+  const rec = await verifiedNameRecord(env, lower);
+  if (rec && rec.userId && rec.userId !== String(userId)) {
+    return { ok: false, code: 'VERIFIED_NAME_TAKEN', error: `"${name}" is already a verified name on another account. Verified names are unique and cannot be reused — pick your own.` };
+  }
+  const now = Date.now();
+  // Tombstone the previous verified name so NO other account can ever claim it.
+  if (st.active && st.lower && st.lower !== lower) {
+    try {
+      await env.EQUYVO_KV.put(verifiedNameKey(st.lower), JSON.stringify({ userId: String(userId), name: st.name, grantedAt: st.grantedAt, tombstone: true, releasedAt: now }), { expirationTtl: VERIFIED_TOMBSTONE_TTL });
+    } catch { /* ignore */ }
+  }
+  try {
+    await env.EQUYVO_KV.put(verifiedNameKey(lower), JSON.stringify({ userId: String(userId), name, grantedAt: now }), { expirationTtl: VERIFIED_TOMBSTONE_TTL });
+    await env.EQUYVO_KV.put(verifiedOwnerKey(userId), JSON.stringify({ name: lower, at: now }), { expirationTtl: VERIFIED_TOMBSTONE_TTL });
+  } catch {
+    return { ok: false, code: 'VERIFIED_NAME_STORE_FAILED', error: 'Could not register the verified name right now. Please try again.' };
+  }
+  return { ok: true, patch: { verified: true, verifiedName: name, verifiedNameAt: now, nameLockUntil: now + VERIFIED_LOCK_MS } };
+}
+
+// Body used on profile-read endpoints so viewers see the verified state.
+function withVerifiedPublicFields(profile) {
+  if (!profile || typeof profile !== 'object') return profile;
+  return { ...profile, verified: profile.verified === true, verifiedName: normVerifiedName(profile.verifiedName || '') };
+}
+
 
 // ---------------------------------------------------------------------------
 // Content-safety helpers — server-only. Blocklists, heuristics, and the shared
@@ -2199,6 +2300,19 @@ export const onRequest = async (context) => {
       return json({ status: 'ok', requestId, timestamp: new Date().toISOString() }, 200, cors);
     }
 
+    // GEO (public): the visitor's country (Cloudflare edge data) so the
+    // pricing page can show country-appropriate currency approximations.
+    // Returns only the two-letter country code — no other data. Falls back
+    // to an empty code, which the client resolves from browser locale.
+    if (path === '/api/geo' && method === 'GET') {
+      let country = '';
+      try {
+        const cf = (request as unknown as { cf?: { country?: string } }).cf;
+        if (cf && typeof cf.country === 'string' && /^[A-Za-z]{2}$/.test(cf.country)) country = cf.country.toUpperCase();
+      } catch { /* cf missing in local dev */ }
+      return json({ data: { country }, error: null }, 200, { ...cors, 'Cache-Control': 'private, max-age=3600' });
+    }
+
     // PLANS (public catalog — quotas only, no secrets)
     if (path === '/api/plans' && method === 'GET') {
       const plans = Object.values(PLAN_CATALOG).map((p) => ({
@@ -2259,18 +2373,45 @@ export const onRequest = async (context) => {
               ).slice(0, 100) || ('verify:' + String(Date.now()));
               const prof = (await getStoredProfile(env, actor.id)) || { id: actor.id };
               const st = nameQuotaState(prof);
+              let profChanged = false;
               if (!st.grants.includes(paymentKey)) {
                 prof.nameChangeQuota = st.quota + NAME_CHANGE_GRANT_PER_PURCHASE;
                 prof.nameChangesUsed = st.used;
                 prof.nameGrantPayments = [...st.grants, paymentKey].slice(-50);
                 if (!Array.isArray(prof.nameBonusPlans)) prof.nameBonusPlans = st.bonusPlans;
-                await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(prof));
+                profChanged = true;
                 data.nameGrant = {
                   granted: NAME_CHANGE_GRANT_PER_PURCHASE,
                   quota: prof.nameChangeQuota,
                   used: st.used,
                   remaining: Math.max(0, prof.nameChangeQuota - st.used),
                 };
+              }
+              // Creator Pro verified badge: granted with this payment. The
+              // tick attaches to the profile's registered display name (or
+              // username) and is globally exclusive in the verified-name
+              // registry — see grantVerifiedName. Idempotent: renewing the
+              // same plan keeps the exact same verified name and date.
+              const paidPlan = String((data && data.plan) || (body && body.plan) || '').slice(0, 64);
+              if (paidPlan === 'eq_creator_pro') {
+                const vs = verifiedProfileState(prof);
+                const g = await grantVerifiedName(env, actor.id, prof, vs.name || prof.name || prof.username || '');
+                if (g.ok && g.patch) {
+                  Object.assign(prof, g.patch);
+                  prof.verifiedNamePending = false;
+                  profChanged = true;
+                  data.verifiedBadge = { granted: true, name: g.patch.verifiedName, grantedAt: g.patch.verifiedNameAt, canChangeNameFrom: g.patch.nameLockUntil };
+                } else if (g && g.error) {
+                  // Name is exclusive-held or empty: keep the purchase valid,
+                  // mark the badge as pending so the next unique name claim
+                  // attaches it (server enforces on the profile save).
+                  prof.verifiedNamePending = true;
+                  profChanged = true;
+                  data.verifiedBadge = { granted: false, pending: true, reason: g.code || 'VERIFIED_NAME_BLOCKED' };
+                }
+              }
+              if (profChanged) {
+                await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(prof));
               }
             }
           } catch { /* grant is best-effort */ }
@@ -2405,7 +2546,98 @@ export const onRequest = async (context) => {
       if (denied) return denied;
       const prof = (await getStoredProfile(env, actor.id)) || {};
       const st = nameQuotaState(prof);
-      return json({ data: { used: st.used, quota: st.quota, remaining: st.remaining }, error: null }, 200, cors);
+      const vs = verifiedProfileState(prof);
+      return json({ data: {
+        used: st.used, quota: st.quota, remaining: st.remaining,
+        verified: vs.active,
+        verifiedName: vs.active ? vs.name : '',
+        canChangeNameAt: vs.active ? vs.lockUntil : 0,
+      }, error: null }, 200, cors);
+    }
+
+    // VERIFIED-NAME availability (authenticated): can THIS account claim the
+    // candidate name as its Creator Pro verified identity? Never leaks the
+    // owner's identity — only availability + the reason.
+    if (path === '/api/profile/verify-name-check' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const candidate = lowerVerifiedName(url.searchParams.get('name') || '');
+      const prof = (await getStoredProfile(env, actor.id)) || {};
+      const vs = verifiedProfileState(prof);
+      const { planId: livePlan } = await resolvePlan(env, actor, bearerFrom(request));
+      const creatorProActive = livePlan === 'eq_creator_pro';
+      const base = { verified: vs.active, verifiedName: vs.active ? vs.name : '', canChangeAt: vs.active ? vs.lockUntil : 0, creatorProActive };
+      if (!candidate) return json({ data: { ...base, available: false, reason: 'NAME_REQUIRED' }, error: null }, 200, cors);
+      const rec = await verifiedNameRecord(env, candidate);
+      const mine = vs.active && vs.lower === candidate;
+      if (rec && rec.userId && rec.userId !== String(actor.id)) {
+        return json({ data: { ...base, available: false, reason: rec.tombstone ? 'NAME_VERIFIED_ELSEWHERE' : 'NAME_TAKEN' }, error: null }, 200, cors);
+      }
+      if (mine) return json({ data: { ...base, available: true, reason: 'CURRENT' }, error: null }, 200, cors);
+      return json({ data: { ...base, available: true, reason: '' }, error: null }, 200, cors);
+    }
+
+    // CONTENT-SCREEN (authenticated, pre-upload): the Create page calls this
+    // the moment a file is picked, BEFORE any upload traffic. Runs the same
+    // safety stack used at publish time (local blocklists + Acronous safety
+    // brain + vision survey of small frame samples) so obvious adult /
+    // violent / exploitative / illegal media is refused on the spot. This is
+    // a UX gate, not the final gate — publish-time moderation still runs and
+    // can quarantine. The verdict travels to the client, internals (patterns,
+    // brain URLs) never leave the server.
+    if (path === '/api/content-screen' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let payload = {};
+      try { payload = await readJson(request); } catch { payload = {}; }
+      if (!payload || typeof payload !== 'object') payload = {};
+      const filename = String((payload as any).filename || '').slice(0, 200);
+      const caption = String((payload as any).caption || '').slice(0, 600);
+      let samples = Array.isArray((payload as any).samples) ? (payload as any).samples : [];
+      // Hard caps: at most 4 samples, each clipped, never logged.
+      samples = samples
+        .filter((s) => typeof s === 'string' && /^data:image\/(jpe?g|png);base64,/.test(s.slice(0, 40)))
+        .slice(0, 4)
+        .map((s) => s.slice(0, 260000));
+      const text = [filename, caption].filter(Boolean).join('\n');
+      const local = moderateTextLocal(text);
+      let verdict = local.verdict;
+      let category = '';
+      if (verdict === 'allow') {
+        try {
+          const brain = await brainSafetyCheck(env, text);
+          if (brain === 'block') verdict = 'block';
+          else if (brain === 'review') verdict = 'review';
+        } catch { /* fail-open */ }
+      }
+      if (verdict === 'allow' && samples.length > 0) {
+        try {
+          const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ images: samples, task: 'moderate', source: 'equyvo-upload-gate' }),
+          }, 4000);
+          if (data && typeof data === 'object') {
+            if (data.safe === false || data.block === true) verdict = 'block';
+            else if (data.review === true || data.quarantine === true) verdict = 'review';
+            else {
+              const cats = (data.categories || data.labels || []);
+              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault/i.test(String(c)))) verdict = 'block';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence/i.test(String(c)))) { verdict = 'review'; category = /child|minor/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
+            }
+            if (!category && verdict !== 'allow') category = /child|csam|minor/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
+          }
+        } catch { /* vision is best-effort; publish-time gate still applies */ }
+      }
+      if (verdict !== 'allow' && !category) category = 'unspecified';
+      const message = verdict === 'block'
+        ? 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media). It was not added.'
+        : verdict === 'review'
+          ? 'This content looks potentially unsafe and cannot be added until it passes review.'
+          : '';
+      return json({ data: { verdict, category: category || 'unspecified', checked: true, message }, error: null }, 200, cors);
     }
 
     // PROFILE
@@ -2451,12 +2683,17 @@ export const onRequest = async (context) => {
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
       clean.id = id;
-      // Quota counters are server-owned: forged client values are dropped and
-      // the stored counters are merged back on save.
+      // Quota + verified-badge counters are server-owned: forged client values
+      // are dropped and the stored counters are merged back on save.
       delete clean.nameChangesUsed;
       delete clean.nameChangeQuota;
       delete clean.nameGrantPayments;
       delete clean.nameBonusPlans;
+      delete clean.verified;            // badge is granted only by payment
+      delete clean.verifiedName;        // registry-managed
+      delete clean.verifiedNameAt;
+      delete clean.nameLockUntil;
+      delete clean.verifiedNamePending;
       // Account type: public/private toggle (signup page + settings).
       // Accepts isPrivate boolean and/or accountType string; stored as
       // canonical isPrivate + accountType. Never trusts the client for
@@ -2483,7 +2720,41 @@ export const onRequest = async (context) => {
       const prevName = typeof prevProfile.name === 'string' ? prevProfile.name : '';
       const nextName = typeof clean.name === 'string' ? clean.name : prevName;
       const nameChanged = prevName ? nextName.trim() !== prevName.trim() : false;
-      if (nameChanged) {
+      const vs = verifiedProfileState(prevProfile);
+      let verifiedPatch = null;
+      if (nameChanged && vs.active) {
+        // Creator Pro verified name: renames are allowed at most once a
+        // month (see VERIFIED_LOCK_MS). The registry move + tombstone runs
+        // only after every other gate passes, on the merged save below.
+        const now = Date.now();
+        if (now < vs.lockUntil) {
+          return json({
+            error: `Your verified name "${vs.name}" was registered recently. Verified names can be changed at most once a month.`,
+            code: 'VERIFIED_NAME_LOCK',
+            canChangeAt: vs.lockUntil,
+          }, 403, cors);
+        }
+        // The new name must be claimable (never owned/tombstoned by another
+        // account). Verification follows the name — the registry moves.
+        const g = await grantVerifiedName(env, id, prevProfile, clean.name);
+        if (!g.ok) {
+          return json({ error: g.error, code: g.code }, 409, cors);
+        }
+        verifiedPatch = g.patch;
+      } else if (nameChanged && vs.pending) {
+        // A Creator Pro payment is waiting for a claimable unique name
+        // (their name at purchase time was verified by someone else).
+        // Establishing the verified identity consumes no quota — it is a
+        // first-time grant, like a fresh profile's first name.
+        const g = await grantVerifiedName(env, id, prevProfile, clean.name);
+        if (g.ok && g.patch) {
+          verifiedPatch = g.patch;
+          verifiedPatch = { ...g.patch, verifiedNamePending: false };
+        }
+        // Not claimable? Fall through: the rename works as an ordinary
+        // (quota-gated) name change and the badge stays pending.
+      }
+      if (nameChanged && !verifiedPatch) {
         // On-demand grant for a paid plan that never recorded a purchase
         // (legacy purchases predate the grant ledger): +2 once per plan.
         try {
@@ -2507,6 +2778,7 @@ export const onRequest = async (context) => {
         nameGrantPayments: qs.grants,
         nameBonusPlans: bonusPlans,
       };
+      if (verifiedPatch) Object.assign(merged, verifiedPatch);
       await kv.put(KEYS.PROFILE(id), JSON.stringify(merged));
       return json({ data: merged, error: null }, 200, cors);
     }

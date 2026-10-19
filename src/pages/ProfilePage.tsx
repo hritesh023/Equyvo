@@ -3,7 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Play, Camera, Volume2, VolumeX, Trash, AlertTriangle } from 'lucide-react';
+import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Play, Camera, Volume2, VolumeX, Trash, AlertTriangle, BadgeCheck } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   DropdownMenu,
@@ -1144,7 +1144,14 @@ const ProfilePage = () => {
               {userProfile.name?.substring(0, 2) || ''}
             </AvatarFallback>
           </Avatar>
-          <h1 className="text-xl md:text-3xl font-bold">{userProfile.name}</h1>
+          <h1 className="text-xl md:text-3xl font-bold flex items-center gap-2">
+            {userProfile.name}
+            {(userProfile as { verified?: boolean }).verified === true && (
+              <span title="Creator Pro verified name" aria-label="Verified" className="text-pink-500">
+                <BadgeCheck className="h-5 w-5 md:h-7 md:w-7" />
+              </span>
+            )}
+          </h1>
           <p className="text-muted-foreground mb-2 text-sm md:text-base">{userProfile.username}</p>
           <p className="text-center max-w-md mb-3 md:mb-4 text-sm md:text-base px-2">{userProfile.bio}</p>
           <div className="flex gap-3 md:gap-4 mb-3 md:mb-4">

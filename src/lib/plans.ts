@@ -22,8 +22,18 @@ export const EQUYVO_PLANS: PlanDef[] = [
   { id: 'eq_free', label: 'Free', priceInr: 0, tagline: 'Everyone', storageGB: 5, maxUploadMB: 20, maxVideoSec: 60, monthlyUploads: 100, features: ['Posts, videos, photos', 'Moments & Thoughts', 'Communities & messaging', 'Discovery', 'Basic creator tools', '5 GB storage · 20 MB uploads', '2 profile name changes · unlimited photo updates'] },
   { id: 'eq_plus', label: 'Plus', priceInr: 49, tagline: 'Enhanced user', storageGB: 50, maxUploadMB: 100, maxVideoSec: 180, monthlyUploads: 500, features: ['50 GB storage · 100 MB uploads', 'Enhanced customization', 'Better privacy controls', 'Ad-light experience', 'Higher media limits', '+2 profile name changes per purchase'] },
   { id: 'eq_premium', label: 'Premium', priceInr: 149, tagline: 'Power user', popular: true, storageGB: 250, maxUploadMB: 500, maxVideoSec: 600, monthlyUploads: 2000, features: ['250 GB storage · 500 MB uploads', 'Ad-free', 'Higher-quality uploads', 'Advanced profile & privacy', 'Advanced analytics', 'AI content tools', 'Priority processing', '+2 profile name changes per purchase'] },
-  { id: 'eq_creator', label: 'Creator', priceInr: 399, tagline: 'Creator', creatorPick: true, storageGB: 500, maxUploadMB: 1024, maxVideoSec: 1800, monthlyUploads: 5000, features: ['500 GB storage · 1 GB uploads', 'Creator analytics & audience insights', 'AI captions & content generation', 'AI thumbnails', 'Scheduling & 4K media', 'Subscriber & monetization tools (10% platform fee)', 'Creator marketplace', '+2 profile name changes per purchase'] },
-  { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 799, tagline: 'Professional creator', storageGB: 1024, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 20000, features: ['1 TB storage · 2 GB uploads', 'AI editing & automated workflows', 'Multiple profiles, team collaboration', 'Brand collaboration tools', 'API access', 'Advanced monetization (10% platform fee)', '+2 profile name changes per purchase'] },
+  { id: 'eq_creator', label: 'Creator', priceInr: 1999, tagline: 'Creator', creatorPick: true, storageGB: 500, maxUploadMB: 1024, maxVideoSec: 1800, monthlyUploads: 5000, features: ['500 GB storage · 1 GB uploads', 'Creator analytics & audience insights', 'AI captions & content generation', 'AI thumbnails', 'Scheduling & 4K media', 'Subscriber & monetization tools (10% platform fee)', 'Creator marketplace', '+2 profile name changes per purchase'] },
+  { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 5999, tagline: 'Professional creator', storageGB: 1024, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 20000, features: [
+    'Creator Pro verified badge — a verified tick on the exact name you registered with, granted once and held only by you',
+    'That verified name is exclusive to your account — no other Creator Pro subscriber can ever verify the same name',
+    'Want a different verified name? Change it at most once a month — each rename re-verifies your new name',
+    '1 TB storage · 2 GB uploads',
+    'AI editing & automated workflows',
+    'Multiple profiles, team collaboration',
+    'Brand collaboration tools',
+    'API access',
+    'Advanced monetization (10% platform fee)',
+  ] },
 ];
 
 export const EQUYVO_PRODUCT = 'equyvo';

@@ -192,10 +192,26 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  // Display-name change quota (server-enforced source of truth).
+  // Display-name change quota (server-enforced source of truth). Also
+  // carries the Creator Pro verified-name state (verified / verifiedName /
+  // canChangeNameAt) so the editor can show the monthly rename lock.
   getNameQuota: () =>
-    request<{ data: { used: number; quota: number; remaining: number }; error: null }>(
+    request<{ data: {
+      used: number; quota: number; remaining: number;
+      verified?: boolean; verifiedName?: string; canChangeNameAt?: number;
+    }; error: null }>(
       '/profile/name-quota'
+    ),
+
+  // Verified-name availability for Creator Pro: can THIS account claim
+  // `name` as its verified identity? Server is the single source of truth.
+  checkVerifiedName: (name: string) =>
+    request<{ data: {
+      available: boolean; reason: string;
+      verified?: boolean; verifiedName?: string; canChangeAt?: number;
+      creatorProActive?: boolean;
+    }; error: null }>(
+      `/profile/verify-name-check?name=${encodeURIComponent(name)}`
     ),
 
   // Search — unified people + content search (real data only, honest empty).
@@ -363,7 +379,25 @@ export const api = {
   // Upload a file via the app's own API. secureUrl is always the best
   // delivery URL — render it directly. Media is compressed client-side first
   // (images -> WebP) to keep R2 storage costs flat.
+  // SAFETY GATE: every upload is screened before the bytes leave the device
+  // (see lib/moderation.ts). Blocks throw ContentBlockedError so callers can
+  // show the warning; infrastructure failures never block uploads.
   uploadFile: async (file: File | Blob, folder?: string) => {
+    try {
+      const mod = await import('./moderation');
+      const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
+      if (screen.verdict !== 'allow') {
+        throw new mod.ContentBlockedError(
+          screen.message || 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media).',
+          screen.category || 'unspecified',
+        );
+      }
+    } catch (e) {
+      // Only the deliberate block should stop the upload — anything else
+      // (network hiccup, sampling quirk) fails open and the publish-time
+      // server moderation still applies.
+      if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
+    }
     let payload: File | Blob = file;
     try {
       const { compressMedia } = await import('./compress');

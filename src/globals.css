@@ -1306,6 +1306,21 @@
     max-height: calc(100dvh - 3.25rem - 4rem);
   }
 
+  /* Chat open (mobile): fixed full-screen overlay under the app top bar.
+     offset-top keeps the chat header below the global top bar; the composer
+     region keeps the safe-area inset so the input never hides on notched
+     devices. With Android adjustResize the fixed bottom rides above the
+     keyboard, so the input bar is always visible. */
+  .chat-open-overlay {
+    padding-top: calc(3.25rem + env(safe-area-inset-top, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    box-sizing: border-box;
+  }
+  /* Composer never shrinks: it is pinned at the overlay bottom. */
+  .chat-overlay-composer {
+    flex: none;
+  }
+
   .app-footer-fill {
     width: 100%;
     max-width: none;

@@ -6,6 +6,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical } from 'lucide-react';
 import { showError } from '@/utils/toast';
+import { useI18n } from '@/lib/i18n';
 import { useNavigate } from 'react-router-dom';
 import { ChatThemeSelector } from './ChatThemeSelector';
 import MediaCropper from './MediaCropper';
@@ -30,6 +31,7 @@ function Ticks({ status }: { status: ChatMessage['status'] }) {
 }
 
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
+  const { t } = useI18n();
   const [tab, setTab] = useState<'followers' | 'following'>('followers');
   const [threads, setThreads] = useState<ChatThread[]>(() => listThreads());
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -287,7 +289,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
   const shell = isMobile
     ? 'chat-mobile-shell w-full flex flex-col bg-background'
-    : 'h-[calc(100vh-80px)] w-80 fixed right-4 top-24 bg-card/95 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden hidden lg:flex flex-col z-40';
+    : 'h-[calc(100vh-6.5rem)] w-80 fixed right-4 top-24 bg-card/95 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden hidden lg:flex flex-col z-40';
 
   return (
     <>
@@ -409,8 +411,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       )}
 
       {activeChat && (
-        <div className={isMobile ? 'flex flex-1 flex-col min-h-0' : 'absolute inset-0 bg-background z-10 flex flex-col'}>
-          <div className="p-3 border-b flex items-center gap-3 bg-secondary/30 backdrop-blur-md sticky top-0 z-10">
+        /* Mobile: fixed full-screen overlay — the composer stays pinned to the
+           viewport bottom (adjustResize shrinks the webview under the
+           keyboard), so the input bar is ALWAYS visible. Covers the app
+           bottom nav while a chat is open, like WhatsApp. */
+        <div className={isMobile
+          ? 'chat-open-overlay fixed inset-x-0 bottom-0 top-0 z-50 flex flex-col bg-[#0b141a]'
+          : 'absolute inset-0 bg-background z-10 flex flex-col'}
+        >
+          <div className="p-3 border-b flex items-center gap-3 bg-secondary/30 backdrop-blur-md shrink-0">
             <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); refreshThreads(); }} aria-label="Back to chat list" title="Back to chat list">
               <ArrowLeft className="w-4 h-4" />
             </Button>
@@ -444,7 +453,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               scroll container so it ALWAYS covers the visible area (it never
               scrolls away with content) and renders as soon as an image/GIF
               theme is applied. */}
-          <div className={`relative flex-1 ${isMobile ? 'min-h-[45dvh]' : 'min-h-0'} bg-[#0b141a] dark:bg-[#0b141a] overflow-hidden`}>
+          <div className={`relative flex-1 min-h-0 bg-[#0b141a] dark:bg-[#0b141a] overflow-hidden`}>
             {chatTheme.type !== 'default' && (
               <div
                 className="absolute inset-0 pointer-events-none"
@@ -559,7 +568,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             </div>
           </div>
 
-          <div className="p-3 border-t bg-background/50 backdrop-blur-md">
+          <div className="p-3 border-t bg-background/50 backdrop-blur-md flex-none chat-overlay-composer">
             {attachedFile && (
               <div className="mb-3 p-3 bg-secondary/50 rounded-lg border">
                 <div className="flex items-center justify-between gap-2">
@@ -631,8 +640,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <Input
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder={`Message ${activeChat.peerName}…`}
-                aria-label={`Message ${activeChat.peerName}`}
+                placeholder={`${t('chat.message')} ${activeChat.peerName}…`}
+                aria-label={`${t('chat.message')} ${activeChat.peerName}`}
                 className="bg-secondary/50"
                 maxLength={2000}
                 disabled={sending}

@@ -25,7 +25,96 @@ import { showSuccess, showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@/components/theme-provider';
 import { requestPushPermission, syncNotificationsFromServer } from '@/lib/notifications';
+import { LANGUAGES, languageLabel } from '@/lib/i18n/languages';
+import { useI18n } from '@/lib/i18n';
 import api from '@/lib/api';
+
+// Language picker (searchable, grouped: India & South Asia first, then the
+// world). Selecting applies instantly app-wide — no reload needed.
+const LANGUAGE_LIST = [
+  ...LANGUAGES.filter((l) => l.group === 'indian'),
+  ...LANGUAGES.filter((l) => l.group === 'world'),
+];
+
+const LanguagePickerCard = () => {
+  const { language, setLanguage, t } = useI18n();
+  const [query, setQuery] = useState('');
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? LANGUAGE_LIST.filter((l) => l.native.toLowerCase().includes(q) || l.english.toLowerCase().includes(q) || l.code.toLowerCase().includes(q))
+    : LANGUAGE_LIST;
+  const indian = filtered.filter((l) => l.group === 'indian');
+  const world = filtered.filter((l) => l.group === 'world');
+
+  const row = (l: typeof LANGUAGE_LIST[number]) => (
+    <button
+      key={l.code}
+      type="button"
+      onClick={() => {
+        setLanguage(l.code);
+        showSuccess(`${t('settings.language')}: ${languageLabel(l.code)}`);
+      }}
+      className={`flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm transition-colors ${
+        language === l.code
+          ? 'border-primary/60 bg-primary/10 text-primary'
+          : 'border-border/50 hover:border-border hover:bg-accent/30'
+      }`}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        <span className="font-medium">{l.native}</span>
+        <span className="truncate text-xs text-muted-foreground">{l.english}</span>
+      </span>
+      {language === l.code && <span className="text-xs font-semibold">✓</span>}
+    </button>
+  );
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <Globe className="h-5 w-5" />
+          {t('settings.language')}
+        </CardTitle>
+        <CardDescription>{t('settings.languageDesc')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder={t('lang.searchPlaceholder')}
+          className="max-w-sm"
+          aria-label={t('lang.searchPlaceholder')}
+        />
+        <div className="max-h-72 space-y-4 overflow-y-auto pr-1">
+          {indian.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {t('settings.groupIndian')} ({indian.length})
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {indian.map(row)}
+              </div>
+            </div>
+          )}
+          {world.length > 0 && (
+            <div className="space-y-2">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {t('settings.groupWorld')} ({world.length})
+              </p>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {world.map(row)}
+              </div>
+            </div>
+          )}
+          {filtered.length === 0 && (
+            <p className="py-4 text-center text-sm text-muted-foreground">{t('common.error')}</p>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">{t('settings.languageNote')}</p>
+      </CardContent>
+    </Card>
+  );
+};
 
 const SettingsPage = () => {
   const navigate = useNavigate();
@@ -290,10 +379,12 @@ const SettingsPage = () => {
     navigate('/app/pricing');
   };
 
+  const { t } = useI18n();
+
   return (
     <div className="max-w-4xl mx-auto space-y-6">
       <div className="flex items-center gap-3 mb-6">
-        <h1 className="text-3xl font-bold">Settings</h1>
+        <h1 className="text-3xl font-bold">{t('nav.settings')}</h1>
       </div>
 
       {/* Privacy Settings */}
@@ -301,7 +392,7 @@ const SettingsPage = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Shield className="h-5 w-5" />
-            Privacy & Security
+            {t('settings.privacy')}
           </CardTitle>
           <CardDescription>
             Control your privacy and security settings
@@ -344,7 +435,7 @@ const SettingsPage = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5" />
-            Notifications
+            {t('settings.notifications')}
           </CardTitle>
           <CardDescription>
             Manage how you receive notifications
@@ -443,7 +534,7 @@ const SettingsPage = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Palette className="h-5 w-5" />
-            Appearance
+            {t('settings.appearance')}
           </CardTitle>
           <CardDescription>
             Customize how Equyvo looks for you
@@ -452,7 +543,7 @@ const SettingsPage = () => {
         <CardContent className="space-y-4">
           <div className="flex items-center justify-between">
             <div>
-              <Label>Dark Mode</Label>
+              <Label>{t('settings.darkMode')}</Label>
               <p className="text-sm text-muted-foreground">
                 Use dark theme across the app
               </p>
@@ -482,6 +573,9 @@ const SettingsPage = () => {
           </div>
         </CardContent>
       </Card>
+
+      {/* Language */}
+      <LanguagePickerCard />
 
       {/* Ads & Privacy */}
       <Card>
@@ -533,7 +627,7 @@ const SettingsPage = () => {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <User className="h-5 w-5" />
-            Account
+            {t('settings.account')}
           </CardTitle>
           <CardDescription>
             Manage your profile and account
@@ -546,7 +640,7 @@ const SettingsPage = () => {
             className="w-full justify-start"
           >
             <User className="h-4 w-4 mr-2" />
-            View Profile
+            {t('action.viewProfile')}
           </Button>
 
           <Separator />
@@ -557,7 +651,7 @@ const SettingsPage = () => {
             className="w-full justify-start"
           >
             <Mail className="h-4 w-4 mr-2" />
-            Contact Support
+            {t('settings.contactSupport')}
           </Button>
 
           <Separator />
@@ -582,7 +676,7 @@ const SettingsPage = () => {
             className="w-full justify-start"
           >
             <LogOut className="h-4 w-4 mr-2" />
-            Sign Out
+            {t('action.signOut')}
           </Button>
         </CardContent>
       </Card>

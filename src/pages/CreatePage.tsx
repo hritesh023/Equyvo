@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop } from 'lucide-react';
+import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import MediaCropper from '@/components/MediaCropper';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -14,6 +15,7 @@ import { markHasRealContent } from '@/lib/data';
 import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
+import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import api from '@/lib/api';
 
 // Helper to get current user info from localStorage
@@ -170,6 +172,13 @@ const CreatePage = () => {
   const [momentFiles, setMomentFiles] = useState<File[]>([]);
   const [momentContent, setMomentContent] = useState('');
   const [videoCaption, setVideoCaption] = useState('');
+
+  // ---- Content-safety gate (visible warning + pick blocked) ----------------
+  // Files are screened the moment they are picked. Anything the safety check
+  // flags (adult/18+, violence, exploitation, illegal or prohibited media)
+  // never enters the editor and triggers this warning dialog instead.
+  const [safetyWarn, setSafetyWarn] = useState<{ name: string; category: ScreenResult['category']; message?: string }[] | null>(null);
+  const [safetyChecking, setSafetyChecking] = useState(false);
 
   // ---- Pre-publish custom thumbnails (one section per media tab, like Live) ----
   // Each video/moment/thought/story tab gets its own separate thumbnail picker.
@@ -852,12 +861,39 @@ const CreatePage = () => {
   const handleFileUpload = async (files: FileList | null, type: string) => {
     if (!files || files.length === 0) return;
 
-    const file = files[0];
+    // SAFETY PRE-SCREEN (before anything enters the editor): each picked file
+    // runs through /api/content-screen. Flagged files never join the editor —
+    // the user gets a clear warning modal naming what happened. Screening
+    // problems fail open (publish-time moderation still quarantines).
+    let safeFiles: File[] = Array.from(files);
+    setSafetyChecking(true);
+    try {
+      const results = await Promise.all(safeFiles.map(async (f) => ({
+        f,
+        r: await screenMedia(f, { kind: type }),
+      })));
+      const flagged = results.filter((x) => x.r.verdict !== 'allow');
+      if (flagged.length > 0) {
+        setSafetyWarn(flagged.map((x) => ({
+          name: x.f.name || 'this file',
+          category: x.r.category || 'unspecified',
+          message: x.r.message,
+        })));
+      }
+      safeFiles = results.filter((x) => x.r.verdict === 'allow').map((x) => x.f);
+    } catch {
+      safeFiles = Array.from(files);
+    } finally {
+      setSafetyChecking(false);
+    }
+    if (safeFiles.length === 0) return;
+
+    const file = safeFiles[0];
 
     switch (type) {
       case 'story':
-        if (files.length > 0) {
-          const validFiles = Array.from(files).filter(file => {
+        if (safeFiles.length > 0) {
+          const validFiles = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
             const isValidSize = file.size <= 50 * 1024 * 1024; // 50MB limit
             if (!isValidType) {
@@ -911,7 +947,7 @@ const CreatePage = () => {
 
       case 'photo':
         if (file.type.startsWith('image/')) {
-          const validPhotos = Array.from(files).filter(file => {
+          const validPhotos = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/');
             const isValidSize = file.size <= 50 * 1024 * 1024; // 50MB limit
             if (!isValidType) {
@@ -932,7 +968,7 @@ const CreatePage = () => {
 
       case 'video':
         if (file.type.startsWith('video/')) {
-          const validVideos = Array.from(files).filter(file => {
+          const validVideos = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('video/');
             const isValidSize = file.size <= 500 * 1024 * 1024; // 500MB limit for longer videos
             if (!isValidType) {
@@ -952,8 +988,8 @@ const CreatePage = () => {
         break;
 
       case 'moment':
-        if (files.length > 0) {
-          const validFiles = Array.from(files).filter(file => {
+        if (safeFiles.length > 0) {
+          const validFiles = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
             const isValidSize = file.size <= 100 * 1024 * 1024;
             if (!isValidType) {
@@ -4353,6 +4389,55 @@ const CreatePage = () => {
               </div>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* Content-safety warning: files the safety check flag never enter the
+          editor. The dialog explains what happened and the rules it protects. */}
+      <Dialog open={!!safetyWarn} onOpenChange={(open) => { if (!open) setSafetyWarn(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-500" />
+              Content not allowed on Equyvo
+            </DialogTitle>
+            <DialogDescription>
+              Our safety check flagged {(safetyWarn?.length || 0) > 1 ? `${safetyWarn?.length} files` : 'this file'} before it could be uploaded, so nothing was added.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              {safetyWarn?.map((w, i) => (
+                <p key={i} className="break-all">
+                  <span className="font-medium">{w.name}</span>
+                  {w.message ? ` — ${w.message}` : ' — flagged as unsafe (adult/18+, violent, exploitative, or otherwise prohibited).'}
+                </p>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Equyvo prohibits sexual content (18+), sexual content involving minors, violence and gore, self-harm promotion, hate speech, threats, scams and illegal activity — in posts, captions, thumbnails, profile media and live streams. Uploads are screened on pick and checked again before publish; anything flagged is blocked or quarantined.
+            </p>
+            {safetyChecking && (
+              <p className="text-xs flex items-center gap-1.5 text-muted-foreground">
+                <Loader2 className="h-3 w-3 animate-spin" /> Screening your next file…
+              </p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setSafetyWarn(null)} className="w-full sm:w-auto">
+              Got it
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Quiet in-progress pill while pick screening runs (large videos may
+          take a second to sample frames). */}
+      {safetyChecking && !safetyWarn && (
+        <div className="fixed bottom-24 right-4 z-50 flex items-center gap-2 rounded-full border bg-background/90 px-3 py-2 text-xs shadow-lg backdrop-blur">
+          <ShieldCheck className="h-4 w-4 text-emerald-500" />
+          <span>Safety check running…</span>
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
         </div>
       )}
     </div>

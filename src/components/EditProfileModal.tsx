@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { X, Upload, Camera, Loader2, Crop } from 'lucide-react';
+import { X, Upload, Camera, Loader2, Crop, BadgeCheck, BadgeAlert } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { compressImage } from '@/lib/utils';
 import AvatarCropper from '@/components/AvatarCropper';
@@ -51,6 +51,9 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
   // Display-name quota (server-enforced; shown here for transparency).
   // Avatars stay unlimited — only the Name field consumes quota.
   const [quota, setQuota] = useState<{ used: number; quota: number; remaining: number } | null>(null);
+  // Creator Pro verified-name state (server-owned; read-only here).
+  const [verified, setVerified] = useState<{ verified: boolean; verifiedName: string; canChangeNameAt: number }>({ verified: false, verifiedName: '', canChangeNameAt: 0 });
+  const [nameCheck, setNameCheck] = useState<{ available: boolean; reason: string } | null>(null);
 
   // Refresh fields + quota every time the modal opens (the parent keeps this
   // component mounted, so initial useState would otherwise go stale).
@@ -63,18 +66,39 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     setAvatarPreview(currentProfile.avatar);
     setCropSrc(null);
     setQuota(null);
+    setVerified({ verified: false, verifiedName: '', canChangeNameAt: 0 });
     let cancelled = false;
     api.getNameQuota()
       .then(({ data, error }) => {
-        if (!cancelled && !error && data && typeof data.remaining === 'number') {
+        if (cancelled || error || !data) return;
+        if (typeof data.remaining === 'number') {
           setQuota({ used: data.used, quota: data.quota, remaining: data.remaining });
         }
+        setVerified({
+          verified: data.verified === true,
+          verifiedName: String(data.verifiedName || ''),
+          canChangeNameAt: Number(data.canChangeNameAt || 0),
+        });
       })
       .catch(() => { /* fail-open: the server still enforces on save */ });
     return () => {
       cancelled = true;
     };
   }, [isOpen]);
+
+  // Live verified-name availability while typing. Debounced so it stays
+  // cheap; the server re-checks authoritatively on save anyway.
+  React.useEffect(() => {
+    if (!isOpen || !nameChanged || !name.trim()) { setNameCheck(null); return; }
+    const t = window.setTimeout(() => {
+      api.checkVerifiedName(name.trim())
+        .then(({ data }) => {
+          setNameCheck(data || null);
+        })
+        .catch(() => { /* server enforces on save */ });
+    }, 450);
+    return () => window.clearTimeout(t);
+  }, [isOpen, name, nameChanged]);
 
   const nameChanged =
     name.trim() !== (currentProfile.name || '').trim();
@@ -135,6 +159,20 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       showError('You have used all your profile name changes. Buy Premium to get 2 more.');
       return;
     }
+    // Creator Pro verified name: the server enforces the monthly lock +
+    // global exclusivity; mirror the obvious cases here for instant feedback.
+    if (verified.verified && nameChanged) {
+      if (verified.canChangeNameAt > Date.now()) {
+        const at = new Date(verified.canChangeNameAt);
+        showError(`Your verified name can be changed from ${at.toLocaleDateString()} — verified names can be changed at most once a month.`);
+        return;
+      }
+      const wantsOld = name.trim().toLowerCase() === verified.verifiedName.toLowerCase();
+      if (!wantsOld && nameCheck && nameCheck.available === false) {
+        showError('That name is already verified on another account. Verified names are unique — pick your own.');
+        return;
+      }
+    }
 
     let avatarUrl = avatarPreview;
     if (avatarFile) {
@@ -142,7 +180,12 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
       try {
         const result = await uploadFile(avatarFile, 'equyvo/avatars');
         avatarUrl = result.secureUrl;
-      } catch {
+      } catch (e: any) {
+        if (e?.code === 'CONTENT_BLOCKED' || e?.name === 'ContentBlockedError') {
+          setIsUploading(false);
+          showError(e.message || 'This image isn’t allowed on Equyvo.');
+          return;
+        }
         showError('Failed to upload avatar. Using local preview.');
       }
       setIsUploading(false);
@@ -221,7 +264,14 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
 
           {/* Name (quota-limited: 2 free, +2 per Premium purchase) */}
           <div>
-            <Label htmlFor="name">Name</Label>
+            <Label htmlFor="name" className="flex items-center gap-1.5">
+              Name
+              {verified.verified && (
+                <span className="inline-flex items-center gap-1 text-[11px] font-medium text-pink-500">
+                  <BadgeCheck className="h-3.5 w-3.5" /> verified
+                </span>
+              )}
+            </Label>
             <Input
               id="name"
               value={name}
@@ -229,6 +279,21 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
               placeholder="Enter your name"
               className="mt-1"
             />
+            {verified.verified && nameChanged && verified.canChangeNameAt > Date.now() && (
+              <p className="mt-1 flex items-start gap-1.5 rounded-md border border-pink-500/40 bg-pink-500/10 p-2 text-[11px] text-foreground">
+                <BadgeAlert className="h-3.5 w-3.5 shrink-0 text-pink-500 mt-0.5" />
+                <span>
+                  Your verified name shows next to the tick in chats, feeds and search. You can change it from{' '}
+                  {new Date(verified.canChangeNameAt).toLocaleDateString()} — verified names can be changed at most once a month.
+                </span>
+              </p>
+            )}
+            {verified.verified && nameChanged && verified.canChangeNameAt <= Date.now() && nameCheck?.available === false && (
+              <p className="mt-1 flex items-start gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-[11px] text-foreground">
+                <BadgeAlert className="h-3.5 w-3.5 shrink-0 text-amber-500 mt-0.5" />
+                <span><strong>{name.trim()}</strong> is already verified on another account — verified names are unique and can never be reused. Pick your own name.</span>
+              </p>
+            )}
             {quota ? (
               quota.remaining > 0 || !nameChanged ? (
                 <p className="text-xs text-muted-foreground mt-1">

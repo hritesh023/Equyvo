@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
+import { I18nProvider } from './lib/i18n';
 import Navbar from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
@@ -222,11 +223,13 @@ const App = () => {
       <ChatThemeProvider>
         <AudioProvider>
           <NetworkProvider>
-            <Router>
-              <ErrorBoundary>
-                <AppContent />
-              </ErrorBoundary>
-            </Router>
+            <I18nProvider>
+              <Router>
+                <ErrorBoundary>
+                  <AppContent />
+                </ErrorBoundary>
+              </Router>
+            </I18nProvider>
           </NetworkProvider>
         </AudioProvider>
       </ChatThemeProvider>

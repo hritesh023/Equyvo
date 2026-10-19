@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
-import { Crown, Check, Loader2 } from 'lucide-react';
+import { Crown, Check, Loader2, BadgeCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { EQUYVO_PLANS, formatINR } from '@/lib/plans';
+import { priceForCountry, CURRENCY_DISCLAIMER, getUserCountry } from '@/lib/currency';
 import { buyPlan, claimBilling, getBillingStatus } from '@/lib/billing';
 import { getAuthToken, getToken } from '@/lib/auth';
 import { toast } from 'sonner';
@@ -18,6 +19,24 @@ const PricingPage: React.FC = () => {
   });
   const [busy, setBusy] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Country-aware display: exact INR price primary; local-currency
+  // approximation secondary (outside India). IN does not affect pricing.
+  const [country, setCountry] = useState<string>(() => {
+    try {
+      return localStorage.getItem('equyvo_geo_country') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  useEffect(() => {
+    getUserCountry()
+      .then((c) => {
+        setCountry(c);
+        try { localStorage.setItem('equyvo_geo_country', c); } catch { /* ignore */ }
+      })
+      .catch(() => { /* keep INR display as fallback */ });
+  }, []);
 
   useEffect(() => {
     getBillingStatus()
@@ -127,6 +146,7 @@ const PricingPage: React.FC = () => {
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {EQUYVO_PLANS.map((p) => {
             const active = activePlan === p.id;
+            const priceLocal = country ? priceForCountry(p.priceInr, country).localApprox : null;
             return (
               <div key={p.id} className={`rounded-2xl border p-6 flex flex-col relative ${p.popular || p.creatorPick ? 'border-pink-500/60 shadow-lg shadow-pink-500/10' : 'border-border'}`}>
                 {(p.popular || p.creatorPick) && (
@@ -136,12 +156,27 @@ const PricingPage: React.FC = () => {
                 )}
                 <h3 className="font-bold text-lg">{p.label}</h3>
                 <p className="text-xs text-muted-foreground">{p.tagline}</p>
-                <p className="text-3xl font-extrabold mt-2">{formatINR(p.priceInr)}<span className="text-sm font-medium text-muted-foreground">{p.priceInr ? '/mo' : ''}</span></p>
+                <div className="mt-2">
+                  <p className="text-3xl font-extrabold">
+                    {formatINR(p.priceInr)}
+                    <span className="text-sm font-medium text-muted-foreground">{p.priceInr ? '/mo' : ''}</span>
+                  </p>
+                  {priceLocal && (
+                    <p className="text-sm text-muted-foreground">{priceLocal}/mo</p>
+                  )}
+                </div>
+                {p.id === 'eq_creator_pro' && (
+                  <p className="mt-2 flex items-start gap-2 rounded-lg border border-pink-500/40 bg-pink-500/10 px-3 py-2 text-xs text-foreground">
+                    <BadgeCheck className="h-4 w-4 shrink-0 text-pink-500 mt-0.5" />
+                    <span><strong>Verified badge</strong> — the verified tick is granted to your registered name once, is globally unique to your account, and renames are limited to once a month.</span>
+                  </p>
+                )}
                 <ul className="mt-4 space-y-2 text-sm text-muted-foreground flex-1">
                   {p.features.map((f) => (
                     <li key={f} className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />{f}</li>
                   ))}
                 </ul>
+
                 <div className="mt-5">
                   {p.priceInr === 0 ? (
                     <Button variant="outline" className="w-full" disabled={active} onClick={active ? undefined : chooseFree} title={active ? 'Your current plan' : 'Stay on the Free plan'}>
@@ -169,6 +204,7 @@ const PricingPage: React.FC = () => {
         </div>
       )}
       <p className="text-center text-xs text-muted-foreground mt-8">UPI · Cards · Netbanking · Wallets · International cards — via Razorpay. Cancel anytime; plan stays till month-end.</p>
+      <p className="text-center text-[11px] text-muted-foreground/80 mt-2 max-w-xl mx-auto">{CURRENCY_DISCLAIMER}</p>
     </div>
   );
 };
