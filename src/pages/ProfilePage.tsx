@@ -45,7 +45,6 @@ import { setContentVisibility } from '@/utils/visibility';
 import ReportModal from '@/components/ReportModal';
 import FollowListModal from '@/components/FollowListModal';
 import FollowButton from '@/components/FollowButton';
-import ReportModal from '@/components/ReportModal';
 import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
 import api from '@/lib/api';
 

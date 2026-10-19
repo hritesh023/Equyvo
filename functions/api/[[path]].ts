@@ -3990,13 +3990,15 @@ export const onRequest = async (context) => {
       let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
       const clean = sanitizeBody(raw);
       const text = String(clean.text || '').slice(0, 2000);
-      const type = clean.type === 'image' || clean.type === 'file' ? clean.type : 'text';
+      const type = clean.type === 'image' || clean.type === 'file' || clean.type === 'audio' ? clean.type : 'text';
       if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
       const clientId = String(clean.id || '').slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '');
       const msg = {
         id: clientId || generateId(), from: actor.id, to: peer, text,
         type, fileUrl: String(clean.fileUrl || '').slice(0, 2000),
         fileName: String(clean.fileName || '').slice(0, 200),
+        // Voice notes: recording length in seconds (display-only metadata).
+        durationSec: Math.min(600, Math.max(0, Math.round(Number(clean.durationSec) || 0))),
         status: 'sent', createdAt: new Date().toISOString(),
       };
       // Event-sourced store: per-message key + per-sender index append. Two
@@ -4069,6 +4071,7 @@ export const onRequest = async (context) => {
         timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
         createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
         type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
+        durationSec: Number(m.durationSec) || 0,
         deletedForEveryone: !!m.deletedForEveryone,
         deletedFor: Array.isArray(m.deletedFor) ? m.deletedFor : [],
       }));

@@ -4,9 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic } from 'lucide-react';
 import { showError } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
+import api from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
 import { ChatThemeSelector } from './ChatThemeSelector';
 import MediaCropper from './MediaCropper';
@@ -22,7 +23,7 @@ import {
 
 /** Clock (sending) / single tick (sent) / double tick (delivered).
  *  Seen has NO tick on purpose — the user-facing signal is the "Seen"
- *  text label rendered under the own bubble (see the read receipt below). */
+ *  text label rendered inside the own bubble, under the timestamp. */
 function Ticks({ status }: { status: ChatMessage['status'] }) {
   if (status === 'sending') return <Clock className="h-3.5 w-3.5 opacity-70" aria-label="Sending" />;
   if (status === 'sent') return <Check className="h-4 w-4 opacity-80" aria-label="Sent" />;
@@ -48,6 +49,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
+
+  // --- Voice messages (mic in the composer) ---------------------------------
+  const [recording, setRecording] = useState(false);
+  const [recSecs, setRecSecs] = useState(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recChunksRef = useRef<Blob[]>([]);
+  const recStreamRef = useRef<MediaStream | null>(null);
+  const recTimerRef = useRef<number | null>(null);
+  const recSecsRef = useRef(0);
+  const recCancelRef = useRef(false);
+  const MAX_VOICE_SECS = 120;
 
   const handleScroll = () => {
     const el = scrollContainerRef.current;
@@ -192,7 +204,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   };
 
   const handleSendMessage = async () => {
-    if ((!message.trim() && !attachedFile) || !activeChat || sending) return;
+    if (recording || (!message.trim() && !attachedFile) || !activeChat || sending) return;
     const threadId = activeChat.id;
     const textToSend = message.trim();
     const fileToSend = attachedFile;
@@ -225,6 +237,122 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       setSending(false);
     }
   };
+
+  /** mm:ss label for the recording timer. */
+  const recTimerLabel = `${String(Math.floor(recSecs / 60)).padStart(2, '0')}:${String(recSecs % 60).padStart(2, '0')}`;
+
+  const stopRecTracks = () => {
+    try { recStreamRef.current?.getTracks().forEach((tr) => tr.stop()); } catch { /* ignore */ }
+    recStreamRef.current = null;
+  };
+  const stopRecTimer = () => {
+    if (recTimerRef.current) { window.clearInterval(recTimerRef.current); recTimerRef.current = null; }
+  };
+
+  const startVoiceRecording = async () => {
+    if (!activeChat || recording || sending) return;
+    const threadId = activeChat.id;
+    if (!navigator.mediaDevices?.getUserMedia || typeof window.MediaRecorder === 'undefined') {
+      showError('Voice messages need microphone support on this device.');
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      recStreamRef.current = stream;
+      const mimes = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4'];
+      const mime = mimes.find((m) => { try { return window.MediaRecorder.isTypeSupported(m); } catch { return false; } });
+      const rec = new MediaRecorder(stream, mime ? { mimeType: mime } : undefined);
+      recChunksRef.current = [];
+      recCancelRef.current = false;
+      setRecSecs(0);
+      recSecsRef.current = 0;
+      rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) recChunksRef.current.push(e.data); };
+      rec.onstop = async () => {
+        stopRecTimer();
+        stopRecTracks();
+        setRecording(false);
+        const secs = recSecsRef.current;
+        const cancelled = recCancelRef.current;
+        recCancelRef.current = false;
+        recorderRef.current = null;
+        if (cancelled) return; // discarded — nothing uploaded or sent
+        const blob = new Blob(recChunksRef.current, { type: rec.mimeType || 'audio/webm' });
+        recChunksRef.current = [];
+        if (!blob.size) {
+          showError('Recording was empty — try again.');
+          return;
+        }
+        setSending(true);
+        try {
+          const ext = String(rec.mimeType || '').includes('mp4') ? 'm4a' : 'webm';
+          const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || 'audio/webm' });
+          const { data, error } = await api.uploadFile(file, 'equyvo/chat/voice');
+          if (error || !data?.secureUrl) throw new Error('voice-upload-failed');
+          const sent = await sendChatMessage(threadId, '', {
+            fileUrl: data.secureUrl,
+            fileName: 'Voice message',
+            type: 'audio',
+            durationSec: Math.max(1, secs || 0),
+          });
+          if (!sent) throw new Error('voice-send-failed');
+          refreshMsgs(threadId);
+          refreshThreads();
+        } catch (err: unknown) {
+          const e = err as { name?: string; message?: string };
+          showError(e?.name === 'ContentBlockedError' ? String(e.message) : 'Voice message could not be sent. Try again.');
+          refreshMsgs(threadId);
+        } finally {
+          setSending(false);
+        }
+      };
+      recorderRef.current = rec;
+      setRecording(true);
+      rec.start(250); // gather audio chunks every 250 ms
+      recTimerRef.current = window.setInterval(() => {
+        setRecSecs((s) => {
+          const next = s + 1;
+          recSecsRef.current = next;
+          if (next >= MAX_VOICE_SECS) {
+            try { if (rec.state === 'recording') rec.stop(); } catch { /* ignore */ }
+          }
+          return next;
+        });
+      }, 1000);
+    } catch {
+      stopRecTimer();
+      stopRecTracks();
+      setRecording(false);
+      showError('Microphone permission is needed to record voice messages.');
+    }
+  };
+
+  const cancelVoiceRecording = () => {
+    recCancelRef.current = true;
+    const rec = recorderRef.current;
+    if (rec && rec.state === 'recording') {
+      try { rec.stop(); } catch { stopRecTimer(); stopRecTracks(); setRecording(false); }
+    } else {
+      recCancelRef.current = false;
+      stopRecTimer();
+      stopRecTracks();
+      setRecording(false);
+    }
+  };
+
+  const finishVoiceRecording = () => {
+    const rec = recorderRef.current;
+    if (rec && rec.state === 'recording') {
+      try { rec.stop(); } catch { stopRecTimer(); stopRecTracks(); setRecording(false); }
+    }
+  };
+
+  // If the sidebar unmounts mid-recording, release the mic and timers.
+  useEffect(() => () => {
+    recCancelRef.current = true;
+    try { if (recorderRef.current && recorderRef.current.state === 'recording') recorderRef.current.stop(); } catch { /* ignore */ }
+    stopRecTimer();
+    stopRecTracks();
+  }, []);
 
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -516,6 +644,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                           <img src={msg.fileUrl} alt="Shared image" loading="lazy" className="max-w-full rounded-lg" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                           {msg.text && <p className="whitespace-pre-wrap break-words">{msg.text}</p>}
                         </div>
+                      ) : msg.type === 'audio' && msg.fileUrl ? (
+                        <div className="min-w-[210px] space-y-1">
+                          <audio controls preload="metadata" src={msg.fileUrl} className="h-9 w-[230px] max-w-full" />
+                          {!!msg.durationSec && <p className="text-[11px] opacity-80 text-right">Voice message · {msg.durationSec}s</p>}
+                          {msg.text && <p className="whitespace-pre-wrap break-words">{msg.text}</p>}
+                        </div>
                       ) : msg.type === 'file' && msg.fileUrl ? (
                         <div className="flex items-center gap-2">
                           <Paperclip className="w-4 h-4 shrink-0" />
@@ -533,6 +667,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         <span>{msg.timestamp}</span>
                         {msg.fromMe && <Ticks status={msg.status} />}
                       </div>
+                      {/* Read receipt INSIDE the bubble, under the timestamp: only
+                          for MY messages, only when seen (the ONLY seen signal — no
+                          blue tick). Incoming bubbles show nothing. */}
+                      {msg.fromMe && msg.status === 'seen' && (
+                        <p className="text-right text-[11px] text-sky-300/90">Seen</p>
+                      )}
                     </div>
                     {menuMsgId === msg.id && (
                       <div className={`mt-1 flex flex-col gap-1 rounded-lg border border-slate-600 bg-slate-900 p-1 shadow-lg ${msg.fromMe ? 'items-end' : 'items-start'}`}>
@@ -553,11 +693,6 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                           </button>
                         )}
                       </div>
-                    )}
-                    {/* Read receipt label: only under MY messages, only when seen (the
-                        ONLY seen signal — no blue tick). Incoming bubbles show nothing. */}
-                    {msg.fromMe && msg.status === 'seen' && (
-                      <p className="mt-0.5 text-right text-[11px] text-sky-300/90">Seen</p>
                     )}
                   </div>
                 </div>
@@ -615,6 +750,40 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 void handleSendMessage();
               }}
             >
+              {recording ? (
+                // Voice-recording bar — replaces the text input while recording.
+                <div className="flex flex-1 items-center gap-2">
+                  <span className="flex items-center gap-2 rounded-full border border-red-500/40 bg-red-500/10 px-3 py-2 text-sm text-red-500">
+                    <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-red-500" aria-hidden="true" />
+                    {recTimerLabel}
+                  </span>
+                  <span className="flex-1 truncate text-xs text-muted-foreground">Recording voice message…</span>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 text-muted-foreground"
+                    onClick={cancelVoiceRecording}
+                    disabled={sending}
+                    aria-label="Cancel recording"
+                    title="Cancel recording"
+                  >
+                    <X className="w-5 h-5" />
+                  </Button>
+                  <Button
+                    type="button"
+                    size="icon"
+                    className="h-10 w-10 rounded-full bg-purple-600 hover:bg-purple-500"
+                    onClick={finishVoiceRecording}
+                    disabled={sending}
+                    aria-label="Send voice message"
+                    title="Send voice message"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
+              ) : (
+              <>
               <div className="relative">
                 <input
                   ref={fileInputRef}
@@ -637,6 +806,18 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   <Paperclip className="w-5 h-5" />
                 </Button>
               </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-10 w-10 text-muted-foreground"
+                onClick={() => void startVoiceRecording()}
+                disabled={sending}
+                aria-label="Record voice message"
+                title="Record voice message"
+              >
+                <Mic className="w-5 h-5" />
+              </Button>
               <Input
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -656,6 +837,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               >
                 <Send className="w-4 h-4" />
               </Button>
+              </>
+              )}
             </form>
           </div>
         </div>

@@ -20,9 +20,11 @@ export interface ChatMessage {
   status?: ChatStatus;
   timestamp: string;
   createdAt: number;
-  type?: 'text' | 'image' | 'file';
+  type?: 'text' | 'image' | 'file' | 'audio';
   fileUrl?: string;
   fileName?: string;
+  /** Voice notes: length in seconds (sender-computed, server echoed). */
+  durationSec?: number;
   deletedForEveryone?: boolean;
   deletedFor?: string[];
   e2e?: boolean;
@@ -269,7 +271,7 @@ function appendMessage(msg: ChatMessage): void {
   if (ix >= 0) {
     threads[ix] = {
       ...threads[ix],
-      lastMessage: msg.type === 'text' ? msg.text : msg.fileName || 'Attachment',
+      lastMessage: msg.type === 'text' ? msg.text : msg.type === 'audio' ? 'Voice message' : msg.fileName || 'Attachment',
       timestamp: msg.timestamp,
       unread: msg.fromMe ? threads[ix].unread : threads[ix].unread + 1,
     };
@@ -300,7 +302,7 @@ function patchMessage(threadId: string, id: string, patch: Partial<ChatMessage>)
 export async function sendChatMessage(
   threadId: string,
   text: string,
-  attach?: { fileUrl: string; fileName: string; type: 'image' | 'file' },
+  attach?: { fileUrl: string; fileName: string; type: 'image' | 'file' | 'audio'; durationSec?: number },
 ): Promise<ChatMessage | null> {
   const clean = String(text || '').trim();
   if ((!clean && !attach) || !threadId) return null;
@@ -317,6 +319,7 @@ export async function sendChatMessage(
     type: attach ? attach.type : 'text',
     fileUrl: attach?.fileUrl,
     fileName: attach?.fileName,
+    durationSec: attach?.durationSec,
     e2e: !!clean,
   };
   appendMessage(msg);
@@ -331,6 +334,7 @@ export async function sendChatMessage(
       type: msg.type,
       fileUrl: attach?.fileUrl,
       fileName: attach?.fileName,
+      durationSec: attach?.durationSec,
     });
     serverOk = !res.error;
     if (res?.data?.id) serverId = String(res.data.id);

@@ -86,8 +86,14 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     };
   }, [isOpen]);
 
+  const nameChanged =
+    name.trim() !== (currentProfile.name || '').trim();
+  const nameBlocked =
+    !!nameChanged && !!quota && quota.remaining <= 0;
+
   // Live verified-name availability while typing. Debounced so it stays
-  // cheap; the server re-checks authoritatively on save anyway.
+  // cheap; the server re-checks authoritatively on save anyway. Declared
+  // after nameChanged (it appears in the deps) to avoid a TDZ reference.
   React.useEffect(() => {
     if (!isOpen || !nameChanged || !name.trim()) { setNameCheck(null); return; }
     const t = window.setTimeout(() => {
@@ -99,11 +105,6 @@ const EditProfileModal: React.FC<EditProfileModalProps> = ({
     }, 450);
     return () => window.clearTimeout(t);
   }, [isOpen, name, nameChanged]);
-
-  const nameChanged =
-    name.trim() !== (currentProfile.name || '').trim();
-  const nameBlocked =
-    !!nameChanged && !!quota && quota.remaining <= 0;
 
   const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
