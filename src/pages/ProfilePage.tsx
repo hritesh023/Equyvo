@@ -45,6 +45,7 @@ import { setContentVisibility } from '@/utils/visibility';
 import ReportModal from '@/components/ReportModal';
 import FollowListModal from '@/components/FollowListModal';
 import FollowButton from '@/components/FollowButton';
+import ReportModal from '@/components/ReportModal';
 import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
 import api from '@/lib/api';
 
@@ -89,6 +90,8 @@ const createDefaultProfile = (user?: { email?: string; fullName?: string; userna
 
 const ProfilePage = () => {
   const { userId, username } = useParams();
+  const _storedUser = getStoredUser();
+  const isOwnProfile = !userId && !username ? true : !(userId || username) || (userId || username) === _storedUser?.id || (userId || username) === _storedUser?.username;
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -102,6 +105,7 @@ const ProfilePage = () => {
   const [liking, setLiking] = useState<string | null>(null);
   const [userReactedPosts, setUserReactedPosts] = useState<Post[]>([]);
   const [showEditProfileModal, setShowEditProfileModal] = useState(false);
+  const [showReportProfile, setShowReportProfile] = useState(false);
   const [showEditPostModal, setShowEditPostModal] = useState(false);
   const [currentEditingPost, setCurrentEditingPost] = useState<Post | null>(null);
   const [showCommentSection, setShowCommentSection] = useState(false);
@@ -1154,22 +1158,30 @@ const ProfilePage = () => {
             </button>
           </div>
           <div className="flex gap-2 flex-wrap justify-center">
-            <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleEditProfile}>
-              <Edit className="h-3 w-3 md:h-4 md:w-4" /> <span className="hidden xs:inline">Edit Profile</span><span className="xs:hidden">Edit</span>
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 md:h-10 md:w-10"
-              onClick={() => navigate('/app/settings')}
-              aria-label="Open settings"
-              title="Open settings"
-            >
-              <Settings className="h-3 w-3 md:h-4 md:w-4" />
-            </Button>
-            <Button variant="destructive" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleDeleteAllData}>
-              <Trash className="h-3 w-3 md:h-4 md:w-4" /> <span className="hidden xs:inline">Delete My Data</span><span className="xs:hidden">Delete</span>
-            </Button>
+            {isOwnProfile ? (
+              <>
+                <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleEditProfile}>
+                  <Edit className="h-3 w-3 md:h-4 md:w-4" /> <span className="hidden xs:inline">Edit Profile</span><span className="xs:hidden">Edit</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 md:h-10 md:w-10"
+                  onClick={() => navigate('/app/settings')}
+                  aria-label="Open settings"
+                  title="Open settings"
+                >
+                  <Settings className="h-3 w-3 md:h-4 md:w-4" />
+                </Button>
+              </>
+            ) : (
+              <>
+                <FollowButton userId={userId || username || ''} />
+                <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={() => setShowReportProfile(true)}>
+                  <AlertTriangle className="h-3 w-3 md:h-4 md:w-4" /> Report
+                </Button>
+              </>
+            )}
           </div>
         </div>
       </Card>
@@ -1987,6 +1999,16 @@ const ProfilePage = () => {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/* Report Profile Modal */}
+      {showReportProfile && (
+        <ReportModal
+          isOpen={showReportProfile}
+          onClose={() => setShowReportProfile(false)}
+          contentId={userId || username || ''}
+          contentType="profile"
+        />
+      )}
 
       {/* Edit Profile Modal */}
       <EditProfileModal

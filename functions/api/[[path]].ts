@@ -2762,16 +2762,21 @@ export const onRequest = async (context) => {
       const picked = Array.isArray(clean.reasons) ? clean.reasons.map((r) => String(r).slice(0, 40)).filter(Boolean).slice(0, 10) : [];
       const reason = String(clean.reason || picked[0] || 'other').slice(0, 40);
       const reasons = picked.length ? picked : [reason];
-      if (!['post', 'thought', 'story', 'moment'].includes(kind) || !id) {
+      if (!['post', 'thought', 'story', 'moment', 'profile'].includes(kind) || !id) {
         return json({ error: 'Invalid report' }, 400, cors);
       }
       const rl = await rateLimit(kv, 'engagement', actor.id, 30);
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
-      const getKey = kind === 'post' ? KEYS.POST : kind === 'thought' ? KEYS.THOUGHT : kind === 'story' ? KEYS.STORY : KEYS.MOMENT;
-      const raw = await kv.get(getKey(id));
-      if (!raw) return json({ data: { ok: true }, error: null }, 200, cors);
+      // Owners cannot report their own profile.
+      if (kind === 'profile' && id === actor.id) return json({ data: { ok: true }, error: null }, 200, cors);
+      const getKey = kind === 'post' ? KEYS.POST : kind === 'thought' ? KEYS.THOUGHT : kind === 'story' ? KEYS.STORY : kind === 'moment' ? KEYS.MOMENT : null;
       let parsed = {};
-      try { parsed = JSON.parse(raw); } catch { return json({ data: { ok: true }, error: null }, 200, cors); }
+      if (getKey) {
+        const raw = await kv.get(getKey(id));
+        if (!raw) return json({ data: { ok: true }, error: null }, 200, cors);
+        try { parsed = JSON.parse(raw); } catch { return json({ data: { ok: true }, error: null }, 200, cors); }
+        if (owns(parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
+      }
       // Owners cannot report their own content into removal; they can delete it.
       if (owns(parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
       const report = {

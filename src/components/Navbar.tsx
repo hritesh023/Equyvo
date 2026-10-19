@@ -226,11 +226,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                 maxSuggestions={5}
               />
             </div>
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button variant="outline" className="w-full sm:w-auto">Done</Button>
-              </DialogClose>
-            </DialogFooter>
+            {/* Done button removed — search is full-screen now. */}
           </DialogContent>
         </Dialog>
       )}

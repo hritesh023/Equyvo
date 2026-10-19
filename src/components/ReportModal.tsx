@@ -20,7 +20,7 @@ interface ReportModalProps {
   isOpen: boolean;
   onClose: () => void;
   contentId: string;
-  contentType: 'post' | 'video' | 'thought' | 'moment' | 'comment' | 'story';
+  contentType: 'post' | 'video' | 'thought' | 'moment' | 'comment' | 'story' | 'profile';
 }
 
 const ReportModal: React.FC<ReportModalProps> = ({
