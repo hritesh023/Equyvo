@@ -318,11 +318,19 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           return next;
         });
       }, 1000);
-    } catch {
+    } catch (err) {
       stopRecTimer();
       stopRecTracks();
       setRecording(false);
-      showError('Microphone permission is needed to record voice messages.');
+      const e = err as { name?: string };
+      if (e?.name === 'NotFoundError' || e?.name === 'OverconstrainedError') {
+        showError('No microphone was found on this device.');
+      } else if (e?.name === 'NotReadableError') {
+        showError('Your microphone is being used by another app. Close it and try again.');
+      } else {
+        // NotAllowedError / SecurityError / anything else → permission story.
+        showError('Microphone permission is needed to record voice messages. Allow the mic for Equyvo, then tap the mic again.');
+      }
     }
   };
 

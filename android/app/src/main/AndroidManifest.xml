@@ -46,6 +46,12 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Voice messages in chat: the WebView needs RECORD_AUDIO both for the
+         runtime prompt and to accept the getUserMedia() permission request.
+         Capacitor's WebChromeClient auto-requests it at runtime when the
+         page calls navigator.mediaDevices.getUserMedia({ audio: true }). -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <!-- Required on Android 13+ for the advertising ID (personalized ads). -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 </manifest>
