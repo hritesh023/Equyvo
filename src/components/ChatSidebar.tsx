@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical } from 'lucide-react';
 import { showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 import { ChatThemeSelector } from './ChatThemeSelector';
@@ -15,7 +15,7 @@ import { getStoredUser } from '@/lib/auth';
 import { getFollowers, getFollowing, type SocialProfile } from '@/lib/social';
 import {
   listThreads, listMessages, ensureThread, syncThreadsFromSocial,
-  sendChatMessage, markThreadSeen, pullThreadMessages,
+  sendChatMessage, markThreadSeen, pullThreadMessages, deleteChatMessage,
   type ChatThread, type ChatMessage,
 } from '@/lib/chat';
 
@@ -40,6 +40,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [attachPreview, setAttachPreview] = useState<string | null>(null);
   const [attachCropSrc, setAttachCropSrc] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [menuMsgId, setMenuMsgId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -257,6 +258,19 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     setAttachCropSrc(null);
   };
 
+  const handleDeleteMessage = async (msg: ChatMessage, forEveryone: boolean) => {
+    setMenuMsgId(null);
+    if (!activeChat) return;
+    if (forEveryone && !msg.fromMe) return;
+    try {
+      await deleteChatMessage(activeChat.id, msg.id, forEveryone);
+      refreshMsgs(activeChat.id);
+      refreshThreads();
+    } catch {
+      showError('Could not delete message.');
+    }
+  };
+
   const isAttachedImage = !!attachedFile && attachedFile.type.startsWith('image/');
   const isAttachedGif = !!attachedFile && attachedFile.type === 'image/gif';
 
@@ -415,15 +429,42 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   </p>
                 </div>
               )}
-              {msgs.map((msg) => (
+              {msgs.map((msg) => {
+                if (msg.deletedForEveryone) {
+                  return (
+                    <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
+                      <div className="max-w-[80%]">
+                        <div className="px-3 py-1.5 rounded-xl text-sm shadow-sm italic opacity-70 bg-slate-800/60 text-slate-300 rounded-tl-none">
+                          This message was deleted
+                          <div className={`mt-0.5 flex items-center justify-end gap-1 text-[11px] text-slate-400`}>
+                            <span>{msg.timestamp}</span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                }
+                return (
                 <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                  <div className="max-w-[80%]">
+                  <div className="max-w-[80%] relative group">
+                    <button
+                      type="button"
+                      aria-label="Message actions"
+                      className="absolute -top-2 -right-2 z-20 hidden group-hover:flex h-6 w-6 items-center justify-center rounded-full bg-slate-900/80 text-slate-200 hover:text-white"
+                      onClick={() => setMenuMsgId(menuMsgId === msg.id ? null : msg.id)}
+                    >
+                      <MoreVertical className="h-3.5 w-3.5" />
+                    </button>
                     <div
                       className={`px-3 py-1.5 rounded-xl text-sm shadow-sm ${
                         msg.fromMe
-                          ? 'bg-[#005c4b] text-white rounded-tr-none'
-                          : 'bg-[#202c33] text-slate-100 rounded-tl-none dark:bg-[#202c33]'
+                          ? 'bg-purple-600 text-white rounded-tr-none'
+                          : 'bg-slate-700 text-slate-100 rounded-tl-none dark:bg-slate-700'
                       }`}
+                      onContextMenu={(e) => { e.preventDefault(); setMenuMsgId(msg.id); }}
+                      onTouchStart={() => { const t = window.setTimeout(() => setMenuMsgId(msg.id), 500); (msg as any)._t = t; }}
+                      onTouchEnd={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
+                      onTouchMove={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
                     >
                       {msg.type === 'image' && msg.fileUrl ? (
                         <div className="space-y-1.5">
@@ -448,6 +489,26 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         {msg.fromMe && <Ticks status={msg.status} />}
                       </div>
                     </div>
+                    {menuMsgId === msg.id && (
+                      <div className={`mt-1 flex flex-col gap-1 rounded-lg border border-slate-600 bg-slate-900 p-1 shadow-lg ${msg.fromMe ? 'items-end' : 'items-start'}`}>
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 rounded px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                          onClick={() => handleDeleteMessage(msg, false)}
+                        >
+                          <Trash2 className="h-3 w-3" /> Delete for me
+                        </button>
+                        {msg.fromMe && (
+                          <button
+                            type="button"
+                            className="flex items-center gap-2 rounded px-2 py-1 text-xs text-red-300 hover:bg-slate-700"
+                            onClick={() => handleDeleteMessage(msg, true)}
+                          >
+                            <Trash2 className="h-3 w-3" /> Delete for everyone
+                          </button>
+                        )}
+                      </div>
+                    )}
                     {/* Read receipt label: only under MY messages, only when seen.
                         Incoming bubbles intentionally show nothing underneath. */}
                     {msg.fromMe && msg.status === 'seen' && (
@@ -455,7 +516,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
               <div ref={bottomRef} />
             </div>
           </div>
@@ -541,7 +603,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <Button
                 type="submit"
                 size="icon"
-                className="h-10 w-10 rounded-full bg-emerald-600 hover:bg-emerald-500"
+                className="h-10 w-10 rounded-full bg-purple-600 hover:bg-purple-500"
                 disabled={(!message.trim() && !attachedFile) || sending}
                 aria-label={sending ? 'Sending…' : 'Send message'}
                 title={sending ? 'Sending…' : 'Send message (Enter)'}

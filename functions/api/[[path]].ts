@@ -3434,8 +3434,9 @@ export const onRequest = async (context) => {
       const text = String(clean.text || '').slice(0, 2000);
       const type = clean.type === 'image' || clean.type === 'file' ? clean.type : 'text';
       if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
+      const clientId = String(clean.id || '').slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '');
       const msg = {
-        id: generateId(), from: actor.id, to: peer, text,
+        id: clientId || generateId(), from: actor.id, to: peer, text,
         type, fileUrl: String(clean.fileUrl || '').slice(0, 2000),
         fileName: String(clean.fileName || '').slice(0, 200),
         status: 'sent', createdAt: new Date().toISOString(),
@@ -3491,12 +3492,16 @@ export const onRequest = async (context) => {
         if (m && m.to === actor.id && m.status === 'sent') { m.status = 'delivered'; touched = true; }
       }
       if (touched) await writeChatMessages(env, actor.id, peer, all);
-      const out = all.slice(-limit).map((m) => ({
+      const out = all.slice(-limit)
+        .filter((m) => !(Array.isArray(m?.deletedFor) && m.deletedFor.includes(actor.id)))
+        .map((m) => ({
         id: m.id, threadId: peer, text: m.text, fromMe: m.from === actor.id,
         status: m.from === actor.id ? m.status : undefined,
         timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
         createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
         type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
+        deletedForEveryone: !!m.deletedForEveryone,
+        deletedFor: Array.isArray(m.deletedFor) ? m.deletedFor : [],
       }));
       return json({ data: { messages: out }, error: null }, 200, cors);
     }
@@ -3534,6 +3539,34 @@ export const onRequest = async (context) => {
     }
 
     // GET /api/chat/threads — follow-based thread list with unread counts.
+    // POST /api/chat/:peer/delete { id, forEveryone? } - delete message.
+    if (path.match(/^\/api\/chat\//) && path.endsWith('/delete') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delete', '')).split('?')[0];
+      if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
+      let raw; try { raw = await readJson(request); } catch { raw = {}; }
+      const id = String((raw && raw.id) || '').slice(0, 64);
+      const forEveryone = !!(raw && raw.forEveryone);
+      if (!id) return json({ error: 'Invalid id' }, 400, cors);
+      const all = await readChatMessages(env, actor.id, peer, 300);
+      const m = all.find((x) => x && x.id === id);
+      if (!m) return json({ error: 'Not found' }, 404, cors);
+      if (forEveryone && m.from !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
+      if (forEveryone) {
+        m.deletedForEveryone = true;
+        m.text = '';
+        m.fileUrl = '';
+        m.fileName = '';
+      } else {
+        m.deletedFor = Array.isArray(m.deletedFor) ? m.deletedFor : [];
+        if (!m.deletedFor.includes(actor.id)) m.deletedFor.push(actor.id);
+      }
+      await writeChatMessages(env, actor.id, peer, all);
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
     if (path === '/api/chat/threads' && method === 'GET') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);

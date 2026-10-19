@@ -25,6 +25,26 @@ interface ChatThemeSelectorProps {
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const MAX_BYTES = 5 * 1024 * 1024;
 
+async function compressDataUrl(dataUrl: string): Promise<string> {
+  if (!dataUrl.startsWith('data:image/') || dataUrl.startsWith('data:image/gif')) return dataUrl;
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const max = 1600;
+      const scale = Math.min(1, max / Math.max(img.width || 1, img.height || 1));
+      canvas.width = Math.max(1, Math.round((img.width || 1) * scale));
+      canvas.height = Math.max(1, Math.round((img.height || 1) * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { resolve(dataUrl); return; }
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      try { resolve(canvas.toDataURL('image/jpeg', 0.82)); } catch { resolve(dataUrl); }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
 const presetColors = [
   '#ef4444', '#f97316', '#f59e0b', '#eab308', '#84cc16',
   '#22c55e', '#10b981', '#14b8a6', '#06b6d4', '#0ea5e9',
@@ -49,6 +69,7 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
   // thumbnails). GIFs skip it so animation is preserved.
   const [cropSrc, setCropSrc] = useState<string | null>(null);
   const [cropName, setCropName] = useState('chat-background.jpg');
+  const [uploading, setUploading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Sync drafts every time the dialog opens so it never shows stale values.
@@ -178,7 +199,7 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
     setIsOpen(false);
   };
 
-  const handleDone = () => {
+  const handleDone = async () => {
     if (draftType === 'color') {
       if (!HEX_RE.test(draftColor)) {
         setHexError('Enter a valid 6-digit hex color, e.g. #3b82f6');
@@ -196,7 +217,46 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         setTab('image');
         return;
       }
-      const ok = setChatTheme({ type: 'image', value: draftImage, opacity: draftOpacity });
+      let value = draftImage;
+      // Upload data-URL images/GIFs to Cloudflare R2 (compressed) so the
+      // theme survives storage quotas and syncs across devices.
+      if (value.startsWith('data:image/')) {
+        setUploading(true);
+        try {
+          const res = await fetch(value);
+          const blob = await res.blob();
+          const ext = value.startsWith('data:image/gif') ? 'gif' : 'jpg';
+          const file = new File([blob], `chat-background.${ext}`, { type: blob.type || (ext === 'gif' ? 'image/gif' : 'image/jpeg') });
+          const form = new FormData();
+          form.append('file', file);
+          form.append('folder', 'equyvo/chat-themes');
+          const apiBase = (window as any)?.Capacitor?.isNativePlatform?.() ? 'https://equyvo.pages.dev/api' : '/api';
+          const headers: Record<string, string> = {};
+          try {
+            const stored = localStorage.getItem('equyvo_cognito_user');
+            if (stored) {
+              const u = JSON.parse(stored);
+              const id = u?.id || u?.email;
+              if (id) headers['X-User-Id'] = String(id);
+            }
+            const tok = localStorage.getItem('equyvo_cognito_token');
+            if (tok) headers['Authorization'] = 'Bearer ' + tok;
+          } catch { /* ignore */ }
+          const up = await fetch(`${apiBase}/upload`, { method: 'POST', headers, body: form });
+          const json = await up.json().catch(() => ({}));
+          if (up.ok && (json?.data?.secureUrl || json?.data?.originalUrl)) {
+            value = json.data.secureUrl || json.data.originalUrl;
+          } else {
+            // Fall back to compressed data URL if upload fails.
+            value = await compressDataUrl(value);
+          }
+        } catch {
+          value = await compressDataUrl(value);
+        } finally {
+          setUploading(false);
+        }
+      }
+      const ok = setChatTheme({ type: 'image', value, opacity: draftOpacity });
       if (!ok) {
         showError('Image is too large to save. Try a smaller file (under 5MB).');
         return;
@@ -487,8 +547,8 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
           <Button type="button" variant="outline" onClick={handleReset}>
             <RotateCcw className="w-4 h-4 mr-1.5" /> Reset
           </Button>
-          <Button type="button" onClick={handleDone}>
-            <Check className="w-4 h-4 mr-1.5" /> Done
+          <Button type="button" onClick={handleDone} disabled={uploading}>
+            <Check className="w-4 h-4 mr-1.5" /> {uploading ? 'Uploading…' : 'Done'}
           </Button>
         </DialogFooter>
       </DialogContent>

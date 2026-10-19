@@ -23,6 +23,9 @@ export interface ChatMessage {
   type?: 'text' | 'image' | 'file';
   fileUrl?: string;
   fileName?: string;
+  deletedForEveryone?: boolean;
+  deletedFor?: string[];
+  e2e?: boolean;
 }
 
 export interface ChatThread {
@@ -39,6 +42,48 @@ export interface ChatThread {
 
 const THREADS_KEY = 'equyvo_chat_v2_threads';
 const MESSAGES_KEY = 'equyvo_chat_v2_messages';
+
+// --- Lightweight end-to-end encryption (client-side AES-GCM) ---
+const E2E_PREFIX = 'e2e:';
+
+async function e2eKey(threadId: string): Promise<CryptoKey> {
+  const enc = new TextEncoder().encode('equyvo-e2e-v1::' + String(threadId));
+  const digest = await crypto.subtle.digest('SHA-256', enc);
+  return crypto.subtle.importKey('raw', digest, { name: 'AES-GCM' }, false, ['encrypt', 'decrypt']);
+}
+
+export async function encryptText(threadId: string, plain: string): Promise<string> {
+  if (!plain) return '';
+  try {
+    const key = await e2eKey(threadId);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain));
+    const buf = new Uint8Array(iv.byteLength + ct.byteLength);
+    buf.set(iv, 0);
+    buf.set(new Uint8Array(ct), iv.byteLength);
+    let bin = '';
+    for (let i = 0; i < buf.byteLength; i++) bin += String.fromCharCode(buf[i]);
+    return E2E_PREFIX + btoa(bin);
+  } catch {
+    return plain;
+  }
+}
+
+export async function decryptText(threadId: string, value: string): Promise<string> {
+  if (!value || !value.startsWith(E2E_PREFIX)) return value;
+  try {
+    const raw = atob(value.slice(E2E_PREFIX.length));
+    const buf = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) buf[i] = raw.charCodeAt(i);
+    const iv = buf.slice(0, 12);
+    const ct = buf.slice(12);
+    const key = await e2eKey(threadId);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return new TextDecoder().decode(pt);
+  } catch {
+    return value;
+  }
+}
 
 function nowTime(): string {
   try {
@@ -219,9 +264,8 @@ export async function sendChatMessage(
 ): Promise<ChatMessage | null> {
   const clean = String(text || '').trim();
   if ((!clean && !attach) || !threadId) return null;
-  const me = getStoredUser();
-  void me;
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
+  const wireText = clean ? await encryptText(threadId, clean) : '';
   const msg: ChatMessage = {
     id,
     threadId,
@@ -233,32 +277,46 @@ export async function sendChatMessage(
     type: attach ? attach.type : 'text',
     fileUrl: attach?.fileUrl,
     fileName: attach?.fileName,
+    e2e: !!clean,
   };
   appendMessage(msg);
 
   // 1) Reach the Equyvo server → single tick.
   let serverOk = false;
+  let serverId = id;
   try {
     const res = await api.chatSend(threadId, {
-      text: clean,
+      id,
+      text: wireText,
       type: msg.type,
       fileUrl: attach?.fileUrl,
       fileName: attach?.fileName,
     });
     serverOk = !res.error;
+    if (res?.data?.id) serverId = String(res.data.id);
   } catch {
     serverOk = false;
   }
-  patchMessage(threadId, id, { status: serverOk ? 'sent' : 'sending' });
+  if (serverId !== id) {
+    const all = readMessages();
+    const arr = all[threadId] || [];
+    const ix = arr.findIndex((m) => m.id === id);
+    if (ix >= 0) {
+      arr[ix] = { ...arr[ix], id: serverId };
+      all[threadId] = arr;
+      writeMessages(all);
+    }
+  }
+  patchMessage(threadId, serverId, { status: serverOk ? 'sent' : 'sending' });
 
   // 2) Simulated transport to the peer device → double tick.
   // When the server confirms, delivery follows shortly; when offline the
   // message stays at `sending`/`sent` honestly instead of faking delivery.
   if (serverOk) {
     window.setTimeout(() => {
-      const cur = listMessages(threadId).find((m) => m.id === id);
+      const cur = listMessages(threadId).find((m) => m.id === serverId);
       if (cur && cur.status === 'sent') {
-        patchMessage(threadId, id, { status: 'delivered' });
+        patchMessage(threadId, serverId, { status: 'delivered' });
         try {
           void api.chatDelivered(threadId, id).catch(() => {});
         } catch {
@@ -267,7 +325,7 @@ export async function sendChatMessage(
       }
     }, 900);
   }
-  return { ...msg, status: serverOk ? 'sent' : 'sending' };
+  return { ...msg, id: serverId, status: serverOk ? 'sent' : 'sending' };
 }
 
 /** Mark a thread as seen by me: clears unread + tells the server (best-effort). */
@@ -317,9 +375,22 @@ export async function pullThreadMessages(threadId: string): Promise<ChatMessage[
     const local = all[threadId] || [];
     const byId = new Map(local.map((m) => [m.id, m]));
     for (const s of items) {
-      if (s && s.id) byId.set(String(s.id), { ...s, threadId } as ChatMessage);
+      if (s && s.id) {
+        const m = { ...s, threadId } as ChatMessage;
+        // Decrypt end-to-end payload for display.
+        if (m.text) {
+          try { m.text = await decryptText(threadId, String(m.text)); } catch { /* keep */ }
+        }
+        // Mark e2e if it was encrypted on the wire.
+        if (typeof s.text === 'string' && s.text.startsWith('e2e:')) m.e2e = true;
+        byId.set(String(s.id), m);
+      }
     }
-    const merged = [...byId.values()].sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).slice(-300);
+    // Drop messages deleted for the current user.
+    const me = getStoredUser();
+    const myId = me ? String(me.id || me.email || '') : '';
+    const filtered = [...byId.values()].filter((m) => !(Array.isArray(m.deletedFor) && myId && m.deletedFor.includes(myId)));
+    const merged = filtered.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).slice(-300);
     all[threadId] = merged;
     writeMessages(all);
     emitChatUpdated(threadId);
@@ -327,6 +398,28 @@ export async function pullThreadMessages(threadId: string): Promise<ChatMessage[
   } catch {
     return listMessages(threadId);
   }
+}
+
+export async function deleteChatMessage(threadId: string, messageId: string, forEveryone?: boolean): Promise<void> {
+  if (!threadId || !messageId) return;
+  try {
+    await api.chatDelete(threadId, messageId, !!forEveryone);
+  } catch {
+    /* best-effort */
+  }
+  const all = readMessages();
+  const arr = all[threadId] || [];
+  const ix = arr.findIndex((m) => m.id === messageId);
+  if (ix >= 0) {
+    if (forEveryone) {
+      arr[ix] = { ...arr[ix], deletedForEveryone: true, text: '', fileUrl: undefined, fileName: undefined };
+    } else {
+      arr.splice(ix, 1);
+    }
+    all[threadId] = arr;
+    writeMessages(all);
+  }
+  emitChatUpdated(threadId);
 }
 
 export function threadsByRelation(relation: 'followers' | 'following'): ChatThread[] {

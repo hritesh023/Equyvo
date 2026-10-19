@@ -37,10 +37,10 @@ function sanitizeTheme(raw: unknown): ChatTheme {
   if (t.type === 'color' && isValidHex(t.value)) {
     return { type: 'color', value: (t.value as string).toLowerCase(), opacity };
   }
-  if (t.type === 'image' && typeof t.value === 'string' && t.value.startsWith('data:image/')) {
-    // Guard against absurdly large values that would thrash storage.
-    // ~7MB data-URL cap; larger values are dropped to default.
-    if (t.value.length > 7_000_000) return { ...defaultChatTheme };
+  if (t.type === 'image' && typeof t.value === 'string' && (t.value.startsWith('data:image/') || /^https?:\/\//.test(t.value) || t.value.startsWith('/api/media/'))) {
+    // Remote (R2/Cloudinary) URLs are preferred and small; data URLs are
+    // capped to avoid thrashing localStorage.
+    if (t.value.startsWith('data:image/') && t.value.length > 7_000_000) return { ...defaultChatTheme };
     return { type: 'image', value: t.value, opacity };
   }
   return { ...defaultChatTheme, opacity };

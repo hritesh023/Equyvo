@@ -271,10 +271,16 @@ export const api = {
 
   // Chat transport. Ticks: sent = reached server, delivered/seen via polling.
   // Gating (followers ↔ following) is enforced server-side; strangers get 403.
-  chatSend: (peer: string, data: { text?: string; type?: string; fileUrl?: string; fileName?: string }) =>
+  chatSend: (peer: string, data: { id?: string; text?: string; type?: string; fileUrl?: string; fileName?: string }) =>
     request<{ data: { id: string; delivered: boolean }; error: null }>(`/chat/${encodeURIComponent(peer)}/send`, {
       method: 'POST',
       body: JSON.stringify(data),
+    }),
+
+  chatDelete: (peer: string, id: string, forEveryone?: boolean) =>
+    request<{ data: { ok: boolean }; error: null }>(`/chat/${encodeURIComponent(peer)}/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ id, forEveryone: !!forEveryone }),
     }),
 
   chatMessages: (peer: string, limit = 100) =>
