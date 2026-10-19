@@ -39,8 +39,6 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
-  
   const { suggestions, isLoading, generateSuggestions, saveSearch } = useAISearch();
 
   // Enhanced SEO-friendly search tracking
@@ -99,8 +97,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node) &&
-          !(event.target as HTMLElement)?.closest?.('[data-search-dropdown]')) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
         setIsOpen(false);
         setSelectedIndex(-1);
       }
@@ -109,32 +106,6 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
-
-  // Position the dropdown via a portal so it is never clipped by scroll
-  // containers (main has overflow-y-auto), fixing the "half page cut off".
-  useEffect(() => {
-    if (!isOpen) return;
-    const update = () => {
-      const el = inputRef.current;
-      if (!el) return;
-      const rect = el.getBoundingClientRect();
-      const width = Math.min(rect.width, window.innerWidth - rect.left - 8);
-      setDropdownStyle({
-        position: 'fixed',
-        top: rect.bottom + 8,
-        left: rect.left,
-        width: Math.max(240, width),
-        zIndex: 1000,
-      });
-    };
-    update();
-    window.addEventListener('scroll', update, true);
-    window.addEventListener('resize', update);
-    return () => {
-      window.removeEventListener('scroll', update, true);
-      window.removeEventListener('resize', update);
-    };
-  }, [isOpen]);
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
