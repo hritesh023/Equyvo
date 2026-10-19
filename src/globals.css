@@ -17,12 +17,12 @@
   --equyvo-safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
 }
 
-/* App main offset (mobile shell): sits between the page top bar (3.25rem)
-   and the bottom nav (4rem), both of which already carry their own safe
-   insets. Desktop/tablet flows the header naturally (unibody — no offsets
-   needed since nothing overlays the content). */
+/* App main offset (mobile shell): content starts right below the OS status
+   bar (safe top) and stops above the fixed bottom nav (4rem + safe bottom).
+   There is no separate top bar band — page headers are ordinary content,
+   merged seamlessly into the body (unibody). */
 .app-main-offset {
-  padding-top: calc(3.25rem + var(--equyvo-safe-top));
+  padding-top: var(--equyvo-safe-top);
   padding-bottom: calc(4rem + var(--equyvo-safe-bottom));
 }
 @media (min-width: 768px) {
@@ -32,9 +32,9 @@
   }
 }
 
-/* Fixed elements anchored to the shell bars (notification panel & backdrop). */
+/* Fixed elements anchored to the shell (notification panel & backdrop). */
 .nav-top-safe {
-  top: calc(3.25rem + var(--equyvo-safe-top));
+  top: var(--equyvo-safe-top);
 }
 .nav-bottom-safe {
   bottom: calc(4rem + var(--equyvo-safe-bottom));
@@ -1336,23 +1336,20 @@
     box-sizing: border-box;
   }
 
-  /* Mobile chat shell: definite height between the fixed top bar and the
-     bottom nav (mirrors the main content offsets) so flex-1 message areas,
-     the background layer and the inner scroll region resolve to real pixel
-     heights instead of collapsing to zero. */
+  /* Mobile chat shell: definite height = viewport minus the fixed bottom nav
+     and the safe insets, so flex-1 message areas, the background layer and
+     the inner scroll region resolve to real pixel heights. */
   .chat-mobile-shell {
-    height: calc(100vh - 3.25rem - 4rem - var(--equyvo-safe-top) - var(--equyvo-safe-bottom));
-    height: calc(100dvh - 3.25rem - 4rem - var(--equyvo-safe-top) - var(--equyvo-safe-bottom));
-    max-height: calc(100dvh - 3.25rem - 4rem);
+    height: calc(100vh - 4rem - var(--equyvo-safe-top) - var(--equyvo-safe-bottom));
+    height: calc(100dvh - 4rem - var(--equyvo-safe-top) - var(--equyvo-safe-bottom));
+    max-height: calc(100dvh - 4rem);
   }
 
-  /* Chat open (mobile): fixed full-screen overlay under the app top bar.
-     offset-top keeps the chat header below the global top bar; the composer
-     region keeps the safe-area inset so the input never hides on notched
-     devices. With Android adjustResize the fixed bottom rides above the
-     keyboard, so the input bar is always visible. */
+  /* Chat open (mobile): fixed full-screen overlay. Content starts below the
+     OS status bar (safe top); the composer keeps the bottom inset so the
+     input is always visible. Android adjustResize keeps it above the keyboard. */
   .chat-open-overlay {
-    padding-top: calc(3.25rem + var(--equyvo-safe-top));
+    padding-top: var(--equyvo-safe-top);
     padding-bottom: var(--equyvo-safe-bottom);
     box-sizing: border-box;
   }

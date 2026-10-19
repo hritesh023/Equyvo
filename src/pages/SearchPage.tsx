@@ -255,8 +255,8 @@ const SearchPage: React.FC = () => {
       />
       
       <div className="min-h-screen bg-background">
-        {/* Search Header */}
-        <div className="sticky top-0 bg-background/95 backdrop-blur-lg border-b border-border/50 z-40 mobile-top-safe">
+        {/* Search header — merged into the body (unibody, no sticky band). */}
+        <div className="bg-background">
           <div className="container mx-auto px-4 py-4">
             <div className="flex flex-col md:flex-row gap-4 items-center">
               {/* Search Input */}
