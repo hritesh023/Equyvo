@@ -83,7 +83,22 @@ export function clearToken(): void {
 export function getStoredUser(): User | null {
   try {
     const raw = localStorage.getItem(USER_KEY);
-    return raw ? JSON.parse(raw) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<User> | null;
+    // Corrupt / fake-shaped entries must never break auth-dependent screens:
+    // a stored user has to at least identify itself, otherwise treat the
+    // session as signed out (and clear the junk so it doesn't recur).
+    if (!parsed || typeof parsed !== 'object') {
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
+    const hasId = typeof parsed.id === 'string' && (parsed.id as string).trim().length > 0;
+    const hasEmail = typeof parsed.email === 'string' && (parsed.email as string).trim().length > 0;
+    if (!hasId && !hasEmail) {
+      localStorage.removeItem(USER_KEY);
+      return null;
+    }
+    return parsed as User;
   } catch {
     return null;
   }

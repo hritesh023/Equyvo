@@ -8,7 +8,7 @@
 import { getStoredUser } from './auth';
 import api from './api';
 
-export type ChatStatus = 'sending' | 'sent' | 'delivered' | 'seen';
+export type ChatStatus = 'sending' | 'sent' | 'delivered' | 'seen' | 'failed';
 export type ChatRelation = 'follower' | 'following' | 'mutual';
 
 export interface ChatMessage {
@@ -351,7 +351,7 @@ export async function sendChatMessage(
       writeMessages(all);
     }
   }
-  patchMessage(threadId, serverId, { status: serverOk ? 'sent' : 'sending' });
+  patchMessage(threadId, serverId, { status: serverOk ? 'sent' : 'failed' });
 
   // 2) The double tick is NOT simulated here — it is earned. 'delivered'
   //    only lands when the PEER's device actually pulls the message (their
@@ -359,7 +359,51 @@ export async function sendChatMessage(
   //    when the peer opens the chat (/seen). Both reach this device through
   //    the next poll (see ChatSidebar's pull interval), never before the
   //    peer's device has truly received the message.
-  return { ...msg, id: serverId, status: serverOk ? 'sent' : 'sending' };
+  return { ...msg, id: serverId, status: serverOk ? 'sent' : 'failed' };
+}
+
+/**
+ * Re-attempt delivery of a message that failed to reach the server (red X
+ * tick). Keeps the SAME client id so the ledger stays linear, then advances
+ * the tick normally. Never throws — a second failure just stays 'failed'.
+ */
+export async function retryChatMessage(threadId: string, messageId: string): Promise<void> {
+  if (!threadId || !messageId) return;
+  const arr = readMessages()[threadId] || [];
+  const m = arr.find((x) => x.id === messageId);
+  if (!m || !m.fromMe) return;
+  patchMessage(threadId, messageId, { status: 'sending' });
+  try {
+    const wireText = m.text ? await encryptText(threadId, m.text) : '';
+    const res = await api.chatSend(threadId, {
+      id: messageId,
+      text: wireText,
+      type: m.type || 'text',
+      fileUrl: m.fileUrl,
+      fileName: m.fileName,
+      durationSec: m.durationSec,
+    });
+    if (res.error) {
+      patchMessage(threadId, messageId, { status: 'failed' });
+      return;
+    }
+    const sid = res?.data?.id ? String(res.data.id) : messageId;
+    if (sid !== messageId) {
+      const all = readMessages();
+      const list = all[threadId] || [];
+      const ix = list.findIndex((x) => x.id === messageId);
+      if (ix >= 0) {
+        list[ix] = { ...list[ix], id: sid };
+        all[threadId] = list;
+        writeMessages(all);
+      }
+      patchMessage(threadId, sid, { status: 'sent' });
+    } else {
+      patchMessage(threadId, messageId, { status: 'sent' });
+    }
+  } catch {
+    patchMessage(threadId, messageId, { status: 'failed' });
+  }
 }
 
 /** Mark a thread as seen by me: clears unread + tells the server (best-effort). */

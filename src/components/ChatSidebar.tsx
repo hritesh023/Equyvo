@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2 } from 'lucide-react';
 import { showError } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
 import api from '@/lib/api';
@@ -18,6 +18,7 @@ import { getFollowers, getFollowing, type SocialProfile } from '@/lib/social';
 import {
   listThreads, listMessages, ensureThread, syncThreadsFromSocial,
   sendChatMessage, markThreadSeen, pullThreadMessages, deleteChatMessage,
+  retryChatMessage,
   type ChatThread, type ChatMessage,
 } from '@/lib/chat';
 
@@ -28,7 +29,42 @@ function Ticks({ status }: { status: ChatMessage['status'] }) {
   if (status === 'sending') return <Clock className="h-3.5 w-3.5 opacity-70" aria-label="Sending" />;
   if (status === 'sent') return <Check className="h-4 w-4 opacity-80" aria-label="Sent" />;
   if (status === 'delivered') return <CheckCheck className="h-4 w-4 opacity-80" aria-label="Delivered" />;
+  if (status === 'failed') return <X className="h-4 w-4 text-red-400" aria-label="Failed to send" />;
   return null;
+}
+
+/** Voice-note player with a graceful fallback: if the audio can't play
+ *  (codec gap in some WebViews, expired upload, dead URL) it degrades into a
+ *  download link instead of a dead silent bubble. Player state resets when
+ *  a different message is rendered (component keyed by message id). */
+function VoiceBubble({ msg }: { msg: ChatMessage }) {
+  const [broken, setBroken] = useState(false);
+  const url = typeof msg.fileUrl === 'string' ? msg.fileUrl : '';
+  if (broken || !url) {
+    if (url) {
+      return (
+        <a
+          href={url}
+          download={msg.fileName || 'voice-message'}
+          className="flex items-center gap-2 rounded-lg bg-white/10 px-2 py-1.5 text-xs font-medium underline underline-offset-2"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <Volume2 className="h-4 w-4 shrink-0" /> Voice message — tap to download
+        </a>
+      );
+    }
+    return <div className="text-xs opacity-80">Voice message unavailable</div>;
+  }
+  return (
+    <audio
+      key={msg.id}
+      controls
+      preload="metadata"
+      src={url}
+      onError={() => setBroken(true)}
+      className="h-9 w-[230px] max-w-full"
+    />
+  );
 }
 
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
@@ -286,7 +322,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         try {
           const ext = String(rec.mimeType || '').includes('mp4') ? 'm4a' : 'webm';
           const file = new File([blob], `voice-${Date.now()}.${ext}`, { type: blob.type || 'audio/webm' });
-          const { data, error } = await api.uploadFile(file, 'equyvo/chat/voice');
+          // One automatic retry: a network blip right after recording should
+          // not waste the whole take. Second failure surfaces the toast.
+          let up: { data?: { secureUrl?: string }; error?: unknown } = {};
+          for (let attempt = 0; attempt < 2 && !up?.data?.secureUrl; attempt++) {
+            if (attempt > 0) await new Promise((r) => setTimeout(r, 800));
+            up = await api.uploadFile(file, 'equyvo/chat/voice');
+          }
+          const data = up?.data;
+          const error = up?.error;
           if (error || !data?.secureUrl) throw new Error('voice-upload-failed');
           const sent = await sendChatMessage(threadId, '', {
             fileUrl: data.secureUrl,
@@ -654,7 +698,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         </div>
                       ) : msg.type === 'audio' && msg.fileUrl ? (
                         <div className="min-w-[210px] space-y-1">
-                          <audio controls preload="metadata" src={msg.fileUrl} className="h-9 w-[230px] max-w-full" />
+                          <VoiceBubble msg={msg} />
                           {!!msg.durationSec && <p className="text-[11px] opacity-80 text-right">Voice message · {msg.durationSec}s</p>}
                           {msg.text && <p className="whitespace-pre-wrap break-words">{msg.text}</p>}
                         </div>
@@ -673,7 +717,18 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                       )}
                       <div className={`mt-0.5 flex items-center justify-end gap-1 text-[11px] ${msg.fromMe ? 'text-white/70' : 'text-slate-400'}`}>
                         <span>{msg.timestamp}</span>
-                        {msg.fromMe && <Ticks status={msg.status} />}
+                        {msg.fromMe && msg.status === 'failed' ? (
+                          <button
+                            type="button"
+                            className="ml-0.5 flex items-center gap-1 rounded text-red-400 hover:text-red-300"
+                            title="Not delivered — tap to retry"
+                            aria-label="Not delivered, tap to retry"
+                            onClick={() => { void retryChatMessage(msg.threadId, msg.id); }}
+                          >
+                            <X className="h-4 w-4" />
+                            <span className="text-[10px] font-medium">Retry</span>
+                          </button>
+                        ) : msg.fromMe && <Ticks status={msg.status} />}
                       </div>
                       {/* Read receipt INSIDE the bubble, under the timestamp: only
                           for MY messages, only when seen (the ONLY seen signal — no
