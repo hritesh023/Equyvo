@@ -87,7 +87,7 @@ export function NotificationBell() {
           )}
         </Button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-[92vw] sm:w-[340px] max-h-[80vh] p-0">
+      <DropdownMenuContent align="end" className="w-screen h-screen max-w-none max-h-none sm:w-[340px] sm:h-auto sm:max-h-[80vh] rounded-none sm:rounded-md p-0 fixed inset-0 sm:inset-auto sm:right-2 sm:top-12">
         <div className="flex items-center justify-between border-b border-border px-3 py-2">
           <p className="text-sm font-semibold">Notifications {count > 0 && <span className="text-muted-foreground">({count} new)</span>}</p>
           <div className="flex items-center gap-1">
