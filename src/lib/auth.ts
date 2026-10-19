@@ -1,6 +1,15 @@
 // Auth now uses Equyvo's own backend (no Cognito, no email verification).
 // Kept as a thin HTTP client over /api/auth/*.
-const API_BASE = '/api';
+function resolveApiBase(): string {
+  try {
+    const cap = (window as any)?.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+      return 'https://equyvo.pages.dev/api';
+    }
+  } catch { /* ignore */ }
+  return '/api';
+}
+const API_BASE = resolveApiBase();
 
 export interface User {
   id: string;

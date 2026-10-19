@@ -809,6 +809,9 @@ const PLATFORM_FEE_BPS = 1000; // 10%
 const DEFAULT_ALLOWED_ORIGINS = [
   'http://localhost:3000',
   'http://localhost:5173',
+  'https://localhost',
+  'capacitor://localhost',
+  'ionic://localhost',
   'https://equyvo.pages.dev',
   'https://equyvo.com',
   'https://www.equyvo.com',

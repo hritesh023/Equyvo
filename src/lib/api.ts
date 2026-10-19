@@ -2,7 +2,16 @@
 // In development, proxies through Vite to local Pages Functions
 // In production, same origin (Pages serves both frontend and functions)
 
-const API_BASE = '/api';
+function resolveApiBase(): string {
+  try {
+    const cap = (window as any)?.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+      return 'https://equyvo.pages.dev/api';
+    }
+  } catch { /* ignore */ }
+  return '/api';
+}
+const API_BASE = resolveApiBase();
 const USER_KEY = 'equyvo_cognito_user';
 const TOKEN_KEY = 'equyvo_cognito_token';
 

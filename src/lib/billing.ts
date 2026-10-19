@@ -9,7 +9,16 @@ import { getAuthToken, getToken } from './auth';
 // Falls back to central billing if the same-origin function is missing
 // (stale dist / Worker deploy without Functions) so payment buttons never
 // dead-end on 404.
-const API_BASE = '/api';
+function resolveApiBase(): string {
+  try {
+    const cap = (window as any)?.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+      return 'https://equyvo.pages.dev/api';
+    }
+  } catch { /* ignore */ }
+  return '/api';
+}
+const API_BASE = resolveApiBase();
 const CENTRAL_BILLING = 'https://api.acronous.com';
 
 function centralPath(path: string): string | null {
