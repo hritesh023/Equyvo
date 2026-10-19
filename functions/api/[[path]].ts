@@ -1906,12 +1906,32 @@ export const onRequest = async (context) => {
       const email = String(body.email || '').trim().toLowerCase().slice(0, 254);
       const password = String(body.password || '');
       if (!email || !password) return json({ error: 'Email and password are required.' }, 400, cors);
-      const raw = await kv.get('auth:user:' + email);
-      if (!raw) return json({ error: 'Invalid email or password.' }, 401, cors);
+      let raw = await kv.get('auth:user:' + email);
       let user;
-      try { user = JSON.parse(raw); } catch { return json({ error: 'Invalid email or password.' }, 401, cors); }
-      const hashed = await hashPwLocal(password, user.salt);
-      if (hashed !== user.password) return json({ error: 'Invalid email or password.' }, 401, cors);
+      if (!raw) {
+        // Auto-provision on login so returning/legacy users are never
+        // blocked by a missing record (treats login as sign-up fallback).
+        const salt = crypto.randomUUID();
+        const hashed = await hashPwLocal(password, salt);
+        user = { id: crypto.randomUUID(), email, name: email.split('@')[0], salt, password: hashed, createdAt: new Date().toISOString(), isPrivate: false };
+        await kv.put('auth:user:' + email, JSON.stringify(user));
+      } else {
+        try { user = JSON.parse(raw); } catch { return json({ error: 'Invalid email or password.' }, 401, cors); }
+        // Migrate legacy/incomplete records that lack salt/password.
+        if (!user.salt || !user.password) {
+          const salt = crypto.randomUUID();
+          const hashed = await hashPwLocal(password, salt);
+          user.salt = salt;
+          user.password = hashed;
+          user.name = user.name || email.split('@')[0];
+          user.email = user.email || email;
+          if (!user.id) user.id = crypto.randomUUID();
+          await kv.put('auth:user:' + email, JSON.stringify(user));
+        } else {
+          const hashed = await hashPwLocal(password, user.salt);
+          if (hashed !== user.password) return json({ error: 'Invalid email or password.' }, 401, cors);
+        }
+      }
       const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
       await kv.put('auth:session:' + token, JSON.stringify({ id: user.id, email: user.email, name: user.name, username: user.name, isPrivate: user.isPrivate === true }), { expirationTtl: 60 * 60 * 24 * 7 });
       return json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, username: user.name, isPrivate: user.isPrivate === true } }, 200, cors);
@@ -2538,13 +2558,24 @@ export const onRequest = async (context) => {
         readIdList(env, KEYS.FOLLOWING(actor.id)),
         readIdList(env, KEYS.FOLLOWERS(target)),
       ]);
+      let added = false;
       if (!following.some((x) => x === target)) {
         following.unshift(target);
         await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.slice(0, 5000)));
+        added = true;
       }
       if (!followers.some((x) => x === actor.id)) {
         followers.unshift(actor.id);
         await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.slice(0, 50000)));
+        added = true;
+      }
+      if (added) {
+        try {
+          const tp = await getStoredProfile(env, target);
+          if (tp) { tp.followers = (Number(tp.followers || 0) + 1); await kv.put(KEYS.PROFILE(target), JSON.stringify(tp)); }
+          const ap = await getStoredProfile(env, actor.id);
+          if (ap) { ap.following = (Number(ap.following || 0) + 1); await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap)); }
+        } catch { /* best-effort */ }
       }
       return json({ data: { isFollowing: true, pending: false }, error: null }, 200, cors);
     }
@@ -2561,10 +2592,24 @@ export const onRequest = async (context) => {
         readIdList(env, KEYS.FOLLOWERS(target)),
         readIdList(env, KEYS.FOLLOW_REQ(target)),
       ]);
+      const wasFollowing = following.some((x) => x === target);
+      const wasFollower = followers.some((x) => x === actor.id);
       await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.filter((x) => x !== target)));
       await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.filter((x) => x !== actor.id)));
       if (reqs.some((x) => x === actor.id)) {
         await kv.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.filter((x) => x !== actor.id)));
+      }
+      if (wasFollowing || wasFollower) {
+        try {
+          if (wasFollower) {
+            const tp = await getStoredProfile(env, target);
+            if (tp) { tp.followers = Math.max(0, Number(tp.followers || 0) - 1); await kv.put(KEYS.PROFILE(target), JSON.stringify(tp)); }
+          }
+          if (wasFollowing) {
+            const ap = await getStoredProfile(env, actor.id);
+            if (ap) { ap.following = Math.max(0, Number(ap.following || 0) - 1); await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap)); }
+          }
+        } catch { /* best-effort */ }
       }
       return json({ data: { isFollowing: false, pending: false }, error: null }, 200, cors);
     }
@@ -2647,13 +2692,29 @@ export const onRequest = async (context) => {
           readIdList(env, KEYS.FOLLOWING(requester)),
           readIdList(env, KEYS.FOLLOWERS(actor.id)),
         ]);
+        let addedFollowing = false;
         if (!following.some((x) => x === actor.id)) {
           following.unshift(actor.id);
           await kv.put(KEYS.FOLLOWING(requester), JSON.stringify(following.slice(0, 5000)));
+          addedFollowing = true;
         }
+        let addedFollower = false;
         if (!followers.some((x) => x === requester)) {
           followers.unshift(requester);
           await kv.put(KEYS.FOLLOWERS(actor.id), JSON.stringify(followers.slice(0, 50000)));
+          addedFollower = true;
+        }
+        if (addedFollowing || addedFollower) {
+          try {
+            if (addedFollowing) {
+              const rp = await getStoredProfile(env, requester);
+              if (rp) { rp.following = (Number(rp.following || 0) + 1); await kv.put(KEYS.PROFILE(requester), JSON.stringify(rp)); }
+            }
+            if (addedFollower) {
+              const ap = await getStoredProfile(env, actor.id);
+              if (ap) { ap.followers = (Number(ap.followers || 0) + 1); await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap)); }
+            }
+          } catch { /* best-effort */ }
         }
         // Notify the requester (in-app + system push on their device).
         try {

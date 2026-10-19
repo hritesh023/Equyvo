@@ -150,7 +150,11 @@ function upsertThread(t: ChatThread): ChatThread[] {
 }
 
 export function listThreads(): ChatThread[] {
-  return readThreads();
+  return readThreads().filter((t) => {
+    const name = String(t.peerName || '').toLowerCase();
+    const id = String(t.id || t.peerId || '').toLowerCase();
+    return name && name !== 'user' && name !== 'users' && id && id !== 'user' && id !== 'users';
+  });
 }
 
 export function listMessages(threadId: string): ChatMessage[] {

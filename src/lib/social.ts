@@ -154,12 +154,10 @@ export async function getFollowers(userId?: string): Promise<{ list: SocialProfi
       (cached[key] as SocialProfile) ||
       summaryForId(rawId)
     );
+  }).filter((p) => {
+    const u = String(p?.username || p?.name || p?.id || '').toLowerCase().replace(/^@/, '');
+    return !!u && u !== 'user' && u !== 'users' && p?.id;
   });
-  if (!list.length && (!id || id === meId())) {
-    // Local fallback: people we've chatted with act as followers so the tab
-    // is never empty on a fresh device.
-    return { list: localPeople().slice(0, 50), restricted: false };
-  }
   return { list, restricted };
 }
 
@@ -178,18 +176,10 @@ export async function getFollowing(userId?: string): Promise<{ list: SocialProfi
       (cached[key] as SocialProfile) ||
       summaryForId(rawId)
     );
+  }).filter((p) => {
+    const u = String(p?.username || p?.name || p?.id || '').toLowerCase().replace(/^@/, '');
+    return !!u && u !== 'user' && u !== 'users' && p?.id;
   });
-  if (!list.length && (!id || id === meId())) {
-    const local = localPeople();
-    // Merge explicit local follows (handles) even when server is empty.
-    const seen = new Set(list.map((p) => p.id.toLowerCase()));
-    for (const p of local) {
-      if (!seen.has(p.id.toLowerCase())) {
-        seen.add(p.id.toLowerCase());
-        list.push(p);
-      }
-    }
-  }
   return { list, restricted };
 }
 
