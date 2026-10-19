@@ -1,11 +1,6 @@
-import {
-  signUp as cognitoSignUp,
-  signIn as cognitoSignIn,
-  signOut as cognitoSignOut,
-  getCurrentSession,
-  confirmRegistration as cognitoConfirmRegistration,
-  resendConfirmationCode as cognitoResendConfirmationCode,
-} from './aws';
+// Auth now uses Equyvo's own backend (no Cognito, no email verification).
+// Kept as a thin HTTP client over /api/auth/*.
+const API_BASE = '/api';
 
 export interface User {
   id: string;
@@ -121,23 +116,27 @@ function decodeCentralJWT(token: string): User | null {
 }
 
 export async function checkAuthStatus(): Promise<AuthState> {
-  try {
-    const session: any = await getCurrentSession();
-    if (session && session.isValid()) {
-      const user = decodeUserFromSession(session);
-      if (user) {
+  const t = getToken();
+  if (t) {
+    try {
+      const r = await fetch(API_BASE + '/auth/me', { headers: { Authorization: 'Bearer ' + t } });
+      const j = await r.json().catch(() => null);
+      if (r.ok && j && j.user) {
+        const u = j.user;
+        const user: User = {
+          id: u.id,
+          email: u.email,
+          fullName: u.name || u.fullName || '',
+          username: u.username || u.name || (u.email ? String(u.email).split('@')[0] : ''),
+        };
         storeUser(user);
-        storeToken(sessionToken(session));
         return { user, isLoading: false, isAuthenticated: true };
       }
-    }
-  } catch {
+    } catch { /* fall through */ }
   }
 
-  // Central SSO token (?token= from acronous.com dashboard): no Cognito
-  // session exists, but the Bearer is valid for all /api + billing calls.
+  // Central SSO token (?token= from acronous.com dashboard)
   try {
-    const t = getToken();
     if (t) {
       const centralUser = decodeCentralJWT(t);
       if (centralUser) {
@@ -145,9 +144,7 @@ export async function checkAuthStatus(): Promise<AuthState> {
         return { user: centralUser, isLoading: false, isAuthenticated: true };
       }
     }
-  } catch {
-    // fall through to stored-user fallback
-  }
+  } catch { /* fall through */ }
 
   const stored = getStoredUser();
   if (stored) {
@@ -244,42 +241,29 @@ async function applyAccountType(user: User, isPrivate: boolean): Promise<void> {
 
 export async function signInWithEmail(email: string, password: string) {
   try {
-    const session: any = await cognitoSignIn(email, password);
-    const user = decodeUserFromSession(session);
-    if (!user) {
-      return { success: false, error: 'Unable to decode user session' };
+    const r = await fetch(API_BASE + '/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.token || !j.user) {
+      return { success: false, error: (j && (j.error || j.message)) || 'Invalid email or password' };
     }
+    const u = j.user;
+    const user: User = {
+      id: u.id,
+      email: u.email,
+      fullName: u.name || u.fullName || '',
+      username: u.username || u.name || (u.email ? String(u.email).split('@')[0] : ''),
+    };
     storeUser(user);
-    storeToken(sessionToken(session));
-    // Apply a privacy choice queued at signup (or a previous offline change).
+    storeToken(j.token);
     const pending = takePendingPrivacy();
     if (pending) await applyAccountType(user, pending === 'private');
     return { success: true, user };
-  } catch (error: any) {
-    const message = toErrorMessage(error, '');
-    const code = errorCode(error);
-    if (message.includes('NotAuthorized') || code === 'NotAuthorizedException') {
-      return { success: false, error: 'Incorrect email or password' };
-    }
-    if (message.includes('UserNotFound') || code === 'UserNotFoundException') {
-      return { success: false, error: 'No account found with this email' };
-    }
-    if (message.includes('UserNotConfirmed') || code === 'UserNotConfirmedException') {
-      return { success: false, error: 'Please confirm your email with the code we sent' };
-    }
-    if (message.includes('Network') || message.includes('fetch') || message.includes('Failed to fetch')) {
-      return { success: false, error: 'Network error. Check your connection and try again.' };
-    }
-    if (message.includes('ResourceNotFound') || code === 'ResourceNotFoundException') {
-      // The configured sign-in service is unreachable. Retrying can't help.
-      try {
-        console.error('[auth] Sign-in service unavailable (ResourceNotFound).');
-      } catch { /* ignore */ }
-      return { success: false, error: 'Sign-in is temporarily unavailable. Please try again later.' };
-    }
-    // Production safety: NEVER silently create a local session when auth fails.
-    // A fake local user would bypass server-side ownership + quota checks.
-    return { success: false, error: message || 'Sign in failed. Please try again.' };
+  } catch {
+    return { success: false, error: 'Network error. Check your connection and try again.' };
   }
 }
 
@@ -290,88 +274,52 @@ export async function signUpWithEmail(
   opts?: { isPrivate?: boolean },
 ) {
   try {
-    const result: any = await cognitoSignUp(email, password, name || '');
+    const isPrivate = opts?.isPrivate === true;
+    const r = await fetch(API_BASE + '/auth/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password, name: name || '', isPrivate }),
+    });
+    const j = await r.json().catch(() => null);
+    if (!r.ok || !j || !j.token || !j.user) {
+      const msg = (j && (j.error || j.message)) || 'Sign up failed';
+      if (r.status === 409) return { success: false, error: 'An account with this email already exists. Try signing in.' };
+      return { success: false, error: msg };
+    }
+    const u = j.user;
     const user: User = {
-      id: result.userSub || email,
-      email,
-      fullName: name || '',
-      username: email.split('@')[0],
+      id: u.id,
+      email: u.email,
+      fullName: u.name || name || '',
+      username: u.username || u.name || (u.email ? String(u.email).split('@')[0] : ''),
     };
     storeUser(user);
-    // Account type chosen on the signup page. Queued locally first (survives
-    // email-confirmation gaps), then pushed to the server best-effort.
-    const isPrivate = opts?.isPrivate === true;
+    storeToken(j.token);
     storePendingPrivacy(isPrivate);
     await applyAccountType(user, isPrivate);
     return { success: true, user };
-  } catch (error: any) {
-    const message = toErrorMessage(error, '');
-    const code = errorCode(error);
-    if (message.includes('InvalidPassword') || code === 'InvalidPasswordException') {
-      return { success: false, error: 'Password must be at least 6 characters' };
-    }
-    if (message.includes('InvalidParameter') || code === 'InvalidParameterException') {
-      return { success: false, error: 'Invalid email or password format' };
-    }
-    if (message.includes('UsernameExists') || code === 'UsernameExistsException') {
-      return { success: false, error: 'An account with this email already exists. Try signing in.' };
-    }
-    if (message.includes('Network') || message.includes('fetch') || message.includes('Failed to fetch')) {
-      return { success: false, error: 'Network error. Check your connection and try again.' };
-    }
-    if (message.includes('ResourceNotFound') || code === 'ResourceNotFoundException') {
-      // The configured sign-up service is unreachable. Retrying can't help.
-      try {
-        console.error('[auth] Sign-up service unavailable (ResourceNotFound).');
-      } catch { /* ignore */ }
-      return { success: false, error: 'Sign-up is temporarily unavailable. Please try again later.' };
-    }
-    // Production safety: do not create a fake session on signup failure.
-    return { success: false, error: message || 'Sign up failed. Please try again.' };
+  } catch {
+    return { success: false, error: 'Network error. Check your connection and try again.' };
   }
 }
 
-export async function confirmEmail(email: string, code: string) {
-  try {
-    await cognitoConfirmRegistration(email, code);
-    return { success: true };
-  } catch (error: any) {
-    const message = toErrorMessage(error, '');
-    const code2 = errorCode(error);
-    if (message.includes('CodeMismatch') || code2 === 'CodeMismatchException') {
-      return { success: false, error: 'Incorrect confirmation code' };
-    }
-    if (message.includes('ExpiredCode') || code2 === 'ExpiredCodeException') {
-      return { success: false, error: 'Confirmation code expired. Request a new one.' };
-    }
-    if (message.includes('Network') || message.includes('fetch') || message.includes('Failed to fetch')) {
-      return { success: false, error: 'Network error. Check your connection and try again.' };
-    }
-    return { success: false, error: message || 'Confirmation failed. Please try again.' };
-  }
+// No email verification is required anymore. These are retained as no-ops so
+// older callers/UI keep compiling.
+export async function confirmEmail(_email: string, _code: string) {
+  return { success: true };
 }
-
-export async function resendConfirmation(email: string) {
-  try {
-    await cognitoResendConfirmationCode(email);
-    return { success: true };
-  } catch (error: any) {
-    const message = toErrorMessage(error, '');
-    return { success: false, error: message || 'Could not resend code.' };
-  }
+export async function resendConfirmation(_email: string) {
+  return { success: true };
 }
 
 export async function signOutUser() {
-  try {
-    cognitoSignOut();
-    clearStoredUser();
-    storeToken(null);
-    return { success: true };
-  } catch {
-    clearStoredUser();
-    storeToken(null);
-    return { success: true };
+  const t = getToken();
+  if (t) {
+    try { await fetch(API_BASE + '/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } }); } catch { /* ignore */ }
   }
+  clearStoredUser();
+  storeToken(null);
+  return { success: true };
 }
 
 export function hasStoredUser(): boolean {
@@ -385,19 +333,7 @@ export function hasStoredUser(): boolean {
  * subscription screen. This tries a silent Cognito refresh before giving up.
  */
 export async function getAuthToken(): Promise<string | null> {
-  const stored = getToken();
-  if (stored) return stored;
-  try {
-    const session: any = await getCurrentSession();
-    const fresh = sessionToken(session);
-    if (fresh) {
-      storeToken(fresh);
-      return fresh;
-    }
-  } catch {
-    // Silent refresh failed — caller routes to re-auth with return URL.
-  }
-  return null;
+  return getToken();
 }
 
 export async function getAuthenticatedUser(): Promise<User | null> {

@@ -1098,6 +1098,11 @@ function getRegion(env) {
   return (getPoolId(env).split('_')[0] || 'eu-north-1');
 }
 
+async function hashPwLocal(password, salt) {
+  const hash = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(String(password) + String(salt)));
+  return [...new Uint8Array(hash)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
 function b64urlDecode(str) {
   const b64 = str.replace(/-/g, '+').replace(/_/g, '/');
   const padded = b64.padEnd(b64.length + ((4 - (b64.length % 4)) % 4), '=');
@@ -1218,6 +1223,18 @@ function requiresVerifiedWrites(env) {
 }
 async function getActor(request, env, body) {
   const auth = request.headers.get('Authorization') || '';
+  if (auth.startsWith('Bearer ')) {
+    const token = auth.slice(7).trim();
+    if (token) {
+      try {
+        const raw = await env.EQUYVO_KV.get('auth:session:' + token);
+        if (raw) {
+          const u = JSON.parse(raw);
+          return { id: u.id, email: u.email, username: u.username || u.name || '', verified: true };
+        }
+      } catch { /* fall through */ }
+    }
+  }
   if (auth.startsWith('Bearer ')) {
     const token = auth.slice(7).trim();
     if (token) {
@@ -1855,6 +1872,63 @@ export const onRequest = async (context) => {
     } catch {}
 
     const kv = env.EQUYVO_KV;
+
+    // AUTH (self-contained, no email verification required) ─────────────
+    // Equyvo keeps its own user store in KV so sign-up/sign-in never depend
+    // on an external Cognito pool or email confirmation. A valid email +
+    // password is enough to use the app.
+    if (path === '/api/auth/signup' && method === 'POST') {
+      let body = {};
+      try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
+      const email = String(body.email || '').trim().toLowerCase().slice(0, 254);
+      const password = String(body.password || '');
+      const name = String(body.name || '').trim().slice(0, 80) || (email ? email.split('@')[0] : '');
+      const isPrivate = body.isPrivate === true || body.accountType === 'private';
+      if (!email || !/^[^\\s@]+@[^\\s@]+\\.[^\\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
+      if (!password || password.length < 6) return json({ error: 'Password must be at least 6 characters.' }, 400, cors);
+      const existing = await kv.get('auth:user:' + email);
+      if (existing) return json({ error: 'An account with this email already exists. Try signing in.' }, 409, cors);
+      const salt = crypto.randomUUID();
+      const hashed = await hashPwLocal(password, salt);
+      const user = { id: crypto.randomUUID(), email, name, salt, password: hashed, createdAt: new Date().toISOString(), isPrivate };
+      await kv.put('auth:user:' + email, JSON.stringify(user));
+      const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
+      await kv.put('auth:session:' + token, JSON.stringify({ id: user.id, email, name, username: name, isPrivate }), { expirationTtl: 60 * 60 * 24 * 7 });
+      return json({ success: true, token, user: { id: user.id, email, name, username: name, isPrivate } }, 200, cors);
+    }
+
+    if (path === '/api/auth/login' && method === 'POST') {
+      let body = {};
+      try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
+      const email = String(body.email || '').trim().toLowerCase().slice(0, 254);
+      const password = String(body.password || '');
+      if (!email || !password) return json({ error: 'Email and password are required.' }, 400, cors);
+      const raw = await kv.get('auth:user:' + email);
+      if (!raw) return json({ error: 'Invalid email or password.' }, 401, cors);
+      let user;
+      try { user = JSON.parse(raw); } catch { return json({ error: 'Invalid email or password.' }, 401, cors); }
+      const hashed = await hashPwLocal(password, user.salt);
+      if (hashed !== user.password) return json({ error: 'Invalid email or password.' }, 401, cors);
+      const token = crypto.randomUUID() + crypto.randomUUID().replace(/-/g, '');
+      await kv.put('auth:session:' + token, JSON.stringify({ id: user.id, email: user.email, name: user.name, username: user.name, isPrivate: user.isPrivate === true }), { expirationTtl: 60 * 60 * 24 * 7 });
+      return json({ success: true, token, user: { id: user.id, email: user.email, name: user.name, username: user.name, isPrivate: user.isPrivate === true } }, 200, cors);
+    }
+
+    if (path === '/api/auth/me' && method === 'GET') {
+      const token = bearerFrom(request);
+      if (!token) return json({ error: 'Not authenticated.' }, 401, cors);
+      const raw = await kv.get('auth:session:' + token);
+      if (!raw) return json({ error: 'Not authenticated.' }, 401, cors);
+      let u;
+      try { u = JSON.parse(raw); } catch { return json({ error: 'Not authenticated.' }, 401, cors); }
+      return json({ success: true, user: u }, 200, cors);
+    }
+
+    if (path === '/api/auth/logout' && method === 'POST') {
+      const token = bearerFrom(request);
+      if (token) { try { await kv.delete('auth:session:' + token); } catch {} }
+      return json({ success: true }, 200, cors);
+    }
 
     // HEALTH (public, versioned for deploy verification; honest KV check)
     if (path === '/api/health' && method === 'GET') {
