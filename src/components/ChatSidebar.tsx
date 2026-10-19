@@ -416,13 +416,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             </div>
           </div>
 
-          {/* WhatsApp-style message area */}
-          <div ref={scrollContainerRef} onScroll={handleScroll} className="flex-1 p-4 space-y-1.5 overflow-y-auto relative bg-[#0b141a] dark:bg-[#0b141a]">
+          {/* WhatsApp-style message area. Background is a sibling layer of the
+              scroll container so it ALWAYS covers the visible area (it never
+              scrolls away with content) and renders as soon as an image/GIF
+              theme is applied. */}
+          <div className="relative flex-1 min-h-0 bg-[#0b141a] dark:bg-[#0b141a] overflow-hidden">
             {chatTheme.type !== 'default' && (
-              <div className="absolute inset-0 pointer-events-none" style={getChatBackgroundStyle()} />
+              <div
+                className="absolute inset-0 pointer-events-none"
+                style={getChatBackgroundStyle()}
+                aria-hidden
+              />
             )}
-            <div className="relative z-10 flex flex-col gap-1.5">
-              {msgs.length === 0 && (
+            <div
+              ref={scrollContainerRef}
+              onScroll={handleScroll}
+              className="absolute inset-0 z-10 overflow-y-auto overscroll-contain p-4"
+            >
+              <div className="flex flex-col gap-1.5">
+                {msgs.length === 0 && (
                 <div className="text-center text-muted-foreground py-8">
                   <p className="mx-auto max-w-[260px] rounded-lg bg-black/40 px-3 py-1.5 text-xs text-amber-100/90">
                     Messages are gated by follow — {activeChat.relation === 'follower' ? `${activeChat.peerName} follows you, so they can write here.` : activeChat.relation === 'following' ? `You follow ${activeChat.peerName}, so you can write here.` : 'you follow each other.'}
@@ -519,6 +531,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 );
               })}
               <div ref={bottomRef} />
+              </div>
             </div>
           </div>
 

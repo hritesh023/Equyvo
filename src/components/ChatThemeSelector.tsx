@@ -116,6 +116,10 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       showError('File must be smaller than 5MB.');
       return;
     }
+    // Selecting a file immediately switches to the Image theme so the
+    // upcoming upload can never be mistaken for (or lost to) a color theme.
+    setTab('image');
+    setDraftType('image');
     const reader = new FileReader();
     reader.onerror = () => {
       setFileError('Could not read that file. Try another image.');
@@ -147,6 +151,69 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
     processFile(e.target.files?.[0]);
   };
 
+  /**
+   * Upload a picked image/GIF to Cloudflare R2 (compressed) and APPLY it as
+   * the chat background right away. Falls back to a compressed data URL when
+   * the upload is unavailable, so the background ALWAYS appears once the
+   * user confirms the crop/adjust step — never silently dropped to a color.
+   */
+  const applyImageTheme = async (dataUrl: string, opacity: number): Promise<void> => {
+    setDraftImage(dataUrl);
+    setDraftType('image');
+    setTab('image');
+    let value = dataUrl;
+    setUploading(true);
+    try {
+      const res = await fetch(dataUrl);
+      const blob = await res.blob();
+      const ext = dataUrl.startsWith('data:image/gif') ? 'gif' : 'jpg';
+      const file = new File([blob], `chat-background.${ext}`, {
+        type: blob.type || (ext === 'gif' ? 'image/gif' : 'image/jpeg'),
+      });
+      const form = new FormData();
+      form.append('file', file);
+      form.append('folder', 'equyvo/chat-themes');
+      const apiBase = (window as any)?.Capacitor?.isNativePlatform?.() ? 'https://equyvo.pages.dev/api' : '/api';
+      const headers: Record<string, string> = {};
+      try {
+        const stored = localStorage.getItem('equyvo_cognito_user');
+        if (stored) {
+          const u = JSON.parse(stored);
+          const id = u?.id || u?.email;
+          if (id) headers['X-User-Id'] = String(id);
+        }
+        const tok = localStorage.getItem('equyvo_cognito_token');
+        if (tok) headers['Authorization'] = 'Bearer ' + tok;
+      } catch { /* ignore */ }
+      const up = await fetch(`${apiBase}/upload`, { method: 'POST', headers, body: form });
+      const json = await up.json().catch(() => ({} as any));
+      if (up.ok && (json?.data?.secureUrl || json?.data?.originalUrl)) {
+        value = json.data.secureUrl || json.data.originalUrl;
+      } else {
+        value = await compressDataUrl(dataUrl);
+      }
+    } catch {
+      value = await compressDataUrl(dataUrl);
+    } finally {
+      setUploading(false);
+    }
+    setDraftImage(value);
+    const ok = setChatTheme({ type: 'image', value, opacity });
+    if (!ok) {
+      // Storage refused the URL/data URL: retry once with a smaller data URL.
+      const smaller = await compressDataUrl(value.startsWith('data:image/') ? value : dataUrl);
+      const ok2 = setChatTheme({ type: 'image', value: smaller, opacity });
+      if (ok2) {
+        setDraftImage(smaller);
+        showSuccess('Chat background applied (compressed locally).');
+      } else {
+        showError('Could not save background. Try a smaller image.');
+      }
+      return;
+    }
+    showSuccess('Chat background applied.');
+  };
+
   const handleCropComplete = (file: File) => {
     const reader = new FileReader();
     reader.onerror = () => {
@@ -160,13 +227,9 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         setFileError('Could not apply the adjusted image. Try again.');
         return;
       }
-      setDraftImage(url);
-      setDraftType('image');
-      showSuccess(
-        url.startsWith('data:image/gif')
-          ? 'Background ready — press Done to apply.'
-          : 'Background adjusted — press Done to apply.',
-      );
+      // Auto-apply: the uploaded/adjusted image becomes the active chat
+      // background immediately (no separate "Done" hop that can lose it).
+      void applyImageTheme(url, draftOpacity);
     };
     reader.readAsDataURL(file);
   };
@@ -178,10 +241,9 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       setCropSrc(null);
       return;
     }
-    setDraftImage(cropSrc);
-    setDraftType('image');
+    const url = cropSrc;
     setCropSrc(null);
-    showSuccess('GIF ready — press Done to apply. (Animated as-is.)');
+    void applyImageTheme(url, draftOpacity);
   };
 
   const handleReset = () => {
@@ -218,7 +280,8 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         return;
       }
       let value = draftImage;
-      // Upload data-URL images/GIFs to Cloudflare R2 (compressed) so the
+      // Already applied (URL) → just re-confirm (e.g. after an opacity tweak).
+      // Raw data URLs still get uploaded to Cloudflare R2 (compressed) so the
       // theme survives storage quotas and syncs across devices.
       if (value.startsWith('data:image/')) {
         setUploading(true);
@@ -258,8 +321,13 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       }
       const ok = setChatTheme({ type: 'image', value, opacity: draftOpacity });
       if (!ok) {
-        showError('Image is too large to save. Try a smaller file (under 5MB).');
-        return;
+        const smaller = await compressDataUrl(value.startsWith('data:image/') ? value : draftImage);
+        const ok2 = setChatTheme({ type: 'image', value: smaller, opacity: draftOpacity });
+        if (!ok2) {
+          showError('Image is too large to save. Try a smaller file (under 5MB).');
+          return;
+        }
+        setDraftImage(smaller);
       }
     }
     showSuccess('Chat background applied.');
