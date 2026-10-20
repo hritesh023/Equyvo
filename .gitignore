@@ -37,6 +37,7 @@ bisect-tmp.tsx
 
 # Build artifacts
 *.apk
+*.aab
 *.keystore
 app-icon.png
 
