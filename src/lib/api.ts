@@ -109,36 +109,55 @@ async function request<T = any>(
   path: string,
   options?: RequestInit
 ): Promise<{ data?: T; error?: string }> {
-  try {
-    // Add cache-busting timestamp to GET requests
-    const isGet = !options || !options.method || options.method === 'GET';
-    const separator = path.includes('?') ? '&' : '?';
-    const url = isGet ? `${API_BASE}${path}${separator}_t=${Date.now()}` : `${API_BASE}${path}`;
-    const headers: Record<string, string> = authHeaders();
-    const isFormData = options?.body instanceof FormData;
-    if (!isFormData) {
-      headers['Content-Type'] = 'application/json';
+  // Resilience: idempotent GETs survive flaky mobile networks with one quiet
+  // retry (network failure or transient 502/503/504). Mutations are never
+  // retried automatically — they may not be safe to replay.
+  const isGet = !options || !options.method || options.method === 'GET';
+  const attempts = isGet ? 2 : 1;
+  let lastError: string | null = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      // Add cache-busting timestamp to GET requests
+      const separator = path.includes('?') ? '&' : '?';
+      const url = isGet ? `${API_BASE}${path}${separator}_t=${Date.now()}` : `${API_BASE}${path}`;
+      const headers: Record<string, string> = authHeaders();
+      const isFormData = options?.body instanceof FormData;
+      if (!isFormData) {
+        headers['Content-Type'] = 'application/json';
+      }
+      const res = await fetch(url, {
+        headers,
+        ...options,
+      });
+      // Error pages (vite proxy 500s, gateway HTML) are not JSON — never let
+      // body parsing itself become the reported error.
+      const json = await res.json().catch(() => ({} as Record<string, unknown>));
+      if (!res.ok) {
+        // Transient gateway/server hiccup on a read: one silent retry.
+        if (isGet && attempt === 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
+          lastError = `Request failed with status ${res.status}`;
+          warnLocalApiOnce(path, res.status);
+          continue;
+        }
+        // Quota/paywall responses redirect to /pricing everywhere (throttled).
+        handlePaywall(res.status, json);
+        const bodyError =
+          typeof json.error === 'string' && json.error ? json.error : null;
+        if (!bodyError) warnLocalApiOnce(path, res.status);
+        return { error: bodyError || `Request failed with status ${res.status}` };
+      }
+      return json as T;
+    } catch (err: any) {
+      if (isGet && attempt === 0) {
+        lastError = err?.message || 'Network error';
+        continue;
+      }
+      warnLocalApiOnce(path, 'network');
+      return { error: err?.message || lastError || 'Network error' };
     }
-    const res = await fetch(url, {
-      headers,
-      ...options,
-    });
-    // Error pages (vite proxy 500s, gateway HTML) are not JSON — never let
-    // body parsing itself become the reported error.
-    const json = await res.json().catch(() => ({} as Record<string, unknown>));
-    if (!res.ok) {
-      // Quota/paywall responses redirect to /pricing everywhere (throttled).
-      handlePaywall(res.status, json);
-      const bodyError =
-        typeof json.error === 'string' && json.error ? json.error : null;
-      if (!bodyError) warnLocalApiOnce(path, res.status);
-      return { error: bodyError || `Request failed with status ${res.status}` };
-    }
-    return json as T;
-  } catch (err: any) {
-    warnLocalApiOnce(path, 'network');
-    return { error: err?.message || 'Network error' };
   }
+  warnLocalApiOnce(path, lastError || 'network');
+  return { error: lastError || 'Network error' };
 }
 
 export const api = {

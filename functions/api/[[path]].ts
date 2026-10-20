@@ -2441,6 +2441,18 @@ export const onRequest = async (context) => {
         ? String(payerActor.email).trim().toLowerCase() : null;
       const orderEmail = guestEmail || payerEmail;
       if (!centralAuthed && !orderEmail) return json({ error: 'Please sign in first.' }, 401, cors);
+      // Abuse guard: order/verify spam costs real upstream writes (Razorpay
+      // orders, central bookkeeping). Per-minute caps keyed to whoever is
+      // paying — central caller, account id, guest email, or IP fallback.
+      const rlId = centralAuthed
+        ? 'u:' + bearer.slice(-24)
+        : payerActor && payerActor.id ? 'a:' + payerActor.id
+        : orderEmail ? 'e:' + orderEmail
+        : 'ip:' + (request.headers.get('cf-connecting-ip') || 'unknown');
+      const rlKind = path === '/api/create-order' ? 'billing_order' : 'billing_verify';
+      if (!(await rateLimit(env.EQUYVO_KV, rlKind, rlId, path === '/api/create-order' ? 8 : 20)).ok) {
+        return json({ error: 'Too many payment attempts. Please wait a minute and try again.' }, 429, cors);
+      }
       if (path === '/api/create-order') {
         // STRICT: a catalog plan id is required. Raw client-supplied amounts
         // are never forwarded — the central worker prices from its catalog

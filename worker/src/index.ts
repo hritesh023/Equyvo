@@ -1044,6 +1044,17 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         ? String(payerActor.email).trim().toLowerCase() : null;
       const orderEmail = guestEmail || payerEmail;
       if (!centralAuthed && !orderEmail) return respondError('Please sign in first.', 401);
+      // Abuse guard (mirror of Pages Functions): per-minute caps on order
+      // creation / verification keyed to the paying identity (or IP).
+      const rlId = centralAuthed
+        ? 'u:' + bearer.slice(-24)
+        : payerActor && payerActor.id ? 'a:' + payerActor.id
+        : orderEmail ? 'e:' + orderEmail
+        : 'ip:' + (request.headers.get('cf-connecting-ip') || 'unknown');
+      const rlKind = path === '/api/create-order' ? 'billing_order' : 'billing_verify';
+      if (!(await rateLimit(env, rlKind, rlId, path === '/api/create-order' ? 8 : 20)).ok) {
+        return respondError('Too many payment attempts. Please wait a minute and try again.', 429);
+      }
       if (path === '/api/create-order') {
         const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
         if (!plan) return respondError('A plan id is required.', 400);
