@@ -59,6 +59,56 @@ export const PLATFORM_FEE_BPS = 1000;
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
 export function planQuota(planId: string) { return PLAN_CATALOG[planId] || PLAN_CATALOG[DEFAULT_PLAN_ID]; }
 
+// =============== Local billing grants (mirror of Pages Functions) ============
+// Central billing only resolves its own JWTs, so verified Razorpay payments
+// from Equyvo session tokens are recorded locally here (same key shapes as
+// the Pages Function worker) for plan resolution / quotas / status.
+const GRANT_TTL_SEC = 45 * 86400;
+function localGrantKey(actorId: string) { return 'billing:grant:' + String(actorId || '').slice(0, 200); }
+function localEmailGrantKey(email: string) { return 'billing:grant:email:' + String(email || '').toLowerCase().slice(0, 254); }
+function validEmailString(e: unknown): boolean {
+  return typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e.trim());
+}
+
+export async function putLocalGrant(env: Env, actorId: string, email: unknown, planId: string, untilMs: number, paymentId?: string): Promise<void> {
+  if (!PLAN_IDS.has(planId)) return;
+  try {
+    await env.EQUYVO_KV.put(KEYS.PLAN_CACHE(actorId), JSON.stringify({ planId, until: untilMs }), { expirationTtl: GRANT_TTL_SEC });
+    await env.EQUYVO_KV.put(localGrantKey(actorId), JSON.stringify({ plan: planId, until: untilMs, paymentId: String(paymentId || '').slice(0, 100) }), { expirationTtl: GRANT_TTL_SEC });
+    if (validEmailString(email)) {
+      await env.EQUYVO_KV.put(
+        localEmailGrantKey(String(email).trim()),
+        JSON.stringify({ plan: planId, until: untilMs, paymentId: String(paymentId || '').slice(0, 100) }),
+        { expirationTtl: GRANT_TTL_SEC },
+      );
+    }
+  } catch { /* best-effort */ }
+}
+
+export async function getLocalGrant(env: Env, actorId: string): Promise<{ plan: string; until: number } | null> {
+  try {
+    const raw = await env.EQUYVO_KV.get(localGrantKey(actorId));
+    if (!raw) return null;
+    const g = JSON.parse(raw);
+    if (g && PLAN_IDS.has(g.plan) && Number(g.until) > Date.now()) return { plan: g.plan, until: Number(g.until) };
+  } catch { /* ignore */ }
+  return null;
+}
+
+export async function claimLocalEmailGrant(env: Env, actor: { id: string; email?: string }): Promise<{ ok: boolean; granted: string[]; plan: string; claimed: boolean } | null> {
+  if (!actor || !validEmailString(actor.email)) return null;
+  try {
+    const raw = await env.EQUYVO_KV.get(localEmailGrantKey(String(actor.email).trim()));
+    if (!raw) return null;
+    const g = JSON.parse(raw);
+    if (!g || !PLAN_IDS.has(g.plan) || !(Number(g.until) > Date.now())) return null;
+    await putLocalGrant(env, actor.id, actor.email, g.plan, Number(g.until), g.paymentId);
+    return { ok: true, granted: [g.plan], plan: g.plan, claimed: true };
+  } catch {
+    return null;
+  }
+}
+
 function monthlyBucket(): string {
   const d = new Date();
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -150,7 +200,7 @@ async function verifyCognitoToken(token: string, env: Env): Promise<{ id: string
     return { id: payload.sub, email: payload.email || '', username: payload['cognito:username'] || '', verified: true };
   } catch { return null; }
 }
-async function verifyCentralJWT(token: string, env: Env): Promise<{ id: string; email: string; username: string; verified: boolean } | null> {
+export async function verifyCentralJWT(token: string, env: Env): Promise<{ id: string; email: string; username: string; verified: boolean } | null> {
   try {
     const secret = String((env as any).JWT_SECRET || (env as any).CENTRAL_JWT_SECRET || '');
     if (!secret) return null;

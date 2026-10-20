@@ -1078,8 +1078,8 @@ const PLAN_CATALOG = {
   eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,   storageBytes: 5 * GB,   maxUploadMB: 20,  maxVideoSec: 60,  monthlyUploads: 100,  quality: 'auto-low',  ads: true },
   eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 49,  storageBytes: 50 * GB,  maxUploadMB: 100, maxVideoSec: 180, monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
   eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149, storageBytes: 250 * GB, maxUploadMB: 500, maxVideoSec: 600, monthlyUploads: 2000, quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 399, storageBytes: 500 * GB, maxUploadMB: 1024, maxVideoSec: 1800, monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 799, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 20000, quality: 'original', ads: false, creator: true },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 1999, storageBytes: 500 * GB, maxUploadMB: 1024, maxVideoSec: 1800, monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 5999, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 20000, quality: 'original', ads: false, creator: true },
   eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 2048 * GB, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true },
 };
 const DEFAULT_PLAN_ID = 'eq_free';
@@ -1684,6 +1684,83 @@ function planQuota(planId) {
 function bearerFrom(request) {
   const auth = request.headers.get('Authorization') || '';
   return auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+}
+
+// =============== Local billing grants (paid through this app) ===============
+// Central billing verifies every Razorpay payment (HMAC + order binding),
+// but its own subscription status only resolves CENTRAL Acronous JWTs.
+// Equyvo's session tokens are opaque KV keys — central can never decode
+// them, so a real payment used to stay invisible to plan resolution,
+// storage quotas and ad gating. A successful verify therefore records the
+// grant HERE (reusing the PLAN_CACHE shape resolvePlan already reads) so a
+// paid tier activates instantly, on every device, with no app restart.
+const GRANT_TTL_SEC = 45 * 86400; // mirror central's subscription TTL
+
+function localGrantKey(actorId) {
+  return 'billing:grant:' + String(actorId || '').slice(0, 200);
+}
+function localEmailGrantKey(email) {
+  return 'billing:grant:email:' + String(email || '').toLowerCase().slice(0, 254);
+}
+function validEmailString(e) {
+  return typeof e === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e.trim());
+}
+
+/** Persist a verified payment: account record (+ email record for claim). */
+async function putLocalGrant(env, actorId, email, planId, untilMs, paymentId) {
+  if (!PLAN_IDS.has(planId)) return;
+  const record = {
+    plan: planId,
+    until: untilMs,
+    grant: 'razorpay',
+    paymentId: String(paymentId || '').slice(0, 100) || '',
+    ts: Date.now(),
+  };
+  try {
+    // Long-TTL account grant (not the 10-min billing cache — this one is
+    // the purchase itself, valid until the month ends).
+    await env.EQUYVO_KV.put(
+      KEYS.PLAN_CACHE(actorId),
+      JSON.stringify({ planId, until: untilMs }),
+      { expirationTtl: GRANT_TTL_SEC },
+    );
+    await env.EQUYVO_KV.put(localGrantKey(actorId), JSON.stringify(record), { expirationTtl: GRANT_TTL_SEC });
+    if (validEmailString(email)) {
+      await env.EQUYVO_KV.put(
+        localEmailGrantKey(email),
+        JSON.stringify({ plan: planId, until: untilMs, paymentId: record.paymentId }),
+        { expirationTtl: GRANT_TTL_SEC },
+      );
+    }
+  } catch { /* best-effort: central remains authoritative for refunds */ }
+}
+
+/** Read the local paid-grant record for an account id. */
+async function getLocalGrant(env, actorId) {
+  try {
+    const raw = await env.EQUYVO_KV.get(localGrantKey(actorId));
+    if (!raw) return null;
+    const g = JSON.parse(raw);
+    if (g && PLAN_IDS.has(g.plan) && Number(g.until) > Date.now()) {
+      return { plan: g.plan, until: Number(g.until) };
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+/** Guest paid with email X, then signed in with X: link to this account. */
+async function claimLocalEmailGrant(env, actor) {
+  if (!actor || !validEmailString(actor.email)) return null;
+  try {
+    const raw = await env.EQUYVO_KV.get(localEmailGrantKey(actor.email));
+    if (!raw) return null;
+    const g = JSON.parse(raw);
+    if (!g || !PLAN_IDS.has(g.plan) || !(Number(g.until) > Date.now())) return null;
+    await putLocalGrant(env, actor.id, actor.email, g.plan, Number(g.until), g.paymentId);
+    return { ok: true, granted: [g.plan], plan: g.plan, claimed: true };
+  } catch {
+    return null;
+  }
 }
 
 // =============== Storage accounting ===============
@@ -2336,42 +2413,89 @@ export const onRequest = async (context) => {
     //   POST /api/create-order   -> central /v1/billing/order
     //   POST /api/verify-payment -> central /v1/billing/verify
     // Secrets stay in the central billing worker — Equyvo holds none. The
-    // caller's Bearer token is forwarded untouched; the browser only ever
-    // sees key_id + order_id, and returns payment_id + signature for verify.
+    // browser only ever sees key_id + order_id, and returns payment_id +
+    // signature for verify.
+    //
+    // Bearer policy (the "Sign in failed" fix): the bearer is forwarded
+    // ONLY when central can verify it (dashboard SSO JWT). Equyvo's own
+    // session tokens are opaque KV keys — forwarded verbatim they made
+    // central answer 401 "Please sign in to continue." on every tap of a
+    // plan card, which surfaced to users as an endless sign-in loop.
+    // Signed-in Equyvo callers instead check out through the verified
+    // account email (central's guest-with-email path): the order binds
+    // guest_email, verify grants it, and the grant is recorded locally so
+    // this account immediately holds the paid tier.
     if ((path === '/api/create-order' || path === '/api/verify-payment') && method === 'POST') {
       const bearer = bearerFrom(request);
       let body: any = {};
       try { body = (await request.json()) || {}; } catch { return json({ error: 'Invalid JSON body.' }, 400, cors); }
-      // Guest checkout: no sign-in needed when a valid email is supplied —
-      // central billing links the grant by email (instant or claimed later).
-      const guestEmail = !bearer && typeof body.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email.trim())
+      const centralAuthed = Boolean(bearer && await verifyCentralJWT(bearer, env));
+      // Which email pays for this order:
+      //   1. explicit guest email in the body (signed-out checkout), or
+      //   2. the caller's VERIFIED account email (signed-in Equyvo user).
+      const guestEmail = !centralAuthed && typeof body.email === 'string' && validEmailString(body.email)
         ? body.email.trim().toLowerCase().slice(0, 254) : null;
-      if (!bearer && !guestEmail) return json({ error: 'Please sign in first.' }, 401, cors);
+      let payerActor: any = null;
+      if (!centralAuthed) payerActor = await getActor(request, env);
+      const payerEmail = !centralAuthed && payerActor && validEmailString(payerActor.email)
+        ? String(payerActor.email).trim().toLowerCase() : null;
+      const orderEmail = guestEmail || payerEmail;
+      if (!centralAuthed && !orderEmail) return json({ error: 'Please sign in first.' }, 401, cors);
       if (path === '/api/create-order') {
         // STRICT: a catalog plan id is required. Raw client-supplied amounts
         // are never forwarded — the central worker prices from its catalog
         // (and also rejects bare amounts since hardening).
         const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
         if (!plan) return json({ error: 'A plan id is required.' }, 400, cors);
-        body = guestEmail ? { plan, email: guestEmail } : { plan };
+        body = orderEmail ? { plan, email: orderEmail } : { plan };
       }
       if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
         return json({ ok: false, error: 'Missing payment fields.' }, 400, cors);
       }
+      // Verify rides with the payer email too (central binds by the server-set
+      // order notes; the email only helps its claim bookkeeping).
+      if (path === '/api/verify-payment' && orderEmail && !body.email) body.email = orderEmail;
       const base = (env.BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
       const target = base + (path === '/api/create-order' ? '/v1/billing/order' : '/v1/billing/verify');
       try {
         const upstream = await fetch(target, {
           method: 'POST',
-          headers: bearer
+          headers: centralAuthed
             ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer }
             : { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
-        // Verified purchase → +2 display-name changes (idempotent per
-        // payment). Best-effort: never fails the payment response itself.
-        if (upstream.ok && path === '/api/verify-payment') {
+        // Verified purchase → record the grant LOCALLY so the paid tier is
+        // visible to plan resolution / quotas / ad-gating right away and on
+        // every device — never gated on central's own JWT recognition.
+        if (upstream.ok && path === '/api/verify-payment' && data && data.ok) {
+          try {
+            const paidPlan = String(data.plan || body.plan || '').slice(0, 64);
+            if (PLAN_IDS.has(paidPlan)) {
+              const untilMs = Date.now() + 31 * 86400000;
+              const grantActor = await getActor(request, env);
+              if (grantActor) {
+                await putLocalGrant(env, grantActor.id, grantActor.email, paidPlan, untilMs, body.razorpay_payment_id);
+                // The paid grant belongs to THIS account: keep the client's
+                // success toast honest even when the upstream order was a
+                // guest-email order created from the session email.
+                data.plan = paidPlan;
+                data.guest = false;
+                data.claimed = true;
+              } else if (orderEmail) {
+                // True guest (no session): park the grant under the payment
+                // email — claim-on-signin promotes it to the account.
+                await kv.put(
+                  localEmailGrantKey(orderEmail),
+                  JSON.stringify({ plan: paidPlan, until: untilMs, paymentId: String(body.razorpay_payment_id || '').slice(0, 100) }),
+                  { expirationTtl: GRANT_TTL_SEC },
+                );
+              }
+            }
+          } catch { /* grant persistence is best-effort */ }
+          // Verified purchase → +2 display-name changes (idempotent per
+          // payment). Best-effort: never fails the payment response itself.
           try {
             const actor = await getActor(request, env);
             if (actor) {
@@ -2507,6 +2631,116 @@ export const onRequest = async (context) => {
 
     if (path === '/api/thoughts' && method === 'POST') {
       return await createItem(context, 'thoughts', KEYS.THOUGHTS, KEYS.THOUGHT, cors);
+    }
+
+    // THOUGHTS TRENDING (real engagement algorithm, server-computed):
+    // GET /api/thoughts/trending — topics come ONLY from explicit tags and
+    // #hashtags in real thoughts (never invented). Score = Σ(engagement ×
+    // recency decay) with a volume floor, where engagement is the same
+    // composite the feed uses (pop score + reacts + likes + comments).
+    // Direction compares the last 24h against the previous window so the
+    // list visibly reorders as the app's activity changes. Cached 45s in
+    // KV so every client polls the same fresh-but-cheap ranking.
+    if (path === '/api/thoughts/trending' && method === 'GET') {
+      const CACHE_KEY = 'trending:thoughts:v1';
+      try {
+        const cached = await kv.get(CACHE_KEY);
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (c && Array.isArray(c.topics) && c.computedAt && (Date.now() - c.computedAt) < 45000) {
+            return json({ data: { topics: c.topics, source: 'algorithm', computedAt: c.computedAt, cached: true }, error: null }, 200, cors);
+          }
+        }
+      } catch { /* cache miss — compute below */ }
+
+      const viewer = await getViewer(request, env);
+      const ids = (await cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT)).slice(0, 300);
+      const raw = (await Promise.all(ids.map(async (id) => {
+        try { const t = await kv.get(KEYS.THOUGHT(id)); return t ? JSON.parse(t) : null; } catch { return null; }
+      }))).filter(Boolean);
+
+      // Same visibility rules as the feed: removed/private/followers-only
+      // thoughts must never leak into what "trends".
+      const visible = await filterVisibleItems(
+        env,
+        viewer,
+        await filterSeed(env, raw.map((t) => ({ ...t, ownerId: t.userId || t.ownerId || t.user || t.authorId }))),
+      );
+
+      const pops = {};
+      await Promise.all(visible.slice(0, 250).map(async (t) => {
+        try { const r = await kv.get(KEYS.POP(t.id)); if (r) pops[t.id] = parseInt(r, 10) || 0; } catch {}
+      }));
+
+      const topicsOf = (t) => {
+        const names = new Set();
+        for (const tag of (Array.isArray(t.tags) ? t.tags : [])) {
+          const key = String(tag || '').trim().replace(/^#+/, '').toLowerCase();
+          if (key && key.length <= 40) names.add(key);
+        }
+        const matches = String(t.content || '').match(/#([A-Za-z0-9_]{2,40})/g) || [];
+        for (const m of matches) names.add(m.slice(1).toLowerCase());
+        return [...names];
+      };
+      const engagementOf = (t) => {
+        const up = Number(t.upvotes_count ?? t.upvotes ?? t.votes ?? 0) || 0;
+        const down = Number(t.downvotes_count ?? t.downvotes ?? 0) || 0;
+        const votes = up - down * 0.5;
+        const likes = Number(t.likes ?? t.likes_count ?? t.likesCount ?? 0) || 0;
+        const reacts = Number(t.reacts ?? t.reacts_count ?? 0) || 0;
+        const comments = Number(t.comments ?? t.comments_count ?? 0) || 0;
+        const pop = Number(pops[t.id] || 0);
+        return votes * 2 + likes * 1.5 + reacts * 2 + comments * 3 + pop;
+      };
+      const now = Date.now();
+
+      const recencyDecay = (t) => {
+        const ts = new Date(t.createdAt || t.publishedAt || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) return 0.01;
+        const ageH = Math.max(0, (now - ts) / 3600000);
+        // 12.6h half-life: yesterday's buzz cools to near-zero by the weekend.
+        return Math.pow(2, -ageH / 18);
+      };
+
+      const aggregates = new Map();
+      for (const t of visible.slice(0, 250)) {
+        const tags = topicsOf(t);
+        if (!tags.length) continue;
+        const decay = recencyDecay(t);
+        const eng = engagementOf(t);
+        // Volume floor: a topic only counts while it is recent enough to be
+        // a trend; the engagement multiplier amplifies hot thoughts.
+        const contribution = (1 + Math.max(0, eng)) * decay;
+        const ageH = (() => {
+          const ts = new Date(t.createdAt || t.publishedAt || 0).getTime();
+          if (!Number.isFinite(ts) || ts <= 0) return 8760;
+          return Math.max(0, (now - ts) / 3600000);
+        })();
+        for (const key of tags) {
+          const rec = aggregates.get(key) || { count: 0, score: 0, recent: 0, past: 0 };
+          rec.count += 1;
+          rec.score += contribution;
+          if (ageH <= 24) rec.recent += 1;
+          else if (ageH <= 48) rec.past += 1;
+          aggregates.set(key, rec);
+        }
+      }
+
+      const topics = [...aggregates.entries()]
+        .map(([name, v]) => {
+          // Velocity: more tagging activity in the last 24h than the
+          // previous window = rising; visibly lower = cooling; else stable.
+          let trend = 'stable';
+          if (v.recent > v.past) trend = 'up';
+          else if (v.past > 0 && v.recent < v.past) trend = 'down';
+          return { name: '#' + name, count: v.count, score: Math.round(v.score * 10) / 10, trend };
+        })
+        .sort((a, b) => b.score - a.score || b.count - a.count)
+        .slice(0, 8);
+
+      const computedAt = Date.now();
+      try { await kv.put(CACHE_KEY, JSON.stringify({ computedAt, topics }), { expirationTtl: 300 }); } catch {}
+      return json({ data: { topics, source: 'algorithm', computedAt, cached: false }, error: null }, 200, cors);
     }
 
     // STORIES (visibility-enforced; see POSTS).
@@ -3893,11 +4127,28 @@ export const onRequest = async (context) => {
       return json({ data: { planId, ads, showAds: ads !== 'ad-free' }, error: null }, 200, cors);
     }
 
-    // ---- BILLING STATUS (same-origin proxy) ----
-    // Keeps the browser on first-party /api only; the central billing host
-    // is contacted server-to-server with the caller's Bearer token.
+    // ---- BILLING STATUS (same-origin) ----
+    // 1) Local grant first: a plan paid through Equyvo (Razorpay-verified by
+    //    central) must show up even though central only resolves its own
+    //    JWTs — Equyvo session tokens used to fall back to free here, which
+    //    made paid tiers vanish after an app restart.
+    // 2) Central proxy for callers holding a central JWT (cross-product
+    //    subscriptions live there).
     if (path === '/api/billing/status' && method === 'GET') {
       const bearer = bearerFrom(request);
+      if (bearer) {
+        const actor = await getActor(request, env);
+        if (actor) {
+          const local = await getLocalGrant(env, actor.id);
+          if (local) {
+            return json({
+              subscriptions: { equyvo: { plan: local.plan, until: local.until } },
+              access: { plan: local.plan, until: local.until },
+              api_credits: 0,
+            }, 200, cors);
+          }
+        }
+      }
       if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
       const base = (env.BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
       try {
@@ -3913,10 +4164,17 @@ export const onRequest = async (context) => {
 
     // ---- BILLING CLAIM (guest purchase linking) ----
     // POST /api/claim-billing — links a guest-paid plan (same email) to the
-    // caller's account. Same-origin proxy to central /v1/billing/claim.
+    // caller's account. Local email grants (paid through THIS app while
+    // signed out) are claimed first; central claim handles browsers that
+    // present a verifiable central JWT.
     if (path === '/api/claim-billing' && method === 'POST') {
       const bearer = bearerFrom(request);
       if (!bearer) return json({ error: 'Please sign in first.' }, 401, cors);
+      const actor = await getActor(request, env);
+      if (actor) {
+        const localClaim = await claimLocalEmailGrant(env, actor);
+        if (localClaim) return json(localClaim, 200, cors);
+      }
       const base = (env.BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
       try {
         const upstream = await fetch(base + '/v1/billing/claim', {

@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Search, TrendingUp, Clock, Sparkles, Brain, ArrowRight, X, Users } from 'lucide-react';
+import { Search, TrendingUp, Clock, Sparkles, Brain, ArrowRight, X, Users, Wand2 } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -109,21 +109,29 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
 
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
-    if (!isOpen || suggestions.length === 0) return;
+    if (!isOpen || renderableSuggestions.length === 0) return;
 
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
-        setSelectedIndex(prev => (prev + 1) % suggestions.length);
+        setSelectedIndex(prev => (prev + 1) % renderableSuggestions.length);
         break;
       case 'ArrowUp':
         e.preventDefault();
-        setSelectedIndex(prev => prev <= 0 ? suggestions.length - 1 : prev - 1);
+        setSelectedIndex(prev => prev <= 0 ? renderableSuggestions.length - 1 : prev - 1);
+        break;
+      case 'Tab':
+        // Autocomplete affordance: Tab accepts the top guess inline without
+        // navigating, so the user keeps typing from the completed text.
+        e.preventDefault();
+        setSelectedIndex(-1);
+        setQuery(renderableSuggestions[0].label);
+        inputRef.current?.focus();
         break;
       case 'Enter':
         e.preventDefault();
         if (selectedIndex >= 0) {
-          handleSuggestionClick(suggestions[selectedIndex]);
+          handleSuggestionClick(renderableSuggestions[selectedIndex]);
         } else {
           handleSearch();
         }
@@ -134,7 +142,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
         inputRef.current?.blur();
         break;
     }
-  }, [isOpen, suggestions, selectedIndex]);
+  }, [isOpen, renderableSuggestions, selectedIndex]);
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
@@ -219,6 +227,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
 
   const getSuggestionIcon = (type: SearchSuggestion['type']) => {
     switch (type) {
+      case 'guess': return <Wand2 className="h-4 w-4 text-amber-500" />;
       case 'ai-generated': return <Brain className="h-4 w-4 text-blue-500" />;
       case 'recent': return <Clock className="h-4 w-4 text-green-500" />;
       case 'trending': return <TrendingUp className="h-4 w-4 text-red-500" />;
@@ -257,6 +266,39 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     groups[suggestion.type].push(suggestion);
     return groups;
   }, {} as Record<string, SearchSuggestion[]>);
+
+  // Flat, render-order list for keyboard navigation (guesses first, then
+  // AI/content, recent, trending) — arrows/Enter stay aligned with the rows
+  // the user actually sees.
+  const renderableSuggestions = useMemo(() => {
+    const guess = (groupedSuggestions['guess'] || []).slice(0, maxSuggestions);
+    const ai = (groupedSuggestions['ai-generated'] || []).slice(0, maxSuggestions);
+    const recent = groupedSuggestions['recent'] || [];
+    const trending = showTrending ? (groupedSuggestions['trending'] || []).slice(0, 3) : [];
+    const out = [...guess, ...ai, ...recent, ...trending];
+    return Array.isArray(out) ? out : [];
+  }, [suggestions, maxSuggestions, showTrending]);
+
+  const navIndexOf = useCallback(
+    (id: string) => renderableSuggestions.findIndex((s) => s.id === id),
+    [renderableSuggestions],
+  );
+
+  /** Typed part dimmed, guessed completion emphasised. */
+  const renderGuessLabel = (label: string, typed: string) => {
+    const q = typed.trim();
+    if (!q) return <span>{label}</span>;
+    const lower = label.toLowerCase();
+    if (lower.startsWith(q.toLowerCase())) {
+      return (
+        <>
+          <span className="text-muted-foreground">{label.slice(0, typed.length)}</span>
+          <span className="font-semibold text-foreground">{label.slice(typed.length)}</span>
+        </>
+      );
+    }
+    return <span className="font-medium">{label}</span>;
+  };
 
   return (
     <div ref={dropdownRef} className={cn("relative w-full max-w-2xl", className)}>
@@ -366,6 +408,44 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                     ))}
                   </div>
                 )}
+                {/* PREDICTIVE GUESSES — completes / corrects what you're typing
+                    using only real Equyvo content. Tab accepts the top guess. */}
+                {groupedSuggestions['guess'] && groupedSuggestions['guess'].length > 0 && (
+                  <div className="p-2 border-b border-border/30">
+                    <div className="px-3 py-2 text-xs font-medium text-muted-foreground flex items-center gap-2">
+                      <Wand2 className="h-3 w-3 text-amber-500" />
+                      {query.trim().length >= 4 && !groupedSuggestions['ai-generated']?.length
+                        ? 'Did you mean'
+                        : 'Finish your search'}
+                    </div>
+                    {groupedSuggestions['guess'].map((suggestion) => (
+                      <button
+                        key={suggestion.id}
+                        onClick={() => handleSuggestionClick(suggestion)}
+                        className={cn(
+                          "w-full flex items-center justify-between p-3 text-left hover:bg-accent/60 transition-all duration-200 rounded-md",
+                          navIndexOf(suggestion.id) >= 0 && selectedIndex === navIndexOf(suggestion.id) && "bg-accent/80"
+                        )}
+                        role="option"
+                        aria-selected={selectedIndex === navIndexOf(suggestion.id)}
+                        title="Press Tab to accept, Enter to search"
+                      >
+                        <div className="flex items-center gap-3 flex-1 min-w-0">
+                          {getSuggestionIcon(suggestion.type)}
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm group-hover:text-primary transition-colors duration-200 truncate">
+                              {renderGuessLabel(suggestion.label, query)}
+                            </div>
+                            <div className="text-xs text-muted-foreground mt-0.5 group-hover:text-foreground/80 transition-colors duration-200 truncate">
+                              {suggestion.description || 'Finish your search'}
+                            </div>
+                          </div>
+                        </div>
+                        <ArrowRight className="h-3 w-3 text-muted-foreground group-hover:text-primary shrink-0" />
+                      </button>
+                    ))}
+                  </div>
+                )}
                 {/* AI-Generated Suggestions */}
                 {groupedSuggestions['ai-generated'] && groupedSuggestions['ai-generated'].length > 0 && (
                   <div className="p-2">
@@ -379,10 +459,10 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         onClick={() => handleSuggestionClick(suggestion)}
                         className={cn(
                           "w-full flex items-center justify-between p-3 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group transform hover:scale-[1.02]",
-                          selectedIndex === index && "bg-accent/80"
+                          selectedIndex === navIndexOf(suggestion.id) && "bg-accent/80"
                         )}
                         role="option"
-                        aria-selected={selectedIndex === index}
+                        aria-selected={selectedIndex === navIndexOf(suggestion.id)}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           {getSuggestionIcon(suggestion.type)}
@@ -419,10 +499,10 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         onClick={() => handleSuggestionClick(suggestion)}
                         className={cn(
                           "w-full flex items-center justify-between p-3 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group transform hover:scale-[1.02]",
-                          selectedIndex === (groupedSuggestions['ai-generated']?.length || 0) + index && "bg-accent/80"
+                          selectedIndex === navIndexOf(suggestion.id) && "bg-accent/80"
                         )}
                         role="option"
-                        aria-selected={selectedIndex === (groupedSuggestions['ai-generated']?.length || 0) + index}
+                        aria-selected={selectedIndex === navIndexOf(suggestion.id)}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           {getSuggestionIcon(suggestion.type)}
@@ -454,12 +534,10 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         onClick={() => handleSuggestionClick(suggestion)}
                         className={cn(
                           "w-full flex items-center justify-between p-3 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group transform hover:scale-[1.02]",
-                          selectedIndex === (groupedSuggestions['ai-generated']?.length || 0) + 
-                                       (groupedSuggestions['recent']?.length || 0) + index && "bg-accent/80"
+                          selectedIndex === navIndexOf(suggestion.id) && "bg-accent/80"
                         )}
                         role="option"
-                        aria-selected={selectedIndex === (groupedSuggestions['ai-generated']?.length || 0) + 
-                                                   (groupedSuggestions['recent']?.length || 0) + index}
+                        aria-selected={selectedIndex === navIndexOf(suggestion.id)}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
                           {getSuggestionIcon(suggestion.type)}

@@ -29,6 +29,7 @@ import { useIsTablet } from './hooks/use-tablet';
 import { initializeAds } from './lib/admob-service';
 import { useAdPlan } from './hooks/use-ad-plan';
 import { useFeedBanner } from './hooks/use-feed-banner';
+import { useInterstitialTrigger } from './hooks/use-interstitial';
 
 function extractTokenFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
@@ -54,6 +55,8 @@ const AppContent = () => {
   // Adaptive feed banner (Free tier, feed routes only — never on video).
   const adPlan = useAdPlan();
   useFeedBanner({ pathname: location.pathname, plan: adPlan });
+  // Interstitials only at natural content-session ends (never mid-watch).
+  useInterstitialTrigger({ pathname: location.pathname, plan: adPlan });
 
   // Set sidebar initial state based on device
   useEffect(() => {
@@ -100,6 +103,10 @@ const AppContent = () => {
   };
 
   const isAuthPage = location.pathname === '/auth';
+  // Pricing is browsable signed-out: buyers tap a plan and go straight to
+  // Razorpay (guest email checkout) — never bounced through the sign-in wall
+  // ("tap 1999 → Sign in failed" regression).
+  const isPricingPage = location.pathname === '/pricing' || location.pathname === '/app/pricing';
   const shouldShowNavbar = user && !isAuthPage;
 
   const handleSignOut = async () => {
@@ -122,10 +129,10 @@ const AppContent = () => {
   };
 
   useEffect(() => {
-    if (!isLoading && !user && !isAuthPage) {
+    if (!isLoading && !user && !isAuthPage && !isPricingPage) {
       navigate('/auth');
     }
-  }, [isLoading, user, isAuthPage, navigate]);
+  }, [isLoading, user, isAuthPage, isPricingPage, navigate]);
 
   if (isLoading) {
     return (

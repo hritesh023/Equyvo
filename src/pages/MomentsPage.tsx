@@ -585,7 +585,7 @@ const MomentsPage = () => {
       <div className={`w-full bg-black flex flex-col items-center justify-center gap-4 px-6 text-center ${isMobile ? 'unibody-viewport' : 'h-[calc(100vh-4rem)] h-[calc(100dvh-4rem)]'}`}>
         <p className="text-white text-lg font-semibold">No moments yet</p>
         <p className="text-white/60 text-sm max-w-sm">Be the first to share a vertical photo or video — it will appear here, in For You, Following (for your followers) and Discover.</p>
-        <Button onClick={() => navigate('/app/create')}>Create a moment</Button>
+        <Button onClick={() => navigate('/app/create?tab=moment')}>Create a moment</Button>
       </div>
     );
   }

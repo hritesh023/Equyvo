@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+﻿import { useState, useCallback, useMemo } from 'react';
 import { searchContent, getAllContent } from './content-index';
 import { brainSearchSuggest, brainLearn } from './brain';
 
@@ -8,7 +8,7 @@ export interface SearchSuggestion {
   label: string;
   category: string;
   description: string;
-  type: 'trending' | 'personal' | 'ai-generated' | 'recent';
+  type: 'trending' | 'personal' | 'ai-generated' | 'recent' | 'guess';
   confidence?: number;
   metadata?: Record<string, any>;
 }
@@ -24,7 +24,18 @@ class AISearchService {
   private static instance: AISearchService;
   private searchHistory: SearchHistoryItem[] = [];
   private userPreferences: string[] = [];
-  
+
+  // â”€â”€ Predictive corpus â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  // Built from REAL Equyvo data only (titles, tags, categories, creators and
+  // the user's own search history). Feeds the "guess what you're typing"
+  // autocomplete: prefix continuations, last-word completions and typo
+  // corrections â€” never invented filler phrases.
+  private corpusWords: string[] = [];          // lowercase distinct words
+  private corpusWordRank: number[] = [];       // parallel: popularity rank
+  private corpusWordMeta: string[] = [];       // parallel: display-ish source
+  private corpusPhrases: { display: string; lower: string }[] = [];
+  private corpusBuiltAt = 0;
+
   static getInstance(): AISearchService {
     if (!AISearchService.instance) {
       AISearchService.instance = new AISearchService();
@@ -87,32 +98,41 @@ class AISearchService {
   // Generate AI-powered suggestions based on input
   async generateSuggestions(query: string): Promise<SearchSuggestion[]> {
     const queryLower = query.toLowerCase().trim();
-    
+
     if (!queryLower) {
       return this.getDefaultSuggestions();
     }
 
     const suggestions: SearchSuggestion[] = [];
 
-    // 1. Try backend AI suggestions first (highest quality)
+    // 1. PREDICTIVE GUESS LAYER â€” "finish what you're typing" from real
+    //    Equyvo content: full-phrase continuations ("music vi" â†’ "music
+    //    videos"), last-word completions ("phot" â†’ "photography") and typo
+    //    corrections ("photografy" â†’ "photography"). No data, no guesses.
+    const phraseGuesses = await this.guessPhraseContinuations(queryLower);
+    const wordGuesses = await this.guessWordCompletions(queryLower);
+    const typoGuesses = await this.guessTypoCorrections(queryLower);
+    suggestions.push(...phraseGuesses, ...wordGuesses, ...typoGuesses);
+
+    // 2. Backend AI suggestions (learned interest-graph labels).
     const backendSuggestions = await this.fetchAISuggestions(queryLower);
     if (backendSuggestions.length > 0) {
       suggestions.push(...backendSuggestions);
     }
 
-    // 2. Local contextual suggestions grounded in real content (supplement)
-    const localSuggestions = this.generateContextualSuggestions(queryLower);
+    // 3. Real content matches from the search index (titles of actual posts).
+    const localSuggestions = this.generateContentMatches(queryLower);
     suggestions.push(...localSuggestions);
 
-    // 3. Recent searches that match
+    // 4. Recent searches that match the typed prefix first.
     const recentSuggestions = this.getRecentSearchSuggestions(queryLower);
     suggestions.push(...recentSuggestions);
 
-    // 4. Trending suggestions that match
+    // 5. Trending suggestions that match
     const trendingSuggestions = this.getTrendingSuggestions(queryLower);
     suggestions.push(...trendingSuggestions);
 
-    // 5. Real tag/category completions from actual Equyvo content (never invented)
+    // 6. Real tag/category completions from actual Equyvo content (never invented)
     const realSuggestions = this.generateRealCompletions(queryLower);
     suggestions.push(...realSuggestions);
 
@@ -125,143 +145,247 @@ class AISearchService {
       return true;
     });
 
-    // Sort by relevance and limit results
+    // Guesses float above everything: they promise "keep this text, I know
+    // where it goes". Higher (phrases) â†’ completions â†’ typos, then the rest
+    // by confidence.
     return unique
-      .sort((a, b) => (b.confidence || 0) - (a.confidence || 0))
+      .sort((a, b) => {
+        const at = a.type === 'guess' ? 100 + (a.confidence || 0) : (a.confidence || 0);
+        const bt = b.type === 'guess' ? 100 + (b.confidence || 0) : (b.confidence || 0);
+        return bt - at;
+      })
       .slice(0, 8);
   }
 
-  // Generate contextual AI suggestions
-  private generateContextualSuggestions(query: string): SearchSuggestion[] {
-    const contextualPatterns = [
-      // Content type patterns
-      {
-        keywords: ['photo', 'picture', 'image', 'camera', 'photography'],
-        suggestions: [
-          { label: 'portrait photography tips', category: 'Photography', description: 'Professional portrait photography techniques' },
-          { label: 'landscape photography', category: 'Photography', description: 'Beautiful landscape photography ideas' },
-          { label: 'street photography', category: 'Photography', description: 'Urban street photography captures' },
-          { label: 'photo editing tutorials', category: 'Photography', description: 'Learn photo editing techniques' }
-        ]
-      },
-      {
-        keywords: ['video', 'movie', 'film', 'cinema'],
-        suggestions: [
-          { label: 'video editing tips', category: 'Video', description: 'Professional video editing tutorials' },
-          { label: 'cinematic techniques', category: 'Video', description: 'Cinematic video techniques' },
-          { label: 'vlogging ideas', category: 'Video', description: 'Creative vlogging content ideas' },
-          { label: 'animation tutorials', category: 'Video', description: 'Animation and motion graphics' }
-        ]
-      },
-      {
-        keywords: ['music', 'song', 'audio', 'sound', 'beat'],
-        suggestions: [
-          { label: 'music production', category: 'Music', description: 'Music production tutorials' },
-          { label: 'songwriting tips', category: 'Music', description: 'Creative songwriting techniques' },
-          { label: 'audio mixing', category: 'Music', description: 'Professional audio mixing guides' },
-          { label: 'music covers', category: 'Music', description: 'Amazing music covers' }
-        ]
-      },
-      {
-        keywords: ['food', 'cooking', 'recipe', 'kitchen', 'chef', 'bake', 'cake'],
-        suggestions: [
-          { label: 'quick recipes', category: 'Food', description: 'Fast and easy recipes' },
-          { label: 'baking tutorials', category: 'Food', description: 'Learn baking techniques' },
-          { label: 'food photography', category: 'Food', description: 'Beautiful food photography' },
-          { label: 'cooking tips', category: 'Food', description: 'Professional cooking advice' }
-        ]
-      },
-      {
-        keywords: ['fitness', 'workout', 'gym', 'exercise', 'health', 'yoga'],
-        suggestions: [
-          { label: 'home workouts', category: 'Fitness', description: 'Effective home workout routines' },
-          { label: 'yoga flows', category: 'Fitness', description: 'Relaxing yoga sequences' },
-          { label: 'strength training', category: 'Fitness', description: 'Build strength exercises' },
-          { label: 'nutrition tips', category: 'Fitness', description: 'Healthy nutrition advice' }
-        ]
-      },
-      {
-        keywords: ['travel', 'trip', 'vacation', 'explore', 'adventure'],
-        suggestions: [
-          { label: 'travel vlogs', category: 'Travel', description: 'Amazing travel experiences' },
-          { label: 'budget travel tips', category: 'Travel', description: 'Travel on a budget guides' },
-          { label: 'hidden gems', category: 'Travel', description: 'Undiscovered travel spots' },
-          { label: 'travel photography', category: 'Travel', description: 'Capture travel memories' }
-        ]
-      },
-      {
-        keywords: ['tech', 'technology', 'coding', 'programming', 'software', 'ai', 'artificial intelligence'],
-        suggestions: [
-          { label: 'tech reviews', category: 'Technology', description: 'Latest tech product reviews' },
-          { label: 'coding tutorials', category: 'Technology', description: 'Learn programming languages' },
-          { label: 'gadget unboxing', category: 'Technology', description: 'New gadget reviews' },
-          { label: 'AI tools', category: 'Technology', description: 'Artificial intelligence tools' }
-        ]
-      },
-      {
-        keywords: ['fashion', 'style', 'outfit', 'clothing', 'trend', 'tie'],
-        suggestions: [
-          { label: 'fashion trends', category: 'Fashion', description: 'Latest fashion trends' },
-          { label: 'outfit ideas', category: 'Fashion', description: 'Daily outfit inspiration' },
-          { label: 'styling tips', category: 'Fashion', description: 'Fashion styling advice' },
-          { label: 'sustainable fashion', category: 'Fashion', description: 'Eco-friendly fashion choices' }
-        ]
-      },
-      {
-        keywords: ['art', 'drawing', 'painting', 'creative', 'design'],
-        suggestions: [
-          { label: 'art tutorials', category: 'Art', description: 'Learn art techniques' },
-          { label: 'digital art', category: 'Art', description: 'Digital art creation' },
-          { label: 'creative projects', category: 'Art', description: 'Inspiring creative ideas' },
-          { label: 'art challenges', category: 'Art', description: 'Fun art challenges' }
-        ]
-      },
-      {
-        keywords: ['gaming', 'games', 'play', 'esports', 'stream'],
-        suggestions: [
-          { label: 'gaming streams', category: 'Gaming', description: 'Popular gaming content' },
-          { label: 'game reviews', category: 'Gaming', description: 'Honest game reviews' },
-          { label: 'esports highlights', category: 'Gaming', description: 'Best esports moments' },
-          { label: 'gaming tutorials', category: 'Gaming', description: 'Improve gaming skills' }
-        ]
-      }
-    ];
+  // â”€â”€ Predictive corpus (rebuilt periodically from live content) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+  private buildCorpus(): void {
+    const now = Date.now();
+    if (this.corpusBuiltAt && now - this.corpusBuiltAt < 30000 && this.corpusWords.length) return;
+    this.corpusBuiltAt = now;
+    this.corpusWords = [];
+    this.corpusWordRank = [];
+    this.corpusWordMeta = [];
+    this.corpusPhrases = [];
 
-    // Find matching patterns
-    const matchedSuggestions: SearchSuggestion[] = [];
-    
-    for (const pattern of contextualPatterns) {
-      if (pattern.keywords.some(keyword => query.includes(keyword))) {
-        const suggestions = pattern.suggestions.map(suggestion => ({
-          id: `ai-${Math.random().toString(36).substr(2, 9)}`,
-          ...suggestion,
-          type: 'ai-generated' as const,
-          confidence: this.calculateConfidence(query, suggestion.label + ' ' + suggestion.description)
-        }));
-        matchedSuggestions.push(...suggestions);
+    const counts = new Map<string, { count: number; meta: string }>();
+    const bump = (word: string, meta: string) => {
+      const w = word.trim().toLowerCase();
+      if (w.length < 3) return;
+      const cur = counts.get(w);
+      if (cur) {
+        cur.count += 1;
+        if (meta === 'recent') cur.meta = meta; // user's own vocab wins
+      } else {
+        counts.set(w, { count: 1, meta });
       }
+    };
+    const pushPhrase = (display: string) => {
+      const d = String(display || '').trim();
+      if (d.length < 3 || d.length > 90) return;
+      this.corpusPhrases.push({ display: d, lower: d.toLowerCase() });
+    };
+
+    // The user's own history first (their vocabulary wins duplicates).
+    for (const h of this.loadSearchHistory()) {
+      const q = String(h?.query || '').trim();
+      if (!q) continue;
+      q.split(/\s+/).forEach((w) => bump(w, 'recent'));
     }
 
-    // If no keyword pattern matched, try content-index-based suggestions
-    // (real Equyvo content only). Honest empty when nothing matches — the
-    // search page will show "No results found" instead of invented filler.
-    if (matchedSuggestions.length === 0) {
+    const all = getAllContent();
+    for (const item of all) {
+      pushPhrase(item.title || '');
+      if (item.creator) {
+        pushPhrase(item.creator);
+        String(item.creator).split(/\s+/).forEach((w) => bump(w, 'creator'));
+      }
+      if (item.category) {
+        pushPhrase(item.category);
+        bump(item.category, 'category');
+      }
+      for (const tag of item.tags || []) {
+        pushPhrase(tag);
+        bump(tag, 'tag');
+      }
+      // Title words â€” real content vocabulary.
+      String(item.title || '').toLowerCase().split(/[^a-z0-9]+/).forEach((w) => bump(w, 'title'));
+    }
+    // History queries as phrases too (recent completions are high-intent).
+    for (const h of this.loadSearchHistory()) {
+      const q = String(h?.query || '').trim();
+      if (q) this.corpusPhrases.push({ display: q, lower: q.toLowerCase() });
+    }
+
+    const ranked = [...counts.entries()].sort((a, b) => b[1].count - a[1].count);
+    for (const [word, v] of ranked) {
+      this.corpusWords.push(word);
+      this.corpusWordRank.push(v.count);
+      this.corpusWordMeta.push(v.meta);
+    }
+    // Max ~10k entries â†’ trivial memory; keeps mustaches cheap too.
+    this.corpusPhrases = this.corpusPhrases.slice(0, 2000);
+  }
+
+  /** Full-phrase continuations: the typed text is a prefix of a real title/tag. */
+  private async guessPhraseContinuations(query: string): Promise<SearchSuggestion[]> {
+    try {
+      if (query.length < 2) return [];
+      this.buildCorpus();
+      const out: SearchSuggestion[] = [];
+      const seen = new Set<string>();
+      // Longer matches score higher ("music vi" â†’ "music videos ...").
+      for (const { display, lower } of this.corpusPhrases) {
+        if (!lower.startsWith(query) || lower === query) continue;
+        if (seen.has(lower)) continue;
+        seen.add(lower);
+        const depthBoost = Math.min(lower.length - query.length, 12) / 40; // shorter leap = better guess
+        out.push({
+          id: `guess-ph-${lower.slice(0, 48)}`,
+          label: display,
+          category: 'Suggested',
+          description: this.guessSourceHint(query, display),
+          type: 'guess',
+          confidence: 0.95 + depthBoost,
+        });
+        if (out.length >= 6) break;
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  private guessSourceHint(query: string, display: string): string {
+    const q = query.toLowerCase();
+    const d = display.toLowerCase();
+    if (this.searchHistory.some((h) => h.query.toLowerCase() === d)) return 'Your recent search';
+    if (d === q) return '';
+    return 'Finish typing â€” real Equyvo match';
+  }
+
+  /** Last-word completions: "music vi" â†’ "music videos", "phot" â†’ "photography". */
+  private async guessWordCompletions(query: string): Promise<SearchSuggestion[]> {
+    try {
+      const tokens = query.split(/\s+/);
+      if (tokens.length === 0 || query.length < 2) return [];
+      this.buildCorpus();
+      const lastTok = tokens[tokens.length - 1].toLowerCase();
+      if (lastTok.length < 1 || lastTok.length > 30) return [];
+      const prefix = tokens.slice(0, -1).join(' ');
+      const out: SearchSuggestion[] = [];
+      for (let i = 0; i < this.corpusWords.length && out.length < 6; i++) {
+        const word = this.corpusWords[i];
+        if (word === lastTok || !word.startsWith(lastTok)) continue;
+        // Prefer the REAL casing of the completed phrase when one exists,
+        // else the raw corpus word â€” never an invented display string.
+        const fullLower = prefix ? `${prefix} ${word}` : word;
+        const realPhrase = this.corpusPhrases.find(
+          (p) => p.lower === fullLower || p.lower.startsWith(`${fullLower} `),
+        );
+        const label = realPhrase ? realPhrase.display : fullLower;
+        out.push({
+          id: `guess-wd-${word}-${prefix.length}`,
+          label,
+          category: 'Suggested',
+          description: 'Continue with this search â€” real Equyvo word',
+          type: 'guess',
+          // Earlier prefix position + popularity = sharper guess.
+          confidence: 0.88 + Math.min(this.corpusWordRank[i], 6) / 40,
+        });
+      }
+      return out;
+    } catch {
+      return [];
+    }
+  }
+
+  /**
+   * Typo corrections â€” "did you mean". Bounded Levenshtein against real
+   * corpus words only; distances â‰¤ 2 (â‰¤ 3 for long words). Shown when the
+   * typed text has no prefix matches, exactly like classic search guessing.
+   */
+  private async guessTypoCorrections(query: string): Promise<SearchSuggestion[]> {
+    try {
+      const tokens = query.split(/\s+/);
+      if (!tokens.length) return [];
+      this.buildCorpus();
+      const lastTok = tokens[tokens.length - 1].toLowerCase();
+      // Only surface typo-guesses for meaningfully typed text.
+      if (lastTok.length < 4) return [];
+      // Prefix hits already cover the obvious case; typo mode is the fallback.
+      const hasPrefixHit =
+        this.corpusPhrases.some((p) => p.lower.startsWith(query)) ||
+        this.corpusWords.some((w) => w.startsWith(lastTok));
+      if (hasPrefixHit) return [];
+
+      const maxDist = lastTok.length >= 7 ? 3 : 2;
+      const prefix = tokens.slice(0, -1).join(' ');
+      const out: { word: string; dist: number; rank: number }[] = [];
+      for (let i = 0; i < this.corpusWords.length; i++) {
+        const word = this.corpusWords[i];
+        // Same first letter or one off: prune cheaply for speed.
+        if (Math.abs(word.length - lastTok.length) > maxDist) continue;
+        if (word[0] !== lastTok[0] && lastTok.length > 3 && word.length > 3) continue;
+        const d = this.boundedLevenshtein(lastTok, word, maxDist);
+        if (d >= 0 && d <= maxDist) out.push({ word, dist: d, rank: this.corpusWordRank[i] });
+      }
+      out.sort((a, b) => a.dist - b.dist || b.rank - a.rank);
+      return out.slice(0, 4).map(({ word, dist }) => {
+        const fixed = prefix ? `${prefix} ${word.charAt(0).toUpperCase() + word.slice(1)}` : word;
+        return {
+          id: `guess-ty-${word}-${dist}`,
+          label: fixed,
+          category: 'Suggested',
+          description: 'Did you mean this?',
+          type: 'guess' as const,
+          confidence: 0.6 + (1 / (dist * 6 + 1)),
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  /** Levenshtein with early cutoff; returns dist (â‰¤ max) or -1 when over. */
+  private boundedLevenshtein(a: string, b: string, max: number): number {
+    if (a === b) return 0;
+    const la = a.length;
+    const lb = b.length;
+    if (Math.abs(la - lb) > max) return -1;
+    let prev = new Array<number>(lb + 1);
+    for (let j = 0; j <= lb; j++) prev[j] = j;
+    for (let i = 1; i <= la; i++) {
+      const cur = [i];
+      let rowMin = i;
+      for (let j = 1; j <= lb; j++) {
+        const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+        const v = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+        cur.push(v);
+        if (v < rowMin) rowMin = v;
+      }
+      if (rowMin > max) return -1; // early exit â€” can't get back under max
+      prev = cur;
+    }
+    return prev[lb] <= max ? prev[lb] : -1;
+  }
+
+  // Real content matches: titles of actual posts matching the typed text.
+  private generateContentMatches(query: string): SearchSuggestion[] {
+    try {
       const indexResults = searchContent(query);
-      if (indexResults.results.length > 0 && !indexResults.isAiRecommended) {
-        const contentSuggestions = indexResults.results.slice(0, 4).map(item => ({
-          id: `content-${item.id}`,
-          label: item.title,
-          category: item.category,
-          description: item.description.slice(0, 80) + '...',
-          type: 'ai-generated' as const,
-          confidence: 0.75,
-          metadata: { contentId: item.id }
-        }));
-        matchedSuggestions.push(...contentSuggestions);
-      }
+      if (indexResults.results.length === 0) return [];
+      return indexResults.results.slice(0, 3).map(item => ({
+        id: `content-${item.id}`,
+        label: item.title,
+        category: item.category,
+        description: item.description.slice(0, 80) + '...',
+        type: 'ai-generated' as const,
+        confidence: 0.75,
+        metadata: { contentId: item.id }
+      }));
+    } catch {
+      return [];
     }
-
-    return matchedSuggestions;
   }
 
   // Real completions from actual Equyvo content (tags/categories/titles).
@@ -299,13 +423,6 @@ class AISearchService {
     } catch {
       return [];
     }
-  }
-
-  // Legacy invented-suggestion generator removed: returning fake
-  // `${query} tutorials`-style rows for random strings is bot-like data.
-  // Kept as an empty stub so older callers don't break.
-  private generateGeneralSuggestions(_query: string): SearchSuggestion[] {
-    return [];
   }
 
   // Get recent search suggestions
@@ -404,13 +521,6 @@ class AISearchService {
     }
     
     return Math.min(score / queryWords.length, 1);
-  }
-
-  // Removed: invented SEO autocomplete (`${query} tutorial`, `${query} near me`,
-  // etc.) is fake data for random strings. Suggestions now come only from real
-  // Equyvo content, backend suggestions, recent searches, and trending topics.
-  private generateSEOSuggestions(_query: string): SearchSuggestion[] {
-    return [];
   }
 
   // Get relative time for display

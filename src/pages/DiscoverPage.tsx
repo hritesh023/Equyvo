@@ -1360,10 +1360,12 @@ const DiscoverPage = () => {
         />
       )}
 
-      {/* Fullscreen Browse */}
+      {/* Fullscreen Browse — desktop view carries the live feed + navbar */}
       <FullscreenBrowse
         isOpen={fullscreenBrowseOpen}
         onClose={() => setFullscreenBrowseOpen(false)}
+        items={gridData}
+        isLoading={isLoadingDiscover}
       />
 
       {/* Comment Section */}

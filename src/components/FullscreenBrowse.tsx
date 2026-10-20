@@ -1,21 +1,27 @@
 import React, { useState } from 'react';
-import { X, Share2, ThumbsUp, MessageCircle, Bookmark, MoreVertical, Play, Eye, Users, Clock } from 'lucide-react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { X, Share2, ThumbsUp, MessageCircle, Bookmark, Play, Eye, Users, Compass } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { showSuccess } from '@/utils/toast';
 import { avatarOf } from '@/utils/avatar';
+import { useI18n } from '@/lib/i18n';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import AppLogo from '@/components/AppLogo';
+import { navItems } from '@/components/Navbar';
 
 interface FullscreenBrowseProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Live discover feed — the desktop view shows real content, never dummies. */
+  items?: any[];
+  isLoading?: boolean;
 }
 
-const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) => {
+const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, items, isLoading }) => {
   const [likedItems, setLikedItems] = useState<Set<string>>(new Set());
   const [savedItems, setSavedItems] = useState<Set<string>>(new Set());
   const [commentSectionOpen, setCommentSectionOpen] = useState(false);
@@ -23,12 +29,17 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
   const [fullscreenContent, setFullscreenContent] = useState<any>(null);
   const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image'>('image');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { t } = useI18n();
 
   if (!isOpen) return null;
 
-  // Content comes from the API feed (no hardcoded sample content)
-  const featuredContent: any[] = [];
-  const trendingContent: any[] = [];
+  // Real feed content: featured first, the rest ranked by reach in Trending.
+  const feed = Array.isArray(items) ? items : [];
+  const featuredContent = feed.slice(0, 6);
+  const trendingContent = [...feed.slice(6)]
+    .sort((a, b) => (Number(b?.views) || 0) - (Number(a?.views) || 0));
 
   const handleLike = (itemId: string) => {
     setLikedItems(prev => {
@@ -67,24 +78,26 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
   };
 
   const handleContentClick = (content: any) => {
-    // Open content in fullscreen viewer
+    // Open content in fullscreen viewer (mirrors the page grid's toFullscreen:
+    // live stays live, anything playable opens as a portrait moment).
+    const isLive = content.isLive || content.live || String(content.contentType || '').toLowerCase() === 'live';
+    const hasVideo = Boolean(content.videoUrl);
     const fullscreenData = {
       ...content,
-      // Ensure proper video/image URLs for fullscreen viewer
-      videoUrl: content.videoUrl || content.image || content.thumbnail,
+      videoUrl: content.videoUrl || undefined,
       image: content.image || content.thumbnail,
       thumbnail: content.thumbnail,
-      // Add missing properties for fullscreen viewer compatibility
       likes: content.likes || 0,
       comments: content.comments || 0,
       views: content.views || 0,
       verified: content.verified === true,
       published: content.published || 'Recently',
-      description: content.description || `Amazing ${content.type} content by ${content.creator}`
+      description: content.description || `Amazing ${content.type} content by ${content.creator}`,
+      forcePortrait: hasVideo && !isLive,
     };
-    
+
     setFullscreenContent(fullscreenData);
-    setFullscreenType(content.type === 'live' ? 'live' : content.type === 'video' ? 'video' : 'image');
+    setFullscreenType(isLive ? 'live' : hasVideo ? 'moment' : 'image');
   };
 
   const handleCloseFullscreen = () => {
@@ -111,15 +124,26 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
     return num.toString();
   };
 
+  // Navigate + collapse the overlay so the destination renders in the shell.
+  const goNav = (path: string) => {
+    onClose();
+    if (location.pathname !== path) navigate(path);
+  };
+
   return (
     <div className="fixed inset-0 bg-black z-50 flex flex-col">
-      {/* Header */}
-      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 p-4">
-        <div className="flex items-center justify-between max-w-7xl mx-auto">
-          <div className="flex items-center gap-4">
+      {/* Header — the main navbar lives INSIDE the desktop view so Home,
+          Discover, Moments, etc. stay reachable in fullscreen mode. */}
+      <div className="bg-black/90 backdrop-blur-md border-b border-white/10 pt-3 pb-0">
+        <div className="flex items-center justify-between max-w-7xl mx-auto px-4 py-2">
+          <button
+            onClick={() => goNav('/app/home')}
+            className="flex items-center gap-3 cursor-pointer"
+            title="Home"
+          >
             <AppLogo alt="Equyvo" className="h-8 w-8" />
             <h1 className="text-white text-xl font-bold">Equyvo</h1>
-          </div>
+          </button>
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -132,186 +156,226 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose }) 
             </Button>
           </div>
         </div>
+        {/* Nav strip: Home · Discover · Create · Moments · Thoughts · Profile · Settings */}
+        <nav className="max-w-7xl mx-auto px-4">
+          <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar pb-2">
+            <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-white/40 mr-2 shrink-0">
+              <Compass className="h-3.5 w-3.5" /> Browse
+            </span>
+            {navItems.map((item) => {
+              const active = location.pathname === item.path;
+              return (
+                <button
+                  key={item.name}
+                  onClick={() => goNav(item.path)}
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-all duration-200 border ${
+                    active
+                      ? 'bg-primary/20 text-white border-primary/40'
+                      : 'bg-white/5 text-white/70 border-transparent hover:bg-white/10 hover:text-white'
+                  }`}
+                >
+                  <item.icon className="h-3.5 w-3.5" />
+                  <span>{t(item.name)}</span>
+                </button>
+              );
+            })}
+          </div>
+        </nav>
       </div>
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto">
         <div className="max-w-7xl mx-auto p-6">
-          {/* Featured Section */}
-          <div className="mb-8">
-            <h2 className="text-white text-2xl font-bold mb-4">Featured</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {featuredContent.map((content) => (
-                <Card key={content.id} className="bg-gray-900 border-gray-800 overflow-hidden group cursor-pointer hover:shadow-xl transition-all duration-300" style={{ pointerEvents: 'auto' }} onClick={() => {
-                  handleContentClick(content);
-                }}>
-                  <div className="relative aspect-video">
-                    <img 
-                      src={content.thumbnail} 
-                      alt={content.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
-                    />
-                    {content.type === 'video' && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="bg-black/60 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="h-6 w-6 text-white" />
-                        </div>
-                      </div>
-                    )}
-                    {content.isLive && (
-                      <div className="absolute top-2 left-2 bg-red-600 text-white px-2 py-1 rounded text-xs font-bold animate-pulse">
-                        LIVE
-                      </div>
-                    )}
-                    {content.duration && !content.isLive && (
-                      <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                        {content.duration}
-                      </div>
-                    )}
-                  </div>
-                  <CardContent className="p-4">
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex items-center gap-2">
-                        <Avatar className="h-8 w-8">
-                          {avatarOf(content) ? <AvatarImage src={avatarOf(content)} /> : null}
-                          <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
-                            {content.creator.substring(0, 2).toUpperCase()}
-                          </AvatarFallback>
-                        </Avatar>
-                        <div>
-                          <h3 className="text-white font-semibold text-sm line-clamp-1">{content.title}</h3>
-                          <div className="flex items-center gap-2">
-                            <span className="text-gray-400 text-xs">{content.creator}</span>
-                            {content.verified && (
-                              <div className="bg-blue-500 rounded-full p-0.5">
-                                <div className="w-2 h-2 bg-white rounded-full"></div>
+          {isLoading ? (
+            <div className="flex items-center justify-center py-24 text-white/70">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/60"></div>
+            </div>
+          ) : feed.length === 0 ? (
+            <div className="text-center py-24">
+              <Compass className="h-12 w-12 mx-auto mb-4 text-white/30" />
+              <h2 className="text-white text-xl font-semibold mb-2">Nothing to browse yet</h2>
+              <p className="text-white/50 text-sm max-w-sm mx-auto">New uploads show up here. Open the normal Discover feed to post or explore categories.</p>
+            </div>
+          ) : (
+            <>
+              {/* Featured Section */}
+              {featuredContent.length > 0 && (
+                <div className="mb-8">
+                  <h2 className="text-white text-2xl font-bold mb-4">Featured</h2>
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                    {featuredContent.map((content) => (
+                      <Card key={content.id} className="bg-gray-900 border-gray-800 overflow-hidden group cursor-pointer hover:shadow-xl transition-all duration-300" style={{ pointerEvents: 'auto' }} onClick={() => {
+                        handleContentClick(content);
+                      }}>
+                        <div className="relative aspect-video">
+                          <img
+                            src={content.thumbnail || content.image}
+                            alt={content.title}
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                            loading="lazy"
+                          />
+                          {content.type === 'video' && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="bg-black/60 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Play className="h-6 w-6 text-white" />
                               </div>
-                            )}
+                            </div>
+                          )}
+                          {content.isLive && (
+                            <div className="absolute top-2 left-2 bg-red-600 text-white px-2 py-1 rounded text-xs font-bold animate-pulse">
+                              LIVE
+                            </div>
+                          )}
+                          {content.duration && !content.isLive && (
+                            <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
+                              {content.duration}
+                            </div>
+                          )}
+                        </div>
+                        <CardContent className="p-4">
+                          <div className="flex items-start justify-between mb-3">
+                            <div className="flex items-center gap-2">
+                              <Avatar className="h-8 w-8">
+                                {avatarOf(content) ? <AvatarImage src={avatarOf(content)} /> : null}
+                                <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
+                                  {(content.creator || 'U').substring(0, 2).toUpperCase()}
+                                </AvatarFallback>
+                              </Avatar>
+                              <div>
+                                <h3 className="text-white font-semibold text-sm line-clamp-1">{content.title}</h3>
+                                <div className="flex items-center gap-2">
+                                  <span className="text-gray-400 text-xs">{content.creator}</span>
+                                  {content.verified && (
+                                    <Badge className="bg-blue-500 rounded-full p-0.5 h-3 w-3 p-0 flex items-center justify-center">
+                                      <span className="sr-only">Verified</span>
+                                    </Badge>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-4 text-gray-400 text-xs mb-3">
+                            {content.views ? (
+                              <span className="flex items-center gap-1">
+                                <Eye className="h-3 w-3" /> {formatNumber(content.views)}
+                              </span>
+                            ) : null}
+                            {content.viewers ? (
+                              <span className="flex items-center gap-1">
+                                <Users className="h-3 w-3" /> {formatNumber(content.viewers)} watching
+                              </span>
+                            ) : null}
+                          </div>
+
+                          <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()} style={{ pointerEvents: 'auto' }}>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleLike(content.id);
+                              }}
+                              className={`text-gray-400 hover:text-white ${likedItems.has(content.id) ? 'text-red-500' : ''}`}
+                            >
+                              <ThumbsUp className={`h-4 w-4 ${likedItems.has(content.id) ? 'fill-current' : ''}`} />
+                              {content.likes ? <span className="ml-1 text-xs">{formatNumber(content.likes)}</span> : null}
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleComment(content);
+                              }}
+                              className="text-gray-400 hover:text-white"
+                            >
+                              <MessageCircle className="h-4 w-4" />
+                              {content.comments ? <span className="ml-1 text-xs">{formatNumber(content.comments)}</span> : null}
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleShare(content);
+                              }}
+                              className="text-gray-400 hover:text-white"
+                            >
+                              <Share2 className="h-4 w-4" />
+                            </Button>
+
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSave(content.id);
+                              }}
+                              className={`text-gray-400 hover:text-white ${savedItems.has(content.id) ? 'text-blue-500' : ''}`}
+                            >
+                              <Bookmark className={`h-4 w-4 ${savedItems.has(content.id) ? 'fill-current' : ''}`} />
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Trending Grid */}
+              {trendingContent.length > 0 && (
+                <div>
+                  <h2 className="text-white text-2xl font-bold mb-4">Trending Now</h2>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
+                    {trendingContent.map((content) => (
+                      <div key={content.id} className="relative group cursor-pointer" style={{ pointerEvents: 'auto' }} onClick={() => {
+                        handleContentClick(content);
+                      }}>
+                        <div className="aspect-square rounded-lg overflow-hidden">
+                          <img
+                            src={content.thumbnail || content.image}
+                            alt={content.title}
+                            className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
+                            loading="lazy"
+                          />
+                          {content.type === 'video' && (
+                            <div className="absolute inset-0 flex items-center justify-center">
+                              <div className="bg-black/60 rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <Play className="h-4 w-4 text-white" />
+                              </div>
+                            </div>
+                          )}
+                          {content.duration && (
+                            <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[10px] px-1 py-0.5 rounded">
+                              {content.duration}
+                            </div>
+                          )}
+                        </div>
+                        <div className="mt-2">
+                          <p className="text-white text-xs font-medium line-clamp-1">{content.title}</p>
+                          <div className="flex items-center gap-1 text-gray-400 text-[10px]">
+                            <span>{content.creator}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-gray-400 text-[10px] mt-1">
+                            <span className="flex items-center gap-0.5">
+                              <Eye className="h-2 w-2" /> {formatNumber(content.views || 0)}
+                            </span>
+                            <span className="flex items-center gap-0.5">
+                              <ThumbsUp className="h-2 w-2" /> {formatNumber(content.likes || 0)}
+                            </span>
                           </div>
                         </div>
                       </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-4 text-gray-400 text-xs mb-3">
-                      {content.views && (
-                        <span className="flex items-center gap-1">
-                          <Eye className="h-3 w-3" /> {formatNumber(content.views)}
-                        </span>
-                      )}
-                      {content.viewers && (
-                        <span className="flex items-center gap-1">
-                          <Users className="h-3 w-3" /> {formatNumber(content.viewers)} watching
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()} style={{ pointerEvents: 'auto' }}>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleLike(content.id);
-                        }}
-                        className={`text-gray-400 hover:text-white ${likedItems.has(content.id) ? 'text-red-500' : ''}`}
-                      >
-                        <ThumbsUp className={`h-4 w-4 ${likedItems.has(content.id) ? 'fill-current' : ''}`} />
-                        {content.likes && <span className="ml-1 text-xs">{formatNumber(content.likes)}</span>}
-                      </Button>
-                      
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleComment(content);
-                        }}
-                        className="text-gray-400 hover:text-white"
-                      >
-                        <MessageCircle className="h-4 w-4" />
-                        {content.comments && <span className="ml-1 text-xs">{formatNumber(content.comments)}</span>}
-                      </Button>
-                      
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleShare(content);
-                        }}
-                        className="text-gray-400 hover:text-white"
-                      >
-                        <Share2 className="h-4 w-4" />
-                      </Button>
-                      
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleSave(content.id);
-                        }}
-                        className={`text-gray-400 hover:text-white ${savedItems.has(content.id) ? 'text-blue-500' : ''}`}
-                      >
-                        <Bookmark className={`h-4 w-4 ${savedItems.has(content.id) ? 'fill-current' : ''}`} />
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-
-          {/* Trending Grid */}
-          <div>
-            <h2 className="text-white text-2xl font-bold mb-4">Trending Now</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {trendingContent.map((content) => (
-                <div key={content.id} className="relative group cursor-pointer" style={{ pointerEvents: 'auto' }} onClick={() => {
-                  handleContentClick(content);
-                }}>
-                  <div className="aspect-square rounded-lg overflow-hidden">
-                    <img 
-                      src={content.thumbnail} 
-                      alt={content.title}
-                      className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
-                    />
-                    {content.type === 'video' && (
-                      <div className="absolute inset-0 flex items-center justify-center">
-                        <div className="bg-black/60 rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <Play className="h-4 w-4 text-white" />
-                        </div>
-                      </div>
-                    )}
-                    {content.duration && (
-                      <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[10px] px-1 py-0.5 rounded">
-                        {content.duration}
-                      </div>
-                    )}
-                  </div>
-                  <div className="mt-2">
-                    <p className="text-white text-xs font-medium line-clamp-1">{content.title}</p>
-                    <div className="flex items-center gap-1 text-gray-400 text-[10px]">
-                      <span>{content.creator}</span>
-                      {content.verified && (
-                        <div className="bg-blue-500 rounded-full p-0.5 scale-75">
-                          <div className="w-1.5 h-1.5 bg-white rounded-full"></div>
-                        </div>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-2 text-gray-400 text-[10px] mt-1">
-                      <span className="flex items-center gap-0.5">
-                        <Eye className="h-2 w-2" /> {formatNumber(content.views)}
-                      </span>
-                      <span className="flex items-center gap-0.5">
-                        <ThumbsUp className="h-2 w-2" /> {formatNumber(content.likes)}
-                      </span>
-                    </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
-          </div>
+              )}
+            </>
+          )}
         </div>
       </div>
 

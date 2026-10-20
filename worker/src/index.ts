@@ -16,6 +16,7 @@ import {
   generateId, fileReport, listReports, fanOutUpload,
   findContentById, getCommentSettings, resolveCommentAuthor, toPublicComment,
   readCommentList, syncContentCommentCount, cleanCommentAvatar, cleanCommentName,
+  putLocalGrant, getLocalGrant, claimLocalEmailGrant, verifyCentralJWT,
 } from './kv';
 export { Env };
 
@@ -248,6 +249,75 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       const offset = parseInt(url.searchParams.get('offset') || '0');
       const thoughts = await getThoughts(env, limit, offset);
       return respond({ data: thoughts, error: null });
+    }
+
+    // Mirror of Pages Functions: real engagement-weighted trending for the
+    // Thoughts page (tags/#hashtags only; recency decay; 24h velocity).
+    if (path === '/api/thoughts/trending' && method === 'GET') {
+      const CACHE_KEY = 'trending:thoughts:v1';
+      try {
+        const cached = await env.EQUYVO_KV.get(CACHE_KEY);
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (c && Array.isArray(c.topics) && c.computedAt && (Date.now() - c.computedAt) < 45000) {
+            return respond({ data: { topics: c.topics, source: 'algorithm', computedAt: c.computedAt, cached: true }, error: null });
+          }
+        }
+      } catch { /* cache miss — compute below */ }
+
+      const now = Date.now();
+      const decayOf = (t: any) => {
+        const ts = new Date(t?.createdAt || t?.publishedAt || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) return 0.01;
+        return Math.pow(2, -(Math.max(0, now - ts) / 3600000) / 18);
+      };
+      const ageHOf = (t: any) => {
+        const ts = new Date(t?.createdAt || t?.publishedAt || 0).getTime();
+        if (!Number.isFinite(ts) || ts <= 0) return 8760;
+        return Math.max(0, (now - ts) / 3600000);
+      };
+      const aggregates = new Map<string, { count: number; score: number; recent: number; past: number }>();
+
+      const thoughts: any[] = await getThoughts(env, 250, 0);
+      for (const t of thoughts) {
+        const names = new Set<string>();
+        for (const tag of (Array.isArray(t.tags) ? t.tags : [])) {
+          const key = String(tag || '').trim().replace(/^#+/, '').toLowerCase();
+          if (key && key.length <= 40) names.add(key);
+        }
+        const matches = String(t.content || '').match(/#([A-Za-z0-9_]{2,40})/g) || [];
+        for (const m of matches) names.add(m.slice(1).toLowerCase());
+        if (!names.size) continue;
+        const up = Number(t.upvotes_count ?? t.upvotes ?? t.votes ?? 0) || 0;
+        const down = Number(t.downvotes_count ?? t.downvotes ?? 0) || 0;
+        const likes = Number(t.likes ?? t.likes_count ?? 0) || 0;
+        const reacts = Number(t.reacts ?? 0) || 0;
+        const comments = Number(t.comments ?? t.comments_count ?? 0) || 0;
+        const contribution = 1 + Math.max(0, up - down * 0.5 + likes * 1.5 + reacts * 2 + comments * 3) * decayOf(t);
+        const ageH = ageHOf(t);
+        for (const key of names) {
+          const rec = aggregates.get(key) || { count: 0, score: 0, recent: 0, past: 0 };
+          rec.count += 1;
+          rec.score += contribution;
+          if (ageH <= 24) rec.recent += 1;
+          else if (ageH <= 48) rec.past += 1;
+          aggregates.set(key, rec);
+        }
+      }
+
+      const topics = [...aggregates.entries()]
+        .map(([name, v]) => {
+          let trend = 'stable';
+          if (v.recent > v.past) trend = 'up';
+          else if (v.past > 0 && v.recent < v.past) trend = 'down';
+          return { name: '#' + name, count: v.count, score: Math.round(v.score * 10) / 10, trend };
+        })
+        .sort((a, b) => b.score - a.score || b.count - a.count)
+        .slice(0, 8);
+
+      const computedAt = Date.now();
+      try { await env.EQUYVO_KV.put(CACHE_KEY, JSON.stringify({ computedAt, topics }), { expirationTtl: 300 }); } catch { /* ignore */ }
+      return respond({ data: { topics, source: 'algorithm', computedAt, cached: false }, error: null });
     }
 
     if (path === '/api/thoughts' && method === 'POST') {
@@ -957,34 +1027,62 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
     // Plans + usage: public catalog, authenticated usage.
     // RAZORPAY CHECKOUT (same-origin proxy to central billing) — mirrors
     // functions/api/[[path]].ts so Worker deploys never 404 on payments.
+    // Bearer is forwarded only when central can verify it (central JWT);
+    // Equyvo session tokens check out via the verified account email
+    // (central's guest-with-email path) and the verified grant is recorded
+    // locally so the paid tier activates instantly.
     if ((path === '/api/create-order' || path === '/api/verify-payment') && method === 'POST') {
       const bearer = bearerFrom(request);
       let body: any = {};
       try { body = (await request.json()) || {}; } catch { return respondError('Invalid JSON body.', 400); }
-      // Guest checkout: no sign-in needed with a valid email (central links
-      // the grant by email — instant or claimed on first sign-in).
-      const guestEmail = !bearer && typeof body.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email.trim())
+      const centralAuthed = Boolean(bearer && await verifyCentralJWT(bearer, env));
+      const guestEmail = !centralAuthed && typeof body.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(body.email.trim())
         ? body.email.trim().toLowerCase().slice(0, 254) : null;
-      if (!bearer && !guestEmail) return respondError('Please sign in first.', 401);
+      let payerActor: any = null;
+      if (!centralAuthed) payerActor = await getActor(request, env);
+      const payerEmail = !centralAuthed && payerActor && typeof payerActor.email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(payerActor.email)
+        ? String(payerActor.email).trim().toLowerCase() : null;
+      const orderEmail = guestEmail || payerEmail;
+      if (!centralAuthed && !orderEmail) return respondError('Please sign in first.', 401);
       if (path === '/api/create-order') {
         const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
         if (!plan) return respondError('A plan id is required.', 400);
-        body = guestEmail ? { plan, email: guestEmail } : { plan };
+        body = orderEmail ? { plan, email: orderEmail } : { plan };
       }
       if (path === '/api/verify-payment' && (!body.razorpay_order_id || !body.razorpay_payment_id || !body.razorpay_signature)) {
         return respond({ ok: false, error: 'Missing payment fields.' }, 400);
       }
+      if (path === '/api/verify-payment' && orderEmail && !body.email) body.email = orderEmail;
       const base = String((env as any).BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
       const target = base + (path === '/api/create-order' ? '/v1/billing/order' : '/v1/billing/verify');
       try {
         const upstream = await fetch(target, {
           method: 'POST',
-          headers: bearer
+          headers: centralAuthed
             ? { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer }
             : { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        if (upstream.ok && path === '/api/verify-payment' && data && data.ok) {
+          try {
+            const paidPlan = String(data.plan || body.plan || '').slice(0, 64);
+            if (PLAN_CATALOG[paidPlan]) {
+              const untilMs = Date.now() + 31 * 86400000;
+              const grantActor = await getActor(request, env);
+              if (grantActor) {
+                await putLocalGrant(env, grantActor.id, grantActor.email, paidPlan, untilMs, body.razorpay_payment_id);
+                data.plan = paidPlan; data.guest = false; data.claimed = true;
+              } else if (orderEmail) {
+                await env.EQUYVO_KV.put(
+                  `billing:grant:email:${orderEmail}`,
+                  JSON.stringify({ plan: paidPlan, until: untilMs, paymentId: String(body.razorpay_payment_id || '').slice(0, 100) }),
+                  { expirationTtl: 45 * 86400 },
+                );
+              }
+            }
+          } catch { /* grant persistence is best-effort */ }
+        }
         return respond(data, upstream.status);
       } catch {
         return respondError('Billing service unreachable. Please try again.', 502);
@@ -994,6 +1092,11 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
     if (path === '/api/claim-billing' && method === 'POST') {
       const bearer = bearerFrom(request);
       if (!bearer) return respondError('Please sign in first.', 401);
+      const actor = await getActor(request, env);
+      if (actor) {
+        const localClaim = await claimLocalEmailGrant(env, actor);
+        if (localClaim) return respond(localClaim, 200);
+      }
       const base = String((env as any).BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
       try {
         const upstream = await fetch(base + '/v1/billing/claim', {
@@ -1010,6 +1113,20 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
 
     if (path === '/api/billing/status' && method === 'GET') {
       const bearer = bearerFrom(request);
+      // Local verified grant first (same rule as Pages Functions).
+      if (bearer) {
+        const actor = await getActor(request, env);
+        if (actor) {
+          const local = await getLocalGrant(env, actor.id);
+          if (local) {
+            return respond({
+              subscriptions: { equyvo: { plan: local.plan, until: local.until } },
+              access: { plan: local.plan, until: local.until },
+              api_credits: 0,
+            }, 200);
+          }
+        }
+      }
       if (!bearer) return respondError('Please sign in first.', 401);
       const base = String((env as any).BILLING_BASE_URL || 'https://api.acronous.com').replace(/\/$/, '');
       try {

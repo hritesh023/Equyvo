@@ -27,6 +27,18 @@ export const ADMOB_BANNER_AD_UNIT_ID =
   import.meta.env.VITE_ADMOB_BANNER_AD_UNIT ||
   'ca-app-pub-8929153950560106/2244247233';
 
+/**
+ * Interstitial ad unit (owner-provided). Shown ONLY at natural
+ * content-session ends (after the user finishes watching video/stories),
+ * never mid-watch, never pre-roll. Frequency-capped so it can never
+ * irritate: first show waits for the session to mature, then a hard
+ * minimum interval between two shows.
+ */
+export const ADMOB_INTERSTITIAL_AD_UNIT_ID =
+  import.meta.env.VITE_ADMOB_INTERSTITIAL_AD_UNIT ||
+  'ca-app-pub-8929153950560106/1150036266';
+export const TEST_INTERSTITIAL_AD_UNIT_ID = 'ca-app-pub-3940256099942544/1033173712';
+
 /** Advertising test-device IDs (comma-separated) for real-device testing. */
 export function admobTestDevices(): string[] {
   const raw = import.meta.env.VITE_ADMOB_TEST_DEVICES || '';
@@ -161,6 +173,12 @@ export function effectiveBannerAdUnitId(): string {
   return ADMOB_BANNER_AD_UNIT_ID;
 }
 
+/** Interstitial unit actually requested (test unit on dev builds). */
+export function effectiveInterstitialAdUnitId(): string {
+  if (isDevEnvironment()) return TEST_INTERSTITIAL_AD_UNIT_ID;
+  return ADMOB_INTERSTITIAL_AD_UNIT_ID;
+}
+
 /**
  * Banner policy: Free tier only. Plus skips the banner (ad-light perk, still
  * sees sparse in-feed cards); Premium/Creator see nothing (ad-free).
@@ -175,6 +193,37 @@ export function shouldShowBanner(plan?: string | null): boolean {
   if (!plan) return true;
   if (isAdFreePlan(plan) || isAdLightPlan(plan)) return false;
   return true;
+}
+
+/**
+ * Interstitial policy — the strict "never irritate" rules:
+ *  - Free tier only (the same audiences as the banner; paid plans never see
+ *    one, PLUS included: the perk of paying is a calmer app).
+ *  - Never during playback: only fired when a watch session (fullscreen
+ *    viewer / story / moments run) ENDS, and only if that session lasted
+ *    long enough to be real watching (see hook).
+ *  - Hard frequency caps: nothing in the first INTERSTITIAL_WARMUP_SEC of a
+ *    session, and at least INTERSTITIAL_MIN_INTERVAL_SEC between two shows.
+ */
+export const INTERSTITIAL_POLICY = {
+  /** Seconds after app start before the first interstitial can ever fire. */
+  WARMUP_SEC: 90,
+  /** Minimum seconds between two interstitial shows. */
+  MIN_INTERVAL_SEC: 240,
+  /** A watch session must last at least this long to unlock a show. */
+  MIN_WATCH_SEC: 8,
+  /** Skip showing right after a plan upgrade (paid = immediately calm). */
+  POST_PURCHASE_GRACE_SEC: 600,
+} as const;
+
+export function shouldShowInterstitial(plan?: string | null): boolean {
+  if (!ADS_ENABLED) return false;
+  if (typeof localStorage !== 'undefined') {
+    if (localStorage.getItem('equyvo_ads_disabled') === 'true') return false;
+  }
+  if (!plan) return true;
+  // Only the free plan sees interstitials — Plus/Premium/Creator never do.
+  return !isAdFreePlan(plan) && !isAdLightPlan(plan);
 }
 
 const BANNER_ROUTES = new Set([

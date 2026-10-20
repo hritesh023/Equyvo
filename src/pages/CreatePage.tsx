@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck } from 'lucide-react';
@@ -151,7 +152,15 @@ const THUMB_SPEC: Record<ThumbKind, { aspect: number; outW: number; outH: number
 };
 
 const CreatePage = () => {
-  const [activeTab, setActiveTab] = useState('story');
+  // Deep-link a composer section: /app/create?tab=moment opens the Moments
+  // composer directly (Moments' empty state sends users there) so tapping
+  // "Create a moment" never lands on the wrong composer type.
+  const [searchParams] = useSearchParams();
+  const [activeTab, setActiveTab] = useState<string>(() => {
+    const t = searchParams.get('tab');
+    const valid = ['story', 'text-story', 'thought', 'photo', 'video', 'live', 'moment'];
+    return t && valid.includes(t) ? t : 'story';
+  });
   const [storyFiles, setStoryFiles] = useState<File[]>([]);
   const [thoughtContent, setThoughtContent] = useState('');
   const [thoughtVideo, setThoughtVideo] = useState<File | null>(null);

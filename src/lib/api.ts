@@ -156,6 +156,13 @@ export const api = {
   getThoughts: (limit = 20, offset = 0) =>
     request<{ data: any[]; error: null }>(`/thoughts?limit=${limit}&offset=${offset}`),
 
+  // Thoughts — trending topics. Server-side engagement-weighted algorithm
+  // (tags + #hashtags of real thoughts; recency decay; 24h velocity trend).
+  // The endpoint re-computes server-side and clients poll it, so the
+  // section auto-updates on its own.
+  getThoughtsTrending: () =>
+    request<{ data: { topics: Array<{ name: string; count: number; score: number; trend: 'up' | 'down' | 'stable' }>; source: string; computedAt: number; cached?: boolean }; error: null }>(`/thoughts/trending`),
+
   createThought: (data: any) =>
     request<{ data: any; error: null }>('/thoughts', {
       method: 'POST',

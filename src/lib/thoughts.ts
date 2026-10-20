@@ -41,8 +41,9 @@ export const getThoughts = async (limit = 20, offset = 0) => {
     const user = await getAuthenticatedUser();
     const thoughtsWithVotes = data.map((thought: Thought) => ({
       ...thought,
-      upvotes_count: (thought as any).upvotes_count || Math.floor(Math.random() * 20),
-      downvotes_count: (thought as any).downvotes_count || Math.floor(Math.random() * 5),
+      // Real counts only: never fabricate engagement numbers client-side.
+      upvotes_count: (thought as any).upvotes_count || 0,
+      downvotes_count: (thought as any).downvotes_count || 0,
       user_vote: user ? ((thought as any).user_vote || null) : null,
       user_liked: user ? ((thought as any).user_has_liked || false) : false
     }));

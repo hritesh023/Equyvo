@@ -14,11 +14,14 @@ import type {
 } from '@capacitor-community/admob';
 import {
   AD_POLICY,
+  INTERSTITIAL_POLICY,
   admobTestDevices,
   effectiveAdUnitId,
   effectiveBannerAdUnitId,
+  effectiveInterstitialAdUnitId,
   isDevEnvironment,
   personalizedAdsEnabled,
+  shouldShowInterstitial as shouldShowInterstitialGate,
 } from './ads-config';
 
 export interface NativeAdData {
@@ -41,6 +44,8 @@ type AdMobPlugin = {
   hideBanner?: () => Promise<void>;
   resumeBanner?: () => Promise<void>;
   removeBanner?: () => Promise<void>;
+  prepareInterstitial?: (opts?: Record<string, unknown>) => Promise<void>;
+  showInterstitial?: () => Promise<void>;
   addListener?: (
     event: string,
     cb: (info?: unknown) => void,
@@ -121,6 +126,9 @@ export function initializeAds(): Promise<void> {
       } catch {
         /* non-fatal */
       }
+      // Preload the interstitial ahead of need (only shown at content-
+      // session ends by the interstitial hook; never mid-watch).
+      void prepareInterstitial();
     } catch {
       /* ads are optional — app must work without them */
     }
@@ -246,6 +254,9 @@ export function setBannerWanted(wanted: boolean): void {
     bannerRetryTimer = null;
   }
   hookBannerVisibility();
+  // Taps/scrolls nudge a no-fill banner back to life once backoff allows —
+  // "the banner is there whenever the user is active".
+  hookInteractions();
 }
 
 /**
@@ -353,6 +364,7 @@ export async function showFeedBanner(): Promise<boolean> {
       bannerAdId = null;
     }
     await attachBannerListeners(plugin);
+    lastBannerAttemptAt = Date.now();
     const narrow =
       typeof window !== 'undefined' && window.innerWidth < 768;
     try {
@@ -403,4 +415,154 @@ export async function hideFeedBanner(): Promise<void> {
   } catch {
     /* ignore */
   }
+}
+
+// ── Interaction-driven banner recovery ─────────────────────────────────────
+// "The banner is back every time the user interacts" without ever becoming
+// spam: taps/scrolls nudge a hidden banner back only when the backoff
+// window has elapsed — each recovery respects the same exponential delay
+// as the timer path, so fast tapping cannot hammer the request pipeline.
+
+let lastBannerAttemptAt = 0;
+let interactionsHooked = false;
+
+/** User gesture hook: only resumes a banner that WANTS to be visible. */
+function pokeBanner(): void {
+  if (!bannerWanted || bannerState === 'shown') return;
+  const elapsed = Date.now() - lastBannerAttemptAt;
+  if (elapsed < bannerRetryDelay()) return; // same politeness as the timer
+  void showFeedBanner();
+}
+
+function hookInteractions(): void {
+  if (interactionsHooked || typeof document === 'undefined') return;
+  interactionsHooked = true;
+  const opts: AddEventListenerOptions = { passive: true };
+  ['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'].forEach((evt) => {
+    document.addEventListener(evt, pokeBanner, opts);
+  });
+}
+
+// ── Interstitial (loaded ahead of need, shown at session ends only) ────────
+
+let interstitialReady = false;
+let interstitialPreparing = false;
+let interstitialShownOnceThisSession = false;
+let lastInterstitialShownAt = 0;
+let sessionStartedAt = Date.now();
+let interstitialListenersHooked = false;
+
+/** Attach the dismiss/failed listeners once (drive the preload cycle). */
+function hookInterstitialListeners(): void {
+  if (interstitialListenersHooked || typeof document === 'undefined') return;
+  interstitialListenersHooked = true;
+  void (async () => {
+    try {
+      const { plugin } = await loadPlugin();
+      if (!plugin?.addListener) return;
+      await plugin.addListener('interstitialAdLoaded', () => {
+        interstitialReady = true;
+      });
+      await plugin.addListener('interstitialAdFailedToLoad', () => {
+        interstitialReady = false;
+        // Quietly try again later — never in a hot loop.
+        setTimeout(() => { void prepareInterstitial(); }, 60_000);
+      });
+      await plugin.addListener('interstitialAdDismissed', () => {
+        interstitialReady = false;
+        // Preload the next one so the following session end has it ready.
+        setTimeout(() => { void prepareInterstitial(); }, 5_000);
+      });
+      await plugin.addListener('interstitialAdShowed', () => {
+        lastInterstitialShownAt = Date.now();
+        interstitialShownOnceThisSession = true;
+        interstitialReady = false;
+      });
+    } catch {
+      /* listeners are best-effort */
+    }
+  })();
+}
+
+/**
+ * Preload the interstitial. Called on app start and after every show —
+ * preparing AHEAD of need means the ad is instant when a watch session
+ * ends, never blocking the transition.
+ */
+export async function prepareInterstitial(): Promise<boolean> {
+  try {
+    if (!isNativePlatform()) return false;
+    const adId = effectiveInterstitialAdUnitId();
+    if (!adId) return false;
+    if (interstitialPreparing) return true;
+    await initializeAds();
+    hookInterstitialListeners();
+    const { plugin } = await loadPlugin();
+    if (!plugin?.prepareInterstitial) return false;
+    interstitialPreparing = true;
+    try {
+      await plugin.prepareInterstitial({
+        adId,
+        isTesting: isDevEnvironment(),
+        npa: !personalizedAdsEnabled(),
+      });
+      interstitialReady = true;
+      return true;
+    } catch {
+      interstitialReady = false;
+      return false;
+    } finally {
+      interstitialPreparing = false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Show the interstitial when — and only when — every gate passes:
+ * native build, free plan, warm-up elapsed, hard interval between shows,
+ * and an ad actually preloaded. All timing checks are local cleanliness
+ * for the user; AdMob itself sees only a normal interstitial request.
+ */
+export async function maybeShowInterstitial(plan: string | null): Promise<boolean> {
+  try {
+    if (!isNativePlatform()) return false;
+    const adId = effectiveInterstitialAdUnitId();
+    if (!adId) return false;
+    try {
+      if (localStorage.getItem('equyvo_ads_disabled') === 'true') return false;
+    } catch { /* ignore */ }
+    if (!interstitialReady) {
+      // Not preloaded yet — quietly prepare for the NEXT natural moment.
+      void prepareInterstitial();
+      return false;
+    }
+    const now = Date.now();
+    if (!shouldShowInterstitialGate(plan)) return false;
+    if (now - sessionStartedAt < INTERSTITIAL_POLICY.WARMUP_SEC * 1000) return false;
+    if (interstitialShownOnceThisSession && now - lastInterstitialShownAt < INTERSTITIAL_POLICY.MIN_INTERVAL_SEC * 1000) return false;
+    const { plugin } = await loadPlugin();
+    if (!plugin?.showInterstitial) return false;
+    try {
+      await plugin.showInterstitial();
+      lastInterstitialShownAt = now;
+      interstitialShownOnceThisSession = true;
+      interstitialReady = false;
+      return true;
+    } catch {
+      interstitialReady = false;
+      void prepareInterstitial();
+      return false;
+    }
+  } catch {
+    return false;
+  }
+}
+
+/** Reset session clocks (used by tests + app relaunches). */
+export function resetInterstitialSession(): void {
+  sessionStartedAt = Date.now();
+  interstitialShownOnceThisSession = false;
+  lastInterstitialShownAt = 0;
 }

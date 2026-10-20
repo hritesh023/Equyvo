@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { api } from '@/lib/api';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -327,13 +328,47 @@ const ThoughtsPage = memo(() => {
   const videoRefs = useRef<{ [key: string]: React.RefObject<HTMLVideoElement> }>({});
   const isInitialized = useRef(false);
 
-  const [trendingTopics] = useState([
-    { name: '#AIRevolution', posts: '12.3K', trend: 'up' },
-    { name: '#WebDevelopment', posts: '8.7K', trend: 'up' },
-    { name: '#StartupLife', posts: '6.2K', trend: 'down' },
-    { name: '#TechNews', posts: '4.5K', trend: 'up' },
-    { name: '#Coding', posts: '3.8K', trend: 'stable' }
-  ]);
+  // TRENDING — server-computed engagement algorithm (GET /api/thoughts/
+  // trending): topics are real tags/#hashtags only, scored by engagement ×
+  // recency decay with 24h velocity direction. Auto-refreshes every 60s and
+  // on feed activity, so the section always reflects the current zeitgeist.
+  interface TrendingTopic {
+    name: string;
+    count: number;
+    score?: number;
+    trend: 'up' | 'down' | 'stable';
+  }
+  const [trendingTopics, setTrendingTopics] = useState<TrendingTopic[]>([]);
+  const [trendingLoading, setTrendingLoading] = useState(true);
+
+  const fetchTrending = useCallback(async (soft = false) => {
+    if (!soft) setTrendingLoading(true);
+    try {
+      const { data, error } = await api.getThoughtsTrending();
+      if (!error && data?.topics) {
+        setTrendingTopics(data.topics);
+      }
+      // On failure keep the previous real list (never fake filler).
+    } catch {
+      /* keep previous */
+    } finally {
+      if (!soft) setTrendingLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchTrending();
+    // Auto-update: poll (server re-computes past its 45s cache) + refresh
+    // instantly when any thought lifecycle/engagement event fires.
+    const poll = setInterval(() => fetchTrending(true), 60000);
+    const onActivity = () => fetchTrending(true);
+    const events = ['thoughtCreated', 'userPostCreated', 'feedRefresh', 'thoughtReacted'];
+    events.forEach((e) => window.addEventListener(e, onActivity));
+    return () => {
+      clearInterval(poll);
+      events.forEach((e) => window.removeEventListener(e, onActivity));
+    };
+  }, [fetchTrending]);
 
   // ── UX-friendly native ads: in-feed slots only, never on video ──
   const adPlan = useAdPlan();
@@ -850,9 +885,31 @@ const ThoughtsPage = memo(() => {
             </div>
           </CardHeader>
           <CardContent className="space-y-2">
-            {trendingTopics.map((topic, index) => (
-              <div 
-                key={topic.name} 
+            {trendingLoading && (
+              <div className="space-y-2">
+                {[1, 2, 3, 4].map((i) => (
+                  <div key={i} className="flex items-center justify-between p-2 rounded-lg">
+                    <div className="flex items-center gap-3">
+                      <div className="w-5 h-5 rounded bg-muted animate-pulse" />
+                      <div className="space-y-1">
+                        <div className="h-3.5 w-28 bg-muted rounded animate-pulse" />
+                        <div className="h-2.5 w-16 bg-muted rounded animate-pulse" />
+                      </div>
+                    </div>
+                    <div className="h-4 w-4 bg-muted rounded animate-pulse" />
+                  </div>
+                ))}
+              </div>
+            )}
+            {!trendingLoading && trendingTopics.length === 0 && (
+              <div className="py-4 text-center">
+                <p className="text-sm text-muted-foreground">No trending topics yet.</p>
+                <p className="text-xs text-muted-foreground mt-1">Post a thought with tags (#topic) — trends grow from real thoughts.</p>
+              </div>
+            )}
+            {!trendingLoading && trendingTopics.map((topic, index) => (
+              <div
+                key={topic.name}
                 className="flex items-center justify-between p-2 rounded-lg hover:bg-white/50 dark:hover:bg-black/20 transition-colors cursor-pointer"
                 onClick={() => handleTrendingTopicClick(topic.name)}
               >
@@ -860,7 +917,9 @@ const ThoughtsPage = memo(() => {
                   <span className="text-lg font-bold text-muted-foreground">#{index + 1}</span>
                   <div>
                     <p className="font-medium text-sm">{topic.name}</p>
-                    <p className="text-xs text-muted-foreground">{topic.posts} posts</p>
+                    <p className="text-xs text-muted-foreground">
+                      {topic.count} {topic.count === 1 ? 'thought' : 'thoughts'}
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-1">

@@ -22,7 +22,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-const navItems = [
+/** Shared navigation surface: the top bar, the mobile bottom nav and the
+ *  fullscreen desktop browse all render the same destinations. */
+export const navItems = [
   { name: 'nav.home', icon: Home, path: '/app/home' },
   { name: 'nav.discover', icon: Globe, path: '/app/discover' },
   { name: 'nav.create', icon: PlusCircle, path: '/app/create' },
