@@ -107,6 +107,34 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  // Group suggestions by type for better organization
+  const groupedSuggestions = suggestions.reduce((groups, suggestion) => {
+    if (!groups[suggestion.type]) {
+      groups[suggestion.type] = [];
+    }
+    groups[suggestion.type].push(suggestion);
+    return groups;
+  }, {} as Record<string, SearchSuggestion[]>);
+
+  // Flat, render-order list for keyboard navigation (guesses first, then
+  // AI/content, recent, trending) — arrows/Enter stay aligned with the rows
+  // the user actually sees. Declared BEFORE the handlers below: a hook
+  // dependency array reads the binding at call time, so a later declaration
+  // would be a temporal-dead-zone crash on first render.
+  const renderableSuggestions = useMemo(() => {
+    const guess = (groupedSuggestions['guess'] || []).slice(0, maxSuggestions);
+    const ai = (groupedSuggestions['ai-generated'] || []).slice(0, maxSuggestions);
+    const recent = groupedSuggestions['recent'] || [];
+    const trending = showTrending ? (groupedSuggestions['trending'] || []).slice(0, 3) : [];
+    const out = [...guess, ...ai, ...recent, ...trending];
+    return Array.isArray(out) ? out : [];
+  }, [suggestions, maxSuggestions, showTrending]);
+
+  const navIndexOf = useCallback(
+    (id: string) => renderableSuggestions.findIndex((s) => s.id === id),
+    [renderableSuggestions],
+  );
+
   // Keyboard navigation
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
     if (!isOpen || renderableSuggestions.length === 0) return;
@@ -256,33 +284,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
       'Entertainment': 'bg-pink-100 text-pink-800 dark:bg-pink-900 dark:text-pink-200'
     };
     return colors[category] || 'bg-gray-100 text-gray-800 dark:bg-gray-900 dark:text-gray-200';
-  };
-
-  // Group suggestions by type for better organization
-  const groupedSuggestions = suggestions.reduce((groups, suggestion) => {
-    if (!groups[suggestion.type]) {
-      groups[suggestion.type] = [];
-    }
-    groups[suggestion.type].push(suggestion);
-    return groups;
-  }, {} as Record<string, SearchSuggestion[]>);
-
-  // Flat, render-order list for keyboard navigation (guesses first, then
-  // AI/content, recent, trending) — arrows/Enter stay aligned with the rows
-  // the user actually sees.
-  const renderableSuggestions = useMemo(() => {
-    const guess = (groupedSuggestions['guess'] || []).slice(0, maxSuggestions);
-    const ai = (groupedSuggestions['ai-generated'] || []).slice(0, maxSuggestions);
-    const recent = groupedSuggestions['recent'] || [];
-    const trending = showTrending ? (groupedSuggestions['trending'] || []).slice(0, 3) : [];
-    const out = [...guess, ...ai, ...recent, ...trending];
-    return Array.isArray(out) ? out : [];
-  }, [suggestions, maxSuggestions, showTrending]);
-
-  const navIndexOf = useCallback(
-    (id: string) => renderableSuggestions.findIndex((s) => s.id === id),
-    [renderableSuggestions],
-  );
+  }
 
   /** Typed part dimmed, guessed completion emphasised. */
   const renderGuessLabel = (label: string, typed: string) => {

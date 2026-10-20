@@ -41,13 +41,14 @@ const VotingButtons: React.FC<VotingButtonsProps> = ({
     lg: 'h-5 w-5'
   };
 
-  const formatCount = (count: number) => {
-    if (count >= 1000000) {
-      return `${(count / 1000000).toFixed(1)}M`;
-    } else if (count >= 1000) {
-      return `${(count / 1000).toFixed(1)}K`;
+  const formatCount = (count: number | undefined | null) => {
+    const c = Number(count) || 0;
+    if (c >= 1000000) {
+      return `${(c / 1000000).toFixed(1)}M`;
+    } else if (c >= 1000) {
+      return `${(c / 1000).toFixed(1)}K`;
     }
-    return count.toString();
+    return String(c);
   };
 
   

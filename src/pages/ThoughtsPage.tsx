@@ -1060,9 +1060,9 @@ const ThoughtsPage = memo(() => {
                     <p className="text-sm leading-relaxed whitespace-pre-wrap">{thought.content}</p>
                     
                     {/* Tags */}
-                    {thought.tags.length > 0 && (
+                    {(thought.tags?.length ?? 0) > 0 && (
                       <div className="flex flex-wrap gap-2 mt-3">
-                        {thought.tags.map((tag) => (
+                        {(thought.tags ?? []).map((tag) => (
                           <Badge key={tag} variant="secondary" className="text-xs">
                             #{tag}
                           </Badge>
