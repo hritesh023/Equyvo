@@ -8,7 +8,7 @@ import type { CapacitorConfig } from '@capacitor/cli';
 const isDev = process.env.CAPACITOR_DEV === '1' || process.env.CAPACITOR_DEV === 'true';
 
 const config: CapacitorConfig = {
-  appId: 'com.equyvo.app',
+  appId: 'equyvo.acronous.com',
   appName: 'Equyvo',
   webDir: 'dist',
   server: {
