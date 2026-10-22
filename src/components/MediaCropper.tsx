@@ -240,7 +240,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
 
   const content = (
     <div
-      className="fixed inset-0 z-[200] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-[350] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
       onClick={onCancel}
       style={{ pointerEvents: 'auto' }}
     >

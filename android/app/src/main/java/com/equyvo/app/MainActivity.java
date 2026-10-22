@@ -100,6 +100,7 @@ public class MainActivity extends BridgeActivity {
             String js = "(function(){var d=document.documentElement;"
                     + "d.style.setProperty('--native-safe-top','" + pendingTop + "px');"
                     + "d.style.setProperty('--native-safe-bottom','" + pendingBottom + "px');"
+                    + "d.classList.add('cap-native');"
                     + "d.setAttribute('data-native-insets','" + lastInsetsPayload + "');})();";
             bridge.getWebView().evaluateJavascript(js, null);
             return;

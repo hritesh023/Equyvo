@@ -60,6 +60,33 @@ html.cap-native {
   bottom: var(--equyvo-bar-bottom);
 }
 
+/* ── OS-safe fullscreen overlays ────────────────────────────────────────────
+   Fullscreen players/sheets render as root-level fixed overlays OVER the
+   whole screen (outside the unibody flow), so they must reserve the OS
+   status bar & gesture-nav space themselves:
+   • Android/tablets: MainActivity (edge-to-edge) forwards the real, capped
+     system-bar + cutout insets as --native-safe-top/bottom on native builds.
+   • iPhone/iPad + browsers: the env() safe-area equivalent.
+   Floors keep the bars' designed 1rem internal padding; !important wins over
+   the bars' own p-4 so the top padding NEVER shrinks. On plain web the vars
+   resolve 0 and nothing changes. */
+.eq-safe-top {
+  padding-top: max(1rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
+}
+.eq-safe-bottom {
+  padding-bottom: max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) !important;
+}
+
+/* Radix portals (dropdown menus, popovers, selects, tooltips…) append to
+   the END of <body> — at equal z-index they tie-win over fullscreen players
+   and their dimmers coat the player buttons ("app UI covers app UI").
+   Give every portal its own high stacking context so anything rendered
+   through Radix ALWAYS renders above the fullscreen players, never under. */
+[data-radix-portal] {
+  position: relative;
+  z-index: 400;
+}
+
 /* Bar-anchored overlay screen (search "desktop / split view"): always
    rendered BETWEEN the shell's in-flow bars, so the navigation
    (Home, Discover, Create, Moments…) never disappears while it is open.
@@ -220,7 +247,7 @@ html.cap-native {
 @layer components {
   /* Story viewer styles */
   .story-viewer {
-    @apply fixed top-0 left-0 w-screen h-screen bg-black z-[99999] flex items-center justify-center;
+    @apply fixed top-0 left-0 w-screen h-screen bg-black z-[150] flex items-center justify-center;
     padding: 0 !important;
     margin: 0 !important;
     width: 100vw !important;
@@ -238,7 +265,10 @@ html.cap-native {
   }
 
   .story-progress {
-    @apply absolute top-0 left-0 right-0 z-10;
+    @apply absolute left-0 right-0 z-10;
+    /* Clear the OS status bar on edge-to-edge builds (Android/iOS/tablets);
+       drops to the designed 0.5rem when there is no system bar to dodge. */
+    top: max(0.5rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
     background: linear-gradient(to bottom, rgba(0,0,0,0.3), transparent);
   }
 
@@ -251,7 +281,8 @@ html.cap-native {
   }
 
   .story-header {
-    @apply absolute top-0 left-0 right-0 p-4 flex items-center justify-between z-10;
+    @apply absolute left-0 right-0 p-4 flex items-center justify-between z-10;
+    top: max(0.5rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
     background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
   }
 

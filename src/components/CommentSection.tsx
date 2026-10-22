@@ -517,7 +517,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({
 
   return (
     <div
-      className="fixed inset-0 z-[9999] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4"
+      className="fixed inset-0 z-[250] flex items-end justify-center bg-black/60 backdrop-blur-sm sm:items-center sm:p-4 eq-safe-bottom"
       onClick={onClose}
       role="dialog"
       aria-modal="true"

@@ -721,7 +721,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           <span className="text-xl font-bold">&gt;</span>
         </Button>
 
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-black/70 backdrop-blur-lg p-4 border-t border-white/10" onClick={(e) => e.stopPropagation()}>
+        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-black/70 backdrop-blur-lg p-4 border-t border-white/10 eq-safe-bottom" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-3">
             <div className="flex flex-col items-center flex-shrink-0">
               <Button

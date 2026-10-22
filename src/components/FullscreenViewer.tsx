@@ -80,14 +80,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [likeCount, setLikeCount] = useState<number>(0);
   const [showCommentSection, setShowCommentSection] = useState(false);
   const [isSplitView, setIsSplitView] = useState(false);
-  const [liveStreamProgress, setLiveStreamProgress] = useState(0);
-  const [liveStreamDuration] = useState(Infinity); // Live streams have infinite duration
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
   const [showImageOverlay, setShowImageOverlay] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
   const lastMouseMoveRef = useRef<number>(Date.now());
   const mouseActivityRef = useRef<boolean>(false);
-  const liveStreamIntervalRef = useRef<NodeJS.Timeout>();
   const detailsPanelTimeoutRef = useRef<NodeJS.Timeout>();
   const controlsShowCountRef = useRef<number>(0);
   const navigate = useNavigate();
@@ -136,6 +133,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                         actualContent?.contentType === 'live' ||
                         actualContent?.isLive === true ||
                         actualContent?.live === true;
+
+  // A live stream that ENDS must immediately fall back to NORMAL video
+  // seek-bar behaviour (real duration + time cursor) — never a permanent red
+  // "LIVE" rail frozen at the end of the recording. Playback events below
+  // flip this: element 'ended', or a finite duration on board with the
+  // playhead at the very end.
+  const [liveEnded, setLiveEnded] = useState(false);
+  useEffect(() => { setLiveEnded(false); }, [fallbackVideoSrc]);
+  const effectiveLive = isLiveStream && !liveEnded;
   
   // Force landscape mode for mobile videos (except moments and stories)
   const shouldForceLandscape = isMobileDevice && isVideoType && !isPortraitMoment && !isStory;
@@ -967,12 +973,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
 
   return (
     <div
-      className={`fixed inset-0 bg-black z-50 ${isSplitView ? 'flex' : ''}`}
+      className={`fixed inset-0 bg-black z-[150] ${isSplitView ? 'flex' : ''}`}
       style={getContainerStyle()}
     >
       {/* Top bar with minimal controls */}
       <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
+        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
         style={{
           paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
           pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
@@ -1085,7 +1091,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               controls={false}
               muted={false}
               loop={isPortraitMoment || isStory}
-              onTimeUpdate={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
+              onTimeUpdate={(e) => {
+                setCurrentTime(e.currentTarget.currentTime);
+                // Live → normal transition: the recording acquired a real
+                // duration and the playhead reached its end (or the element
+                // reports ended) — the seek bar becomes a regular one.
+                if (effectiveLive) {
+                  const v = e.currentTarget;
+                  const d = v.duration;
+                  if (v.ended || (isFinite(d) && d > 0 && v.currentTime >= d - 0.4)) {
+                    setLiveEnded(true);
+                  }
+                }
+              }}
+              onEnded={() => { if (effectiveLive) setLiveEnded(true); }}
               onSeeked={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
               onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); }}
             />
@@ -1099,7 +1118,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           )}
           
           {/* Combined bottom overlay with video info and controls */}
-          <div className="absolute bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none">
+          <div className="absolute bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none eq-safe-bottom">
             {/* Details Section - above controls */}
             {!isSplitView && (
               <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0'}`}
@@ -1261,7 +1280,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             >
               {/* Progress Bar — hover/drag shows a small preview window above the bar */}
               <div className="relative mb-3">
-                {isLiveStream ? (
+                {effectiveLive ? (
                   <div className="relative">
                     <div className="flex items-center justify-between mb-1">
                       <span className="text-red-500 text-xs font-medium flex items-center gap-1">
@@ -1269,7 +1288,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                         LIVE
                       </span>
                       <span className="text-white text-xs font-medium">
-                        {formatTime(liveStreamProgress)}
+                        {formatTime(currentTime)}
                       </span>
                     </div>
                     <div className="w-full h-2 bg-red-500/30 rounded-lg overflow-hidden">
@@ -1343,7 +1362,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   </div>
                   
                   <span className="text-white text-sm font-medium">
-                    {isLiveStream ? `LIVE ${formatTime(liveStreamProgress)}` : `${formatTime(currentTime)} / ${formatTime(duration || 100)}`}
+                    {effectiveLive ? `LIVE ${formatTime(currentTime)}` : `${formatTime(currentTime)} / ${formatTime(duration || 100)}`}
                   </span>
                 </div>
                 
@@ -1371,7 +1390,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       {/* Split View Bottom Bar - appears inside video container */}
       {isSplitView && isVideoType && videoSrc && (
         <div
-          className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4"
+          className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 eq-safe-bottom"
           style={{
             paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
           }}
@@ -1518,7 +1537,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       {/* Split View Bottom Bar - appears inside image container */}
       {isSplitView && !isVideoType && actualType === 'image' && (
         <div
-          className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4"
+          className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 eq-safe-bottom"
           style={{
             paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
           }}
