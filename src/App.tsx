@@ -182,12 +182,11 @@ const AppContent = () => {
   }
 
   return (
-    /* Unibody shell (phones): ONE body — [top bar] [scrollable content]
-       [bottom nav] stacked in normal flow inside a 100dvh flex column.
-       The bars own their rows, so no page element can ever be cut off
-       behind them (full-viewport overlays keep their safe-area anchoring
-       via measured --equyvo-bar-* vars). Desktop keeps the classic
-       scrolling window. */
+    /* Unibody shell (phones): ONE body — [scrollable content] [bottom nav]
+       stacked in normal flow inside a 100dvh flex column. There is NO top
+       header on phones (removed completely): the content column reserves the
+       OS status-bar safe area itself, and the bottom nav is the single
+       persistent navigation surface. Desktop keeps the top nav + sidebar. */
     <div className="flex flex-col overflow-hidden bg-background text-foreground h-screen h-[100dvh] md:h-auto md:min-h-screen md:overflow-visible">
       {shouldShowNavbar && <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />}
       
@@ -200,7 +199,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain' : ''} edge-fill`}>
+        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pt-[var(--equyvo-safe-top)]' : ''} edge-fill`}>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />

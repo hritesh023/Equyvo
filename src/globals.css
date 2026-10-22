@@ -3,9 +3,11 @@
 @tailwind utilities;
 
 /* ── Unibody layout contract (single source of truth) ─────────────────────
-   The mobile app is ONE BODY: [top bar] [scrollable content] [bottom nav]
-   stacked in normal flow inside a 100dvh flex column. No fixed overlay
-   bands anywhere — nothing can ever hide behind the header on any page.
+   Phones are ONE BODY: [scrollable content] [bottom nav] stacked in normal
+   flow inside a 100dvh flex column. There is NO top header on phones — the
+   content column reserves the OS status-bar area itself and the bottom nav
+   is the only persistent bar. No fixed overlay band, so nothing can ever be
+   hidden behind app chrome.
 
    HARD, CONCRETE inset protection — no value can ever collapse to 0 on a
    phone, whatever insets are reported (0, huge cutout boxes, lost vars…).
@@ -15,11 +17,13 @@
    BOTTOM = 28px floor — clears every gesture bar + curved screen footer.
    SIDES  = 0 — content uses the full width, straight into curved edges.
 
-   The floors are consumed ONLY inside the in-flow bars (their padding).
-   Both bars also publish their exact rendered height to CSS:
-     --equyvo-bar-top / --equyvo-bar-bottom (measured by Navbar.tsx,
-     floored by the fallback values below so layout still resolves on the
-     very first paint or if JS measurement ever failed). */
+   The top floor is consumed by the content column (and by fixed overlays
+   anchored with .nav-top-safe). The bottom bar publishes its exact rendered
+   height to CSS:
+     --equyvo-bar-bottom (measured by Navbar.tsx, floored by the fallback
+     value below so layout still resolves on the very first paint or if JS
+     measurement ever failed). Phones set --equyvo-bar-top to the OS safe
+     area only (there is no header to measure). */
 :root {
   /* Website / browsers: floor wins over env() (max ≥ 48). */
   --equyvo-safe-top: max(48px, env(safe-area-inset-top, 0px));
@@ -30,6 +34,16 @@
   /* Fallback bar heights (JS measurement refines to exact pixels). */
   --equyvo-bar-top: calc(var(--equyvo-safe-top) + 3.25rem);
   --equyvo-bar-bottom: calc(4rem + var(--equyvo-safe-bottom));
+}
+
+/* Phones have NO in-flow top header (removed completely). The content
+   column starts directly below the OS status bar, and every fixed overlay
+   anchored with .nav-top-safe starts there too — never under the OS UI.
+   (Desktop/tablet keep the top nav and its measured height fallback.) */
+@media (max-width: 767px) {
+  :root {
+    --equyvo-bar-top: var(--equyvo-safe-top);
+  }
 }
 
 /* Deliberate pinch-zoom engine (src/lib/display.tsx) scales the APP layout

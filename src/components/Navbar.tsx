@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { useI18n } from '@/lib/i18n';
 import { Link, useLocation } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
-import { Home, Compass, PlusCircle, Video, MessageSquare, User, Search, Bell, LogOut, Settings, Globe, Camera } from 'lucide-react';
+import { Home, PlusCircle, MessageSquare, User, LogOut, Settings, Globe, Camera } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -13,14 +13,6 @@ import AppLogo from './AppLogo';
 import { showSuccess } from '@/utils/toast';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 
 /** Shared navigation surface: the top bar, the mobile bottom nav and the
  *  fullscreen desktop browse all render the same destinations. */
@@ -79,17 +71,6 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const location = useLocation();
   const isMobile = useIsMobile();
   const navigate = useNavigate();
-  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
-  const topBarRef = useRef<HTMLDivElement>(null);
-
-  // Publish the exact top-bar height (--equyvo-bar-top).
-  useFlowBarMeasure(topBarRef, '--equyvo-bar-top');
-
-  // Close the mobile search dialog as soon as navigation happens (e.g. tapping
-  // a profile in the suggestions) so it never traps the user on the home screen.
-  useEffect(() => {
-    setMobileSearchOpen(false);
-  }, [location.pathname]);
 
   // Handle null user gracefully: check stored user as fallback.
   // No invented fallback identity — without a real account nothing renders.
@@ -133,62 +114,13 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
     navigate(`/app/search?q=${encodeURIComponent(query)}`);
   }, [navigate]);
 
-  const handleMobileSearch = useCallback((query: string) => {
-    showSuccess(`Searching for "${query}"...`);
-    navigate(`/app/search?q=${encodeURIComponent(query)}`);
-    setMobileSearchOpen(false);
-  }, [navigate]);
-
 
   return (
     <>
-      {/* Mobile Top Bar — IN FLOW at the top of the unibody shell. Content
-          below it can never be covered by this bar (it owns its row), and
-          its safe-area padding keeps it clear of the status bar / notch. */}
-      {isMobile && (
-        <div
-          ref={topBarRef}
-          className="mobile-top-nav-fill relative z-50 shrink-0 border-b border-border/50 bg-background"
-        >
-          <div className="flex items-center justify-between px-3 py-2">
-            {/* Logo and Search */}
-            <div className="flex items-center gap-2 flex-1">
-              <Link to="/" className="flex items-center gap-2">
-                <AppLogo className="h-6 w-6" />
-                <span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>Equyvo</span>
-              </Link>
-            </div>
-            
-            {/* Search Button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setMobileSearchOpen(true)}
-              className="text-foreground hover:bg-accent/50 transition-all duration-200 h-8 w-8"
-            >
-              <Search className="h-4 w-4" />
-            </Button>
-            
-            {/* Theme Toggle + Notifications */}
-            <NotificationBell />
-            <ThemeToggle />
-            
-            {/* User Avatar */}
-            {effectiveUser && (
-              <Avatar 
-                className="h-6 w-6 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
-                onClick={() => navigateToProfile(navigate)}
-                title="Your Profile"
-              >
-                <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
-                <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
-              </Avatar>
-            )}
-          </div>
-        </div>
-      )}
-      
-      {/* Desktop Navigation — full-bleed bar, readable centered content */}
+      {/* Desktop Navigation — full-bleed bar, readable centered content.
+          Phones have NO top header at all: every app screen starts directly
+          with its content below the OS status bar, and the single persistent
+          navigation surface is the bottom nav. */}
       {!isMobile && (
         <nav className="z-50 w-full bg-background">
           <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-2 py-2 sm:px-3 md:px-4 md:py-3">
@@ -257,27 +189,6 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         </nav>
       )}
 
-      {/* Mobile Search Dialog */}
-      {isMobile && (
-        <Dialog open={mobileSearchOpen} onOpenChange={setMobileSearchOpen}>
-          <DialogContent className="fixed inset-0 w-full h-full max-w-none translate-x-0 translate-y-0 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[95vw] sm:max-w-md sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-lg bg-background/95 backdrop-blur-lg border-border/50 overflow-y-auto" aria-describedby={undefined}>
-            <DialogHeader>
-              <DialogTitle>Search Equyvo</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <SearchSuggest
-                onSearch={handleMobileSearch}
-                onClose={() => setMobileSearchOpen(false)}
-                placeholder="Search for content, users, tags..."
-                autoFocus={true}
-                showTrending={false}
-                maxSuggestions={5}
-              />
-            </div>
-            {/* Done button removed — search is full-screen now. */}
-          </DialogContent>
-        </Dialog>
-      )}
     </>
   );
 };
@@ -307,7 +218,7 @@ export function MobileBottomNav() {
       className="mobile-bottom-nav-fill relative z-50 shrink-0 border-t border-border/50 bg-background shadow-lg"
     >
       <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2">
-      {navItems.slice(0, 5).map((item) => (
+      {navItems.slice(0, 6).map((item) => (
         <Link
           key={item.name}
           to={item.path}
@@ -321,18 +232,6 @@ export function MobileBottomNav() {
           <span className="sr-only">{t(item.name)}</span>
         </Link>
       ))}
-      {/* More options button */}
-      <Link
-        to="/app/settings"
-        className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === '/app/settings'
-          ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
-          : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
-          }`}
-      >
-        <Settings className="h-5 w-5 shrink-0" />
-        <span className="max-w-full truncate text-[10px] font-medium">More</span>
-        <span className="sr-only">More options</span>
-      </Link>
       </div>
     </div>
   );

@@ -34,13 +34,18 @@
   <div id="root">
   </div>
   <script>
-    // Production-safe global error hook: log for diagnostics only.
+    // Production-safe global error hooks: log for diagnostics only.
     // Never render error internals into the UI (no debug overlays).
     window.onerror = function (message, source, lineno, colno, error) {
       try {
         console.error('Global Error:', message, 'At:', source + ':' + lineno + ':' + colno, error);
       } catch { /* ignore */ }
     };
+    window.addEventListener('unhandledrejection', function (event) {
+      try {
+        console.error('Unhandled Rejection:', event.reason);
+      } catch { /* ignore */ }
+    });
   </script>
   <script type="module" src="/src/main.tsx"></script>
 </body>
