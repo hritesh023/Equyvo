@@ -142,54 +142,52 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
 
   return (
     <>
-      {/* Mobile Top Bar — the ONE perfect header, restored: logo + wordmark,
-          search, notifications, theme and profile in a single in-flow row.
-          It owns its row of the unibody shell, so content can never slide
-          under it, and its safe-area padding keeps it clear of the status
-          bar / notch. Rendered exactly once per app start — never on the
-          loading page, never stacked with any page-local bar. */}
+      {/* Mobile Top Bar — the OLD header design (as at commit 498a408),
+          restored verbatim: logo + "Equyvo" wordmark left, then search,
+          notifications, theme and profile avatar in one row. IN FLOW at the
+          top of the unibody shell — it owns its row, so content can never
+          slide under it; safe-area padding keeps it clear of the status
+          bar / notch (edge-to-edge contract unchanged). */}
       {isMobile && (
         <div
           ref={topBarRef}
           className="mobile-top-nav-fill relative z-50 shrink-0 border-b border-border/50 bg-background"
         >
-          <div className="flex items-center justify-between gap-2 py-2">
-            {/* Logo + wordmark (single instance, links home) */}
-            <Link to="/app/home" className="flex items-center gap-2 shrink-0" aria-label="Equyvo home">
-              <AppLogo className="h-6 w-6" />
-              <span className="text-base font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>equyvo</span>
-            </Link>
-
-            <div className="flex items-center gap-1">
-              {/* Search button — opens the full-screen search overlay */}
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setMobileSearchOpen(true)}
-                aria-label="Search Equyvo"
-                className="text-foreground hover:bg-accent/50 transition-all duration-200 h-9 w-9"
-              >
-                <Search className="h-[18px] w-[18px]" />
-              </Button>
-
-              {/* Notifications */}
-              <NotificationBell />
-
-              {/* Theme */}
-              <ThemeToggle />
-
-              {/* Profile button */}
-              {effectiveUser && (
-                <Avatar
-                  className="h-7 w-7 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
-                  onClick={() => navigateToOwnProfile(navigate)}
-                  title="Your Profile"
-                >
-                  <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
-                  <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
-                </Avatar>
-              )}
+          <div className="flex items-center justify-between px-3 py-2">
+            {/* Logo and Search */}
+            <div className="flex items-center gap-2 flex-1">
+              <Link to="/" className="flex items-center gap-2">
+                <AppLogo className="h-6 w-6" />
+                <span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>Equyvo</span>
+              </Link>
             </div>
+
+            {/* Search Button */}
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setMobileSearchOpen(true)}
+              aria-label="Search Equyvo"
+              className="text-foreground hover:bg-accent/50 transition-all duration-200 h-8 w-8"
+            >
+              <Search className="h-4 w-4" />
+            </Button>
+
+            {/* Theme Toggle + Notifications */}
+            <NotificationBell />
+            <ThemeToggle />
+
+            {/* User Avatar */}
+            {effectiveUser && (
+              <Avatar
+                className="h-6 w-6 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                onClick={() => navigateToOwnProfile(navigate)}
+                title="Your Profile"
+              >
+                <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
+                <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+              </Avatar>
+            )}
           </div>
         </div>
       )}
@@ -276,8 +274,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                 onClose={() => setMobileSearchOpen(false)}
                 placeholder="Search for content, users, tags..."
                 autoFocus={true}
-                showTrending={true}
-                maxSuggestions={6}
+                showTrending={false}
+                maxSuggestions={5}
               />
             </div>
           </DialogContent>
