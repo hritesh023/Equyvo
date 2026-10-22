@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff, ThumbsUp } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -15,6 +15,7 @@ import ShareButton from '@/components/ShareButton';
 import { showSuccess, showError } from '@/utils/toast';
 import { useAudio } from '../contexts/AudioContext';
 import { useMediaSession } from '@/hooks/use-media-session';
+import { useBackOverlay } from '@/lib/back-navigation';
 import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
 import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
@@ -95,6 +96,13 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       window.dispatchEvent(new CustomEvent('storyViewerClosed'));
     };
   }, []);
+
+  // Hardware/system back: first press closes the story rail and returns to
+  // the profile/feed underneath — the app itself is never exited.
+  useBackOverlay(true, useCallback(() => {
+    onClose();
+    return true;
+  }, [onClose]));
 
   const togglePlayPause = () => {
     const video = videoRef.current;

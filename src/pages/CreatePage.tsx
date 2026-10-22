@@ -18,6 +18,7 @@ import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
+import { setAppBusy } from '@/lib/back-navigation';
 import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 
 // Helper to get current user info from localStorage
@@ -468,6 +469,15 @@ const CreatePage = () => {
   const [showContentManagement, setShowContentManagement] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'moments' | 'text-stories'>('all');
   const [isUploading, setIsUploading] = useState(false);
+  // Hardware/system-back busy guard: while an upload runs, a stray back press
+  // can never silently leave the page and lose progress — the coordinator
+  // shows "press back again"; a deliberate second press still lets them go.
+  useEffect(() => {
+    if (isUploading) {
+      setAppBusy(true);
+      return () => setAppBusy(false);
+    }
+  }, [isUploading]);
   // Publish-progress bar state (exact byte progress from the upload runner).
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(null);
   // Plan caps for pre-publish validation (size / length) + upgrade hints.

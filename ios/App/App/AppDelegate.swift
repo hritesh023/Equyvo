@@ -7,7 +7,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // iOS/iPadOS edge-swipe back: enable the native history gesture on the
+        // Capacitor WKWebView. The web history stack mirrors SPA routes, so
+        // swiping from the screen edge navigates INSIDE the app (previous
+        // page / unwinds overlays through history) instead of doing nothing.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+            guard let self = self else { return }
+            let bridge = self.window?.rootViewController as? CAPBridgeViewController
+            bridge?.webView?.allowsBackForwardNavigationGestures = true
+        }
         return true
     }
 

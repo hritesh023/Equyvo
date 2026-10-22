@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
@@ -31,6 +31,7 @@ import { initializeAds } from './lib/admob-service';
 import { useAdPlan } from './hooks/use-ad-plan';
 import { useFeedBanner } from './hooks/use-feed-banner';
 import { useInterstitialTrigger } from './hooks/use-interstitial';
+import { initBackNavigation, setGoBack, trackNavigation } from './lib/back-navigation';
 
 function extractTokenFromUrl(): string | null {
   const params = new URLSearchParams(window.location.search);
@@ -52,6 +53,23 @@ const AppContent = () => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
+
+  // ── Hardware/system back wiring ────────────────────────────────────────
+  // Every source navigation is mirrored into the coordinator's in-app depth:
+  // link taps/stores push, history back pops — so the Android back button
+  // walks the PREVIOUS page instead of closing the app. React Router is also
+  // handed over as the "go to previous page" implementation.
+  const navigationType = useNavigationType();
+  const firstNavMirror = useRef(true);
+  useEffect(() => {
+    // The initial deep-load is not a navigation — don't count it.
+    if (firstNavMirror.current) { firstNavMirror.current = false; return; }
+    trackNavigation(navigationType);
+    // location.key changes on EVERY navigation (even same-path pushes).
+  }, [location.key]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    setGoBack(() => navigate(-1));
+  }, [navigate]);
 
   // Adaptive feed banner (Free tier, feed routes only — never on video).
   const adPlan = useAdPlan();
@@ -227,6 +245,7 @@ const App = () => {
   // Initialize Mobile Ads SDK once (no-op on web; real fill on native shell).
   React.useEffect(() => {
     initializeAds();
+    initBackNavigation();
   }, []);
   if (!showApp) {
     return <SplashScreen onFinish={() => setShowApp(true)} />;

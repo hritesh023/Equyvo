@@ -10,6 +10,7 @@ import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { avatarOf } from '@/utils/avatar';
+import { useBackOverlay } from '@/lib/back-navigation';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
@@ -85,6 +86,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const detailsPanelTimeoutRef = useRef<NodeJS.Timeout>();
   const controlsShowCountRef = useRef<number>(0);
   const navigate = useNavigate();
+
+  // ── Hardware/system back inside the viewer ─────────────────────────────
+  // First press peels the top sub-panel off (fullscreen → details → image
+  // info → comments), the final press CLOSES THE VIEWER (returns to the
+  // feed underneath) — the app itself is never exited from here.
+  const handleBackInViewer = useCallback((): boolean => {
+    try {
+      if (document.fullscreenElement) { void document.exitFullscreen(); return true; }
+    } catch { /* ignore */ }
+    if (showDetailsPanel) { setShowDetailsPanel(false); return true; }
+    if (showImageOverlay) { setShowImageOverlay(false); return true; }
+    if (showCommentSection) { setShowCommentSection(false); return true; }
+    onClose();
+    return true;
+  }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose]);
+  useBackOverlay(true, handleBackInViewer);
 
   // Detect mobile device and orientation
   const isMobileDevice = window.innerWidth < 768;

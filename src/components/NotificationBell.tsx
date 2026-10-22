@@ -13,6 +13,7 @@ import {
   declineFollowRequest,
   type AppNotification,
 } from '@/lib/notifications';
+import { useBackOverlay } from '@/lib/back-navigation';
 
 const kindLabel: Record<AppNotification['kind'], string> = {
   follow_request: 'Follow request',
@@ -32,6 +33,10 @@ const kindLabel: Record<AppNotification['kind'], string> = {
  */
 export function NotificationBell() {
   const [open, setOpen] = useState(false);
+  // Hardware/system back: the first press closes this panel and returns to
+  // the page underneath — never exits the app (it's a custom portal, so the
+  // Radix Escape fallback doesn't reach it; registered directly).
+  useBackOverlay(open, () => { setOpen(false); return true; });
   const [items, setItems] = useState<AppNotification[]>(() => listNotifications());
   const [count, setCount] = useState(() => unreadCount());
   const [busy, setBusy] = useState<string | null>(null);
