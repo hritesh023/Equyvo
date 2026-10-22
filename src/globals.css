@@ -49,6 +49,24 @@ html.cap-native {
   bottom: var(--equyvo-bar-bottom);
 }
 
+/* Bar-anchored overlay screen (search "desktop / split view"): always
+   rendered BETWEEN the shell's in-flow bars, so the navigation
+   (Home, Discover, Create, Moments…) never disappears while it is open.
+   md+ has no bottom nav in the shell, so only the top bar anchors there. */
+.bar-anchored-overlay {
+  position: fixed;
+  left: 0;
+  right: 0;
+  top: var(--equyvo-bar-top, calc(var(--equyvo-safe-top) + 3.25rem));
+  bottom: var(--equyvo-bar-bottom, calc(4rem + var(--equyvo-safe-bottom)));
+}
+
+@media (min-width: 768px) {
+  .bar-anchored-overlay {
+    bottom: 0;
+  }
+}
+
 /* Exact unibody content-column height (between the in-flow bars) for
    viewports that fill the screen edge to edge: moments feed, chat
    shells… Replaces every hand-guessed 100dvh calc() on mobile. */

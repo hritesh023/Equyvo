@@ -10,7 +10,6 @@ import { avatarOf } from '@/utils/avatar';
 import { useI18n } from '@/lib/i18n';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
-import AppLogo from '@/components/AppLogo';
 import { navItems } from '@/components/Navbar';
 
 interface FullscreenBrowseProps {
@@ -131,19 +130,16 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
   };
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col">
-      {/* Header — the main navbar lives INSIDE the desktop view so Home,
-          Discover, Moments, etc. stay reachable in fullscreen mode. */}
+    <div className="bar-anchored-overlay bg-black z-50 flex flex-col">
+      {/* Header — anchored between the shell's bars, so the app navigation
+          (Home, Discover, Moments…) stays visible while browsing. The
+          internal strip mirrors the same destinations. */}
       <div className="bg-black/90 backdrop-blur-md border-b border-white/10 pt-3 pb-0">
         <div className="flex items-center justify-between max-w-7xl mx-auto px-4 py-2">
-          <button
-            onClick={() => goNav('/app/home')}
-            className="flex items-center gap-3 cursor-pointer"
-            title="Home"
-          >
-            <AppLogo alt="Equyvo" className="h-8 w-8" />
-            <h1 className="text-white text-xl font-bold">Equyvo</h1>
-          </button>
+          <span className="flex items-center gap-2 text-white/70">
+            <Compass className="h-5 w-5" />
+            <h1 className="text-white text-base font-semibold">Desktop Browse</h1>
+          </span>
           <div className="flex items-center gap-2">
             <Button
               variant="ghost"
@@ -156,9 +152,10 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
             </Button>
           </div>
         </div>
-        {/* Nav strip: Home · Discover · Create · Moments · Thoughts · Profile · Settings */}
+        {/* Nav strip: Home · Discover · Create · Moments · Thoughts · Profile · Settings.
+            Wraps instead of scrolling sideways, so nothing needs a drag. */}
         <nav className="max-w-7xl mx-auto px-4">
-          <div className="flex items-center gap-1 sm:gap-2 overflow-x-auto no-scrollbar pb-2">
+          <div className="flex items-center flex-wrap gap-1 sm:gap-2 pb-2">
             <span className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-white/40 mr-2 shrink-0">
               <Compass className="h-3.5 w-3.5" /> Browse
             </span>
@@ -168,7 +165,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                 <button
                   key={item.name}
                   onClick={() => goNav(item.path)}
-                  className={`flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-all duration-200 border ${
+                  className={`flex items-center gap-1.5 rounded-full px-2.5 sm:px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-all duration-200 border ${
                     active
                       ? 'bg-primary/20 text-white border-primary/40'
                       : 'bg-white/5 text-white/70 border-transparent hover:bg-white/10 hover:text-white'
@@ -185,7 +182,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
 
       {/* Main Content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-7xl mx-auto p-6">
+        <div className="max-w-7xl mx-auto p-4 sm:p-6">
           {isLoading ? (
             <div className="flex items-center justify-center py-24 text-white/70">
               <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white/60"></div>

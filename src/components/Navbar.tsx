@@ -286,7 +286,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
  * (rendered by App.tsx after <main>). Its safe-area padding keeps it clear
  * of the gesture bar, and it can never overlay page content because it
  * occupies its own row below the scrollable column.
- * Hidden on the search page so search stays full-screen.
+ * Rendered on every page — including search/tag browse — so the app
+ * navigation (Home, Discover, Create, Moments…) is always reachable.
  */
 export function MobileBottomNav() {
   const { t } = useI18n();
@@ -297,10 +298,7 @@ export function MobileBottomNav() {
   // Publish the exact bottom-nav height (--equyvo-bar-bottom).
   useFlowBarMeasure(barRef, '--equyvo-bar-bottom');
 
-  const isSearchPage = location.pathname === '/app/search' || location.pathname === '/search';
-
   if (!isMobile) return null;
-  if (isSearchPage) return null;
 
   return (
     <div

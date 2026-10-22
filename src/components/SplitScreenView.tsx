@@ -90,18 +90,20 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
 
   return (
     <div className={cn(
-      'fixed inset-0 bg-background/95 backdrop-blur-sm z-50 flex',
-      isFullscreen && 'p-0',
+      // Bar-anchored overlay: sits between the shell's in-flow bars so the
+      // app navigation (Home, Discover, Create, Moments…) stays visible
+      // while the desktop/split view is open.
+      'bar-anchored-overlay bg-background/95 backdrop-blur-sm z-50 flex',
       className
     )}>
       <div className={cn(
-        'flex w-full h-full',
-        isFullscreen ? 'gap-0' : 'gap-4 p-4'
+        'flex min-h-0 w-full h-full flex-col sm:flex-row',
+        isFullscreen ? 'gap-0' : 'gap-2 p-2 sm:gap-4 sm:p-4'
       )}>
         {/* Left Panel - Video/Content Viewer */}
         <div className={cn(
-          'flex-1 flex flex-col bg-background',
-          isFullscreen ? 'w-2/3' : 'w-1/2'
+          'flex-1 min-h-0 flex flex-col bg-background overflow-hidden',
+          isFullscreen ? 'sm:w-2/3' : ''
         )}>
           {selectedItem ? (
             <>
@@ -234,10 +236,11 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
           )}
         </div>
 
-        {/* Right Panel - Content List for Browsing */}
+        {/* Right Panel - Content List for Browsing (stacks under the viewer
+            on phones so both halves are usable without horizontal squeeze) */}
         <div className={cn(
-          'bg-background border-l border-border overflow-hidden flex flex-col',
-          isFullscreen ? 'w-1/3' : 'w-1/2 max-w-md'
+          'bg-background border-t sm:border-t-0 sm:border-l border-border overflow-hidden flex flex-col h-[45%] shrink-0 sm:h-auto sm:shrink sm:min-h-0',
+          isFullscreen ? 'sm:w-1/3' : 'sm:w-1/2 sm:max-w-md'
         )}>
           {/* Header */}
           <div className="p-4 border-b border-border">

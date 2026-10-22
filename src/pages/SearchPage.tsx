@@ -258,8 +258,8 @@ const SearchPage: React.FC = () => {
           min-height for the desktop layout. */}
       <div className="min-h-full md:min-h-screen bg-background">
         <div className="bg-background">
-          <div className="container mx-auto px-4 py-4">
-            <div className="flex flex-col md:flex-row gap-4 items-center">
+          <div className="container mx-auto px-3 sm:px-4 py-4">
+            <div className="flex flex-col md:flex-row gap-2 sm:gap-4 md:items-center">
               {/* Search Input */}
               <div className="w-full md:max-w-2xl">
                 <SearchSuggest
@@ -269,10 +269,12 @@ const SearchPage: React.FC = () => {
                 />
               </div>
               
-              {/* Filters and View Mode */}
-              <div className="flex items-center gap-4">
+              {/* Filters and View Mode — wraps onto multiple rows on small
+                  screens so the Grid / List / Desktop buttons are always on
+                  screen (the page never requires horizontal dragging). */}
+              <div className="flex flex-wrap items-center gap-2 sm:gap-4">
                 <Select value={sortBy} onValueChange={handleSortChange}>
-                  <SelectTrigger className="w-32">
+                  <SelectTrigger className="h-9 w-[7.5rem] sm:w-32 shrink-0">
                     <SelectValue placeholder="Sort by" />
                   </SelectTrigger>
                   <SelectContent>
@@ -284,7 +286,7 @@ const SearchPage: React.FC = () => {
                 </Select>
                 
                 <Select value={filterCategory} onValueChange={handleCategoryFilter}>
-                  <SelectTrigger className="w-32">
+                  <SelectTrigger className="h-9 w-[8rem] sm:w-32 shrink-0">
                     <SelectValue placeholder="Category" />
                   </SelectTrigger>
                   <SelectContent>
@@ -296,12 +298,14 @@ const SearchPage: React.FC = () => {
                   </SelectContent>
                 </Select>
                 
-                <div className="flex items-center border rounded-md">
+                <div className="flex items-center border rounded-md shrink-0">
                   <Button
                     variant={viewMode === 'grid' ? 'default' : 'ghost'}
                     size="sm"
                     onClick={() => setViewMode('grid')}
                     className="rounded-r-none"
+                    title="Grid View"
+                    aria-label="Grid View"
                   >
                     <Grid className="h-4 w-4" />
                   </Button>
@@ -310,15 +314,18 @@ const SearchPage: React.FC = () => {
                     size="sm"
                     onClick={() => setViewMode('list')}
                     className="rounded-none border-l border-r"
+                    title="List View"
+                    aria-label="List View"
                   >
                     <List className="h-4 w-4" />
                   </Button>
                   <Button
-                    variant={viewMode === 'split' ? 'default' : 'ghost'}
+                    variant={showSplitScreen ? 'default' : 'ghost'}
                     size="sm"
                     onClick={handleSplitScreenToggle}
                     className="rounded-l-none"
-                    title="Split Screen View"
+                    title="Desktop View (split screen)"
+                    aria-label="Desktop View (split screen)"
                   >
                     <Monitor className="h-4 w-4" />
                   </Button>
