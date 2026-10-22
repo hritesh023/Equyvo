@@ -11,6 +11,7 @@ import { FullscreenContent } from '@/types';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { avatarOf } from '@/utils/avatar';
 import { useBackOverlay } from '@/lib/back-navigation';
+import { useVideo2xPress } from '@/lib/video-2x';
 import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
@@ -56,6 +57,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     (window as any).tempFullscreenContent = null;
   }
   const videoRef = useRef<HTMLVideoElement>(null);
+
+  // Hold-to-2× scrub: long-press right = fast-forward at 2× the speed,
+  // long-press left = rewind at 2× (long videos, moments & live streams).
+  useVideo2xPress(() => [videoRef.current]);
   const [isPlaying, setIsPlaying] = useState(true);
   // Signal fullscreen takeover so the feed banner stays hidden while video
   // plays (no overlays, no interruptions).

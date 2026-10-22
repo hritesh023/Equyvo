@@ -21,6 +21,7 @@ import { showError } from '@/utils/toast';
 import ReportModal from '@/components/ReportModal';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import api from '@/lib/api';
+import { useVideo2xPress } from '@/lib/video-2x';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -37,6 +38,11 @@ const MomentsPage = () => {
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
   const containerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<(HTMLVideoElement | null)[]>([]);
+
+  // Hold-to-2× scrub in the vertical moments feed: long-press right =
+  // forward at 2×, long-press left = rewind at 2× (looping clips restore
+  // their speed/state on release).
+  useVideo2xPress(() => videoRefs.current.filter(Boolean) as HTMLVideoElement[]);
   const scrollTimeoutRef = useRef<NodeJS.Timeout>();
   const activeVideoIndexRef = useRef(activeVideoIndex);
   activeVideoIndexRef.current = activeVideoIndex;

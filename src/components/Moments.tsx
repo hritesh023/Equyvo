@@ -5,6 +5,7 @@ import { Play, Pause, Video, Camera, Eye, EyeOff, ThumbsUp, MessageCircle, Volum
 import { showSuccess, showError } from '@/utils/toast';
 import { handleAsyncError, createError } from '@/utils/error-handling';
 import { usePlatformOptimizations } from '@/hooks/use-platform-optimizations';
+import { useVideo2xPress } from '@/lib/video-2x';
 import SaveButton from '@/components/SaveButton';
 import DeleteButton from '@/components/ui/DeleteButton';
 import { getStoredUser } from '@/lib/auth';
@@ -79,6 +80,10 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   const [isSeeking, setIsSeeking] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const videoRefs = useRef<{[key: string]: HTMLVideoElement}>({});
+
+  // Hold-to-2× scrub on any moments video (grid preview + vertical rail):
+  // long-press right = forward at 2×, long-press left = rewind at 2×.
+  useVideo2xPress(() => Object.values(videoRefs.current));
   const playingVideosRef = useRef(playingVideos);
   playingVideosRef.current = playingVideos;
   const isMutedRef = useRef(isMuted);
