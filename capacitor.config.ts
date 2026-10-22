@@ -33,6 +33,16 @@ const config: CapacitorConfig = {
     backgroundColor: '#000000'
   },
   plugins: {
+    // Play Console Android-15 guidance (SDK 35+ target): the app handles
+    // window insets itself — MainActivity.enableEdgeToEdge() + a real
+    // ViewCompat insets listener forward measured system-bar/cutout insets
+    // as --native-safe-top/bottom, which the web CSS consumes (globals.css).
+    // Capacitor's own --safe-area-inset-* injection is therefore redundant:
+    // disable it so the app has ONE deterministic insets source of truth on
+    // Android 15 edge-to-edge, on every device class.
+    SystemBars: {
+      insetsHandling: 'disable',
+    },
     SplashScreen: {
       // Handoff timing: the web splash (SplashScreen.tsx) runs 1.5s + 0.3s
       // fade. The native splash auto-hides at exactly 1800ms so the launch
