@@ -260,6 +260,5 @@ export function useVideo2xPress(
       for (const v of Array.from(attached)) detach(v);
       hideOverlay();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 }

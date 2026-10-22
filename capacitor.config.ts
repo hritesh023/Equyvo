@@ -34,7 +34,11 @@ const config: CapacitorConfig = {
   },
   plugins: {
     SplashScreen: {
-      launchShowDuration: 3000,
+      // Handoff timing: the web splash (SplashScreen.tsx) runs 1.5s + 0.3s
+      // fade. The native splash auto-hides at exactly 1800ms so the launch
+      // logo is shown ONCE in one continuous piece — never a second logo
+      // popping after the first.
+      launchShowDuration: 1800,
       launchAutoHide: true,
       backgroundColor: '#000000',
       androidSplashResourceName: 'splash',

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { X, MoreVertical, MessageCircle, Send, Volume2, VolumeX, Play, Pause, Bookmark, Flag, Trash2, Share2, RotateCcw, EyeOff, ThumbsUp } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,7 @@ import { useBackOverlay } from '@/lib/back-navigation';
 import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
 import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
+import { navigateToProfile } from '@/utils/profile-navigation';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -40,6 +42,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   onDeleteStory,
   onHideStory,
 }) => {
+  const navigate = useNavigate();
   const { isGloballyMuted, setGlobalMute } = useAudio();
   const [progress, setProgress] = useState(0);
   const [comment, setComment] = useState('');
@@ -474,15 +477,31 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
         <div className="story-header">
           <div className="story-user-info">
-            <Avatar 
+            <Avatar
               className="w-10 h-10 border-2 border-white cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
               title={`${currentStory.user}'s Profile`}
+              onClick={(e) => {
+                e.stopPropagation();
+                // Real creator profile — owner id first, username as fallback.
+                navigateToProfile(
+                  navigate,
+                  (currentStory as any)?.userId || (currentStory as any)?.user_id || '',
+                  currentStory.user,
+                );
+              }}
             >
               <AvatarImage src={currentStory.avatar} />
               <AvatarFallback>{currentStory.user.substring(0, 2)}</AvatarFallback>
             </Avatar>
-            <div>
-              <p className="text-white font-semibold">{currentStory.user}</p>
+            <div className="cursor-pointer" onClick={(e) => {
+              e.stopPropagation();
+              navigateToProfile(
+                navigate,
+                (currentStory as any)?.userId || (currentStory as any)?.user_id || '',
+                currentStory.user,
+              );
+            }}>
+              <p className="text-white font-semibold cursor-pointer">{currentStory.user}</p>
               <p className="text-white/70 text-sm">{currentStory.time}</p>
             </div>
           </div>
@@ -700,26 +719,33 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           )}
         </div>
 
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onPrevious}
-          disabled={currentIndex === 0}
+        {/* Left / right edge tap zones — swipe-free navigation between
+            stories. A tap in the left ~28% goes to the PREVIOUS story and
+            the right ~28% to the NEXT one; the middle stays free for the
+            play/pause controls. Edge zones sit under the top header row and
+            above the bottom action bar, so no control is ever blocked
+            (header/menu/close/like have pointer priority). */}
+        <div
+          role="button"
+          tabIndex={0}
           aria-label="Previous story"
-          className="absolute left-4 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all duration-300 hover:scale-110 disabled:opacity-30 disabled:cursor-not-allowed z-20 rounded-full p-3 shadow-lg"
-        >
-          <span className="text-xl font-bold">&lt;</span>
-        </Button>
-        <Button
-          variant="ghost"
-          size="icon"
-          onClick={onNext}
-          disabled={currentIndex === stories.length - 1}
+          onClick={(e) => {
+            e.stopPropagation();
+            if (currentIndex > 0) onPrevious();
+          }}
+          className="absolute left-0 top-24 bottom-24 w-[28%] cursor-pointer z-[5] max-md:top-20 max-md:bottom-20"
+        />
+        <div
+          role="button"
+          tabIndex={0}
           aria-label="Next story"
-          className="absolute right-4 top-1/2 -translate-y-1/2 bg-black/40 hover:bg-black/60 text-white backdrop-blur-md transition-all duration-300 hover:scale-110 disabled:opacity-30 disabled:cursor-not-allowed z-20 rounded-full p-3 shadow-lg"
-        >
-          <span className="text-xl font-bold">&gt;</span>
-        </Button>
+          onClick={(e) => {
+            e.stopPropagation();
+            if (currentIndex < stories.length - 1) onNext();
+            else onClose();
+          }}
+          className="absolute right-0 top-24 bottom-24 w-[28%] cursor-pointer z-[5] max-md:top-20 max-md:bottom-20"
+        />
 
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-black/70 backdrop-blur-lg p-4 border-t border-white/10 eq-safe-bottom" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-3">

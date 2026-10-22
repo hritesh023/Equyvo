@@ -8,7 +8,7 @@ import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, ownerIdOf, isPlaceholderId } from '@/utils/profile-navigation';
 import { avatarOf } from '@/utils/avatar';
 import { useBackOverlay } from '@/lib/back-navigation';
 import { useVideo2xPress } from '@/lib/video-2x';
@@ -954,18 +954,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   };
 
   const handleFollow = () => {
-    if (onFollow && actualContent?.creatorId) {
-      onFollow(actualContent.creatorId);
-      showSuccess(followedCreators.has(actualContent.creatorId) ? 'Unfollowed creator' : 'Following creator!');
-    } else if (actualContent?.creator) {
-      // Fallback if no creatorId but creator name exists
-      const creatorId = actualContent.creatorId || actualContent.creator.toLowerCase().replace(/\s+/g, '-');
-      if (onFollow) {
-        onFollow(creatorId);
-        showSuccess(followedCreators.has(creatorId) ? 'Unfollowed creator' : 'Following creator!');
-      } else {
-        showSuccess('Follow functionality not available');
-      }
+    // Real owner id only — never invent a fake id from the display name
+    // (that navigation landed on unrelated profiles).
+    const ownerId = ownerIdOf(actualContent) || actualContent?.creatorId;
+    if (onFollow && ownerId && !isPlaceholderId(ownerId)) {
+      onFollow(ownerId);
+      showSuccess(followedCreators.has(ownerId) ? 'Unfollowed creator' : 'Following creator!');
     } else {
       showSuccess('No creator to follow');
     }
@@ -1146,7 +1140,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       <Avatar 
                         className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
                         onClick={() => {
-                          navigateToProfile(navigate, actualContent.creatorId, actualContent.creator);
+                          navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator);
                         }}
                         title={`${actualContent.creator}'s Profile`}
                       >
@@ -1157,7 +1151,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       </Avatar>
                       <span 
                         className="font-medium hover:text-white transition-colors cursor-pointer"
-                        onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                        onClick={() => navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator)}
                       >
                         {actualContent.creator || 'Unknown Creator'}
                       </span>
@@ -1266,15 +1260,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               </div>
             )}
             
-            {/* Custom Video Controls */}
+            {/* Custom Video Controls — the inline padding now reserves real
+                gesture-bar / curved-edge space on Android edge-to-edge builds
+                (env() reads 0 in the Capacitor WebView, so the
+                --native-safe-bottom var is always included), keeping the
+                play/pause, seek and every control above the system navbar
+                and clickable. */}
             <div 
-              className={`bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-500 pointer-events-none ${showControls ? 'opacity-100' : 'opacity-0'}`}
+              className="bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-500 pointer-events-none"
               style={{ 
                 paddingBottom: isPortraitMoment
-                  ? 'calc(env(safe-area-inset-bottom, 0px) + 120px)'
+                  ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 120px)'
                   : (isMobileDevice && !isPortraitMoment && !isStory)
-                    ? 'calc(env(safe-area-inset-bottom, 0px) + 80px)'
-                    : 'calc(env(safe-area-inset-bottom, 0px) + 140px)',
+                    ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 80px)'
+                    : 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 140px)',
                 display: showControls ? 'block' : 'none'
               }}
             >
@@ -1406,7 +1405,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
                   onClick={() => {
                     // Navigate to creator's profile when avatar is clicked
-                    navigateToProfile(navigate, actualContent.creatorId, actualContent.creator);
+                    navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator);
                   }}
                   title={`${actualContent.creator}'s Profile`}
                 >
@@ -1417,7 +1416,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 </Avatar>
                 <span 
                   className="font-medium hover:text-white transition-colors cursor-pointer"
-                  onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                  onClick={() => navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator)}
                   title={`${actualContent.creator}'s Profile`}
                 >
                   {actualContent.creator || 'Unknown Creator'}
@@ -1553,7 +1552,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
                   onClick={() => {
                     // Navigate to creator's profile when avatar is clicked
-                    navigateToProfile(navigate, actualContent.creatorId, actualContent.creator);
+                    navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator);
                   }}
                   title={`${actualContent.creator}'s Profile`}
                 >
@@ -1564,7 +1563,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 </Avatar>
                 <span 
                   className="font-medium hover:text-white transition-colors cursor-pointer"
-                  onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                  onClick={() => navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator)}
                   title={`${actualContent.creator}'s Profile`}
                 >
                 {actualContent.creator || 'Unknown Creator'}
@@ -1744,7 +1743,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       {/* Image overlay with actions (non-split-view) */}
       {!isVideoType && (actualType === 'image' || actualType === 'post') && !isSplitView && showImageOverlay && (
         <div
-          className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 animate-in slide-in-from-bottom duration-300"
+          className="fixed bottom-0 left-0 right-0 z-40 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 eq-safe-bottom animate-in slide-in-from-bottom duration-300"
           style={{
             paddingBottom: 'calc(env(safe-area-inset-bottom, 0px) + 16px)'
           }}
@@ -1758,7 +1757,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <div className="flex items-center gap-2">
                 <Avatar 
                   className="h-8 w-8 cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
-                  onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                  onClick={() => navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator)}
                 >
                                     {realAvatarSrc ? <AvatarImage src={realAvatarSrc} /> : null}
                   <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
@@ -1767,7 +1766,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 </Avatar>
                 <span 
                   className="font-medium hover:text-white transition-colors cursor-pointer"
-                  onClick={() => navigateToProfile(navigate, actualContent.creatorId, actualContent.creator)}
+                  onClick={() => navigateToProfile(navigate, ownerIdOf(actualContent) || undefined, actualContent.creator)}
                 >
                   {actualContent.creator || 'Unknown Creator'}
                 </span>

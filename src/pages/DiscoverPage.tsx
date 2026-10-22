@@ -19,7 +19,7 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, isPlaceholderId } from '@/utils/profile-navigation';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
@@ -63,6 +63,19 @@ const hasRenderableMedia = (i: any): boolean => {
   return Boolean(v || img);
 };
 
+/** Real creator-account id for a discover item: prefer the server-stored
+ *  owner-id fields; accept creatorId only when it is a real value (never
+ *  invented "user-{name}" / "unknown" placeholders); otherwise fall back to
+ *  the display name so navigation uses the /profile/@username route. */
+const discoverCreatorId = (item: any): string => {
+  if (!item) return '';
+  const direct = item.userId || item.ownerId || item.user_id;
+  if (typeof direct === 'string' && direct.trim()) return direct.trim();
+  const cid = item.creatorId;
+  if (typeof cid === 'string' && cid.trim() && !isPlaceholderId(cid)) return cid.trim();
+  return typeof item.creator === 'string' ? item.creator : '';
+};
+
 /** Build the fullscreen payload for any discover card (single place, so every
  *  card — public uploads included — opens correctly with actions working). */
 const toFullscreen = (
@@ -81,7 +94,7 @@ const toFullscreen = (
       forcePortrait: isVideo && !isLive,
       title: item.title,
       creator: item.creator,
-      creatorId: item.creatorId || `user-${item.creator}`,
+      creatorId: discoverCreatorId(item),
       image: item.image,
       thumbnail: item.thumbnail || item.image,
       videoUrl: item.videoUrl,
@@ -322,7 +335,7 @@ const DiscoverPage = () => {
             title: String(t.content || '').slice(0, 80) || 'Thought',
             content: t.content || '',
             creator: t.user?.username || t.creator || 'Unknown',
-            creatorId: t.user?.id || t.user?.username || 'unknown',
+            creatorId: discoverCreatorId(t) || t.user?.username || '',
             image: first && first.type !== 'video' ? first.url || first.thumbnail || '' : (t.image_url || ''),
             thumbnail: first?.thumbnail || first?.url || t.image_url || '',
             videoUrl: first?.type === 'video' ? first.url || '' : '',
@@ -348,7 +361,7 @@ const DiscoverPage = () => {
               title: String(p.content || p.title || 'Post').slice(0, 80),
               content: p.content || '',
               creator: creatorOf(p),
-              creatorId: p.userId || p.user || 'unknown',
+              creatorId: discoverCreatorId(p),
               image: img,
               thumbnail: img,
               videoUrl: vid,
@@ -375,7 +388,7 @@ const DiscoverPage = () => {
               title: String(m.content || 'Moment').slice(0, 80),
               content: m.content || '',
               creator: creatorOf(m),
-              creatorId: m.userId || m.user || 'unknown',
+              creatorId: discoverCreatorId(m),
               image: img,
               thumbnail: img || m.thumbnail || '',
               videoUrl: vid,

@@ -2,7 +2,7 @@ import React, { useState, useEffect, useCallback, useRef, useLayoutEffect } from
 import { useI18n } from '@/lib/i18n';
 import { Link, useLocation } from 'react-router-dom';
 import { useNavigate } from 'react-router-dom';
-import { Home, PlusCircle, MessageSquare, User, LogOut, Settings, Globe, Camera } from 'lucide-react';
+import { Home, PlusCircle, MessageSquare, User, LogOut, Settings, Globe, Camera, Search } from 'lucide-react';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -11,8 +11,14 @@ import { NotificationBell } from './NotificationBell';
 import SearchSuggest from './SearchSuggest';
 import AppLogo from './AppLogo';
 import { showSuccess } from '@/utils/toast';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToOwnProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 /** Shared navigation surface: the top bar, the mobile bottom nav and the
  *  fullscreen desktop browse all render the same destinations. */
@@ -71,6 +77,19 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
   const location = useLocation();
   const isMobile = useIsMobile();
   const navigate = useNavigate();
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const topBarRef = useRef<HTMLDivElement>(null);
+
+  // Publish the exact top-bar height (--equyvo-bar-top) so fixed screen
+  // overlays (notification panel, chat shells, search split view…) anchor
+  // precisely below the restored header on every device.
+  useFlowBarMeasure(topBarRef, '--equyvo-bar-top');
+
+  // Close the mobile search dialog as soon as navigation happens (e.g.
+  // tapping a profile in the suggestions) so it never traps the user.
+  useEffect(() => {
+    setMobileSearchOpen(false);
+  }, [location.pathname]);
 
   // Handle null user gracefully: check stored user as fallback.
   // No invented fallback identity — without a real account nothing renders.
@@ -114,13 +133,68 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
     navigate(`/app/search?q=${encodeURIComponent(query)}`);
   }, [navigate]);
 
+  const handleMobileSearch = useCallback((query: string) => {
+    showSuccess(`Searching for "${query}"...`);
+    navigate(`/app/search?q=${encodeURIComponent(query)}`);
+    setMobileSearchOpen(false);
+  }, [navigate]);
+
 
   return (
     <>
-      {/* Desktop Navigation — full-bleed bar, readable centered content.
-          Phones have NO top header at all: every app screen starts directly
-          with its content below the OS status bar, and the single persistent
-          navigation surface is the bottom nav. */}
+      {/* Mobile Top Bar — the ONE perfect header, restored: logo + wordmark,
+          search, notifications, theme and profile in a single in-flow row.
+          It owns its row of the unibody shell, so content can never slide
+          under it, and its safe-area padding keeps it clear of the status
+          bar / notch. Rendered exactly once per app start — never on the
+          loading page, never stacked with any page-local bar. */}
+      {isMobile && (
+        <div
+          ref={topBarRef}
+          className="mobile-top-nav-fill relative z-50 shrink-0 border-b border-border/50 bg-background"
+        >
+          <div className="flex items-center justify-between gap-2 py-2">
+            {/* Logo + wordmark (single instance, links home) */}
+            <Link to="/app/home" className="flex items-center gap-2 shrink-0" aria-label="Equyvo home">
+              <AppLogo className="h-6 w-6" />
+              <span className="text-base font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>equyvo</span>
+            </Link>
+
+            <div className="flex items-center gap-1">
+              {/* Search button — opens the full-screen search overlay */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setMobileSearchOpen(true)}
+                aria-label="Search Equyvo"
+                className="text-foreground hover:bg-accent/50 transition-all duration-200 h-9 w-9"
+              >
+                <Search className="h-[18px] w-[18px]" />
+              </Button>
+
+              {/* Notifications */}
+              <NotificationBell />
+
+              {/* Theme */}
+              <ThemeToggle />
+
+              {/* Profile button */}
+              {effectiveUser && (
+                <Avatar
+                  className="h-7 w-7 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                  onClick={() => navigateToOwnProfile(navigate)}
+                  title="Your Profile"
+                >
+                  <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
+                  <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+                </Avatar>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Desktop Navigation — full-bleed bar, readable centered content. */}
       {!isMobile && (
         <nav className="z-50 w-full bg-background">
           <div className="mx-auto flex w-full max-w-screen-2xl items-center justify-between px-2 py-2 sm:px-3 md:px-4 md:py-3">
@@ -169,7 +243,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                 <div className="flex items-center gap-1 sm:gap-2">
                   <Avatar 
                     className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
-                    onClick={() => navigateToProfile(navigate)}
+                    onClick={() => navigateToOwnProfile(navigate)}
                     title="Your Profile"
                   >
                     <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
@@ -189,6 +263,26 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
         </nav>
       )}
 
+      {/* Mobile Search — full-screen overlay so suggestions never clip */}
+      {isMobile && (
+        <Dialog open={mobileSearchOpen} onOpenChange={setMobileSearchOpen}>
+          <DialogContent className="fixed inset-0 w-full h-full max-w-none translate-x-0 translate-y-0 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[95vw] sm:max-w-md sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-lg bg-background/95 backdrop-blur-lg border-border/50 overflow-y-auto eq-safe-top" aria-describedby={undefined}>
+            <DialogHeader>
+              <DialogTitle>Search Equyvo</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <SearchSuggest
+                onSearch={handleMobileSearch}
+                onClose={() => setMobileSearchOpen(false)}
+                placeholder="Search for content, users, tags..."
+                autoFocus={true}
+                showTrending={true}
+                maxSuggestions={6}
+              />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </>
   );
 };

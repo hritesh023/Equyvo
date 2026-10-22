@@ -90,7 +90,20 @@ const createDefaultProfile = (user?: { email?: string; fullName?: string; userna
 const ProfilePage = () => {
   const { userId, username } = useParams();
   const _storedUser = getStoredUser();
-  const isOwnProfile = !userId && !username ? true : !(userId || username) || (userId || username) === _storedUser?.id || (userId || username) === _storedUser?.username;
+  // A route is the viewer's OWN profile only when the target matches their
+  // account (id, username, or email). Otherwise someone else's is viewed —
+  // the fallback for empty params stays the own-profile screen.
+  const routeTarget = (() => {
+    const raw = String(userId || username || '').trim();
+    try { return decodeURIComponent(raw).replace(/^@/, ''); } catch { return raw.replace(/^@/, ''); }
+  })();
+  const isOwnProfile = !routeTarget
+    ? true
+    : !!_storedUser && (
+        routeTarget === _storedUser.id ||
+        routeTarget === _storedUser.username ||
+        routeTarget === _storedUser.email
+      );
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -147,20 +160,44 @@ const ProfilePage = () => {
   React.useEffect(() => {
     if (typeof window !== 'undefined') {
       const currentUser = getStoredUser();
-      const targetId = userId || username;
+      const rawTarget = String(userId || username || '').trim();
+      // /profile/@:username routes carry no '@'; /profile/:userId may carry a
+      // URL-encoded value. Strip any leading @ and decode for safe compare.
+      let target = rawTarget;
+      try { target = decodeURIComponent(rawTarget).replace(/^@/, ''); } catch { /* keep raw */ }
+      const isSelfTarget = !!currentUser && (
+        target === currentUser.id ||
+        target === currentUser.username ||
+        target === currentUser.email
+      );
 
-      if (targetId && (!currentUser || targetId !== currentUser.id)) {
-        api.getProfile(targetId).then((serverProfile) => {
+      if (target && !isSelfTarget) {
+        // Viewing ANOTHER account. Never leak the viewer's own profile as a
+        // stand-in: start from an honest placeholder for the target account
+        // (filled by the server fetch when the account exists, otherwise the
+        // shows the real handle with an empty state instead of someone
+        // else's content).
+        setUserProfile({
+          ...createDefaultProfile({ email: '', username: target, id: target } as any),
+          name: target,
+          username: target,
+          posts: [],
+        } as any);
+
+        api.getProfile(target).then((serverProfile) => {
           if (serverProfile?.data) {
             setUserProfile((prev: any) => ({
               ...prev,
               ...serverProfile.data,
-              posts: prev?.posts || [],
+              // The server row is authoritative for the viewed account.
+              id: serverProfile.data.id || target,
+              username: serverProfile.data.username || serverProfile.data.name || target,
+              posts: [],
             }));
           }
         }).catch(() => {});
 
-        api.getUserContent(targetId).then(({ data, error }) => {
+        api.getUserContent(target).then(({ data, error }) => {
           if (error || !data || typeof data !== 'object') return;
           const serverItems = [
             ...((data as any).posts || []),
@@ -168,7 +205,6 @@ const ProfilePage = () => {
             ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
             ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
           ];
-          if (!serverItems.length) return;
           setUserProfile((prev: any) => ({ ...prev, posts: serverItems }));
         }).catch(() => {});
 

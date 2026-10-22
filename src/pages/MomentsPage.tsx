@@ -703,8 +703,9 @@ const MomentsPage = () => {
                 <Avatar 
                   className="h-12 w-12 border-2 border-white cursor-pointer hover:scale-110 hover:ring-2 hover:ring-white/50 transition-all duration-200"
                   onClick={() => {
-                    // Navigate to user profile when avatar is clicked
-                    navigateToProfile(navigate, undefined, moment.user);
+                    // Navigate to the CREATOR's profile — owner id from the
+                    // moment row, username route only as last resort.
+                    navigateToProfile(navigate, moment.ownerId || moment.userId || (moment as any).user_id || undefined, moment.user);
                   }}
                   title={`${moment.user}'s Profile`}
                 >

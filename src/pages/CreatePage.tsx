@@ -196,7 +196,9 @@ function makeRecorder(ms: MediaStream): MediaRecorder {
   try {
     return mime ? new MediaRecorder(ms, { mimeType: mime }) : new MediaRecorder(ms);
   } catch {
-    try { return new MediaRecorder(ms); } catch (e) { throw e; }
+    // mime probe was wrong (or the type option is unsupported) — bare retry;
+    // any error from the bare call is a genuine recorder failure.
+    return new MediaRecorder(ms);
   }
 }
 
@@ -2590,7 +2592,6 @@ const CreatePage = () => {
       stopCamera();
     }
     return () => { stopCamera(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab]);
 
   const handleDeleteScheduledPost = (id: string) => {

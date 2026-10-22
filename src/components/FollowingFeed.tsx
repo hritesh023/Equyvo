@@ -14,6 +14,7 @@ import StandardPostMenu from './StandardPostMenu';
 import ReportModal from './ReportModal';
 import EditProfileContentModal from './EditProfileContentModal';
 import { showSuccess, showError } from '@/utils/toast';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { deleteContent } from '@/utils/delete';
 import { Post } from '@/types';
 import { useMemo } from 'react';
@@ -171,7 +172,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
       published: post.time,
       duration: post.duration,
       description: post.content,
-      creatorId: post.user,
+      creatorId: ownerIdOf(post) || post.user,
       // Only real values: never invent verified/subscriber counts.
       verified: (post as any).verified === true,
       fallbackImage: img,
@@ -180,17 +181,8 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
       forcePortrait: isMomentPost
     };
     
-    
-    // Make bot content playable when tapped
-    if (post.user.includes('Official') || post.user.includes('Tech') || post.user.includes('Bot')) {
-      if (!img) {
-        showSuccess(`🎵 Playing content from ${post.user}`);
-      } else {
-        onFullscreen(fullscreenContent as any);
-      }
-    } else {
-      onFullscreen(fullscreenContent as any);
-    }
+    // Open content in fullscreen viewer
+    onFullscreen(fullscreenContent as any);
   };
 
   return (
@@ -209,14 +201,6 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
             <Users className="w-12 h-12 text-gray-300 mx-auto mb-4" />
             <p className="text-gray-500">No posts from following accounts</p>
             <p className="text-gray-400 text-sm mt-1">Follow more accounts to see their content here</p>
-            <div className="mt-4 space-y-2">
-              <p className="text-sm text-gray-400">Suggestions to follow:</p>
-              <div className="flex justify-center gap-2 flex-wrap">
-                {['Equyvo Official', 'Tech Enthusiast', 'Emma Thompson'].map(account => (
-                  <FollowButton key={account} userName={account} size="sm" className="text-xs" />
-                ))}
-              </div>
-            </div>
           </div>
         ) : (
           <div className="space-y-4">
@@ -233,8 +217,8 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                       <Avatar 
                         className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                         onClick={() => {
-                          // Navigate to user profile when avatar is clicked
-
+                          // Navigate to the CREATOR's profile.
+                          navigateToProfile(navigate, ownerIdOf(post) || undefined, post.user);
                         }}
                         title={`${post.user}'s Profile`}
                       >

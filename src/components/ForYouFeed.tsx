@@ -17,7 +17,7 @@ import EditProfileContentModal from './EditProfileContentModal';
 import { showSuccess, showError } from '@/utils/toast';
 import { deleteContent } from '@/utils/delete';
 import { Post } from '@/types';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { useMemo } from 'react';
 import { withInFeedAds } from '@/lib/feed-ads';
 import { shouldShowAds } from '@/lib/ads-config';
@@ -241,7 +241,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
       published: post.time,
       duration: post.duration,
       description: post.content,
-      creatorId: post.user,
+      creatorId: ownerIdOf(post) || post.user,
       // Only real values: never invent verified/subscriber counts.
       verified: (post as any).verified === true,
       fallbackImage: img,
@@ -286,8 +286,10 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     <Avatar 
                       className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                       onClick={() => {
-                        // Navigate to user profile when avatar is clicked
-                        navigateToProfile(navigate, post.id, post.user);
+                        // Navigate to the CREATOR's profile: real owner id
+                        // first, username route as fallback (never post.id,
+                        // never the viewer's own profile).
+                        navigateToProfile(navigate, ownerIdOf(post) || undefined, post.user);
                       }}
                       title={`${post.user}'s Profile`}
                     >
