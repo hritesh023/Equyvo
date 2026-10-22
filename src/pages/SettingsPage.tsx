@@ -18,7 +18,9 @@ import {
   Trash2,
   User,
   Mail,
-  Megaphone
+  Megaphone,
+  Type as TypeIcon,
+  ZoomIn
 } from 'lucide-react';
 import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
@@ -27,6 +29,7 @@ import { useTheme } from '@/components/theme-provider';
 import { requestPushPermission, syncNotificationsFromServer } from '@/lib/notifications';
 import { LANGUAGES, languageLabel } from '@/lib/i18n/languages';
 import { useI18n } from '@/lib/i18n';
+import { useDisplay, FONT_MIN, FONT_MAX, ZOOM_MIN, ZOOM_MAX } from '@/lib/display';
 import api from '@/lib/api';
 
 // Language picker (searchable, grouped: India & South Asia first, then the
@@ -111,6 +114,151 @@ const LanguagePickerCard = () => {
           )}
         </div>
         <p className="text-xs text-muted-foreground">{t('settings.languageNote')}</p>
+      </CardContent>
+    </Card>
+  );
+};
+
+// Text & Display controls: app-wide text size + deliberate pinch zoom
+// (with the anti-mistouch guard). Changes apply instantly via the display
+// engine (src/lib/display.tsx) — no reload, persisted per device.
+const DisplaySettingsCard = () => {
+  const { t } = useI18n();
+  const {
+    fontScale, setFontScale,
+    zoom, setZoom,
+    pinchOn, setPinchOn,
+    antiMistouch, setAntiMistouch,
+    resetDisplay,
+  } = useDisplay();
+  const fontPct = Math.round(fontScale * 100);
+  const zoomPct = Math.round(zoom * 100);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <TypeIcon className="h-5 w-5" />
+          {t('display.title')}
+        </CardTitle>
+        <CardDescription>{t('display.desc')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Text size */}
+        <div>
+          <div className="flex items-center justify-between">
+            <Label>{t('display.fontSection')}</Label>
+            <span className="text-xs font-semibold tabular-nums">{fontPct}%</span>
+          </div>
+          <p className="text-sm text-muted-foreground mb-2">{t('display.fontDesc')}</p>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs"
+              onClick={() => setFontScale(fontScale - 0.05)}
+              disabled={fontScale <= FONT_MIN + 0.001}
+              aria-label={`${t('display.fontSmall')} (${t('display.fontSection')})`}
+            >
+              A−
+            </Button>
+            <Input
+              type="range"
+              min={FONT_MIN}
+              max={FONT_MAX}
+              step={0.05}
+              value={fontScale}
+              onChange={(e) => setFontScale(parseFloat(e.target.value))}
+              aria-label={t('display.fontSection')}
+              className="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
+            />
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-base leading-none"
+              onClick={() => setFontScale(fontScale + 0.05)}
+              disabled={fontScale >= FONT_MAX - 0.001}
+              aria-label={`${t('display.fontLarge')} (${t('display.fontSection')})`}
+            >
+              A+
+            </Button>
+          </div>
+          <div className="mt-2 flex items-center justify-between">
+            <span className="text-[11px] text-muted-foreground">{t('display.fontSmall')}</span>
+            <span className="text-sm font-medium">{t('display.fontNormal')}</span>
+            <span className="text-lg font-semibold">{t('display.fontLarge')}</span>
+          </div>
+        </div>
+
+        <Separator />
+
+        {/* Pinch zoom */}
+        <div className="space-y-3">
+          <div>
+            <div className="flex items-center justify-between">
+              <Label>{t('display.zoomSection')}</Label>
+              <span className="text-xs font-semibold tabular-nums">{zoomPct}%</span>
+            </div>
+            <p className="text-sm text-muted-foreground mb-2">{t('display.zoomOnDesc')}</p>
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="min-w-0 pr-3">
+              <Label>{t('display.zoomOn')}</Label>
+              <p className="text-xs text-muted-foreground">{
+                // Reuse the pinch description under the switch.
+                t('display.zoomOnDesc')
+              }</p>
+            </div>
+            <Switch checked={pinchOn} onCheckedChange={setPinchOn} />
+          </div>
+          <div className="flex items-center justify-between">
+            <div className="min-w-0 pr-3">
+              <Label>{t('display.antimistouch')}</Label>
+              <p className="text-xs text-muted-foreground">{t('display.antimistouchDesc')}</p>
+            </div>
+            <Switch
+              checked={antiMistouch}
+              onCheckedChange={setAntiMistouch}
+              disabled={!pinchOn}
+            />
+          </div>
+          <div>
+            <div className="flex items-center justify-between mb-1">
+              <Label className="text-xs">{t('display.zoomLevel')}</Label>
+            </div>
+            <div className="flex items-center gap-3">
+              <Input
+                type="range"
+                min={ZOOM_MIN}
+                max={ZOOM_MAX}
+                step={0.1}
+                value={zoom}
+                disabled={!pinchOn}
+                onChange={(e) => setZoom(parseFloat(e.target.value))}
+                aria-label={t('display.zoomLevel')}
+                className="h-2 flex-1 cursor-pointer appearance-none rounded-full bg-muted accent-primary"
+              />
+            </div>
+          </div>
+        </div>
+
+        <Separator />
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={resetDisplay}>
+            {t('display.fontReset')} + {t('display.resetZoom')}
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={zoom === 1}
+            onClick={() => setZoom(1)}
+          >
+            <ZoomIn className="h-4 w-4 mr-2" />
+            {t('display.resetZoom')}
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground">{t('display.zoomNote')}</p>
       </CardContent>
     </Card>
   );
@@ -576,6 +724,9 @@ const SettingsPage = () => {
 
       {/* Language */}
       <LanguagePickerCard />
+
+      {/* Font size & pinch zoom (display) */}
+      <DisplaySettingsCard />
 
       {/* Ads & Privacy */}
       <Card>

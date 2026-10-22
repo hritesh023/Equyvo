@@ -519,21 +519,11 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Ensure moments fill the horizontal space by duplicating if needed
-  const getDisplayMoments = () => {
-    if (!isHomePage || moments.length === 0) return moments;
-    
-    // Calculate how many moments needed to fill the screen (approximately 6-8 visible)
-    const minVisibleCount = 8;
-    const displayMoments = [...moments];
-    
-    // Duplicate moments if we don't have enough to fill the space
-    while (displayMoments.length < minVisibleCount && moments.length > 0) {
-      displayMoments.push(...moments.map(m => ({ ...m, id: `${m.id}-duplicate-${displayMoments.length}` })));
-    }
-    
-    return displayMoments;
-  };
+  // Feed integrity: display EXACTLY the shapes the server sent, once each.
+  // The old "duplicate to fill the rail" logic rendered the same moment 2-4
+  // times in the home strip and made one upload look like a flood of copies.
+  // Sparseness is honest: if there are fewer moments they simply sit left-aligned.
+  const getDisplayMoments = () => moments;
 
   const displayMoments = getDisplayMoments();
   const showActionOverlay = deviceCapabilities.isTouchDevice;

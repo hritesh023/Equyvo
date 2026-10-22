@@ -281,6 +281,7 @@ function scheduleBannerRetry(): void {
 function hookBannerVisibility(): void {
   if (bannerVisibilityHooked || typeof document === 'undefined') return;
   bannerVisibilityHooked = true;
+  hookKeyboard();
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') {
       try {
@@ -291,7 +292,7 @@ function hookBannerVisibility(): void {
       void hideFeedBanner();
       return;
     }
-    if (bannerWanted) {
+    if (bannerWanted && !keyboardOpen) {
       // Visible again while on an allowed screen → the banner comes straight
       // back (resume if it still exists, fresh request otherwise).
       void showFeedBanner();
@@ -344,6 +345,7 @@ export async function showFeedBanner(): Promise<boolean> {
     if (!adId) return false;
     if (!isDevEnvironment() && !isBannerConfigured()) return false;
     hookBannerVisibility();
+    if (keyboardOpen) return false; // never rain above the IME
     const { plugin } = await loadPlugin();
     if (!plugin?.showBanner) return false;
     await initializeAds();
@@ -417,6 +419,67 @@ export async function hideFeedBanner(): Promise<void> {
   }
 }
 
+// ── Keyboard co-existence ──────────────────────────────────────────────────
+// A native BOTTOM_CENTER banner rides up above the IME when the user starts
+// typing — exactly where it would cover the input fields. While the
+// keyboard is open the banner goes hidden; bannerWanted is preserved so it
+// returns the moment the IME closes (no blank strip, no lost state).
+// Detection: iOS shrinks the visual viewport BELOW innerHeight; Android's
+// adjustResize shrinks innerHeight itself — so the combined test is
+// "text-field focused AND the window lost real height".
+
+let keyboardOpen = false;
+let keyboardHooked = false;
+
+function isImeVisible(): boolean {
+  try {
+    const el = document.activeElement;
+    const typing =
+      el instanceof HTMLInputElement ||
+      el instanceof HTMLTextAreaElement ||
+      (el as HTMLElement | null)?.isContentEditable === true;
+    if (!typing) return false;
+    const vv = window.visualViewport;
+    const visibleH = vv?.height ?? window.innerHeight;
+    if (window.innerHeight - visibleH > 140) return true; // iOS pattern
+    const screenH = window.screen?.height ?? 0;
+    return screenH > 0 && visibleH < screenH * 0.7; // Android adjustResize
+  } catch {
+    return false;
+  }
+}
+
+function updateKeyboardState(): void {
+  const open = isImeVisible();
+  if (open === keyboardOpen) return;
+  keyboardOpen = open;
+  if (keyboardOpen) {
+    void hideFeedBanner();
+  } else if (bannerWanted) {
+    void showFeedBanner();
+  }
+}
+
+/** IME layout lands a hair AFTER the DOM focus events — scan twice. */
+function scheduleKeyboardScan(): void {
+  setTimeout(updateKeyboardState, 120);
+  setTimeout(updateKeyboardState, 400);
+}
+
+function hookKeyboard(): void {
+  if (keyboardHooked || typeof window === 'undefined') return;
+  keyboardHooked = true;
+  const opts: AddEventListenerOptions = { passive: true };
+  window.addEventListener('focusin', scheduleKeyboardScan, opts);
+  window.addEventListener('focusout', scheduleKeyboardScan, opts);
+  window.addEventListener('resize', scheduleKeyboardScan, opts);
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener('resize', scheduleKeyboardScan, opts);
+    vv.addEventListener('scroll', scheduleKeyboardScan, opts);
+  }
+}
+
 // ── Interaction-driven banner recovery ─────────────────────────────────────
 // "The banner is back every time the user interacts" without ever becoming
 // spam: taps/scrolls nudge a hidden banner back only when the backoff
@@ -428,6 +491,7 @@ let interactionsHooked = false;
 
 /** User gesture hook: only resumes a banner that WANTS to be visible. */
 function pokeBanner(): void {
+  if (keyboardOpen) return;
   if (!bannerWanted || bannerState === 'shown') return;
   const elapsed = Date.now() - lastBannerAttemptAt;
   if (elapsed < bannerRetryDelay()) return; // same politeness as the timer

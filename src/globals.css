@@ -31,12 +31,23 @@
   --equyvo-bar-top: calc(var(--equyvo-safe-top) + 3.25rem);
   --equyvo-bar-bottom: calc(4rem + var(--equyvo-safe-bottom));
 }
+
+/* Deliberate pinch-zoom engine (src/lib/display.tsx) scales the APP layout
+   through this variable via CSS `zoom` — text size (root font-size) and
+   layout zoom are independent settings. Defaults to 1 (no scaling). */
+html {
+  zoom: var(--equyvo-app-zoom, 1);
+}
 html.cap-native {
-  /* App: FIXED clearance floors — cannot ever read 0, never mind what the
-     OS/WebView/Capacitor report (all three proved unreliable on curved
-     devices). Fixed 28px bottom fill, no side pads. */
-  --equyvo-safe-top: 48px;
-  --equyvo-safe-bottom: 28px;
+  /* App: floors still guarantee "never 0", whatever the OS/WebView/Capacitor
+     report (all three proved unreliable on curved devices) — but native
+     MainActivity now measures the REAL system-bar + display-cutout insets
+     (capped at 96/64px) and forwards them as --native-safe-top/bottom, so
+     clearance grows above the floor when the device genuinely needs it
+     (proper Android-15 edge-to-edge insets handling). Fixed 28px bottom
+     fill, no side pads. */
+  --equyvo-safe-top: max(48px, var(--native-safe-top, 0px));
+  --equyvo-safe-bottom: max(28px, var(--native-safe-bottom, 0px));
 }
 
 /* Fixed screen overlays anchored to the shell (notification panel &
@@ -1584,12 +1595,23 @@ html.cap-native {
 
 /*
  * AdMob adaptive banner is a NATIVE view overlaid above the app bottom nav
- * (see use-feed-banner; only on native shells, feed routes, Free tier).
- * Reserve scroll space so the banner never covers content or the nav.
+ * (see admob-service; only on native shells, feed routes, Free tier).
+ * Reserve scroll space so the banner NEVER covers content or the nav — at
+ * ALL widths: phones get the 70px nav lift (banner strip ≈70–220px tall),
+ * tablets/large screens get margin 0 with an ≈90px adaptive banner, so they
+ * reserve a smaller strip. Both strips are multiplied by
+ * --equyvo-app-zoom-inverse: the banner is a native view OUTSIDE the zoomed
+ * web tree, so a zoomed-in layout must not shrink its physical space.
  */
 @media (max-width: 767px) {
   body.has-ad-banner main {
-    padding-bottom: 150px !important;
+    padding-bottom: calc(150px * var(--equyvo-app-zoom-inverse, 1)) !important;
+  }
+}
+
+@media (min-width: 768px) {
+  body.has-ad-banner main {
+    padding-bottom: calc(104px * var(--equyvo-app-zoom-inverse, 1)) !important;
   }
 }
 

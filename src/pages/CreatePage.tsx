@@ -2,13 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import MediaCropper from '@/components/MediaCropper';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
 import { compressImage } from '@/lib/utils';
@@ -17,7 +18,7 @@ import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
-import api from '@/lib/api';
+import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 
 // Helper to get current user info from localStorage
 function getCurrentUserInfo(): { userId: string; username: string } {
@@ -151,6 +152,83 @@ const THUMB_SPEC: Record<ThumbKind, { aspect: number; outW: number; outH: number
   'pending-story': { aspect: 9 / 16, outW: 720, outH: 1280, label: 'story cover' },
 };
 
+/** Recording-seconds → m:ss for the camera REC badge. */
+function fileVideoFormatSecs(total: number): string {
+  const s = Math.max(0, Math.floor(total || 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+// ── Recording + big-file helpers (module level) ─────────────────────────────
+// Android WebView and older browsers reject a hard-coded
+// 'video/webm;codecs=vp9' (the historical live-recording crash). Probe
+// supported containers in preference order — mp4 first, because Android
+// WebView plays it natively and R2 range playback serves it everywhere.
+function pickRecorderMime(): string {
+  if (typeof MediaRecorder === 'undefined') return '';
+  const prefs = [
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+  ];
+  try {
+    const supported = prefs.filter((m) => {
+      try { return !!MediaRecorder.isTypeSupported(m); } catch { return false; }
+    });
+    return supported[0] || '';
+  } catch { return ''; }
+}
+
+/** File extension for a recorded container mime ('' probe → mp4 default). */
+function extForMime(mime: string): string {
+  const m = (mime || '').toLowerCase();
+  if (m.includes('mp4') || m.includes('aac')) return 'mp4';
+  if (m.includes('matroska')) return 'mkv';
+  if (m.includes('webm') || m.includes('vorbis') || m.includes('opus')) return 'webm';
+  return 'mp4';
+}
+
+/** MediaRecorder for a stream with proactive type probing + bare fallback. */
+function makeRecorder(ms: MediaStream): MediaRecorder {
+  const mime = pickRecorderMime();
+  try {
+    return mime ? new MediaRecorder(ms, { mimeType: mime }) : new MediaRecorder(ms);
+  } catch {
+    try { return new MediaRecorder(ms); } catch (e) { throw e; }
+  }
+}
+
+/** Real duration (seconds) of a video Blob via metadata — promise never rejects. */
+function probeVideoDuration(src: Blob): Promise<number | undefined> {
+  return new Promise((resolve) => {
+    try {
+      if (!src.type || !src.type.startsWith('video/')) { resolve(undefined); return; }
+      const url = URL.createObjectURL(src);
+      const el = document.createElement('video');
+      let settled = false;
+      const done = (v: number | undefined) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { URL.revokeObjectURL(url); } catch { /* ignore */ }
+        try { el.removeAttribute('src'); } catch { /* ignore */ }
+        resolve(v);
+      };
+      const timer = setTimeout(() => done(undefined), 8000);
+      el.preload = 'metadata';
+      el.muted = true;
+      (el as any).playsInline = true;
+      el.onloadedmetadata = () => {
+        const d = Number.isFinite(el.duration) && el.duration > 0 ? Math.round(el.duration) : undefined;
+        done(d);
+      };
+      el.onerror = () => done(undefined);
+      el.src = url;
+    } catch { resolve(undefined); }
+  });
+}
+
 const CreatePage = () => {
   // Deep-link a composer section: /app/create?tab=moment opens the Moments
   // composer directly (Moments' empty state sends users there) so tapping
@@ -158,7 +236,7 @@ const CreatePage = () => {
   const [searchParams] = useSearchParams();
   const [activeTab, setActiveTab] = useState<string>(() => {
     const t = searchParams.get('tab');
-    const valid = ['story', 'text-story', 'thought', 'photo', 'video', 'live', 'moment'];
+    const valid = ['story', 'text-story', 'thought', 'photo', 'video', 'live', 'moment', 'camera'];
     return t && valid.includes(t) ? t : 'story';
   });
   const [storyFiles, setStoryFiles] = useState<File[]>([]);
@@ -390,6 +468,31 @@ const CreatePage = () => {
   const [showContentManagement, setShowContentManagement] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'moments' | 'text-stories'>('all');
   const [isUploading, setIsUploading] = useState(false);
+  // Publish-progress bar state (exact byte progress from the upload runner).
+  const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(null);
+  // Plan caps for pre-publish validation (size / length) + upgrade hints.
+  const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
+  // SINGLE-FLIGHT publish lock: every post/schedule/draft/live action runs at
+  // most once even if the button is tapped repeatedly (dup-inducing tap
+  // races all happened inside the async upload window).
+  const publishLockRef = useRef(false);
+  // Active recording container (probed mimeType) + start time.
+  const recorderMimeRef = useRef('');
+  const recordingStartRef = useRef(0);
+  // Camera tab: live preview stream + recorder.
+  const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
+  const cameraRecorderRef = useRef<MediaRecorder | null>(null);
+  const cameraChunksRef = useRef<Blob[]>([]);
+  const cameraTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const cameraMimeRef = useRef('');
+  const cameraStartRef = useRef(0);
+  const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
+  const [cameraReady, setCameraReady] = useState(false);
+  const [cameraError, setCameraError] = useState('');
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [cameraRecordSecs, setCameraRecordSecs] = useState(0);
+  const [cameraDest, setCameraDest] = useState<'story' | 'photo' | 'video' | 'moment'>('story');
   // Who can see new uploads: public (everyone), followers (followers-only),
   // private (only you). Sent to the server with every post; the server
   // enforces it for every account on every device.
@@ -585,6 +688,24 @@ const CreatePage = () => {
     };
   }, []);
 
+  // Live plan caps for pre-publish validation: loaded once so oversized /
+  // over-length files are refused BEFORE any bytes move, with an upgrade
+  // hint instead of a server 413 at the end of a long upload.
+  useEffect(() => {
+    let alive = true;
+    try {
+      api.getUsage().then(({ data, error }) => {
+        if (!alive || error || !data) return;
+        setPlanCaps({
+          planLabel: (data as any).planLabel || 'your plan',
+          maxUploadMB: Number((data as any).maxUploadMB) || 0,
+          maxVideoSec: Number((data as any).maxVideoSec) || 0,
+        });
+      }).catch(() => { /* caps stay null → server remains the hard gate */ });
+    } catch { /* ignore */ }
+    return () => { alive = false; };
+  }, []);
+
   // Type definitions for scheduled and draft posts
   interface ScheduledPost {
     id: string;
@@ -611,6 +732,7 @@ const CreatePage = () => {
     videoUrl?: string;
     publicId?: string;
     resourceType?: string;
+    r2Key?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -630,6 +752,7 @@ const CreatePage = () => {
     thumbnail: string;
     publicId?: string;
     resourceType?: string;
+    r2Key?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -648,6 +771,7 @@ const CreatePage = () => {
     thumbnail?: string;
     publicId?: string;
     resourceType?: string;
+    r2Key?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -668,6 +792,7 @@ const CreatePage = () => {
     duration?: number;
     publicId?: string;
     resourceType?: string;
+    r2Key?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -685,6 +810,7 @@ const CreatePage = () => {
     videoUrl?: string;
     publicId?: string;
     resourceType?: string;
+    r2Key?: string;
     content: string;
     uploadDate: Date;
     isPrivate: boolean;
@@ -720,7 +846,64 @@ const CreatePage = () => {
   return '';
 }
 
-// Shared helper: persist content to API, index for search, update localStorage, notify other pages
+  // ---- Plan-aware pre-validation + shared upload runner ---------------------
+  const CAP_MB = (n: number) => n * 1024 * 1024;
+
+  /** '' when within plan caps, otherwise the upgrade-flavoured reason. */
+  const checkPlanCap = (file: File | Blob, kindLabel: string): string => {
+    const caps = planCaps;
+    if (caps?.maxUploadMB && file.size > CAP_MB(caps.maxUploadMB)) {
+      return `${kindLabel} is ${Math.round(file.size / (1024 * 1024))}MB — the ${caps.planLabel} plan allows up to ${caps.maxUploadMB}MB per file. Upgrade for higher limits.`;
+    }
+    return '';
+  };
+
+  /**
+   * Shared upload runner: sequential (one network transfer at a time — a
+   * batch of large videos can never interleave into memory), reports exact
+   * byte progress into the publish bar, encodes duration for R2 chunk
+   * sessions, and never lets a single failed file abort the batch.
+   */
+  const runUpload = async (
+    raw: File | Blob,
+    folder: string,
+    slot: { index: number; count: number },
+    hint?: string,
+  ): Promise<UploadResult | null> => {
+    try {
+      const isVideo = !!raw.type?.startsWith?.('video/');
+      const duration = isVideo ? (await probeVideoDuration(raw)) : undefined;
+      const onProgress = (p: UploadProgress) => {
+        if (slot.count > 1) {
+          // Batch: reserves slot.index/count → (slot.index+1)/count of the bar.
+          const span = 1 / slot.count;
+          const frac = p.total > 0 ? Math.max(0, Math.min(1, p.loaded / p.total)) : 0;
+          setUploadProgress({
+            phase: p.phase,
+            pct: Math.max(1, Math.min(99, Math.round((slot.index + frac) * span * 100))),
+          });
+        } else {
+          setUploadProgress({
+            phase: p.phase,
+            pct: Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50)),
+          });
+        }
+      };
+      const { data, error } = await api.uploadFile(raw, folder, onProgress, { duration });
+      if (error) throw new Error(error);
+      setUploadProgress(slot.count > 1
+        ? { phase: 'uploading', pct: Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100))) }
+        : { phase: 'done', pct: 100 });
+      return data || null;
+    } catch (err) {
+      setUploadProgress(null);
+      if (!hint) showError(err instanceof Error ? err.message : 'Upload failed');
+      else showError(`${hint}: ${err instanceof Error ? err.message : 'upload failed'}`);
+      return null;
+    }
+  };
+
+  // Shared helper: persist content to API, index for search, update localStorage, notify other pages
 // STRICT type routing: each type is written to exactly ONE collection so a
 // photo can never leak into Moments and a moment never leaks into Thoughts.
   async function persistContent(content: Record<string, unknown>) {
@@ -904,13 +1087,13 @@ const CreatePage = () => {
         if (safeFiles.length > 0) {
           const validFiles = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
-            const isValidSize = file.size <= 50 * 1024 * 1024; // 50MB limit
+            const isValidSize = file.size <= 200 * 1024 * 1024; // generous pre-cap — the plan cap gates at post time
             if (!isValidType) {
               showError('Please select only images or videos');
               return false;
             }
             if (!isValidSize) {
-              showError('File size must be less than 50MB');
+              showError('File size must be less than 200MB');
               return false;
             }
             return true;
@@ -958,13 +1141,13 @@ const CreatePage = () => {
         if (file.type.startsWith('image/')) {
           const validPhotos = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/');
-            const isValidSize = file.size <= 50 * 1024 * 1024; // 50MB limit
+            const isValidSize = file.size <= 200 * 1024 * 1024;
             if (!isValidType) {
               showError('Please select only images');
               return false;
             }
             if (!isValidSize) {
-              showError('Image size must be less than 50MB');
+              showError('Image size must be less than 200MB');
               return false;
             }
             return true;
@@ -979,13 +1162,13 @@ const CreatePage = () => {
         if (file.type.startsWith('video/')) {
           const validVideos = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('video/');
-            const isValidSize = file.size <= 500 * 1024 * 1024; // 500MB limit for longer videos
+            const isValidSize = file.size <= 800 * 1024 * 1024; // generous pre-cap — plan caps gate at post time
             if (!isValidType) {
               showError('Please select only videos');
               return false;
             }
             if (!isValidSize) {
-              showError('Video size must be less than 500MB');
+              showError('Video size must be less than 800MB');
               return false;
             }
             return true;
@@ -1000,13 +1183,13 @@ const CreatePage = () => {
         if (safeFiles.length > 0) {
           const validFiles = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
-            const isValidSize = file.size <= 100 * 1024 * 1024;
+            const isValidSize = file.size <= 200 * 1024 * 1024;
             if (!isValidType) {
               showError('Please select only images or videos');
               return false;
             }
             if (!isValidSize) {
-              showError('File size must be less than 100MB');
+              showError('File size must be less than 200MB');
               return false;
             }
             return true;
@@ -1055,138 +1238,161 @@ const CreatePage = () => {
   };
 
   const handlePostStory = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (publishLockRef.current) {
+      showError('A story publish is still running. One at a time, please.');
+      return;
+    }
     if (storyFiles.length === 0) {
       showError('Please select at least one file for your story');
       return;
     }
+    publishLockRef.current = true;
+    try {
+      const storyContent = {
+        files: storyFiles,
+        caption: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || ''
+      };
 
-    const storyContent = {
-      files: storyFiles,
-      caption: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || ''
-    };
-
-    switch (action) {
+      switch (action) {
       case 'post':
         setIsUploading(true);
-        const uploadedStoryResults = await Promise.all(
-          storyFiles.map(async (file) => {
-            try {
-              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
-              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/stories');
-              if (error) throw new Error(error);
-              return { file, result: data };
-            } catch (err) {
-              showError(`Upload failed for ${file.name}`);
-            }
-            return { file, result: null };
-          })
-        );
+        setUploadProgress({ phase: 'processing', pct: 1 });
+        {
+          // Sequential uploads: each file gets its own full progress window.
+          const storyResults: Array<{ file: File; result: UploadResult | null }> = [];
+          for (let i = 0; i < storyFiles.length; i++) {
+            const file = storyFiles[i];
+            const capErr = checkPlanCap(file, 'Story');
+            if (capErr) { setUploadProgress(null); showError(capErr); continue; }
+            const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+            const result = await runUpload(up, 'equyvo/stories', { index: i, count: storyFiles.length });
+            storyResults.push({ file, result });
+          }
+          // Robust pairing: only media that actually uploaded gets persisted.
+          // Failed files are left selected for retry and no orphan cover-only
+          // story is ever created.
+          const storySuccesses = storyResults.filter(
+            (r): r is { file: File; result: UploadResult } => !!r.result,
+          );
+          if (storySuccesses.length === 0) {
+            setIsUploading(false);
+            setUploadProgress(null);
+            showError('Story upload failed — no cover was posted without its media.');
+            break;
+          }
+          // The custom cover is uploaded only now that its media exists.
+          const storyCustomThumb = await uploadPendingThumb(storyThumbFile);
+          const newUploadedStories: UploadedStory[] = storySuccesses.map(({ file, result }, index) => ({
+            id: Date.now().toString() + index,
+            type: file.type.startsWith('image/') ? 'image' : 'video',
+            fileName: file.name,
+            fileSize: file.size,
+            duration: file.type.startsWith('video/') ? '0:15' : undefined,
+            thumbnail: storyCustomThumb || getThumbnailFromUpload(result),
+            publicId: result?.publicId || '',
+            resourceType: result?.resourceType || '',
+            r2Key: result?.r2Key || '',
+            uploadDate: new Date(),
+            isPrivate: contentVisibility !== 'public',
+            views: 0,
+            likes: 0,
+            comments: 0,
+            shares: 0,
+            expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
+          }));
 
-        // Robust pairing: only media that actually uploaded gets persisted.
-        // Failed files are left selected for retry and no orphan cover-only
-        // story is ever created.
-        const storySuccesses = uploadedStoryResults.filter(
-          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
-        );
-        if (storySuccesses.length === 0) {
+          setUploadedStories(prev => [...prev, ...newUploadedStories]);
+          setUploadProgress(null);
+          let storyPersistError: string | null = null;
+          for (let i = 0; i < newUploadedStories.length; i++) {
+            const s = newUploadedStories[i];
+            const secureUrl = storySuccesses[i]?.result?.secureUrl || '';
+            if (!secureUrl) continue;
+            const isVid = s.type === 'video';
+            const err = await persistContent({
+              id: s.id,
+              type: 'story',
+              content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '',
+              image: isVid ? '' : secureUrl,
+              media: secureUrl,
+              thumbnail: s.thumbnail || secureUrl,
+              videoUrl: isVid ? secureUrl : '',
+              mediaType: isVid ? 'video' : 'image',
+              publicId: s.publicId,
+              resourceType: s.resourceType,
+              r2Key: s.r2Key,
+              user: getCurrentAuthor().username,
+              avatar: getCurrentAuthor().avatar,
+            });
+            if (err) storyPersistError = err;
+          }
           setIsUploading(false);
-          showError('Story upload failed — no cover was posted without its media.');
-          break;
-        }
-        // The custom cover is uploaded only now that its media exists.
-        const storyCustomThumb = await uploadPendingThumb(storyThumbFile);
-        const newUploadedStories: UploadedStory[] = storySuccesses.map(({ file, result }, index) => ({
-          id: Date.now().toString() + index,
-          type: file.type.startsWith('image/') ? 'image' : 'video',
-          fileName: file.name,
-          fileSize: file.size,
-          duration: file.type.startsWith('video/') ? '0:15' : undefined,
-          thumbnail: storyCustomThumb || getThumbnailFromUpload(result),
-          publicId: result?.publicId || '',
-          resourceType: result?.resourceType || '',
-          uploadDate: new Date(),
-          isPrivate: contentVisibility !== 'public',
-          views: 0,
-          likes: 0,
-          comments: 0,
-          shares: 0,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000)
-        }));
+          setUploadProgress(null);
+          if (storyPersistError) {
+            showError('Saved locally but feed sync failed: ' + storyPersistError);
+          } else if (storySuccesses.length < storyResults.length) {
+            showSuccess(`${storySuccesses.length} story item(s) posted; failed files were kept for retry.`);
+          } else {
+            showSuccess('Story posted successfully! It will be available for 24 hours.');
+          }
+          // Keep failed files selected for retry; the consumed cover is cleared.
+          setStoryFiles(prev => prev.filter(f => !storySuccesses.some(s => s.file === f)));
+          clearStoryThumb();
 
-        setUploadedStories(prev => [...prev, ...newUploadedStories]);
-        let storyPersistError: string | null = null;
-        for (let i = 0; i < newUploadedStories.length; i++) {
-          const s = newUploadedStories[i];
-          const secureUrl = storySuccesses[i]?.result?.secureUrl || '';
-          if (!secureUrl) continue;
-          const isVid = s.type === 'video';
-          const err = await persistContent({
-            id: s.id,
-            type: 'story',
-            content: (document.getElementById('story-caption') as HTMLTextAreaElement)?.value || '',
-            image: isVid ? '' : secureUrl,
-            media: secureUrl,
-            thumbnail: s.thumbnail || secureUrl,
-            videoUrl: isVid ? secureUrl : '',
-            mediaType: isVid ? 'video' : 'image',
-            publicId: s.publicId,
-            resourceType: s.resourceType,
-            user: getCurrentAuthor().username,
-            avatar: getCurrentAuthor().avatar,
-          });
-          if (err) storyPersistError = err;
+          window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
         }
-        setIsUploading(false);
-        if (storyPersistError) {
-          showError('Saved locally but feed sync failed: ' + storyPersistError);
-        } else if (storySuccesses.length < uploadedStoryResults.length) {
-          showSuccess(`${storySuccesses.length} story item(s) posted; failed files were kept for retry.`);
-        } else {
-          showSuccess('Story posted successfully! It will be available for 24 hours.');
-        }
-        // Keep failed files selected for retry; the consumed cover is cleared.
-        setStoryFiles(prev => prev.filter(f => !storySuccesses.some(s => s.file === f)));
-        clearStoryThumb();
-
-        window.dispatchEvent(new CustomEvent('storyUploaded', { detail: newUploadedStories }));
         break;
       case 'schedule':
         if (!scheduleDateTime) {
           showError('Please select a date and time for scheduling');
           return;
         }
-        const newScheduledStory: ScheduledPost = {
-          id: Date.now().toString(),
-          type: 'story',
-          content: storyContent,
-          scheduledTime: new Date(scheduleDateTime),
-          status: 'scheduled'
-        };
-        setScheduledPosts(prev => [...prev, newScheduledStory]);
+        {
+          const newScheduledStory: ScheduledPost = {
+            id: Date.now().toString(),
+            type: 'story',
+            content: storyContent,
+            scheduledTime: new Date(scheduleDateTime),
+            status: 'scheduled'
+          };
+          setScheduledPosts(prev => [...prev, newScheduledStory]);
+        }
         showSuccess('Story scheduled successfully!');
         setStoryFiles([]);
         setShowScheduleModal(false);
         setScheduleDateTime('');
         break;
       case 'draft':
-        const newDraftStory: DraftPost = {
-          id: Date.now().toString(),
-          type: 'story',
-          content: storyContent,
-          createdAt: new Date()
-        };
-        setDraftPosts(prev => [...prev, newDraftStory]);
+        {
+          const newDraftStory: DraftPost = {
+            id: Date.now().toString(),
+            type: 'story',
+            content: storyContent,
+            createdAt: new Date()
+          };
+          setDraftPosts(prev => [...prev, newDraftStory]);
+        }
         showSuccess('Story saved as draft!');
         break;
+      }
+    } finally {
+      publishLockRef.current = false;
+      // post/schedule/draft paths that never touched progress also clear it here.
+      if (action === 'post') setUploadProgress(null);
     }
   };
 
   const handlePostTextStory = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (publishLockRef.current) {
+      showError('A story publish is still running. One at a time, please.');
+      return;
+    }
     if (!textStoryContent.trim()) {
       showError('Please enter some text for your story');
       return;
     }
-
+    publishLockRef.current = true;
+    try {
     const textStoryData = {
       content: textStoryContent,
       background: textStoryBackground,
@@ -1195,6 +1401,7 @@ const CreatePage = () => {
 
     switch (action) {
       case 'post':
+        setIsUploading(true);
         // Add text story to uploaded text stories list with analytics
         const newUploadedTextStory: UploadedTextStory = {
           id: Date.now().toString(),
@@ -1212,6 +1419,7 @@ const CreatePage = () => {
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
         const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '' });
+        setIsUploading(false);
         if (textStoryErr) {
           showError('Saved locally but feed sync failed: ' + textStoryErr);
         } else {
@@ -1255,14 +1463,22 @@ const CreatePage = () => {
         showSuccess('Text story saved as draft!');
         break;
     }
+    } finally {
+      publishLockRef.current = false;
+    }
   };
 
   const handlePostThought = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (publishLockRef.current) {
+      showError('A thought publish is still running. One at a time, please.');
+      return;
+    }
     if (!thoughtContent.trim()) {
       showError('Please enter your thought');
       return;
     }
-
+    publishLockRef.current = true;
+    try {
     const thoughtData = {
       content: thoughtContent,
       video: thoughtVideo
@@ -1271,14 +1487,18 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
-        let thoughtUploadResult: { secureUrl: string; resourceType: string; publicId?: string; variants?: { thumbnail?: string } | null } | null = null;
+        let thoughtUploadResult: { secureUrl: string; resourceType: string; publicId?: string; r2Key?: string; variants?: { thumbnail?: string } | null } | null = null;
         if (thoughtVideo) {
+          const capErr = checkPlanCap(thoughtVideo, 'Thought media');
+          if (capErr) { setIsUploading(false); setUploadProgress(null); showError(capErr); break; }
           try {
             const uploadFile = thoughtVideo.type.startsWith('image/') ? await compressImage(thoughtVideo) : thoughtVideo;
-            const { data, error } = await api.uploadFile(uploadFile, 'equyvo/thoughts');
-            if (error) throw new Error(error);
-            thoughtUploadResult = { secureUrl: data!.secureUrl, resourceType: data!.resourceType, publicId: data!.publicId || undefined, variants: data!.variants };
+            const upResult = await runUpload(uploadFile, 'equyvo/thoughts', { index: 0, count: 1 });
+            if (upResult) {
+              thoughtUploadResult = { secureUrl: upResult.secureUrl, resourceType: upResult.resourceType, publicId: upResult.publicId || undefined, r2Key: upResult.r2Key || undefined, variants: upResult.variants };
+            }
           } catch (err) {
+            setUploadProgress(null);
             showError('Upload failed for thought media');
           }
         }
@@ -1290,6 +1510,7 @@ const CreatePage = () => {
         const thoughtSecureUrl = thoughtUploadResult?.secureUrl || '';
         if (thoughtVideo && !thoughtSecureUrl) {
           setIsUploading(false);
+          setUploadProgress(null);
           showError('Thought media upload failed — nothing was posted without its media.');
           break;
         }
@@ -1312,6 +1533,7 @@ const CreatePage = () => {
           thumbnail: thoughtThumbnail || thoughtSecureUrl || undefined,
           publicId: thoughtUploadResult?.publicId || '',
           resourceType: thoughtUploadResult?.resourceType || '',
+          r2Key: thoughtUploadResult?.r2Key || '',
           uploadDate: new Date(),
           isPrivate: contentVisibility !== 'public',
           views: 0,
@@ -1340,8 +1562,10 @@ const CreatePage = () => {
           image_url: thoughtMediaType === 'video' ? '' : (thoughtSecureUrl || thoughtThumbnail),
           publicId: newUploadedThought.publicId,
           resourceType: newUploadedThought.resourceType,
+          r2Key: newUploadedThought.r2Key,
         });
         setIsUploading(false);
+        setUploadProgress(null);
         if (persistErr) {
           showError('Thought saved locally but feed sync failed: ' + persistErr);
         } else {
@@ -1381,112 +1605,126 @@ const CreatePage = () => {
         showSuccess('Thought saved as draft!');
         break;
     }
+    } finally {
+      publishLockRef.current = false;
+    }
   };
 
   const handlePostPhotos = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (publishLockRef.current) {
+      showError('A photo publish is still running. One at a time, please.');
+      return;
+    }
     if (photoFiles.length === 0) {
       showError('Please select at least one photo');
       return;
     }
+    publishLockRef.current = true;
+    try {
+      const photosData = {
+        files: photoFiles,
+        caption: photoCaption
+      };
 
-    const photosData = {
-      files: photoFiles,
-      caption: photoCaption
-    };
-
-    switch (action) {
+      switch (action) {
       case 'post':
         setIsUploading(true);
-        const uploadedPhotoResults = await Promise.all(
-          photoFiles.map(async (file) => {
-            try {
-              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
-              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/photos');
-              if (error) throw new Error(error);
-              return { file, result: data };
-            } catch (err) {
-              showError(`Upload failed for ${file.name}`);
-            }
-            return { file, result: null };
-          })
-        );
+        setUploadProgress({ phase: 'processing', pct: 1 });
+        {
+          const uploadedPhotoResults: Array<{ file: File; result: UploadResult | null }> = [];
+          for (let i = 0; i < photoFiles.length; i++) {
+            const file = photoFiles[i];
+            const capErr = checkPlanCap(file, 'Photo');
+            if (capErr) { setUploadProgress(null); showError(capErr); continue; }
+            const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+            const result = await runUpload(up, 'equyvo/photos', { index: i, count: photoFiles.length });
+            uploadedPhotoResults.push({ file, result });
+          }
 
-        // Only photos that actually uploaded are persisted — failed files stay
-        // selected for retry and no media-less item is ever created.
-        const photoSuccesses = uploadedPhotoResults.filter(
-          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
-        );
-        if (photoSuccesses.length === 0) {
+          // Only photos that actually uploaded are persisted — failed files stay
+          // selected for retry and no media-less item is ever created.
+          const photoSuccesses = uploadedPhotoResults.filter(
+            (r): r is { file: File; result: UploadResult } => !!r.result,
+          );
+          if (photoSuccesses.length === 0) {
+            setIsUploading(false);
+            setUploadProgress(null);
+            showError('Photo upload failed — nothing was posted without its media.');
+            break;
+          }
+          const newUploadedPhotos: UploadedPhoto[] = photoSuccesses.map(({ file, result }, index) => ({
+            id: Date.now().toString() + index,
+            fileName: file.name,
+            fileSize: file.size,
+            thumbnail: getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
+            caption: photoCaption,
+            mediaType: file.type.startsWith('video/') ? 'video' : 'image',
+            videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
+            duration: result?.duration,
+            publicId: result?.publicId || '',
+            resourceType: result?.resourceType || '',
+            r2Key: result?.r2Key || '',
+            uploadDate: new Date(),
+            isPrivate: contentVisibility !== 'public',
+            views: 0,
+            likes: 0,
+            comments: 0,
+            shares: 0
+          }));
+
+          setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
+          setUploadProgress(null);
+          let photoPersistError: string | null = null;
+          for (let i = 0; i < newUploadedPhotos.length; i++) {
+            const p = newUploadedPhotos[i];
+            // Full-res URL straight from the upload result — never the cropped thumbnail.
+            const secureUrl = photoSuccesses[i]?.result?.secureUrl || '';
+            if (!secureUrl) continue;
+            const err = await persistContent({
+              id: p.id,
+              type: p.mediaType === 'video' ? 'video' : 'photo',
+              content: p.caption,
+              image: p.mediaType === 'video' ? '' : secureUrl,
+              media: secureUrl,
+              thumbnail: p.thumbnail || secureUrl,
+              videoUrl: p.videoUrl,
+              mediaType: p.mediaType,
+              duration: p.duration,
+              publicId: p.publicId,
+              resourceType: p.resourceType,
+              r2Key: p.r2Key,
+            });
+            if (err) photoPersistError = err;
+          }
           setIsUploading(false);
-          showError('Photo upload failed — nothing was posted without its media.');
-          break;
+          setUploadProgress(null);
+          if (photoPersistError) {
+            showError('Saved locally but feed sync failed: ' + photoPersistError);
+          } else if (photoSuccesses.length < uploadedPhotoResults.length) {
+            showSuccess(`${photoSuccesses.length} photo(s) posted; failed files were kept for retry.`);
+          } else {
+            showSuccess(`${photoSuccesses.length} photo(s) posted successfully!`);
+          }
+          // Keep failed files selected for retry.
+          setPhotoFiles(prev => prev.filter(f => !photoSuccesses.some(s => s.file === f)));
+          setPhotoCaption('');
         }
-        const newUploadedPhotos: UploadedPhoto[] = photoSuccesses.map(({ file, result }, index) => ({
-          id: Date.now().toString() + index,
-          fileName: file.name,
-          fileSize: file.size,
-          thumbnail: getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
-          caption: photoCaption,
-          mediaType: file.type.startsWith('video/') ? 'video' : 'image',
-          videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
-          duration: result?.duration,
-          publicId: result?.publicId || '',
-          resourceType: result?.resourceType || '',
-          uploadDate: new Date(),
-          isPrivate: contentVisibility !== 'public',
-          views: 0,
-          likes: 0,
-          comments: 0,
-          shares: 0
-        }));
-
-        setUploadedPhotos(prev => [...prev, ...newUploadedPhotos]);
-        let photoPersistError: string | null = null;
-        for (let i = 0; i < newUploadedPhotos.length; i++) {
-          const p = newUploadedPhotos[i];
-          // Full-res URL straight from the upload result — never the cropped thumbnail.
-          const secureUrl = photoSuccesses[i]?.result?.secureUrl || '';
-          if (!secureUrl) continue;
-          const err = await persistContent({
-            id: p.id,
-            type: p.mediaType === 'video' ? 'video' : 'photo',
-            content: p.caption,
-            image: p.mediaType === 'video' ? '' : secureUrl,
-            media: secureUrl,
-            thumbnail: p.thumbnail || secureUrl,
-            videoUrl: p.videoUrl,
-            mediaType: p.mediaType,
-            duration: p.duration,
-            publicId: p.publicId,
-            resourceType: p.resourceType,
-          });
-          if (err) photoPersistError = err;
-        }
-        setIsUploading(false);
-        if (photoPersistError) {
-          showError('Saved locally but feed sync failed: ' + photoPersistError);
-        } else if (photoSuccesses.length < uploadedPhotoResults.length) {
-          showSuccess(`${photoSuccesses.length} photo(s) posted; failed files were kept for retry.`);
-        } else {
-          showSuccess(`${photoSuccesses.length} photo(s) posted successfully!`);
-        }
-        // Keep failed files selected for retry.
-        setPhotoFiles(prev => prev.filter(f => !photoSuccesses.some(s => s.file === f)));
-        setPhotoCaption('');
         break;
       case 'schedule':
         if (!scheduleDateTime) {
           showError('Please select a date and time for scheduling');
           return;
         }
-        const newScheduledPhotos: ScheduledPost = {
-          id: Date.now().toString(),
-          type: 'photos',
-          content: photosData,
-          scheduledTime: new Date(scheduleDateTime),
-          status: 'scheduled'
-        };
-        setScheduledPosts(prev => [...prev, newScheduledPhotos]);
+        {
+          const newScheduledPhotos: ScheduledPost = {
+            id: Date.now().toString(),
+            type: 'photos',
+            content: photosData,
+            scheduledTime: new Date(scheduleDateTime),
+            status: 'scheduled'
+          };
+          setScheduledPosts(prev => [...prev, newScheduledPhotos]);
+        }
         showSuccess(`${photoFiles.length} photo(s) scheduled successfully!`);
         setPhotoFiles([]);
         setPhotoCaption('');
@@ -1494,124 +1732,155 @@ const CreatePage = () => {
         setScheduleDateTime('');
         break;
       case 'draft':
-        const newDraftPhotos: DraftPost = {
-          id: Date.now().toString(),
-          type: 'photos',
-          content: photosData,
-          createdAt: new Date()
-        };
-        setDraftPosts(prev => [...prev, newDraftPhotos]);
+        {
+          const newDraftPhotos: DraftPost = {
+            id: Date.now().toString(),
+            type: 'photos',
+            content: photosData,
+            createdAt: new Date()
+          };
+          setDraftPosts(prev => [...prev, newDraftPhotos]);
+        }
         showSuccess(`${photoFiles.length} photo(s) saved as draft!`);
         break;
+      }
+    } finally {
+      publishLockRef.current = false;
+      if (action === 'post') setUploadProgress(null);
     }
   };
 
   const handlePostVideos = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (publishLockRef.current) {
+      showError('A video publish is still running. One at a time, please.');
+      return;
+    }
     if (videoFiles.length === 0) {
       showError('Please select at least one video');
       return;
     }
+    publishLockRef.current = true;
+    try {
+      const videosData = {
+        files: videoFiles,
+        caption: videoCaption
+      };
 
-    const videosData = {
-      files: videoFiles,
-      caption: videoCaption
-    };
-
-    switch (action) {
+      switch (action) {
       case 'post':
         setIsUploading(true);
-        const uploadedVideoResults = await Promise.all(
-          videoFiles.map(async (file) => {
-            try {
-              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
-              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/videos');
-              if (error) throw new Error(error);
-              return { file, result: data };
-            } catch (err) {
-              showError(`Upload failed for ${file.name}`);
+        setUploadProgress({ phase: 'processing', pct: 1 });
+        {
+          const uploadedVideoResults: Array<{ file: File; result: UploadResult | null; durationSec?: number }> = [];
+          for (let i = 0; i < videoFiles.length; i++) {
+            const file = videoFiles[i];
+            const capErr = checkPlanCap(file, 'Video');
+            if (capErr) { setUploadProgress(null); showError(capErr); continue; }
+            // Length pre-check (plan seconds): stop BEFORE a multi-GB upload
+            // so rejection never arrives after minutes of transferring.
+            const durationSec = await probeVideoDuration(file);
+            const maxSec = planCaps?.maxVideoSec || 0;
+            if (durationSec && maxSec && durationSec > maxSec) {
+              setUploadProgress(null);
+              showError(`Video is ${Math.floor(durationSec / 60)}m ${durationSec % 60}s — the ${planCaps!.planLabel} plan allows up to ${Math.floor(maxSec / 60)} minutes of video. Upgrade for longer uploads.`);
+              continue;
             }
-            return { file, result: null };
-          })
-        );
+            const result = await runUpload(file, 'equyvo/videos', { index: i, count: videoFiles.length });
+            uploadedVideoResults.push({ file, result, durationSec });
+          }
 
-        // Only videos that actually uploaded are persisted — failed files are
-        // kept selected for retry and no thumbnail-only item is ever created.
-        const videoSuccesses = uploadedVideoResults.filter(
-          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
-        );
-        if (videoSuccesses.length === 0) {
+          // Only videos that actually uploaded are persisted — failed files are
+          // kept selected for retry and no thumbnail-only item is ever created.
+          const videoSuccesses = uploadedVideoResults.filter(
+            (r): r is { file: File; result: UploadResult; durationSec?: number } => !!r.result,
+          );
+          if (videoSuccesses.length === 0) {
+            setIsUploading(false);
+            setUploadProgress(null);
+            showError('Video upload failed — no thumbnail was posted without its video.');
+            break;
+          }
+          // Custom thumbnail from the separate section wins (uploaded only now
+          // that its video media exists).
+          const videoCustomThumb = await uploadPendingThumb(videoThumbFile);
+
+          // Client posters for videos that arrived without a thumbnail.
+          const videoPosters = await Promise.all(
+            videoSuccesses.map(async ({ file, result }) => {
+              const t = getThumbnailFromUpload(result);
+              if (t) return t;
+              try {
+                const poster = await captureVideoPoster(file);
+                return poster || '';
+              } catch { return ''; }
+            })
+          );
+          const newUploadedVideos: UploadedVideo[] = videoSuccesses.map(({ file, result, durationSec }, index) => ({
+            id: Date.now().toString() + index,
+            title: videoCaption || file.name,
+            fileName: file.name,
+            fileSize: file.size,
+            duration: result?.duration
+              ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}`
+              : durationSec
+                ? `${Math.floor(durationSec / 60)}:${String(durationSec % 60).padStart(2, '0')}`
+                : '0:00',
+            thumbnail: videoCustomThumb || videoPosters[index] || getThumbnailFromUpload(result),
+            videoUrl: result?.secureUrl || '',
+            publicId: result?.publicId || '',
+            resourceType: result?.resourceType || '',
+            r2Key: result?.r2Key || '',
+            uploadDate: new Date(),
+            isPrivate: contentVisibility !== 'public',
+            views: 0,
+            likes: 0,
+            comments: 0,
+            shares: 0,
+            watchTime: 0,
+            engagement: 0
+          }));
+
+          setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
+          setUploadProgress(null);
+          let videoPersistError: string | null = null;
+          for (let i = 0; i < newUploadedVideos.length; i++) {
+            const v = newUploadedVideos[i];
+            if (!v.videoUrl) continue;
+            const err = await persistContent({
+              id: v.id, type: 'video', content: v.title, image: '', media: v.videoUrl, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', duration: videoSuccesses[i]?.durationSec, publicId: v.publicId, resourceType: v.resourceType, r2Key: v.r2Key,
+            });
+            if (err) videoPersistError = err;
+          }
           setIsUploading(false);
-          showError('Video upload failed — no thumbnail was posted without its video.');
-          break;
+          setUploadProgress(null);
+          if (videoPersistError) {
+            showError('Saved locally but feed sync failed: ' + videoPersistError);
+          } else if (videoSuccesses.length < uploadedVideoResults.length) {
+            showSuccess(`${videoSuccesses.length} video(s) posted; failed files were kept for retry.`);
+          } else {
+            showSuccess(`${videoSuccesses.length} video(s) posted successfully!`);
+          }
+          // Keep failed files selected for retry; the consumed thumbnail is cleared.
+          setVideoFiles(prev => prev.filter(f => !videoSuccesses.some(s => s.file === f)));
+          setVideoCaption('');
+          clearVideoThumb();
         }
-        // Custom thumbnail from the separate section wins (uploaded only now
-        // that its video media exists).
-        const videoCustomThumb = await uploadPendingThumb(videoThumbFile);
-
-        // Client posters for videos that arrived without a thumbnail.
-        const videoPosters = await Promise.all(
-          videoSuccesses.map(async ({ file, result }) => {
-            const t = getThumbnailFromUpload(result);
-            if (t) return t;
-            try {
-              const poster = await captureVideoPoster(file);
-              return poster || '';
-            } catch { return ''; }
-          })
-        );
-        const newUploadedVideos: UploadedVideo[] = videoSuccesses.map(({ file, result }, index) => ({
-          id: Date.now().toString() + index,
-          title: videoCaption || file.name,
-          fileName: file.name,
-          fileSize: file.size,
-          duration: result?.duration ? `${Math.floor(result.duration / 60)}:${String(Math.floor(result.duration % 60)).padStart(2, '0')}` : '0:00',
-          thumbnail: videoCustomThumb || videoPosters[index] || getThumbnailFromUpload(result),
-          videoUrl: result?.secureUrl || '',
-          publicId: result?.publicId || '',
-          resourceType: result?.resourceType || '',
-          uploadDate: new Date(),
-          isPrivate: contentVisibility !== 'public',
-          views: 0,
-          likes: 0,
-          comments: 0,
-          shares: 0,
-          watchTime: 0,
-          engagement: 0
-        }));
-
-        setUploadedVideos(prev => [...prev, ...newUploadedVideos]);
-        let videoPersistError: string | null = null;
-        for (const v of newUploadedVideos) {
-          if (!v.videoUrl) continue;
-          const err = await persistContent({ id: v.id, type: 'video', content: v.title, image: '', media: v.videoUrl, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', publicId: v.publicId, resourceType: v.resourceType });
-          if (err) videoPersistError = err;
-        }
-        setIsUploading(false);
-        if (videoPersistError) {
-          showError('Saved locally but feed sync failed: ' + videoPersistError);
-        } else if (videoSuccesses.length < uploadedVideoResults.length) {
-          showSuccess(`${videoSuccesses.length} video(s) posted; failed files were kept for retry.`);
-        } else {
-          showSuccess(`${videoSuccesses.length} video(s) posted successfully!`);
-        }
-        // Keep failed files selected for retry; the consumed thumbnail is cleared.
-        setVideoFiles(prev => prev.filter(f => !videoSuccesses.some(s => s.file === f)));
-        setVideoCaption('');
-        clearVideoThumb();
         break;
       case 'schedule':
         if (!scheduleDateTime) {
           showError('Please select a date and time for scheduling');
           return;
         }
-        const newScheduledVideos: ScheduledPost = {
-          id: Date.now().toString(),
-          type: 'videos',
-          content: videosData,
-          scheduledTime: new Date(scheduleDateTime),
-          status: 'scheduled'
-        };
-        setScheduledPosts(prev => [...prev, newScheduledVideos]);
+        {
+          const newScheduledVideos: ScheduledPost = {
+            id: Date.now().toString(),
+            type: 'videos',
+            content: videosData,
+            scheduledTime: new Date(scheduleDateTime),
+            status: 'scheduled'
+          };
+          setScheduledPosts(prev => [...prev, newScheduledVideos]);
+        }
         showSuccess(`${videoFiles.length} video(s) scheduled successfully!`);
         setVideoFiles([]);
         setVideoCaption('');
@@ -1619,21 +1888,31 @@ const CreatePage = () => {
         setScheduleDateTime('');
         break;
       case 'draft':
-        const newDraftVideos: DraftPost = {
-          id: Date.now().toString(),
-          type: 'videos',
-          content: videosData,
-          createdAt: new Date()
-        };
-        setDraftPosts(prev => [...prev, newDraftVideos]);
+        {
+          const newDraftVideos: DraftPost = {
+            id: Date.now().toString(),
+            type: 'videos',
+            content: videosData,
+            createdAt: new Date()
+          };
+          setDraftPosts(prev => [...prev, newDraftVideos]);
+        }
         showSuccess(`${videoFiles.length} video(s) saved as draft!`);
         break;
+      }
+    } finally {
+      publishLockRef.current = false;
+      if (action === 'post') setUploadProgress(null);
     }
   };
 
   const handlePostLive = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
     switch (action) {
       case 'post':
+        if (publishLockRef.current) {
+          showError('A publish is still running. One at a time, please.');
+          return;
+        }
         if (!liveTitle.trim()) {
           showError('Please enter a title for your live stream');
           return;
@@ -1641,155 +1920,192 @@ const CreatePage = () => {
         await handleStartLive();
         break;
       case 'schedule':
+        if (publishLockRef.current) {
+          showError('A publish is still running. One at a time, please.');
+          return;
+        }
         if (!scheduleDateTime) {
           showError('Please select a date and time for scheduling');
           return;
         }
-        const newScheduledLive: ScheduledPost = {
-          id: Date.now().toString(),
-          type: 'live',
-          content: { title: liveTitle, description: liveDescription },
-          scheduledTime: new Date(scheduleDateTime),
-          status: 'scheduled'
-        };
-        setScheduledPosts(prev => [...prev, newScheduledLive]);
-        showSuccess('Live stream scheduled successfully!');
-        setLiveTitle('');
-        setLiveDescription('');
-        setShowScheduleModal(false);
-        setScheduleDateTime('');
+        publishLockRef.current = true;
+        try {
+          const newScheduledLive: ScheduledPost = {
+            id: Date.now().toString(),
+            type: 'live',
+            content: { title: liveTitle, description: liveDescription },
+            scheduledTime: new Date(scheduleDateTime),
+            status: 'scheduled'
+          };
+          setScheduledPosts(prev => [...prev, newScheduledLive]);
+          showSuccess('Live stream scheduled successfully!');
+          setLiveTitle('');
+          setLiveDescription('');
+          setShowScheduleModal(false);
+          setScheduleDateTime('');
+        } finally {
+          publishLockRef.current = false;
+        }
         break;
       case 'draft':
-        const newDraftLive: DraftPost = {
-          id: Date.now().toString(),
-          type: 'live',
-          content: { title: liveTitle, description: liveDescription },
-          createdAt: new Date()
-        };
-        setDraftPosts(prev => [...prev, newDraftLive]);
-        showSuccess('Live stream saved as draft!');
+        if (publishLockRef.current) {
+          showError('A publish is still running. One at a time, please.');
+          return;
+        }
+        publishLockRef.current = true;
+        try {
+          const newDraftLive: DraftPost = {
+            id: Date.now().toString(),
+            type: 'live',
+            content: { title: liveTitle, description: liveDescription },
+            createdAt: new Date()
+          };
+          setDraftPosts(prev => [...prev, newDraftLive]);
+          showSuccess('Live stream saved as draft!');
+        } finally {
+          publishLockRef.current = false;
+        }
         break;
     }
   };
 
   const handlePostMoment = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+    if (publishLockRef.current) {
+      showError('A moment publish is still running. One at a time, please.');
+      return;
+    }
     if (momentFiles.length === 0) {
       showError('Please select at least one photo or video');
       return;
     }
+    publishLockRef.current = true;
+    try {
+      const momentsData = { files: momentFiles, content: momentContent };
 
-    const momentsData = { files: momentFiles, content: momentContent };
-
-    switch (action) {
+      switch (action) {
       case 'post':
         setIsUploading(true);
-        const uploadedResults = await Promise.all(
-          momentFiles.map(async (file) => {
-            try {
-              const uploadFile = file.type.startsWith('image/') ? await compressImage(file) : file;
-              const { data, error } = await api.uploadFile(uploadFile, 'equyvo/moments');
-              if (error) throw new Error(error);
-              return { file, result: data };
-            } catch (err) {
-              showError(`Upload failed for ${file.name}`);
+        setUploadProgress({ phase: 'processing', pct: 1 });
+        {
+          const uploadedResults: Array<{ file: File; result: UploadResult | null; durationSec?: number }> = [];
+          for (let i = 0; i < momentFiles.length; i++) {
+            const file = momentFiles[i];
+            const capErr = checkPlanCap(file, 'Moment');
+            if (capErr) { setUploadProgress(null); showError(capErr); continue; }
+            const durationSec = file.type.startsWith('video/') ? await probeVideoDuration(file) : undefined;
+            const maxSec = planCaps?.maxVideoSec || 0;
+            if (durationSec && maxSec && durationSec > maxSec) {
+              setUploadProgress(null);
+              showError(`Moment video is ${Math.floor(durationSec / 60)} minutes long — the ${planCaps!.planLabel} plan allows up to ${Math.floor(maxSec / 60)} minutes. Upgrade for longer uploads.`);
+              continue;
             }
-            return { file, result: null };
-          })
-        );
+            const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+            const result = await runUpload(up, 'equyvo/moments', { index: i, count: momentFiles.length });
+            uploadedResults.push({ file, result, durationSec });
+          }
 
-        // Only moment media that actually uploaded is persisted — failed files
-        // stay selected for retry and no cover-only item is ever created.
-        const momentSuccesses = uploadedResults.filter(
-          (r): r is { file: File; result: NonNullable<typeof r.result> } => !!r.result,
-        );
-        if (momentSuccesses.length === 0) {
+          // Only moment media that actually uploaded is persisted — failed files
+          // stay selected for retry and no cover-only item is ever created.
+          const momentSuccesses = uploadedResults.filter(
+            (r): r is { file: File; result: UploadResult; durationSec?: number } => !!r.result,
+          );
+          if (momentSuccesses.length === 0) {
+            setIsUploading(false);
+            setUploadProgress(null);
+            showError('Moment upload failed — no cover was posted without its media.');
+            break;
+          }
+          // Custom cover from the separate thumbnail section wins (uploaded only
+          // now that its moment media exists).
+          const momentCustomThumb = await uploadPendingThumb(momentThumbFile);
+
+          // Posters for video moments + full URLs for photo moments.
+          const momentPosters = await Promise.all(
+            momentSuccesses.map(async ({ file, result }) => {
+              const t = getThumbnailFromUpload(result);
+              if (t) return t;
+              if (file.type.startsWith('video/')) {
+                try {
+                  const poster = await captureVideoPoster(file);
+                  return poster || '';
+                } catch { return ''; }
+              }
+              return result?.secureUrl || '';
+            })
+          );
+          const newUploadedMoments: UploadedMoment[] = momentSuccesses.map(({ file, result }, index) => ({
+            id: Date.now().toString() + index,
+            fileName: file.name,
+            fileSize: file.size,
+            thumbnail: momentCustomThumb || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
+            mediaType: file.type.startsWith('image/') ? 'image' : 'video',
+            videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
+            publicId: result?.publicId || '',
+            resourceType: result?.resourceType || '',
+            r2Key: result?.r2Key || '',
+            content: momentContent,
+            uploadDate: new Date(),
+            isPrivate: contentVisibility !== 'public',
+            views: 0,
+            likes: 0,
+            comments: 0,
+          }));
+
+          setUploadedMoments(prev => [...prev, ...newUploadedMoments]);
+          setUploadProgress(null);
+          let momentPersistError: string | null = null;
+          for (let i = 0; i < newUploadedMoments.length; i++) {
+            const m = newUploadedMoments[i];
+            const secureUrl = momentSuccesses[i]?.result?.secureUrl || '';
+            if (!secureUrl) continue;
+            // Photo moment: media/image/thumbnail = full image. Video moment:
+            // media/videoUrl = playable URL, thumbnail = poster only.
+            const err = await persistContent({
+              id: m.id,
+              type: 'moment',
+              content: m.content,
+              image: m.mediaType === 'video' ? '' : (secureUrl || m.thumbnail),
+              media: m.mediaType === 'video' ? (m.videoUrl || secureUrl) : (secureUrl || m.thumbnail),
+              thumbnail: m.thumbnail || secureUrl,
+              mediaType: m.mediaType,
+              videoUrl: m.videoUrl,
+              duration: momentSuccesses[i]?.durationSec,
+              publicId: m.publicId,
+              resourceType: m.resourceType,
+              r2Key: m.r2Key,
+            });
+            if (err) momentPersistError = err;
+          }
           setIsUploading(false);
-          showError('Moment upload failed — no cover was posted without its media.');
-          break;
+          setUploadProgress(null);
+          if (momentPersistError) {
+            showError('Saved locally but feed sync failed: ' + momentPersistError);
+          } else if (momentSuccesses.length < uploadedResults.length) {
+            showSuccess(`${momentSuccesses.length} moment(s) posted; failed files were kept for retry.`);
+          } else {
+            showSuccess(`${momentSuccesses.length} moment(s) posted successfully!`);
+          }
+          // Keep failed files selected for retry; the consumed cover is cleared.
+          setMomentFiles(prev => prev.filter(f => !momentSuccesses.some(s => s.file === f)));
+          setMomentContent('');
+          clearMomentThumb();
         }
-        // Custom cover from the separate thumbnail section wins (uploaded only
-        // now that its moment media exists).
-        const momentCustomThumb = await uploadPendingThumb(momentThumbFile);
-
-        // Posters for video moments + full URLs for photo moments.
-        const momentPosters = await Promise.all(
-          momentSuccesses.map(async ({ file, result }) => {
-            const t = getThumbnailFromUpload(result);
-            if (t) return t;
-            if (file.type.startsWith('video/')) {
-              try {
-                const poster = await captureVideoPoster(file);
-                return poster || '';
-              } catch { return ''; }
-            }
-            return result?.secureUrl || '';
-          })
-        );
-        const newUploadedMoments: UploadedMoment[] = momentSuccesses.map(({ file, result }, index) => ({
-          id: Date.now().toString() + index,
-          fileName: file.name,
-          fileSize: file.size,
-          thumbnail: momentCustomThumb || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
-          mediaType: file.type.startsWith('image/') ? 'image' : 'video',
-          videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
-          publicId: result?.publicId || '',
-          resourceType: result?.resourceType || '',
-          content: momentContent,
-          uploadDate: new Date(),
-          isPrivate: contentVisibility !== 'public',
-          views: 0,
-          likes: 0,
-          comments: 0,
-        }));
-
-        setUploadedMoments(prev => [...prev, ...newUploadedMoments]);
-        let momentPersistError: string | null = null;
-        for (let i = 0; i < newUploadedMoments.length; i++) {
-          const m = newUploadedMoments[i];
-          const secureUrl = momentSuccesses[i]?.result?.secureUrl || '';
-          if (!secureUrl) continue;
-          // Photo moment: media/image/thumbnail = full image. Video moment:
-          // media/videoUrl = playable URL, thumbnail = poster only.
-          const err = await persistContent({
-            id: m.id,
-            type: 'moment',
-            content: m.content,
-            image: m.mediaType === 'video' ? '' : (secureUrl || m.thumbnail),
-            media: m.mediaType === 'video' ? (m.videoUrl || secureUrl) : (secureUrl || m.thumbnail),
-            thumbnail: m.thumbnail || secureUrl,
-            mediaType: m.mediaType,
-            videoUrl: m.videoUrl,
-            publicId: m.publicId,
-            resourceType: m.resourceType,
-          });
-          if (err) momentPersistError = err;
-        }
-        setIsUploading(false);
-        if (momentPersistError) {
-          showError('Saved locally but feed sync failed: ' + momentPersistError);
-        } else if (momentSuccesses.length < uploadedResults.length) {
-          showSuccess(`${momentSuccesses.length} moment(s) posted; failed files were kept for retry.`);
-        } else {
-          showSuccess(`${momentSuccesses.length} moment(s) posted successfully!`);
-        }
-        // Keep failed files selected for retry; the consumed cover is cleared.
-        setMomentFiles(prev => prev.filter(f => !momentSuccesses.some(s => s.file === f)));
-        setMomentContent('');
-        clearMomentThumb();
         break;
       case 'schedule':
         if (!scheduleDateTime) {
           showError('Please select a date and time for scheduling');
           return;
         }
-        const newScheduledMoments: ScheduledPost = {
-          id: Date.now().toString(),
-          type: 'moments',
-          content: momentsData,
-          scheduledTime: new Date(scheduleDateTime),
-          status: 'scheduled'
-        };
-        setScheduledPosts(prev => [...prev, newScheduledMoments]);
+        {
+          const newScheduledMoments: ScheduledPost = {
+            id: Date.now().toString(),
+            type: 'moments',
+            content: momentsData,
+            scheduledTime: new Date(scheduleDateTime),
+            status: 'scheduled'
+          };
+          setScheduledPosts(prev => [...prev, newScheduledMoments]);
+        }
         showSuccess(`${momentFiles.length} moment(s) scheduled successfully!`);
         setMomentFiles([]);
         setMomentContent('');
@@ -1797,15 +2113,21 @@ const CreatePage = () => {
         setScheduleDateTime('');
         break;
       case 'draft':
-        const newDraftMoments: DraftPost = {
-          id: Date.now().toString(),
-          type: 'moments',
-          content: momentsData,
-          createdAt: new Date()
-        };
-        setDraftPosts(prev => [...prev, newDraftMoments]);
+        {
+          const newDraftMoments: DraftPost = {
+            id: Date.now().toString(),
+            type: 'moments',
+            content: momentsData,
+            createdAt: new Date()
+          };
+          setDraftPosts(prev => [...prev, newDraftMoments]);
+        }
         showSuccess(`${momentFiles.length} moment(s) saved as draft!`);
         break;
+      }
+    } finally {
+      publishLockRef.current = false;
+      if (action === 'post') setUploadProgress(null);
     }
   };
 
@@ -1814,26 +2136,74 @@ const CreatePage = () => {
       showError('Please enter a title for your live stream');
       return;
     }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showError('Camera is not available on this device. Live needs app permission to go live.');
+      return;
+    }
 
+    // SINGLE-FLIGHT: going live twice simultaneously duplicates announcements.
+    if (publishLockRef.current) {
+      showError('A publish is still running. One at a time, please.');
+      return;
+    }
+    publishLockRef.current = true;
     try {
+      // CAMERA FIRST. Permission is the most likely blocker — surface it
+      // before any announcement/notification exists, so a denied grant can
+      // never leave a live stream that nobody can show.
       setIsUploading(true);
+      let mediaStream: MediaStream | null = null;
+      try {
+        mediaStream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: 'environment' },
+          audio: true,
+        });
+      } catch (error) {
+        setIsUploading(false);
+        if (error instanceof Error) {
+          if (error.name === 'NotAllowedError') {
+            showError('Camera and microphone access denied. Allow access in your device/app settings to go live.');
+          } else if (error.name === 'NotFoundError') {
+            showError('No camera or microphone found. Please connect a device to go live.');
+          } else {
+            showError('Failed to access camera/microphone. Please check your device permissions.');
+          }
+        }
+        return;
+      }
+      setStream(mediaStream);
 
-      // Upload thumbnail if provided
+      // Modern recording: probe containers instead of the hard-coded vp9
+      // webm (which throws on many Android WebViews and silently killed live).
+      let recorder: MediaRecorder;
+      try {
+        recorder = makeRecorder(mediaStream);
+      } catch {
+        mediaStream.getTracks().forEach(t => t.stop());
+        setStream(null);
+        setIsUploading(false);
+        showError('This device cannot record live video. Please update your system WebView.');
+        return;
+      }
+      recorderMimeRef.current = recorder.mimeType || pickRecorderMime();
+
+      // Upload thumbnail if provided (camera already secured).
       let liveThumbnailUrl = '';
       let liveThumbnailPublicId = '';
       let liveThumbnailResourceType = '';
+      let liveThumbnailR2Key = '';
       if (liveThumbnailFile) {
         try {
-          const { data, error } = await api.uploadFile(liveThumbnailFile, 'equyvo/live/thumbnails');
-          if (!error && data) {
-            liveThumbnailUrl = data.secureUrl;
-            liveThumbnailPublicId = data.publicId;
-            liveThumbnailResourceType = data.resourceType;
+          const upThumb = await runUpload(liveThumbnailFile, 'equyvo/live/thumbnails', { index: 0, count: 1 }, 'Live cover');
+          if (upThumb) {
+            liveThumbnailUrl = upThumb.secureUrl;
+            liveThumbnailPublicId = upThumb.publicId || '';
+            liveThumbnailResourceType = upThumb.resourceType;
+            liveThumbnailR2Key = upThumb.r2Key || '';
           }
-        } catch {
-          showError('Failed to upload thumbnail');
-        }
+        } catch { /* cover is optional — stream continues */ }
       }
+      setUploadProgress(null);
 
       const author = getCurrentAuthor();
 
@@ -1848,6 +2218,7 @@ const CreatePage = () => {
         thumbnail: liveThumbnailUrl,
         publicId: liveThumbnailPublicId,
         resourceType: liveThumbnailResourceType,
+        r2Key: liveThumbnailR2Key,
         user: author.username,
         userId: author.userId,
         avatar: author.avatar,
@@ -1886,19 +2257,6 @@ const CreatePage = () => {
       });
       localStorage.setItem('equyvo_live_notifications', JSON.stringify(existingNotifs.slice(0, 20)));
 
-      // Request camera and microphone permissions
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: true,
-        audio: true
-      });
-
-      setStream(mediaStream);
-
-      // Initialize MediaRecorder
-      const recorder = new MediaRecorder(mediaStream, {
-        mimeType: 'video/webm;codecs=vp9'
-      });
-
       const chunks: Blob[] = [];
 
       recorder.ondataavailable = (event) => {
@@ -1908,31 +2266,23 @@ const CreatePage = () => {
       };
 
       recorder.onstop = () => {
-        const blob = new Blob(chunks, { type: 'video/webm' });
+        const mime = (recorderMimeRef.current || 'video/webm').split(';')[0];
+        const blob = new Blob(chunks, { type: mime });
         handleSaveRecording(blob);
       };
 
       setMediaRecorder(recorder);
       setRecordedChunks(chunks);
 
-      // Start recording
+      // Camera secured → recording → announcement done: only now is it LIVE.
       recorder.start();
+      recordingStartRef.current = Date.now();
       setIsRecording(true);
       setIsUploading(false);
 
       showSuccess('Live stream started! Followers have been notified.');
-
-    } catch (error) {
-      setIsUploading(false);
-      if (error instanceof Error) {
-        if (error.name === 'NotAllowedError') {
-          showError('Camera and microphone access denied. Please allow access to go live.');
-        } else if (error.name === 'NotFoundError') {
-          showError('No camera or microphone found. Please connect a device to go live.');
-        } else {
-          showError('Failed to access camera/microphone. Please check your device permissions.');
-        }
-      }
+    } finally {
+      publishLockRef.current = false;
     }
   };
 
@@ -1965,18 +2315,36 @@ const CreatePage = () => {
   };
 
   const handleSaveRecording = async (blob: Blob) => {
-    const file = new File([blob], `live-stream-${Date.now()}.webm`, { type: 'video/webm' });
+    // Container follows the probe result ('video/mp4' on Android WebView,
+    // 'video/webm' elsewhere) so the persisted extension matches the bytes.
+    const mime = (blob.type || recorderMimeRef.current || 'video/webm').split(';')[0];
+    const ext = extForMime(mime);
+    const file = new File([blob], `live-stream-${Date.now()}.${ext}`, { type: mime });
+    const secs = recordingStartRef.current
+      ? Math.max(1, Math.round((Date.now() - recordingStartRef.current) / 1000))
+      : undefined;
 
     setIsUploading(true);
-    let liveUploadResult: { secureUrl: string; publicId: string; resourceType: string; duration?: number } | null = null;
+    setUploadProgress({ phase: 'uploading', pct: 1 });
+    let liveUploadResult: UploadResult | null = null;
     try {
-      const { data, error } = await api.uploadFile(file, 'equyvo/live');
+      const { data, error } = await api.uploadFile(file, 'equyvo/live', (p) => setUploadProgress({
+        phase: p.phase,
+        pct: Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50)),
+      }), { duration: secs });
       if (error) throw new Error(error);
-      liveUploadResult = data!;
+      liveUploadResult = data || null;
     } catch (err) {
-      showError('Upload failed for live recording');
+      showError('Live recording upload failed — the raw recording was saved to your device. Try again later.' + (err instanceof Error ? ` (${err.message})` : ''));
     }
     setIsUploading(false);
+    setUploadProgress(null);
+
+    if (!liveUploadResult?.secureUrl) {
+      // NEVER persist a video item without its playable URL — that is what
+      // made live replays render as broken "image" cards before.
+      return;
+    }
 
     const liveThumbnail = getThumbnailFromUpload(liveUploadResult);
     const newUploadedVideo: UploadedVideo = {
@@ -1984,10 +2352,16 @@ const CreatePage = () => {
       title: liveTitle || `Live Stream ${new Date().toLocaleString()}`,
       fileName: file.name,
       fileSize: file.size,
-      duration: liveUploadResult?.duration
-        ? `${Math.floor(liveUploadResult.duration / 60)}:${String(Math.floor(liveUploadResult.duration % 60)).padStart(2, '0')}`
-        : '0:00',
+      duration: secs
+        ? `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`
+        : (liveUploadResult.duration
+          ? `${Math.floor(liveUploadResult.duration / 60)}:${String(Math.floor(liveUploadResult.duration % 60)).padStart(2, '0')}`
+          : '0:00'),
       thumbnail: liveThumbnail,
+      videoUrl: liveUploadResult.secureUrl,
+      publicId: liveUploadResult.publicId || '',
+      resourceType: liveUploadResult.resourceType,
+      r2Key: liveUploadResult.r2Key || '',
       uploadDate: new Date(),
       isPrivate: contentVisibility !== 'public',
       views: 0,
@@ -1999,17 +2373,215 @@ const CreatePage = () => {
     };
 
     setUploadedVideos(prev => [...prev, newUploadedVideo]);
-    await persistContent({ id: newUploadedVideo.id, type: 'video', content: newUploadedVideo.title, image: liveThumbnail, thumbnail: liveThumbnail });
+    const persistErr = await persistContent({
+      id: newUploadedVideo.id,
+      type: 'video',
+      content: newUploadedVideo.title,
+      image: '',
+      media: liveUploadResult.secureUrl,
+      thumbnail: liveThumbnail,
+      videoUrl: liveUploadResult.secureUrl,
+      mediaType: 'video',
+      duration: secs || liveUploadResult.duration,
+      publicId: newUploadedVideo.publicId,
+      resourceType: newUploadedVideo.resourceType,
+      r2Key: newUploadedVideo.r2Key,
+    });
+    if (persistErr) {
+      showError('Replay saved locally but feed sync failed: ' + persistErr);
+    }
 
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = file.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    try {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch { /* local download is a convenience — never fatal */ }
   };
+
+  // ── Camera tab: capture photos/videos straight from the device camera ────
+  // Captures route into the chosen composer (story/photo/video/moment) via
+  // the same queues the picker fills, so posting flows stay identical.
+
+  const stopCamera = () => {
+    if (cameraTimerRef.current) {
+      clearInterval(cameraTimerRef.current);
+      cameraTimerRef.current = null;
+    }
+    try {
+      if (cameraRecorderRef.current && cameraRecorderRef.current.state !== 'inactive') {
+        cameraRecorderRef.current.stop();
+      }
+    } catch { /* ignore */ }
+    cameraRecorderRef.current = null;
+    cameraChunksRef.current = [];
+    try {
+      cameraStreamRef.current?.getTracks().forEach((t) => t.stop());
+    } catch { /* ignore */ }
+    cameraStreamRef.current = null;
+    setCameraReady(false);
+    setIsCapturing(false);
+    setCameraRecordSecs(0);
+  };
+
+  const startCamera = async (facing: 'environment' | 'user' = cameraFacing) => {
+    setCameraError('');
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setCameraError('Camera is not supported on this device.');
+      return;
+    }
+    try {
+      stopCamera();
+      const ms = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: facing === 'environment' ? { ideal: 'environment' } : { ideal: 'user' } },
+        audio: true,
+      });
+      cameraStreamRef.current = ms;
+      setCameraFacing(facing);
+      if (cameraVideoRef.current) {
+        cameraVideoRef.current.srcObject = ms;
+        try { await cameraVideoRef.current.play(); } catch { /* autoplay policy — user gesture will resume */ }
+      }
+      setCameraReady(true);
+    } catch (e) {
+      if (e instanceof Error) {
+        if (e.name === 'NotAllowedError') setCameraError('Camera access denied. Allow camera access for Equyvo in your device settings.');
+        else if (e.name === 'NotFoundError') setCameraError('No camera was found on this device.');
+        else setCameraError('Camera could not start. Please try again.');
+      } else setCameraError('Camera could not start. Please try again.');
+    }
+  };
+
+  const flipCamera = () => {
+    void startCamera(cameraFacing === 'environment' ? 'user' : 'environment');
+  };
+
+  const capturePhoto = async (): Promise<File | null> => {
+    const v = cameraVideoRef.current;
+    if (!v || !v.videoWidth) {
+      showError('Camera is not ready yet. Try again.');
+      return null;
+    }
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = v.videoWidth;
+      canvas.height = v.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { showError('Capture failed. Please try again.'); return null; }
+      if (cameraFacing === 'user') {
+        // Mirror the saved shot so it matches the mirrored preview UX.
+        ctx.translate(canvas.width, 0);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92));
+      if (!blob || blob.size === 0) { showError('Capture failed. Please try again.'); return null; }
+      return new File([blob], `camera-photo-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    } catch {
+      showError('Capture failed. Please try again.');
+      return null;
+    }
+  };
+
+  /** Send a captured file into the composer the user chose in the camera tab. */
+  const routeCameraFile = (file: File) => {
+    const isImage = file.type.startsWith('image/');
+    const isVideo = file.type.startsWith('video/');
+    let dest = cameraDest;
+    if (isVideo && dest === 'photo') dest = 'video';
+    if (isImage && dest === 'video') dest = 'photo';
+    setCameraDest(dest);
+    switch (dest) {
+      case 'story':
+        setStoryFiles(prev => [...prev, file]);
+        break;
+      case 'photo':
+        setPhotoFiles(prev => [...prev, file]);
+        break;
+      case 'video':
+        setVideoFiles(prev => [...prev, file]);
+        break;
+      case 'moment':
+        setMomentFiles(prev => [...prev, file]);
+        break;
+    }
+    setActiveTab(dest);
+    showSuccess(`Capture added to your ${dest === 'text-story' ? 'story' : dest} composer.`);
+  };
+
+  const handleCameraCapture = async () => {
+    if (publishLockRef.current) return;
+    const file = await capturePhoto();
+    if (file) routeCameraFile(file);
+  };
+
+  const handleCameraRecordToggle = () => {
+    const ms = cameraStreamRef.current;
+    if (!ms) {
+      void startCamera();
+      return;
+    }
+    if (cameraRecorderRef.current && cameraRecorderRef.current.state !== 'inactive') {
+      try { cameraRecorderRef.current.stop(); } catch { /* ignore */ }
+      return;
+    }
+    try {
+      const rec = makeRecorder(ms);
+      cameraRecorderRef.current = rec;
+      cameraMimeRef.current = rec.mimeType || pickRecorderMime();
+      cameraChunksRef.current = [];
+      cameraStartRef.current = Date.now();
+      rec.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) cameraChunksRef.current.push(e.data);
+      };
+      rec.onstop = () => {
+        if (cameraTimerRef.current) { clearInterval(cameraTimerRef.current); cameraTimerRef.current = null; }
+        setIsCapturing(false);
+        const secs = Math.max(1, Math.round((Date.now() - cameraStartRef.current) / 1000));
+        setCameraRecordSecs(0);
+        const mime = (cameraMimeRef.current || 'video/webm').split(';')[0];
+        const blob = new Blob(cameraChunksRef.current, { type: mime });
+        cameraChunksRef.current = [];
+        cameraRecorderRef.current = null;
+        if (!blob.size) {
+          showError('Recording came out empty. Please try again.');
+          return;
+        }
+        // Big local safety: never hand the composer an unrecordable giant.
+        if (blob.size > 500 * 1024 * 1024) {
+          showError(`Recording is ${Math.round(blob.size / (1024 * 1024))}MB — clips up to 500MB are supported.`);
+          return;
+        }
+        const file = new File([blob], `camera-video-${Date.now()}.${extForMime(mime)}`, { type: mime });
+        Object.defineProperty(file, 'duration', { value: secs });
+        routeCameraFile(file);
+      };
+      rec.start(1000);
+      setIsCapturing(true);
+      setCameraRecordSecs(0);
+      cameraTimerRef.current = setInterval(() => {
+        setCameraRecordSecs(Math.max(1, Math.round((Date.now() - cameraStartRef.current) / 1000)));
+      }, 1000);
+    } catch {
+      showError('Video recording is not supported on this device. Try capturing a photo instead.');
+    }
+  };
+
+  // Camera stream follows the tab: ON when the camera tab is active, stopped
+  // otherwise (and on unmount) so the privacy indicator is never left on.
+  useEffect(() => {
+    if (activeTab === 'camera') {
+      void startCamera();
+    } else {
+      stopCamera();
+    }
+    return () => { stopCamera(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab]);
 
   const handleDeleteScheduledPost = (id: string) => {
     setScheduledPosts(prev => prev.filter(post => post.id !== id));
@@ -3169,15 +3741,46 @@ const CreatePage = () => {
         </CardContent>
       </Card>
 
+      {/* Publish progress: exact byte-level bar for every composer tab while
+          one upload network is active (chunked flow reports real progress). */}
+      {isUploading && uploadProgress && (
+        <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 space-y-2" role="status" aria-live="polite">
+          <div className="flex items-center justify-between text-xs font-medium">
+            <span className="text-primary">
+              {uploadProgress.phase === 'screening'
+                ? 'Checking content safety…'
+                : uploadProgress.phase === 'processing'
+                  ? 'Processing media…'
+                  : uploadProgress.phase === 'uploading'
+                    ? 'Uploading…'
+                    : uploadProgress.phase === 'finalizing'
+                      ? 'Finishing up…'
+                      : 'Almost done…'}
+            </span>
+            <span className="text-muted-foreground tabular-nums">{uploadProgress.pct}%</span>
+          </div>
+          <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-all duration-300"
+              style={{ width: `${uploadProgress.pct}%` }}
+            />
+          </div>
+          <p className="text-[11px] leading-tight text-muted-foreground">
+            Large videos upload safely in the background — keep this page open. You can post again as soon as this finishes.
+          </p>
+        </div>
+      )}
+
       {/* Create Content Tabs — horizontally scrollable icon pills on mobile
           so labels never squeeze/wrap ("Text Story" etc.); grid on desktop. */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
+        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 md:grid md:grid-cols-8 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
           {[
+            { value: 'camera', label: 'Camera', Icon: SwitchCamera },
             { value: 'story', label: 'Story', Icon: Camera },
             { value: 'text-story', label: 'Text', Icon: Text },
             { value: 'thought', label: 'Thought', Icon: Brain },
-            { value: 'photo', label: 'Photos', Icon: ImageIcon },
+            { value: 'photo', label: 'Photos', Icon: Image },
             { value: 'video', label: 'Videos', Icon: Film },
             { value: 'live', label: 'Live', Icon: Zap },
             { value: 'moment', label: 'Moments', Icon: Video },
@@ -3315,14 +3918,15 @@ const CreatePage = () => {
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={() => handlePostStory('post')} className="w-full sm:flex-1">
-                  Post Story
+                <Button onClick={() => handlePostStory('post')} disabled={isUploading || storyFiles.length === 0} className="w-full sm:flex-1">
+                  {isUploading ? 'Posting…' : 'Post Story'}
                 </Button>
                 <Button
                   onClick={() => {
                     setCurrentContentType('story');
                     setShowScheduleModal(true);
                   }}
+                  disabled={isUploading}
                   variant="outline"
                   className="w-full sm:flex-1"
                 >
@@ -3331,6 +3935,7 @@ const CreatePage = () => {
                 </Button>
                 <Button
                   onClick={() => handlePostStory('draft')}
+                  disabled={isUploading || storyFiles.length === 0}
                   variant="secondary"
                   className="w-full sm:flex-1"
                 >
@@ -3460,8 +4065,8 @@ const CreatePage = () => {
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={() => handlePostTextStory('post')} className="w-full sm:flex-1">
-                  Post Text Story
+                <Button onClick={() => handlePostTextStory('post')} disabled={isUploading || !textStoryContent.trim()} className="w-full sm:flex-1">
+                  {isUploading ? 'Posting…' : 'Post Text Story'}
                 </Button>
                 <Button
                   onClick={() => {
@@ -3469,16 +4074,13 @@ const CreatePage = () => {
                     setShowScheduleModal(true);
                   }}
                   variant="outline"
+                  disabled={isUploading}
                   className="w-full sm:flex-1"
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
                 </Button>
-                <Button
-                  onClick={() => handlePostTextStory('draft')}
-                  variant="secondary"
-                  className="w-full sm:flex-1"
-                >
+                <Button onClick={() => handlePostTextStory('draft')} disabled={isUploading || !textStoryContent.trim()} variant="secondary" className="w-full sm:flex-1">
                   Save as Draft
                 </Button>
               </div>
@@ -3608,14 +4210,15 @@ const CreatePage = () => {
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={() => handlePostThought('post')} className="w-full sm:flex-1">
-                  Post Thought
+                <Button onClick={() => handlePostThought('post')} disabled={isUploading} className="w-full sm:flex-1">
+                  {isUploading ? 'Posting…' : 'Post Thought'}
                 </Button>
                 <Button
                   onClick={() => {
                     setCurrentContentType('thought');
                     setShowScheduleModal(true);
                   }}
+                  disabled={isUploading}
                   variant="outline"
                   className="w-full sm:flex-1"
                 >
@@ -3624,6 +4227,7 @@ const CreatePage = () => {
                 </Button>
                 <Button
                   onClick={() => handlePostThought('draft')}
+                  disabled={isUploading}
                   variant="secondary"
                   className="w-full sm:flex-1"
                 >
@@ -3705,14 +4309,15 @@ const CreatePage = () => {
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={() => handlePostPhotos('post')} className="w-full sm:flex-1">
-                  Post Photos
+                <Button onClick={() => handlePostPhotos('post')} disabled={isUploading || photoFiles.length === 0} className="w-full sm:flex-1">
+                  {isUploading ? 'Posting…' : 'Post Photos'}
                 </Button>
                 <Button
                   onClick={() => {
                     setCurrentContentType('photos');
                     setShowScheduleModal(true);
                   }}
+                  disabled={isUploading}
                   variant="outline"
                   className="w-full sm:flex-1"
                 >
@@ -3721,6 +4326,7 @@ const CreatePage = () => {
                 </Button>
                 <Button
                   onClick={() => handlePostPhotos('draft')}
+                  disabled={isUploading || photoFiles.length === 0}
                   variant="secondary"
                   className="w-full sm:flex-1"
                 >
@@ -3854,14 +4460,15 @@ const CreatePage = () => {
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={() => handlePostVideos('post')} className="w-full sm:flex-1">
-                  Post Videos
+                <Button onClick={() => handlePostVideos('post')} disabled={isUploading || videoFiles.length === 0} className="w-full sm:flex-1">
+                  {isUploading ? 'Posting…' : 'Post Videos'}
                 </Button>
                 <Button
                   onClick={() => {
                     setCurrentContentType('videos');
                     setShowScheduleModal(true);
                   }}
+                  disabled={isUploading}
                   variant="outline"
                   className="w-full sm:flex-1"
                 >
@@ -3870,6 +4477,7 @@ const CreatePage = () => {
                 </Button>
                 <Button
                   onClick={() => handlePostVideos('draft')}
+                  disabled={isUploading || videoFiles.length === 0}
                   variant="secondary"
                   className="w-full sm:flex-1"
                 >
@@ -4029,15 +4637,16 @@ const CreatePage = () => {
 
               {!isRecording ? (
                 <div className="flex flex-col sm:flex-row gap-2">
-                  <Button onClick={() => handlePostLive('post')} className="w-full sm:flex-1 bg-red-500 hover:bg-red-600">
+                  <Button onClick={() => handlePostLive('post')} disabled={isUploading} className="w-full sm:flex-1 bg-red-500 hover:bg-red-600">
                     <Zap className="h-4 w-4 mr-2" />
-                    Go Live Now
+                    {isUploading ? 'Connecting camera…' : 'Go Live Now'}
                   </Button>
                   <Button
                     onClick={() => {
                       setCurrentContentType('live');
                       setShowScheduleModal(true);
                     }}
+                    disabled={isUploading}
                     variant="outline"
                     className="w-full sm:flex-1"
                   >
@@ -4046,6 +4655,7 @@ const CreatePage = () => {
                   </Button>
                   <Button
                     onClick={() => handlePostLive('draft')}
+                    disabled={isUploading}
                     variant="secondary"
                     className="w-full sm:flex-1"
                   >
@@ -4194,7 +4804,7 @@ const CreatePage = () => {
                   }}
                   variant="outline"
                   className="w-full sm:flex-1"
-                  disabled={momentFiles.length === 0}
+                  disabled={isUploading || momentFiles.length === 0}
                 >
                   <Calendar className="h-4 w-4 mr-2" />
                   Schedule
@@ -4203,11 +4813,125 @@ const CreatePage = () => {
                   onClick={() => handlePostMoment('draft')}
                   variant="secondary"
                   className="w-full sm:flex-1"
-                  disabled={momentFiles.length === 0}
+                  disabled={isUploading || momentFiles.length === 0}
                 >
                   Save Draft
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* Camera capture — direct device camera, straight into any composer */}
+        <TabsContent value="camera" className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Camera className="h-5 w-5" />
+                Camera Capture
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Take photos or videos right now and post them to any composer
+              </p>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="relative overflow-hidden rounded-lg border bg-black">
+                <video
+                  ref={cameraVideoRef}
+                  muted
+                  playsInline
+                  autoPlay
+                  className="w-full max-h-[70vh] object-cover aspect-[9/16] sm:aspect-video"
+                  style={{ transform: cameraFacing === 'user' ? 'scaleX(-1)' : undefined }}
+                />
+                {!cameraReady && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-sm text-white/80 p-6">
+                    {cameraError ? (
+                      <>
+                        <AlertTriangle className="h-8 w-8" />
+                        <p>{cameraError}</p>
+                        <Button size="sm" variant="secondary" onClick={() => void startCamera()}>
+                          Try again
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <Loader2 className="h-8 w-8 animate-spin" />
+                        <p>Starting camera… If this is the first time, allow camera access.</p>
+                      </>
+                    )}
+                  </div>
+                )}
+                {isCapturing && (
+                  <div className="absolute top-3 left-3 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
+                    <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
+                    REC {fileVideoFormatSecs(cameraRecordSecs)}
+                  </div>
+                )}
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={flipCamera}
+                  disabled={isCapturing}
+                  className="absolute top-3 right-3 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60"
+                  title="Switch camera"
+                >
+                  <SwitchCamera className="h-5 w-5" />
+                </Button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label htmlFor="camera-dest">Send capture to</Label>
+                  <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment')}>
+                    <SelectTrigger id="camera-dest" className="mt-1">
+                      <SelectValue placeholder="Choose composer" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="story">Story (24h)</SelectItem>
+                      <SelectItem value="photo">Photos</SelectItem>
+                      <SelectItem value="video">Videos</SelectItem>
+                      <SelectItem value="moment">Moments</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {cameraDest === 'photo' ? 'Photo captures open the Photos composer.' : 'Videos route to Videos when the destination is Photos.'}
+                  </p>
+                </div>
+                <div className="flex items-end gap-3">
+                  <Button
+                    onClick={() => void handleCameraCapture()}
+                    disabled={!cameraReady || isCapturing || isUploading}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    <Camera className="h-4 w-4 mr-2" />
+                    Photo
+                  </Button>
+                  <Button
+                    onClick={handleCameraRecordToggle}
+                    disabled={!cameraReady || isUploading}
+                    variant={isCapturing ? 'destructive' : 'default'}
+                    className="flex-1"
+                  >
+                    {isCapturing ? (
+                      <>
+                        <Square className="h-4 w-4 mr-2" />
+                        Stop & Send
+                      </>
+                    ) : (
+                      <>
+                        <Video className="h-4 w-4 mr-2" />
+                        Record
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Captures land directly in the chosen composer's queue — you see the preview and the caption before posting.
+                {planCaps?.maxVideoSec ? ` Plan allows up to ${Math.floor(planCaps.maxVideoSec / 60)} min of video.` : ''}
+              </p>
             </CardContent>
           </Card>
         </TabsContent>
@@ -4380,7 +5104,7 @@ const CreatePage = () => {
                     }
                   }}
                   className="w-full sm:flex-1"
-                  disabled={!scheduleDateTime}
+                  disabled={!scheduleDateTime || isUploading}
                 >
                   Confirm Schedule
                 </Button>

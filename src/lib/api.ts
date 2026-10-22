@@ -160,6 +160,162 @@ async function request<T = any>(
   return { error: lastError || 'Network error' };
 }
 
+// Upload sizing contract:
+// • ≤ 8MB  → single-shot POST /api/upload (unchanged legacy path).
+// • > 8MB  → resumable chunked flow (POST /upload/init → PUT /upload/part ×
+//            N → POST /upload/complete) streaming 8MB parts one request at a
+//            time, so long videos / vlogs / live recordings cannot blow a
+//            request body, worker memory or a mobile network. Per-part hash
+//            chain on the server keeps identity verifiable.
+export type UploadPhase = 'screening' | 'processing' | 'uploading' | 'finalizing' | 'done';
+
+export interface UploadProgress {
+  loaded: number;
+  total: number;
+  phase: UploadPhase;
+}
+
+export interface UploadResult {
+  publicId: string | null;
+  secureUrl: string;
+  originalUrl: string;
+  delivery: 'r2' | 'cloudinary';
+  store: 'r2+cloudinary' | 'r2' | 'cloudinary';
+  r2Key: string | null;
+  variants: { thumbnail: string; optimized?: string; sd?: string; hd?: string } | null;
+  deduped?: boolean;
+  planId?: string;
+  resourceType: string;
+  format: string;
+  bytes: number;
+  width?: number;
+  height?: number;
+  createdAt: string;
+  duration?: number;
+  chunked?: boolean;
+}
+
+/** Server rejects with a quota code or message on any cap breach. */
+function throwUploadError(message: string, code?: string): never {
+  const e = new Error(message) as Error & { code?: string };
+  if (code) e.code = code;
+  throw e;
+}
+
+const CHUNK_PART_SIZE = 8 * 1024 * 1024;
+const PART_TIMEOUT_MS = 180_000;
+
+function extFromBlob(blob: Blob): string {
+  try {
+    const name = (blob as File).name || '';
+    let ext = name ? String(name.split('.').pop() || '') : '';
+    ext = ext.replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+    if (ext && ext.length <= 8) return ext;
+    const t = (blob.type || '').toLowerCase();
+    const m = t.match(/(mp4|webm|mov|m4a|mpeg|mp3|aac|ogg|wav|jpeg|jpg|png|webp|heic|avif|gif)/);
+    if (m) return m[1];
+  } catch { /* ignore */ }
+  return 'bin';
+}
+
+/** One PUT /upload/part with timeout + few retries; returns nothing on fail. */
+async function uploadOnePart(
+  uploadId: string,
+  partIndex: number,
+  chunk: Blob,
+): Promise<{ data?: { partIndex: number; etag: string; bytes: number }; error?: string }> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), PART_TIMEOUT_MS);
+  try {
+    const fd = new FormData();
+    fd.append('file', chunk);
+    return await request(
+      `/upload/part?uploadId=${encodeURIComponent(uploadId)}&partIndex=${partIndex}`,
+      { method: 'PUT', body: fd, signal: ctrl.signal },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Chunked uploader for big files. Throws Error on failure (aborts session). */
+async function uploadChunked(
+  payload: Blob,
+  folder: string | undefined,
+  meta: { duration?: number } | undefined,
+  onProgress: (loaded: number, phase: UploadPhase) => void,
+): Promise<{ data?: UploadResult; error?: string }> {
+  const type = (payload as File).type || 'application/octet-stream';
+  const total = payload.size;
+  const init = await request<{ chunked: boolean; uploadId?: string; partSize?: number; r2Key?: string | null }>(
+    '/upload/init',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        size: total,
+        type,
+        name: (payload as File).name || '',
+        folder: folder || 'equyvo/uploads',
+        ext: extFromBlob(payload),
+      }),
+    },
+  );
+  if (init.error) throwUploadError(init.error);
+  const started = init.data;
+  if (!started || started.chunked !== true || !started.uploadId) {
+    // Server prefers the direct path (cap changed / small file) — fall back.
+    const formData = new FormData();
+    formData.append('file', payload);
+    if (folder) formData.append('folder', folder);
+    const res = await request<UploadResult>('/upload', { method: 'POST', body: formData });
+    if (res.data) onProgress(total, 'done');
+    return res;
+  }
+  const uploadId = started.uploadId;
+  const partSize = started.partSize || CHUNK_PART_SIZE;
+  const totalParts = Math.ceil(total / partSize);
+  let uploaded = 0;
+  onProgress(0, 'uploading');
+  try {
+    for (let partIndex = 1; partIndex <= totalParts; partIndex++) {
+      const start = (partIndex - 1) * partSize;
+      const end = Math.min(start + partSize, total);
+      const chunk = payload.slice(start, end);
+      let lastErr: string | null = null;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          const res = await uploadOnePart(uploadId, partIndex, chunk);
+          if (res.error) {
+            // Session gone / quota answer — retrying cannot help.
+            throwUploadError(res.error, (/UPLOAD_SESSION_GONE/.test(res.error) ? 'UPLOAD_SESSION_GONE' : undefined));
+          }
+          lastErr = null;
+          break;
+        } catch (e) {
+          if (e instanceof Error && (e as Error & { code?: string }).code === 'UPLOAD_SESSION_GONE') throw e;
+          lastErr = e instanceof Error ? e.message : 'Chunk upload failed';
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+      if (lastErr) throwUploadError(lastErr);
+      uploaded = end;
+      onProgress(uploaded, 'uploading');
+    }
+    onProgress(total, 'finalizing');
+    const comp = await request<UploadResult>('/upload/complete', {
+      method: 'POST',
+      body: JSON.stringify({ uploadId, duration: meta?.duration }),
+    });
+    if (comp.error) throwUploadError(comp.error);
+    onProgress(total, 'done');
+    if (!comp.data) throwUploadError('Upload finished without a result');
+    return comp;
+  } catch (fatal) {
+    try { void request('/upload/abort', { method: 'POST', body: JSON.stringify({ uploadId }) }); } catch { /* best effort */ }
+    throw fatal;
+  }
+}
+
 export const api = {
   // Posts
   getPosts: (limit = 50) =>
@@ -408,7 +564,16 @@ export const api = {
   // SAFETY GATE: every upload is screened before the bytes leave the device
   // (see lib/moderation.ts). Blocks throw ContentBlockedError so callers can
   // show the warning; infrastructure failures never block uploads.
-  uploadFile: async (file: File | Blob, folder?: string) => {
+  uploadFile: async (
+    file: File | Blob,
+    folder?: string,
+    onProgress?: (p: UploadProgress) => void,
+    meta?: { duration?: number },
+  ) => {
+    const step = (loaded: number, totalCount: number, phase: UploadPhase) => {
+      try { onProgress?.({ loaded: Math.min(loaded, Math.max(totalCount, 1)), total: Math.max(totalCount, 1), phase }); } catch { /* observer errors never break uploads */ }
+    };
+    step(0, 1, 'screening');
     try {
       const mod = await import('./moderation');
       const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
@@ -424,35 +589,29 @@ export const api = {
       // server moderation still applies.
       if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
     }
+    step(0, 1, 'processing');
     let payload: File | Blob = file;
     try {
       const { compressMedia } = await import('./compress');
-      payload = await compressMedia(file);
+      const compressed = await compressMedia(file);
+      // Compression helps; it must never make the payload bigger.
+      if (compressed && (!compressed.size || compressed.size <= (file.size || compressed.size))) {
+        payload = compressed;
+      }
     } catch { /* fall back to original on any compression error */ }
-    const formData = new FormData();
-    formData.append('file', payload);
-    if (folder) formData.append('folder', folder);
-    return request<{
-      publicId: string | null;
-      secureUrl: string;
-      originalUrl: string;
-      delivery: 'r2' | 'cloudinary';
-      store: 'r2+cloudinary' | 'r2' | 'cloudinary';
-      r2Key: string | null;
-      variants: { thumbnail: string; optimized?: string; sd?: string; hd?: string } | null;
-      deduped?: boolean;
-      planId?: string;
-      resourceType: string;
-      format: string;
-      bytes: number;
-      width?: number;
-      height?: number;
-      createdAt: string;
-      duration?: number;
-    }>('/upload', {
-      method: 'POST',
-      body: formData,
-    });
+    const total = payload.size;
+    if (total <= CHUNK_PART_SIZE) {
+      const formData = new FormData();
+      formData.append('file', payload);
+      if (folder) formData.append('folder', folder);
+      const res = await request<UploadResult>('/upload', {
+        method: 'POST',
+        body: formData,
+      });
+      step(total, total, res.data ? 'done' : 'uploading');
+      return res;
+    }
+    return await uploadChunked(payload, folder, meta, (loaded, phase) => step(loaded, total, phase));
   },
 
   // Get user's own posts

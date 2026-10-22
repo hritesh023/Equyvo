@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate } from
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
+import { DisplayProvider } from './lib/display';
 import Navbar, { MobileBottomNav } from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
@@ -236,11 +237,13 @@ const App = () => {
         <AudioProvider>
           <NetworkProvider>
             <I18nProvider>
-              <Router>
-                <ErrorBoundary>
-                  <AppContent />
-                </ErrorBoundary>
-              </Router>
+              <DisplayProvider>
+                <Router>
+                  <ErrorBoundary>
+                    <AppContent />
+                  </ErrorBoundary>
+                </Router>
+              </DisplayProvider>
             </I18nProvider>
           </NetworkProvider>
         </AudioProvider>

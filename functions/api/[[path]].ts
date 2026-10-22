@@ -1074,13 +1074,17 @@ async function syncContentCommentCount(env, found, count) {
 //   Free 5GB / Plus 50GB / Premium 250GB / Creator 500GB / Creator Pro 1TB / Biz 2TB
 // ---------------------------------------------------------------------------
 const GB = 1024 * 1024 * 1024;
+// Upload caps raised so the app can handle long videos / vlogs / live
+// recordings on the free tier too (measured to real-world 1080p phone
+// recordings): the FILE-SIZE/LENGTH gates scale with the plan, storage
+// quota stays the primary limit. Upgrades buy storage + even bigger caps.
 const PLAN_CATALOG = {
-  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,   storageBytes: 5 * GB,   maxUploadMB: 20,  maxVideoSec: 60,  monthlyUploads: 100,  quality: 'auto-low',  ads: true },
-  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 49,  storageBytes: 50 * GB,  maxUploadMB: 100, maxVideoSec: 180, monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
-  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149, storageBytes: 250 * GB, maxUploadMB: 500, maxVideoSec: 600, monthlyUploads: 2000, quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 1999, storageBytes: 500 * GB, maxUploadMB: 1024, maxVideoSec: 1800, monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 5999, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 20000, quality: 'original', ads: false, creator: true },
-  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 2048 * GB, maxUploadMB: 2048, maxVideoSec: 7200, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true },
+  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,   storageBytes: 10 * GB,  maxUploadMB: 200,  maxVideoSec: 1800, monthlyUploads: 300,   quality: 'auto-low',  ads: true },
+  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 49,  storageBytes: 100 * GB, maxUploadMB: 1000, maxVideoSec: 7200, monthlyUploads: 1000,  quality: 'auto-good', ads: 'light' },
+  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149, storageBytes: 250 * GB, maxUploadMB: 2000, maxVideoSec: 14400, monthlyUploads: 5000, quality: 'auto-best', ads: false },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 1999, storageBytes: 500 * GB, maxUploadMB: 4096, maxVideoSec: 28800, monthlyUploads: 10000, quality: 'auto-best', ads: false, creator: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 5999, storageBytes: 1024 * GB, maxUploadMB: 8192, maxVideoSec: 43200, monthlyUploads: 50000, quality: 'original', ads: false, creator: true },
+  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 2048 * GB, maxUploadMB: 8192, maxVideoSec: 43200, monthlyUploads: 100000, quality: 'original', ads: false, creator: true, business: true },
 };
 const DEFAULT_PLAN_ID = 'eq_free';
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
@@ -2061,6 +2065,39 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
 
   const now = new Date().toISOString();
+
+  // ── Idempotent-create guard: identical rapid re-posts return the original ──
+  // Double-tapped "Post" buttons, retried taps during a slow network, or
+  // replayed requests previously created real duplicate stories/moments in
+  // the feed. Now an identical item from the SAME account within a short
+  // window returns the ALREADY-created item instead of duplicating it.
+  // Distinct uploads (different text/media or after the window) create as
+  // normal — nothing legitimate is ever swallowed.
+  let idempotencyId = '';
+  let idempotencyKey = '';
+  try {
+    const fpText = JSON.stringify([
+      kind,
+      actor.id,
+      String(body.content || body.text || ''),
+      String(body.title || ''),
+      String(body.videoUrl || body.video || body.media || ''),
+      String(body.image || body.image_url || ''),
+      Array.isArray(body.tags) ? body.tags.join('|') : String(body.tags || ''),
+    ]);
+    const fp = await sha256Hex(new TextEncoder().encode(fpText).buffer);
+    idempotencyId = fp.slice(0, 24);
+    idempotencyKey = 'dup:' + kind + ':' + actor.id + ':' + idempotencyId;
+    const recent = await kv.get('seenup:' + idempotencyKey);
+    if (recent) {
+      const prev = JSON.parse(recent);
+      if (prev && prev.id) {
+        const prevRaw = await kv.get(itemKey(prev.id));
+        if (prevRaw) return json({ data: transformItem(JSON.parse(prevRaw)), duplicate: true, error: null }, 200, cors);
+      }
+    }
+  } catch { /* dedupe is best-effort */ }
+
   let id = generateId();
   if (typeof body.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(body.id)) {
     const existing = await kv.get(itemKey(body.id));
@@ -2124,6 +2161,12 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   ids.unshift(id);
   await kv.put(listKey, JSON.stringify(ids.slice(0, 500)));
   await kv.put(KEYS.HAS_REAL_USERS, 'true');
+  // Record the idempotency window for this content fingerprint.
+  try {
+    if (idempotencyKey) {
+      await kv.put('seenup:' + idempotencyKey, JSON.stringify({ id, at: Date.now() }), { expirationTtl: 15 });
+    }
+  } catch { /* best-effort */ }
   // Index every content type so search + AI feed see thoughts/stories/moments
   // too (posts-only index left most content invisible). Best-effort.
   try {
@@ -3742,6 +3785,224 @@ export const onRequest = async (context) => {
     // R2 put (original, required when bound) -> Cloudinary (variants,
     // best-effort when bound) -> usage accounting. secureUrl is ALWAYS the
     // best delivery URL (R2 when available), so the frontend needs no changes.
+    // ── CHUNKED UPLOAD (resumable multipart → R2) ────────────────────────────
+    // Long videos / vlogs / live recordings exceed what a single fetch body
+    // and a single worker memory window can safely carry. The client slices
+    // the file into 8MB parts and streams them one request at a time:
+    //   POST /api/upload/init            → { uploadId, partSize }
+    //   PUT  /api/upload/part?uploadId&partIndex  (chunk as 'file') → { etag }
+    //   POST /api/upload/complete        → same payload shape as /api/upload
+    //   POST /api/upload/abort           → cancels (removes R2 multipart)
+    // Plan caps are checked at INIT against the declared total size and at
+    // COMPLETE against the real assembled size, so partial progress can
+    // never bypass billing.
+    if (path === '/api/upload/init' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      if (!env.EQUYVO_R2) return json({ error: 'Media warehouse not configured' }, 503, cors);
+      const bearer = bearerFrom(request);
+      const { planId } = await resolvePlan(env, actor, bearer);
+      const quota = planQuota(planId);
+      const rl = await rateLimit(kv, 'upload', actor.id, rateLimitFor(planId, 'upload'));
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      let payload = {};
+      try { payload = await readJson(request); } catch { payload = {}; }
+      const declaredBytes = Math.max(0, Math.round(Number(payload.size) || 0));
+      const contentType = String(payload.type || '').slice(0, 120);
+      const folder = String(payload.folder || 'equyvo/uploads').replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
+      if (!mimeAllowed(contentType)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
+      if (declaredBytes <= 0) return json({ error: 'Empty file' }, 400, cors);
+      if (declaredBytes <= 8 * 1024 * 1024) {
+        // Small enough for the single-shot path — tell the client to use it.
+        return json({ data: { chunked: false }, error: null }, 200, cors);
+      }
+      const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
+      const maxBytes = Math.min(quota.maxUploadMB, envCapMB) * 1024 * 1024;
+      if (declaredBytes > maxBytes) {
+        return json({ error: `File too large for ${quota.label} (max ${Math.min(quota.maxUploadMB, envCapMB)}MB). Upgrade for higher limits.`, code: 'QUOTA_FILE_SIZE', planId }, 413, cors);
+      }
+      const usage = await getUsage(env, actor.id);
+      if (usage.bytes + declaredBytes > quota.storageBytes) {
+        return json({ error: `Storage quota exceeded for ${quota.label} (${Math.round(quota.storageBytes / GB)}GB). Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId, usage }, 402, cors);
+      }
+      if (usage.monthUploads >= quota.monthlyUploads) {
+        return json({ error: `Monthly upload limit reached for ${quota.label}. Upgrades reset limits.`, code: 'QUOTA_MONTHLY', planId }, 402, cors);
+      }
+      const ext = String(payload.ext || extFromFile({ name: payload.name || '', type: contentType })).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'bin';
+      const r2Key = r2KeyFor(actor.id, generateId(), ext);
+      let mpu;
+      try {
+        mpu = await env.EQUYVO_R2.createMultipartUpload(r2Key, {
+          httpMetadata: { contentType: contentType || 'application/octet-stream', cacheControl: 'public, max-age=31536000, immutable' },
+          customMetadata: { uploader: String(actor.id).slice(0, 128), encoding: 'none' },
+        });
+      } catch {
+        return json({ error: 'Could not start chunked upload. Please try again.' }, 500, cors);
+      }
+      const uploadId = generateId() + generateId();
+      const session = {
+        actorId: actor.id, r2Key, r2UploadId: mpu.uploadId, folder,
+        size: declaredBytes, type: contentType, partSize: 8 * 1024 * 1024,
+        parts: {}, createdAt: Date.now(), planId,
+      };
+      try {
+        await kv.put('upl:' + uploadId, JSON.stringify(session), { expirationTtl: 6 * 60 * 60 });
+      } catch {
+        try { await env.EQUYVO_R2.resumeMultipartUpload(r2Key, mpu.uploadId).abortMultipartUpload(); } catch {}
+        return json({ error: 'Could not start chunked upload. Please try again.' }, 500, cors);
+      }
+      return json({ data: { chunked: true, uploadId, partSize: session.partSize, r2Key }, error: null }, 200, cors);
+    }
+
+    if (path === '/api/upload/part' && method === 'PUT') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const uploadId = String(url.searchParams.get('uploadId') || '').slice(0, 64);
+      const partIndex = clamp(parseInt(url.searchParams.get('partIndex') || '', 10) || 0, 1, 10000);
+      let session = null;
+      try {
+        const raw = await kv.get('upl:' + uploadId);
+        if (raw) session = JSON.parse(raw);
+      } catch { session = null; }
+      if (!session || session.actorId !== actor.id) {
+        return json({ error: 'Upload session not found. Restart the upload.' , code: 'UPLOAD_SESSION_GONE' }, 404, cors);
+      }
+      let formData;
+      try { formData = await request.formData(); } catch { return json({ error: 'Invalid chunk' }, 400, cors); }
+      const file = formData.get('file');
+      if (!file || typeof file === 'string' || file.size <= 0) return json({ error: 'Empty chunk' }, 400, cors);
+      // Running hash: digest every part so the final object can be identified
+      // even without a whole-file buffer (CPU-safe: per-part native crypto).
+      let partHash = '';
+      try {
+        partHash = await sha256Hex(await file.arrayBuffer());
+      } catch { /* hashing is metadata only — continue */ }
+      let etag = '';
+      try {
+        const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
+        const part = await mpu.uploadPart(partIndex, await file.arrayBuffer());
+        etag = part.etag || '';
+      } catch (e) {
+        return json({ error: 'Chunk upload failed. Retry this part.', code: 'UPLOAD_PART_FAILED' }, 502, cors);
+      }
+      try {
+        session.parts[String(partIndex)] = { etag, hash: partHash, size: Number(file.size || 0) };
+        await kv.put('upl:' + uploadId, JSON.stringify(session), { expirationTtl: 6 * 60 * 60 });
+      } catch { /* best-effort progress tracking */ }
+      return json({ data: { partIndex, etag, bytes: Number(file.size || 0) }, error: null }, 200, cors);
+    }
+
+    if (path === '/api/upload/complete' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      if (!env.EQUYVO_R2) return json({ error: 'Media warehouse not configured' }, 503, cors);
+      let payload = {};
+      try { payload = await readJson(request); } catch { payload = {}; }
+      const uploadId = String(payload.uploadId || '').slice(0, 64);
+      let session = null;
+      try {
+        const raw = await kv.get('upl:' + uploadId);
+        if (raw) session = JSON.parse(raw);
+      } catch { session = null; }
+      if (!session || session.actorId !== actor.id) {
+        return json({ error: 'Upload session not found. Restart the upload.', code: 'UPLOAD_SESSION_GONE' }, 404, cors);
+      }
+      const partEntries = Object.entries(session.parts || {})
+        .map(([k, v]) => ({ i: parseInt(k, 10), etag: (v && v.etag) || '', hash: (v && v.hash) || '', size: (v && v.size) || 0 }))
+        .filter((p) => p.i > 0 && p.etag)
+        .sort((a, b) => a.i - b.i);
+      if (!partEntries.length) {
+        return json({ error: 'No chunks received. Please restart the upload.', code: 'UPLOAD_NO_PARTS' }, 400, cors);
+      }
+      const totalBytes = partEntries.reduce((n, p) => n + (Number(p.size) || 0), 0);
+      if (totalBytes <= 0) return json({ error: 'Empty upload' }, 400, cors);
+      const { planId: livePlan } = await resolvePlan(env, actor, bearerFrom(request));
+      const quota = planQuota(livePlan);
+      const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
+      const maxBytes = Math.min(quota.maxUploadMB, envCapMB) * 1024 * 1024;
+      if (totalBytes > maxBytes + session.partSize) {
+        try { await env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId).abortMultipartUpload(); } catch {}
+        try { await kv.delete('upl:' + uploadId); } catch {}
+        return json({ error: `File too large for ${quota.label}. Upgrade for higher limits.`, code: 'QUOTA_FILE_SIZE', planId: livePlan }, 413, cors);
+      }
+      let obj = null;
+      try {
+        const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
+        obj = await mpu.completeMultipartUpload(partEntries.map((p) => ({ partNumber: p.i, etag: p.etag })));
+      } catch (e) {
+        return json({ error: 'Could not finalize upload. Please retry.', code: 'UPLOAD_COMPLETE_FAILED' }, 502, cors);
+      }
+      try { await kv.delete('upl:' + uploadId); } catch {}
+      // Whole-file identity without a whole-file hash: the object is keyed by
+      // the hash chain of its bytes.
+      let fullHash = '';
+      try {
+        fullHash = await sha256Hex(new TextEncoder().encode('mp1:' + partEntries.map((p) => p.hash).join('')).buffer);
+      } catch { fullHash = session.r2UploadId || generateId(); }
+      const contentType = session.type || 'application/octet-stream';
+      const isVideo = String(contentType).startsWith('video/');
+      const audioLike = String(contentType).startsWith('audio/');
+      const r2Url = r2DeliveryUrl(request, env, session.r2Key);
+      const resourceType = audioLike || isVideo ? 'video' : 'image';
+      const payloadOut = {
+        publicId: null,
+        secureUrl: r2Url,
+        originalUrl: r2Url,
+        delivery: 'r2',
+        resourceType,
+        format: String(session.r2Key || '').split('.').pop().replace(/[^a-z0-9]/gi, '') || 'bin',
+        bytes: totalBytes,
+        // Multipart-completed objects: expose stored size/etag via head data.
+        width: undefined,
+        height: undefined,
+        createdAt: new Date().toISOString(),
+        duration: Number(payload.duration) || undefined,
+        variants: null,
+        r2Key: session.r2Key,
+        store: 'r2',
+        deduped: false,
+        planId: livePlan,
+        chunked: true,
+      };
+      try {
+        await env.EQUYVO_KV.put(KEYS.HASH('mp:' + fullHash), JSON.stringify(payloadOut), { expirationTtl: 60 * 60 * 24 * 90 });
+        await env.EQUYVO_KV.put(KEYS.MEDIA('mp:' + fullHash), JSON.stringify({ bytes: totalBytes, r2Key: session.r2Key }), { expirationTtl: 60 * 60 * 24 * 365 });
+      } catch { /* best-effort */ }
+      try {
+        const nextUsage = await addUsage(env, actor.id, Number(totalBytes || 0));
+        return json({
+          data: payloadOut,
+          usage: { usedBytes: nextUsage.bytes, quotaBytes: quota.storageBytes },
+          error: null,
+        }, 200, cors);
+      } catch {
+        return json({ data: payloadOut, error: null }, 200, cors);
+      }
+    }
+
+    if (path === '/api/upload/abort' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let payload = {};
+      try { payload = await readJson(request); } catch { payload = {}; }
+      const uploadId = String(payload.uploadId || '').slice(0, 64);
+      let session = null;
+      try {
+        const raw = await kv.get('upl:' + uploadId);
+        if (raw) session = JSON.parse(raw);
+      } catch { session = null; }
+      try { await kv.delete('upl:' + uploadId); } catch {}
+      if (session && session.actorId === actor.id && env.EQUYVO_R2) {
+        try { await env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId).abortMultipartUpload(); } catch {}
+      }
+      return json({ data: { aborted: true }, error: null }, 200, cors);
+    }
+
     if (path === '/api/upload' && method === 'POST') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);

@@ -52,6 +52,15 @@
          page calls navigator.mediaDevices.getUserMedia({ audio: true }). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Camera capture + going live: the WebView's getUserMedia({ video })
+         prompts via Capacitor's WebChromeClient only when this permission is
+         declared. Front camera / back camera hardware feature declared as
+         optional so devices without a camera can still install the app. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <!-- Required on Android 13+ for the advertising ID (personalized ads). -->
     <uses-permission android:name="com.google.android.gms.permission.AD_ID" />
 </manifest>
