@@ -201,7 +201,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             </div>
 
             {/* AI-Powered Search Bar (Desktop) */}
-            <div className="flex-grow max-w-lg mx-4">
+            <div className="flex-grow min-w-0 max-w-lg mx-4">
               <SearchSuggest
                 onSearch={handleSearch}
                 placeholder="Search for content, users, tags... (Press '/' to focus)"
@@ -211,7 +211,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
               />
             </div>
 
-            {/* Navigation Links (Desktop) */}
+            {/* Navigation Links (Desktop) — labels appear from 2xl so the bar
+                never overflows on 1280-1535px screens (icons still navigate) */}
             <div className="flex items-center gap-1 sm:gap-2 md:gap-4">
               <div className="hidden lg:flex items-center gap-4 xl:gap-6">
                 {navItems.map((item) => (
@@ -222,7 +223,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
                       }`}
                   >
                     <item.icon className="h-4 w-4" />
-                    <span className="hidden xl:block">{t(item.name)}</span>
+                    <span className="hidden 2xl:block">{t(item.name)}</span>
                   </Link>
                 ))}
               </div>
