@@ -42,14 +42,21 @@ android {
         applicationId "equyvo.acronous.com"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 14
-        versionName "1.0.1"
+        versionCode 15
+        versionName "1.0.2"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
+    }
+
+    androidResources {
+        // Ship only English resources: the ad/UMP libraries bundle dozens of
+        // locales the app never renders (app i18n lives in the web layer).
+        // Cuts APK/AAB size and memory footprint (Play Console size score).
+        localeFilters += ['en']
     }
     
     signingConfigs {
@@ -65,8 +72,12 @@ android {
     
     buildTypes {
         release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // Full R8: dead-code elimination + optimization + obfuscation.
+            // Play Console previously reported "Obfuscation percentage 1%"
+            // because minification was disabled entirely.
+            minifyEnabled true
+            shrinkResources true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release
         }
     }

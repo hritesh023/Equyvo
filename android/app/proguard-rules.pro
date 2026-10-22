@@ -1,21 +1,37 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# ─────────────────────────────────────────────────────────────────────────────
+# Equyvo release R8 configuration (AGP 8.13 line)
+# Production build uses full R8: shrink (minifyEnabled) + optimize + obfuscate.
+# The WebView JS↔native Capacitor bridge is REFLECTION-based, so every entry
+# point the bridge can touch is kept explicitly below. Everything else is
+# dead-code-eliminated, optimized and renamed — this is what lifts the Play
+# Console obfuscation/size metrics away from "1% obfuscated".
+# ─────────────────────────────────────────────────────────────────────────────
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Annotation metadata the Capacitor / AdMob / Cordova runtimes reflect on.
+-keepattributes RuntimeVisibleAnnotations,RuntimeVisibleParameterAnnotations,RuntimeVisibleTypeAnnotations,AnnotationDefault,Signature,InnerClasses,EnclosingMethod,Exceptions,Deprecated
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# Real line numbers on release crash traces (uploaded Play traces stay debuggable).
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# ── Capacitor WebView bridge ────────────────────────────────────────────────
+-keep class com.getcapacitor.** { *; }
+-keep public class * extends com.getcapacitor.Plugin { *; }
+-keep @com.getcapacitor.annotation.CapacitorPlugin public class * { *; }
+-keep public class com.equyvo.app.MainActivity { *; }
+
+# JS-exposed bridge methods can never be renamed or stripped.
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+
+# ── AdMob + UMP (user messaging) ────────────────────────────────────────────
+# The SDK ships its own R8 rules; these guard the reflection-heavy surfaces.
+-keep class com.google.android.gms.ads.** { public protected *; }
+-keep class com.google.android.ump.** { public protected *; }
+-keep class com.getcapacitor.community.admob.** { *; }
+
+# ── Noise silencing (optional/condo dependencies referenced reflectively) ───
+-dontwarn javax.annotation.**
+-dontwarn javax.naming.**
+-dontwarn org.apache.http.**

@@ -40,4 +40,7 @@ bisect-tmp.tsx
 *.aab
 *.keystore
 app-icon.png
+# R8 obfuscation mapping for Play Console de-obfuscation (local artifact,
+# uploaded to Play Console per release — never committed)
+equyvo-mapping-*.txt
 

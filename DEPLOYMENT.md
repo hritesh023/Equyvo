@@ -73,3 +73,40 @@ KV (`EQUYVO_KV`) and R2 (`equyvo-media`) bindings live in `wrangler.toml`.
   keep the two in sync when adding API routes.
 - `android/` + `ios/` are the Capacitor native shells — the same `dist/`
   build ships to mobile. Use `npx cap sync` after building.
+
+## Android release build (R8)
+
+Release builds run **full R8** (dead-code elimination + optimization +
+obfuscation) so Play Console sees real shrinking — previously
+"Obfuscation percentage 1%" because `minifyEnabled` was false.
+
+- Config: `android/app/build.gradle` (`minifyEnabled`, `shrinkResources`,
+  `proguard-android-optimize.txt`) + `android/app/proguard-rules.pro`
+  (keeps for the Capacitor reflection bridge, AdMob/UMP surfaces,
+  `@JavascriptInterface` methods).
+- Only English resources ship (`androidResources.localeFilters = ['en']`) —
+  app i18n lives in the web layer.
+- AGP stays on the latest 8.x. AGP 9 requires dropping the separate
+  `kotlin-android` plugin (built-in Kotlin), which the AdMob community
+  plugin still uses in `node_modules`; upgrade AGP together with Capacitor 9
+  when it reaches GA.
+
+```bash
+# from Equyvo/ (not android/)
+npm run build:production
+npx cap sync android
+cd android ; .\gradlew assembleRelease bundleRelease
+```
+
+Outputs (after every release build):
+
+- `app/build/outputs/apk/release/app-release.apk` → root `equyvo-app.apk`
+- `app/build/outputs/bundle/release/app-release.aab` → root `equyvo-app.aab`
+- `app/build/outputs/mapping/release/mapping.txt` → root
+  `equyvo-mapping-<version>.txt` — upload this to **Play Console →
+  App releases → Release → Retrace/De-obfuscation files** so Play shows
+  readable stack traces for the obfuscated build. Never commit it.
+
+Bump `versionCode` (+1, integer) and `versionName` in
+`android/app/build.gradle` every release: Play never accepts a reused
+versionCode — current: `versionCode 15` / `1.0.2`.
