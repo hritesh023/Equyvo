@@ -9,6 +9,7 @@ import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
 
 import ErrorBoundary from './components/ErrorBoundary'; 
+import SplashScreen from './components/SplashScreen'; 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
 import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, setToken, User } from './lib/auth';
@@ -235,12 +236,22 @@ const AppContent = () => {
 };
 
 const App = () => {
-  const [showApp, setShowApp] = useState(true);
+  const [showApp, setShowApp] = useState(false);
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowApp(true);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
   // Initialize Mobile Ads SDK once (no-op on web; real fill on native shell).
   React.useEffect(() => {
     initializeAds();
     initBackNavigation();
   }, []);
+
+  if (!showApp) {
+    return <SplashScreen onFinish={() => setShowApp(true)} />;
+  }
 
   return (
     <ThemeProvider defaultTheme="dark">

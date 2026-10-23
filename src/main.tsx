@@ -17,7 +17,7 @@ import "./globals.css";
  * (stored user/token, profile/avatar, plans, settings, theme, language) is
  * NEVER touched.
  */
-const EQUYVO_DATA_SCHEMA_V = "2026-10-24-header-fix";
+const EQUYVO_DATA_SCHEMA_V = "2026-10-24-native-header-fix";
 try {
   if (localStorage.getItem("equyvo_data_schema_v") !== EQUYVO_DATA_SCHEMA_V) {
     const CONTENT_CACHE_KEYS = [
