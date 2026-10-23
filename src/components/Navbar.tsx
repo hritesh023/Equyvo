@@ -157,7 +157,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             {/* Logo + wordmark (single instance, links home) */}
             <Link to="/app/home" className="flex items-center gap-2 shrink-0" aria-label="Equyvo home">
               <AppLogo className="h-6 w-6" />
-              <span className="text-base font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>equyvo</span>
+              <span className="text-base font-bold italic bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>equyvo</span>
             </Link>
 
             <div className="flex items-center gap-1">
@@ -202,7 +202,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
             <div className="flex items-center gap-1 sm:gap-2">
               <Link to="/" className="flex items-center gap-1 sm:gap-2">
                 <AppLogo className="h-6 w-6 sm:h-7 sm:w-7 md:h-8 md:w-8" />
-                <span className="text-sm sm:text-base md:text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 hidden sm:block leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>Equyvo</span>
+                <span className="text-sm sm:text-base md:text-xl font-bold italic bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 hidden sm:block leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>equyvo</span>
               </Link>
             </div>
 
