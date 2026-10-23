@@ -153,41 +153,43 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
           ref={topBarRef}
           className="mobile-top-nav-fill relative z-50 shrink-0 border-b border-border/50 bg-background"
         >
-          <div className="flex items-center justify-between px-3 py-2">
-            {/* Logo and Search */}
-            <div className="flex items-center gap-2 flex-1">
-              <Link to="/" className="flex items-center gap-2">
-                <AppLogo className="h-6 w-6" />
-                <span className="text-sm font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>Equyvo</span>
-              </Link>
-            </div>
+          <div className="flex items-center justify-between gap-2 py-2">
+            {/* Logo + wordmark (single instance, links home) */}
+            <Link to="/app/home" className="flex items-center gap-2 shrink-0" aria-label="Equyvo home">
+              <AppLogo className="h-6 w-6" />
+              <span className="text-base font-bold bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 leading-loose py-1" style={{ fontFamily: "'Pacifico', cursive" }}>equyvo</span>
+            </Link>
 
-            {/* Search Button */}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => setMobileSearchOpen(true)}
-              aria-label="Search Equyvo"
-              className="text-foreground hover:bg-accent/50 transition-all duration-200 h-8 w-8"
-            >
-              <Search className="h-4 w-4" />
-            </Button>
-
-            {/* Theme Toggle + Notifications */}
-            <NotificationBell />
-            <ThemeToggle />
-
-            {/* User Avatar */}
-            {effectiveUser && (
-              <Avatar
-                className="h-6 w-6 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
-                onClick={() => navigateToOwnProfile(navigate)}
-                title="Your Profile"
+            <div className="flex items-center gap-1">
+              {/* Search button — opens the full-screen search overlay */}
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setMobileSearchOpen(true)}
+                aria-label="Search Equyvo"
+                className="text-foreground hover:bg-accent/50 transition-all duration-200 h-9 w-9"
               >
-                <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
-                <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
-              </Avatar>
-            )}
+                <Search className="h-[18px] w-[18px]" />
+              </Button>
+
+              {/* Notifications */}
+              <NotificationBell />
+
+              {/* Theme */}
+              <ThemeToggle />
+
+              {/* Profile button */}
+              {effectiveUser && (
+                <Avatar
+                  className="h-7 w-7 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
+                  onClick={() => navigateToOwnProfile(navigate)}
+                  title="Your Profile"
+                >
+                  <AvatarImage src={profileAvatar || effectiveUser.user_metadata?.avatar_url} alt={effectiveUser.email} />
+                  <AvatarFallback className="text-xs">{effectiveUser.email?.charAt(0).toUpperCase() || 'U'}</AvatarFallback>
+                </Avatar>
+              )}
+            </div>
           </div>
         </div>
       )}

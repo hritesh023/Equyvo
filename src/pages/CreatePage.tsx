@@ -4891,11 +4891,11 @@ const CreatePage = () => {
                 </Button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
+                <div className="min-w-0">
                   <Label htmlFor="camera-dest">Send capture to</Label>
                   <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment')}>
-                    <SelectTrigger id="camera-dest" className="mt-1">
+                    <SelectTrigger id="camera-dest" className="mt-1 w-full">
                       <SelectValue placeholder="Choose composer" />
                     </SelectTrigger>
                     <SelectContent>
@@ -4909,12 +4909,12 @@ const CreatePage = () => {
                     {cameraDest === 'photo' ? 'Photo captures open the Photos composer.' : 'Videos route to Videos when the destination is Photos.'}
                   </p>
                 </div>
-                <div className="flex items-end gap-3">
+                <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full min-w-0">
                   <Button
                     onClick={() => void handleCameraCapture()}
                     disabled={!cameraReady || isCapturing || isUploading}
                     variant="outline"
-                    className="flex-1"
+                    className="w-full sm:flex-1"
                   >
                     <Camera className="h-4 w-4 mr-2" />
                     Photo
@@ -4923,7 +4923,7 @@ const CreatePage = () => {
                     onClick={handleCameraRecordToggle}
                     disabled={!cameraReady || isUploading}
                     variant={isCapturing ? 'destructive' : 'default'}
-                    className="flex-1"
+                    className="w-full sm:flex-1"
                   >
                     {isCapturing ? (
                       <>
