@@ -217,8 +217,32 @@ const PricingPage: React.FC = () => {
     }
     // Guest path: one email → straight into Razorpay (in-app, same window).
     const stored = getStoredUser();
+    const storedEmail = stored?.email && EMAIL_RE.test(stored.email) ? stored.email : '';
+    if (storedEmail) {
+      setBusy(planId);
+      try {
+        toast.info('Opening secure Razorpay checkout...');
+        const v = await buyPlan(planId, storedEmail);
+        applyPurchase(v as VerifyResult);
+        return;
+      } catch (e: unknown) {
+        const msg = e instanceof Error ? e.message : 'Payment failed.';
+        if (msg === 'payment_cancelled') return;
+        if (isServiceCheckoutError(e)) {
+          try {
+            const url = 'https://acronous.com/checkout.html?plan=' + encodeURIComponent(planId) + '&email=' + encodeURIComponent(storedEmail);
+            const isNative = !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.();
+            if (!isNative) { toast.info('Opening secure checkout on acronous.com...'); window.location.href = url; return; }
+          } catch { /* ignore */ }
+        }
+        toast.error(msg);
+        return;
+      } finally {
+        setBusy(null);
+      }
+    }
     setPayPlan(planId);
-    setPayEmail(stored?.email && EMAIL_RE.test(stored.email) ? stored.email : '');
+    setPayEmail('');
     setPayError(null);
     setPayEmailOpen(true);
   };
