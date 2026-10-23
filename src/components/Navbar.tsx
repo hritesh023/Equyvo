@@ -316,12 +316,12 @@ export function MobileBottomNav() {
         <Link
           key={item.name}
           to={item.path}
-          className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-2 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
+          className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-1 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
             ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
             : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
             }`}
         >
-          <item.icon className="h-5 w-5 shrink-0" />
+          <item.icon className="h-4 w-4 shrink-0" />
           <span className="max-w-full truncate text-[10px] font-medium">{t(item.name)}</span>
           <span className="sr-only">{t(item.name)}</span>
         </Link>
