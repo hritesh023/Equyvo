@@ -1,6 +1,4 @@
 import React, { useEffect, useState, useRef } from 'react';
-import AppLogo from './AppLogo';
-
 const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
     const [isVisible, setIsVisible] = useState(true);
     const [loadingProgress, setLoadingProgress] = useState(0);
@@ -60,22 +58,9 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
             </div>
 
             <div className="relative flex flex-col items-center justify-center">
-                {/* Logo with enhanced animation */}
-                <div className="relative mb-8">
-                    <div className="w-24 h-24 sm:w-32 sm:h-32 md:w-40 md:h-40 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(34,211,238,0.5)] animate-bounce">
-                        <AppLogo
-                            alt="Equyvo Logo"
-                            className="w-full h-full object-cover"
-                        />
-                    </div>
-                    {/* Glow effect */}
-                    <div className="absolute inset-0 rounded-2xl bg-gradient-to-r from-cyan-400/30 to-blue-500/30 animate-pulse" />
-                </div>
-
-                {/* App name with gradient text */}
-                <h1 className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-black bg-clip-text text-transparent bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 mb-6 animate-pulse leading-[2.5] py-6 px-4" style={{ fontFamily: "'Pacifico', cursive", overflow: 'visible' }}>
-                    equyvo
-                </h1>
+                {/* Clean loading indicator (no duplicate logo/header) */}
+                <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-cyan-400/30 border-t-cyan-400 animate-spin mb-6" />
+                <h1 className="text-2xl sm:text-3xl font-bold text-cyan-300 mb-6">Loading Equyvo…</h1>
 
                 {/* Loading progress bar */}
                 <div className="w-64 sm:w-80 h-2 bg-gray-700/50 rounded-full overflow-hidden mb-4 backdrop-blur-sm">

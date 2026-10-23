@@ -48,7 +48,7 @@ const config: CapacitorConfig = {
       // fade. The native splash auto-hides at exactly 1800ms so the launch
       // logo is shown ONCE in one continuous piece — never a second logo
       // popping after the first.
-      launchShowDuration: 1800,
+      launchShowDuration: 0,
       launchAutoHide: true,
       backgroundColor: '#000000',
       androidSplashResourceName: 'splash',
