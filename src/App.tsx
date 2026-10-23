@@ -7,7 +7,7 @@ import { DisplayProvider } from './lib/display';
 import Navbar, { MobileBottomNav } from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
-import SplashScreen from './components/SplashScreen';
+
 import ErrorBoundary from './components/ErrorBoundary'; 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
@@ -235,21 +235,13 @@ const AppContent = () => {
 };
 
 const App = () => {
-  const [showApp, setShowApp] = useState(false);
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowApp(true);
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
+  const [showApp, setShowApp] = useState(true);
   // Initialize Mobile Ads SDK once (no-op on web; real fill on native shell).
   React.useEffect(() => {
     initializeAds();
     initBackNavigation();
   }, []);
-  if (!showApp) {
-    return <SplashScreen onFinish={() => setShowApp(true)} />;
-  }
+
   return (
     <ThemeProvider defaultTheme="dark">
       <ChatThemeProvider>
