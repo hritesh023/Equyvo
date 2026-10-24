@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <!-- Android 12+ system splash screen.
+         The OS otherwise uses the launcher icon as windowSplashScreenAnimatedIcon
+         — an ENLARGED app logo that can flash for one frame whenever the
+         starting window is redrawn (e.g. the activity window resizing as the
+         soft keyboard opens). Pin it to a transparent 1dp placeholder and a
+         flat app-coloured background: the OS splash becomes an invisible black
+         frame and the only splash the user ever sees is the in-app web splash.
+
+         NOTE: a style with the same name in a qualified folder REPLACES the
+         base definition, so the base items are repeated here on purpose. -->
+    <style name="AppTheme.NoActionBar" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:windowBackground">@color/equyvo_window_bg</item>
+        <item name="android:background">@null</item>
+        <item name="android:windowSplashScreenBackground">@color/equyvo_window_bg</item>
+        <item name="android:windowSplashScreenAnimatedIcon">@drawable/splash_icon_blank</item>
+        <item name="android:windowSplashScreenIconBackgroundColor">@color/equyvo_window_bg</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+    </style>
+</resources>

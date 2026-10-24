@@ -44,23 +44,20 @@ const config: CapacitorConfig = {
       insetsHandling: 'disable',
     },
     SplashScreen: {
-      // Handoff timing: the web splash (SplashScreen.tsx) runs 1.5s + 0.3s
-      // fade. The native splash auto-hides at exactly 1800ms so the launch
-      // logo is shown ONCE in one continuous piece — never a second logo
-      // popping after the first.
+      // Native splash is disabled in favour of the in-app web splash
+      // (SplashScreen.tsx), which carries the real logo and loading bar.
+      // Keeping a native splash here caused a stale "bad header" overlay
+      // above the WebView on Android. Auto-hide immediately, no dialog.
       launchShowDuration: 0,
       launchAutoHide: true,
       backgroundColor: '#000000',
       androidSplashResourceName: 'splash',
       androidScaleType: 'CENTER_CROP',
-      showSpinner: true,
-      spinnerStyle: 'default',
-      spinnerColor: '#999999',
+      showSpinner: false,
       splashFullScreen: true,
       splashImmersive: true,
-      layoutName: 'launch_screen',
-      useDialog: true,
-      launchFadeOutDuration: 500
+      useDialog: false,
+      launchFadeOutDuration: 0
     },
     StatusBar: {
       style: 'DARK',

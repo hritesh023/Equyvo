@@ -1,6 +1,8 @@
 import React, { useEffect, useState, useRef } from 'react';
+import AppLogo from './AppLogo';
 const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
     const [isVisible, setIsVisible] = useState(true);
+    const [shouldRender, setShouldRender] = useState(true);
     const [loadingProgress, setLoadingProgress] = useState(0);
     const [loadingText, setLoadingText] = useState('Initializing...');
     const onFinishRef = useRef(onFinish);
@@ -22,25 +24,32 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
         const totalDuration = 1500; // Reduced to 1.5 seconds total
         const stepDuration = totalDuration / loadingSteps.length;
 
+        const stepTimers: ReturnType<typeof setTimeout>[] = [];
         loadingSteps.forEach((step, index) => {
-            setTimeout(() => {
+            stepTimers.push(setTimeout(() => {
                 setLoadingProgress(step.progress);
                 setLoadingText(step.text);
-            }, index * stepDuration);
+            }, index * stepDuration));
         });
 
-        const timer = setTimeout(() => {
+        const fadeTimer = setTimeout(() => {
             setIsVisible(false);
-            setTimeout(() => onFinishRef.current(), 300); // Reduced fade time to 300ms
-        }, totalDuration + 300);
+            setTimeout(() => {
+                setShouldRender(false);
+                onFinishRef.current();
+            }, 300); // Reduced fade time to 300ms
+        }, totalDuration);
 
-        return () => clearTimeout(timer);
+        return () => {
+            stepTimers.forEach(t => clearTimeout(t));
+            clearTimeout(fadeTimer);
+        };
     }, []); // Empty dependency array - only run once
 
-    if (!isVisible) return null;
+    if (!shouldRender) return null;
 
     return (
-        <div className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-gradient-to-br from-black via-blue-900/50 to-black transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`fixed inset-0 z-[100] flex flex-col items-center justify-center bg-gradient-to-br from-black via-blue-900/50 to-black transition-opacity duration-300 ${isVisible ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
             {/* Animated background particles */}
             <div className="absolute inset-0 overflow-hidden">
                 {[...Array(20)].map((_, i) => (
@@ -58,7 +67,10 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
             </div>
 
             <div className="relative flex flex-col items-center justify-center">
-                {/* Clean loading indicator (no duplicate logo/header) */}
+                {/* App logo */}
+                <div className="w-24 h-24 sm:w-32 sm:h-32 rounded-2xl overflow-hidden shadow-[0_0_50px_rgba(34,211,238,0.5)] animate-bounce mb-6">
+                    <AppLogo alt="Equyvo Logo" className="w-full h-full object-cover" />
+                </div>
                 <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-full border-4 border-cyan-400/30 border-t-cyan-400 animate-spin mb-6" />
                 <h1 className="text-2xl sm:text-3xl font-bold text-cyan-300 mb-6">Loading Equyvo…</h1>
 

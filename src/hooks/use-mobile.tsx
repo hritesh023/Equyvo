@@ -11,9 +11,15 @@ const MOBILE_BREAKPOINT = 768;
  */
 export function useIsMobile() {
   const [isMobile, setIsMobile] = React.useState<boolean>(
-    () =>
-      typeof window !== "undefined" &&
-      window.innerWidth < MOBILE_BREAKPOINT,
+    () => {
+      if (typeof window === "undefined") return false;
+      // Native shells (Android/iOS) are always phone-class layouts: the
+      // WebView can briefly report a desktop-ish width during the first
+      // paint, which rendered the desktop top nav as a "bad header" overlay
+      // above the mobile header. Treat native platforms as mobile outright.
+      const native = !!(window as any)?.Capacitor?.isNativePlatform?.();
+      return native || window.innerWidth < MOBILE_BREAKPOINT;
+    },
   );
 
   React.useEffect(() => {
