@@ -990,8 +990,9 @@ const CreatePage = () => {
       if (savedProfile) {
         const profile = JSON.parse(savedProfile);
         if (profile.name || profile.username) {
+          const pid = profile.id || author.userId || getCurrentUserInfo().userId;
           await api.indexContent({
-            id: 'profile-' + (profile.id || userInfo.userId),
+            id: 'profile-' + pid,
             title: profile.name || profile.username || postData.user,
             description: profile.bio || '',
             type: 'post',
@@ -2263,7 +2264,7 @@ const CreatePage = () => {
       existingNotifs.unshift({
         id: liveId,
         title: liveTitle,
-        user: userInfo.username,
+        user: getCurrentUserInfo().username,
         thumbnail: liveThumbnailUrl || '',
         startedAt: new Date().toISOString(),
       });
@@ -2507,22 +2508,32 @@ const CreatePage = () => {
     if (isVideo && dest === 'photo') dest = 'video';
     if (isImage && dest === 'video') dest = 'photo';
     setCameraDest(dest);
+    // Clear other media so camera capture directly goes to the chosen section
+    setStoryFiles([]);
+    setPhotoFiles([]);
+    setVideoFiles([]);
+    setMomentFiles([]);
+    setThoughtVideo(null);
+    clearStoryThumb();
+    clearVideoThumb();
+    clearMomentThumb();
+    clearThoughtThumb();
     switch (dest) {
       case 'story':
-        setStoryFiles(prev => [...prev, file]);
+        setStoryFiles([file]);
         break;
       case 'photo':
-        setPhotoFiles(prev => [...prev, file]);
+        setPhotoFiles([file]);
         break;
       case 'video':
-        setVideoFiles(prev => [...prev, file]);
+        setVideoFiles([file]);
         break;
       case 'moment':
-        setMomentFiles(prev => [...prev, file]);
+        setMomentFiles([file]);
         break;
     }
     setActiveTab(dest);
-    showSuccess(`Capture added to your ${dest === 'text-story' ? 'story' : dest} composer.`);
+    showSuccess(`Capture added to ${dest === 'photo' ? 'Photos' : dest === 'video' ? 'Videos' : dest === 'story' ? 'Stories' : 'Moments'} section. Review and post.`);
   };
 
   const handleCameraCapture = async () => {
@@ -4862,38 +4873,37 @@ const CreatePage = () => {
                 )}
               </div>
             )}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={() => setActiveTab('photo')}
+              className="absolute top-4 left-4 h-10 w-10 rounded-full bg-black/60 text-white hover:bg-black/80"
+              title="Close camera"
+            >
+              <X className="h-6 w-6" />
+            </Button>
             {isCapturing && (
-              <div className="absolute top-4 left-4 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
+              <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
                 REC {fileVideoFormatSecs(cameraRecordSecs)}
               </div>
             )}
-            <Button
-              size="icon"
-              variant="ghost"
-              onClick={flipCamera}
-              disabled={isCapturing}
-              className="absolute top-4 right-4 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60"
-              title="Switch camera"
-            >
-              <SwitchCamera className="h-5 w-5" />
-            </Button>
 
-            <div className="absolute bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom),1rem)] bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-10 px-4">
-              <div className="flex items-center justify-center mb-6">
+            <div className="absolute bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom),1rem)] bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-10 px-4 pointer-events-none">
+              <div className="flex items-center justify-center mb-6 pointer-events-auto">
                 <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment')}>
                   <SelectTrigger className="w-auto bg-black/60 text-white border-white/40 rounded-full px-4">
                     <SelectValue placeholder="Send to" />
                   </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="story">Story</SelectItem>
-                    <SelectItem value="photo">Photos</SelectItem>
-                    <SelectItem value="video">Videos</SelectItem>
-                    <SelectItem value="moment">Moments</SelectItem>
+                  <SelectContent position="popper" side="top" align="center" sideOffset={8} className="z-[100000] bg-black/90 text-white border-white/30">
+                    <SelectItem value="story" className="text-white focus:bg-white/20 focus:text-white">Story</SelectItem>
+                    <SelectItem value="photo" className="text-white focus:bg-white/20 focus:text-white">Photos</SelectItem>
+                    <SelectItem value="video" className="text-white focus:bg-white/20 focus:text-white">Videos</SelectItem>
+                    <SelectItem value="moment" className="text-white focus:bg-white/20 focus:text-white">Moments</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
-              <div className="flex items-center justify-center gap-8 pb-2">
+              <div className="flex items-center justify-center gap-8 pb-2 pointer-events-auto">
                 <Button
                   onClick={flipCamera}
                   disabled={isCapturing}
