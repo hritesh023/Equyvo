@@ -1550,6 +1550,195 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       return respond({ data: { contentId, commentsEnabled: enabled }, error: null });
     }
 
+
+    // Chunked upload endpoints (for large files > 8MB) - accept both /api/* and /* forms
+    if ((path === '/api/upload/init' || path === '/upload/init') && method === 'POST') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const bearer = bearerFrom(request);
+      const { planId } = await resolvePlan(env, actor.id, bearer);
+      const quota = planQuota(planId);
+      const rl = await rateLimit(env, 'upload', actor.id, rateLimitFor(planId, 'upload'));
+      if (!rl.ok) return respondError('Too many requests', 429);
+
+      let body: any = {};
+      try { body = await request.json(); } catch { return respondError('Invalid JSON', 400); }
+      const size = Number(body.size || 0);
+      const type = String(body.type || '');
+      const name = String(body.name || '');
+      const folder = String(body.folder || 'equyvo/uploads').replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
+      const ext = String(body.ext || extFromFile({ name } as any) || 'bin').replace(/[^a-z0-9]/gi, '').toLowerCase() || 'bin';
+
+      if (!(type.startsWith('image/') || type.startsWith('video/'))) {
+        return respondError('Only images and videos are allowed', 415);
+      }
+      const envCapMB = parseInt(env.MAX_UPLOAD_MB || '', 10) || quota.maxUploadMB;
+      const maxBytes = Math.min(quota.maxUploadMB, envCapMB) * 1024 * 1024;
+      if (size > maxBytes) return respondError(`File too large for ${quota.label} (max ${Math.min(quota.maxUploadMB, envCapMB)}MB)`, 413);
+
+      const usage = await getUsage(env, actor.id);
+      if (usage.bytes + size > quota.storageBytes) {
+        return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
+      }
+      if (usage.monthUploads >= quota.monthlyUploads) {
+        return respond({ error: `Monthly upload limit reached for ${quota.label}`, code: 'QUOTA_MONTHLY', planId }, 402);
+      }
+
+      const uploadId = 'upl_' + (crypto.randomUUID ? crypto.randomUUID().replace(/-/g, '').slice(0, 16) : Math.random().toString(36).slice(2, 18));
+      const partSize = 8 * 1024 * 1024;
+      const meta = { uploadId, actorId: actor.id, size, type, name, folder, ext, planId, createdAt: Date.now() };
+      await env.EQUYVO_KV.put(KEYS.UPLOAD_SESSION(uploadId), JSON.stringify(meta), { expirationTtl: 3600 });
+      return respond({ data: { chunked: true, uploadId, partSize }, error: null });
+    }
+
+    if ((path === '/api/upload/part' || path === '/upload/part') && method === 'PUT') {
+      const url = new URL(request.url);
+      const uploadId = url.searchParams.get('uploadId') || '';
+      const partIndex = parseInt(url.searchParams.get('partIndex') || '0', 10);
+      if (!uploadId || partIndex < 1) return respondError('Invalid request', 400);
+
+      const sessionRaw = await env.EQUYVO_KV.get(KEYS.UPLOAD_SESSION(uploadId));
+      if (!sessionRaw) return respondError('UPLOAD_SESSION_GONE', 410);
+      const session: any = JSON.parse(sessionRaw);
+
+      const formData = await request.formData();
+      const chunk = formData.get('file') as unknown as File | Blob | null;
+      if (!chunk) return respondError('No part provided', 400);
+
+      const bytes = new Uint8Array(await (chunk as any).arrayBuffer());
+      const partKey = KEYS.UPLOAD_PART(uploadId, partIndex);
+      let partB64 = '';
+      try {
+        let s = '';
+        for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+        partB64 = btoa(s);
+      } catch {
+        partB64 = '';
+      }
+      await env.EQUYVO_KV.put(partKey, partB64, { expirationTtl: 3600 });
+      await env.EQUYVO_KV.put(KEYS.UPLOAD_SESSION(uploadId), JSON.stringify({ ...session, lastPartAt: Date.now() }), { expirationTtl: 3600 });
+      return respond({ data: { partIndex, etag: 'part-' + partIndex, bytes: bytes.length }, error: null });
+    }
+
+    if ((path === '/api/upload/complete' || path === '/upload/complete') && method === 'POST') {
+      let body: any = {};
+      try { body = await request.json(); } catch { return respondError('Invalid JSON', 400); }
+      const uploadId = String(body.uploadId || '');
+      if (!uploadId) return respondError('Invalid request', 400);
+
+      const sessionRaw = await env.EQUYVO_KV.get(KEYS.UPLOAD_SESSION(uploadId));
+      if (!sessionRaw) return respondError('UPLOAD_SESSION_GONE', 410);
+      const session: any = JSON.parse(sessionRaw);
+      const actorId = session.actorId;
+
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      if (String((actor as any).id) !== String(actorId)) return respondError('Unauthorized', 403);
+
+      const bearer = bearerFrom(request);
+      const { planId } = await resolvePlan(env, actor.id, bearer);
+      const quota = planQuota(planId);
+
+      const partSize = 8 * 1024 * 1024;
+      const totalParts = Math.max(1, Math.ceil(Number(session.size || 0) / partSize));
+      const parts: Uint8Array[] = [];
+      for (let i = 1; i <= totalParts; i++) {
+        const p = await env.EQUYVO_KV.get(KEYS.UPLOAD_PART(uploadId, i));
+        if (!p) return respondError('Missing upload part', 400);
+        try {
+          const bin = atob(p);
+          const u = new Uint8Array(bin.length);
+          for (let j = 0; j < bin.length; j++) u[j] = bin.charCodeAt(j);
+          parts.push(u);
+        } catch {
+          return respondError('Missing upload part', 400);
+        }
+      }
+      const totalSize = parts.reduce((s, p) => s + p.length, 0);
+      const merged = new Uint8Array(totalSize);
+      let off = 0;
+      for (const p of parts) { merged.set(p, off); off += p.length; }
+
+      const file = new File([merged as any], session.name || ('upload.' + session.ext), { type: session.type || 'application/octet-stream' });
+      const hash = await sha256Hex(merged.buffer as ArrayBuffer);
+      const hit = await env.EQUYVO_KV.get(KEYS.HASH(hash));
+      if (hit) {
+        try { await env.EQUYVO_KV.delete(KEYS.UPLOAD_SESSION(uploadId)); } catch {}
+        for (let i = 1; i <= totalParts; i++) { try { await env.EQUYVO_KV.delete(KEYS.UPLOAD_PART(uploadId, i)); } catch {} }
+        return respond({ data: { ...JSON.parse(hit), deduped: true, planId, chunked: true }, error: null });
+      }
+
+      const cloudName = env.CLOUDINARY_CLOUD_NAME;
+      const uploadPreset = env.CLOUDINARY_UPLOAD_PRESET;
+      const hasR2 = !!env.EQUYVO_R2;
+      const cloudConfigured = !!(cloudName && uploadPreset);
+      if (!hasR2 && !cloudConfigured) return respondError('Media storage not configured on server', 500);
+
+      let r2Key: string | null = null;
+      if (hasR2) {
+        r2Key = r2KeyFor(actor.id, hash, session.ext || extFromFile(file));
+        try {
+          await env.EQUYVO_R2.put(r2Key, merged, {
+            httpMetadata: { contentType: file.type || 'application/octet-stream', cacheControl: 'public, max-age=31536000, immutable' },
+            customMetadata: { uploader: String(actor.id).slice(0, 128), sha256: hash },
+          });
+        } catch { r2Key = null; }
+      }
+
+      let result: any = null;
+      if (cloudConfigured) {
+        const cloudForm = new FormData();
+        cloudForm.append('file', file);
+        cloudForm.append('upload_preset', uploadPreset);
+        cloudForm.append('folder', session.folder || 'equyvo/uploads');
+        try {
+          const resp = await fetch(https://api.cloudinary.com/v1_1//auto/upload, { method: 'POST', body: cloudForm });
+          result = await resp.json().catch(() => ({}));
+        } catch { result = {}; }
+      }
+
+      const resourceType = result?.resource_type || (String((file as any).type).startsWith('video/') ? 'video' : 'image');
+      const variants = result ? cloudinaryVariants(result.secure_url, result.resource_type, quota.quality) : null;
+      const r2Url = r2Key ? r2DeliveryUrl(request, env, r2Key) : null;
+      const resObj: any = {
+        publicId: result?.public_id || null,
+        secureUrl: r2Url || result?.secure_url || '',
+        originalUrl: r2Url || result?.secure_url || '',
+        delivery: r2Url ? 'r2' : (result ? 'cloudinary' : 'r2'),
+        resourceType,
+        format: result?.format || session.ext || extFromFile(file),
+        bytes: result?.bytes || merged.length || (file as any).size || 0,
+        width: result?.width, height: result?.height,
+        createdAt: result?.created_at || new Date().toISOString(), duration: result?.duration || body.duration,
+        variants, r2Key, store: r2Key && result ? 'r2+cloudinary' : r2Key ? 'r2' : 'cloudinary', planId,
+      };
+      resObj.chunked = true;
+      try { await env.EQUYVO_KV.put(KEYS.HASH(hash), JSON.stringify(resObj), { expirationTtl: 60 * 60 * 24 * 90 }); } catch {}
+      try {
+        if (hash) await env.EQUYVO_KV.put(KEYS.MEDIA(result?.public_id || hash), JSON.stringify({ bytes: resObj.bytes, r2Key }), { expirationTtl: 60 * 60 * 24 * 365 });
+      } catch {}
+      try { await addUsage(env, actor.id, Number(resObj.bytes || 0)); } catch {}
+      try { await env.EQUYVO_KV.delete(KEYS.UPLOAD_SESSION(uploadId)); } catch {}
+      for (let i = 1; i <= totalParts; i++) { try { await env.EQUYVO_KV.delete(KEYS.UPLOAD_PART(uploadId, i)); } catch {} }
+      return respond({ data: resObj, error: null });
+    }
+
+    if ((path === '/api/upload/abort' || path === '/upload/abort') && method === 'POST') {
+      let body: any = {};
+      try { body = await request.json(); } catch { body = {}; }
+      const uploadId = String(body.uploadId || '');
+      if (uploadId) {
+        try {
+          const sessionRaw = await env.EQUYVO_KV.get(KEYS.UPLOAD_SESSION(uploadId));
+          const session: any = sessionRaw ? JSON.parse(sessionRaw) : null;
+          const partSize = 8 * 1024 * 1024;
+          const totalParts = session ? Math.max(1, Math.ceil(Number(session.size || 0) / partSize)) : 0;
+          try { await env.EQUYVO_KV.delete(KEYS.UPLOAD_SESSION(uploadId)); } catch {}
+          for (let i = 1; i <= totalParts; i++) { try { await env.EQUYVO_KV.delete(KEYS.UPLOAD_PART(uploadId, i)); } catch {} }
+        } catch {}
+      }
+      return respond({ data: { ok: true }, error: null });
+    }
     if (path === '/api/health') {
       // Honest health: KV must answer. Brain is best-effort (feed/search work
       // offline from KV), so a down brain = degraded, not a 503 outage.

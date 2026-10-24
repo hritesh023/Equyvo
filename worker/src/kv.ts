@@ -40,6 +40,8 @@ const KEYS = {
   COMMENTS: (contentId: string) => `comments:${contentId}`,
   COMMENT: (id: string) => `comment:${id}`,
   CSETTINGS: (contentId: string) => `csettings:${contentId}`,
+  UPLOAD_SESSION: (id: string) => `upload:session:${id}`,
+  UPLOAD_PART: (id: string, part: number) => `upload:part:${id}:${part}`,
 };
 
 export { KEYS };
