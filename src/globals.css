@@ -1408,8 +1408,8 @@ html.cap-native {
     width: 100dvw;
     max-width: none;
     margin: 0;
-    padding-top: 0.25rem;
-    padding-bottom: calc(var(--equyvo-safe-bottom) + 0.25rem);
+    padding-top: 0;
+    padding-bottom: max(0px, var(--equyvo-safe-bottom));
     padding-left: max(0px, var(--equyvo-safe-left));
     padding-right: max(0px, var(--equyvo-safe-right));
     box-sizing: border-box;
@@ -1420,7 +1420,7 @@ html.cap-native {
     width: 100dvw;
     max-width: none;
     margin: 0;
-    padding-top: calc(var(--equyvo-safe-top) + 0.25rem);
+    padding-top: max(0px, var(--equyvo-safe-top));
     padding-left: max(0.5rem, var(--equyvo-safe-left));
     padding-right: max(0.5rem, var(--equyvo-safe-right));
     box-sizing: border-box;

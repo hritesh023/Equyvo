@@ -153,7 +153,7 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
           ref={topBarRef}
           className="mobile-top-nav-fill relative z-50 shrink-0 border-b border-border/50 bg-background"
         >
-          <div className="flex items-center justify-between gap-2 py-2">
+          <div className="flex items-center justify-between gap-2 py-1.5">
             {/* Logo + wordmark (single instance, links home) */}
             <Link to="/app/home" className="flex items-center gap-2 shrink-0" aria-label="Equyvo home">
               <AppLogo className="h-6 w-6" />
@@ -311,7 +311,7 @@ export function MobileBottomNav() {
       ref={barRef}
       className="mobile-bottom-nav-fill relative z-50 shrink-0 border-t border-border/50 bg-background shadow-lg"
     >
-      <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2">
+      <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2 py-1">
       {navItems.slice(0, 6).map((item) => (
         <Link
           key={item.name}
