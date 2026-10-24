@@ -1692,7 +1692,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         cloudForm.append('upload_preset', uploadPreset);
         cloudForm.append('folder', session.folder || 'equyvo/uploads');
         try {
-          const resp = await fetch(https://api.cloudinary.com/v1_1//auto/upload, { method: 'POST', body: cloudForm });
+          const resp = await fetch(`https://api.cloudinary.com/v1_1/${cloudName}/auto/upload`, { method: 'POST', body: cloudForm });
           result = await resp.json().catch(() => ({}));
         } catch { result = {}; }
       }

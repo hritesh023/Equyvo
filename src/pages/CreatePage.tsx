@@ -4833,118 +4833,95 @@ const CreatePage = () => {
           </Card>
         </TabsContent>
 
-        {/* Camera capture — direct device camera, straight into any composer */}
-        <TabsContent value="camera" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Camera className="h-5 w-5" />
-                Camera Capture
-              </CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Take photos or videos right now and post them to any composer
-              </p>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="relative overflow-hidden rounded-lg border bg-black">
-                <video
-                  ref={cameraVideoRef}
-                  muted
-                  playsInline
-                  autoPlay
-                  className="w-full max-h-[70vh] object-cover aspect-[9/16] sm:aspect-video"
-                  style={{ transform: cameraFacing === 'user' ? 'scaleX(-1)' : undefined }}
-                />
-                {!cameraReady && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-sm text-white/80 p-6">
-                    {cameraError ? (
-                      <>
-                        <AlertTriangle className="h-8 w-8" />
-                        <p>{cameraError}</p>
-                        <Button size="sm" variant="secondary" onClick={() => void startCamera()}>
-                          Try again
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <Loader2 className="h-8 w-8 animate-spin" />
-                        <p>Starting camera… If this is the first time, allow camera access.</p>
-                      </>
-                    )}
-                  </div>
+        {/* Camera capture — full screen camera UI */}
+        <TabsContent value="camera" className="fixed inset-0 z-[200] bg-black m-0 p-0">
+          <div className="relative h-[100dvh] w-screen bg-black">
+            <video
+              ref={cameraVideoRef}
+              muted
+              playsInline
+              autoPlay
+              className="absolute inset-0 h-full w-full object-cover"
+              style={{ transform: cameraFacing === 'user' ? 'scaleX(-1)' : undefined }}
+            />
+            {!cameraReady && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-center text-sm text-white/80 p-6">
+                {cameraError ? (
+                  <>
+                    <AlertTriangle className="h-8 w-8" />
+                    <p>{cameraError}</p>
+                    <Button size="sm" variant="secondary" onClick={() => void startCamera()}>
+                      Try again
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Loader2 className="h-8 w-8 animate-spin" />
+                    <p>Starting camera… If this is the first time, allow camera access.</p>
+                  </>
                 )}
-                {isCapturing && (
-                  <div className="absolute top-3 left-3 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
-                    <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
-                    REC {fileVideoFormatSecs(cameraRecordSecs)}
-                  </div>
-                )}
+              </div>
+            )}
+            {isCapturing && (
+              <div className="absolute top-4 left-4 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
+                REC {fileVideoFormatSecs(cameraRecordSecs)}
+              </div>
+            )}
+            <Button
+              size="icon"
+              variant="ghost"
+              onClick={flipCamera}
+              disabled={isCapturing}
+              className="absolute top-4 right-4 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60"
+              title="Switch camera"
+            >
+              <SwitchCamera className="h-5 w-5" />
+            </Button>
+
+            <div className="absolute bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom),1rem)] bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-10 px-4">
+              <div className="flex items-center justify-center mb-6">
+                <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment')}>
+                  <SelectTrigger className="w-auto bg-black/60 text-white border-white/40 rounded-full px-4">
+                    <SelectValue placeholder="Send to" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="story">Story</SelectItem>
+                    <SelectItem value="photo">Photos</SelectItem>
+                    <SelectItem value="video">Videos</SelectItem>
+                    <SelectItem value="moment">Moments</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="flex items-center justify-center gap-8 pb-2">
                 <Button
-                  size="icon"
-                  variant="ghost"
                   onClick={flipCamera}
                   disabled={isCapturing}
-                  className="absolute top-3 right-3 h-10 w-10 rounded-full bg-black/40 text-white hover:bg-black/60"
-                  title="Switch camera"
+                  size="icon"
+                  variant="ghost"
+                  className="h-12 w-12 rounded-full bg-black/60 text-white hover:bg-black/80"
                 >
-                  <SwitchCamera className="h-5 w-5" />
+                  <SwitchCamera className="h-6 w-6" />
+                </Button>
+                <button
+                  onClick={() => void handleCameraCapture()}
+                  disabled={!cameraReady || isCapturing || isUploading}
+                  className="relative h-20 w-20 rounded-full border-4 border-white flex items-center justify-center disabled:opacity-50"
+                >
+                  <div className="h-16 w-16 rounded-full bg-white"></div>
+                </button>
+                <Button
+                  onClick={handleCameraRecordToggle}
+                  disabled={!cameraReady || isUploading}
+                  size="icon"
+                  variant="ghost"
+                  className={`h-12 w-12 rounded-full ${isCapturing ? 'bg-red-600 text-white' : 'bg-black/60 text-white hover:bg-black/80'}`}
+                >
+                  {isCapturing ? <Square className="h-5 w-5" /> : <Video className="h-6 w-6" />}
                 </Button>
               </div>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 w-full min-w-0">
-                <div className="min-w-0">
-                  <Label htmlFor="camera-dest">Send capture to</Label>
-                  <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment')}>
-                    <SelectTrigger id="camera-dest" className="mt-1 w-full">
-                      <SelectValue placeholder="Choose composer" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="story">Story (24h)</SelectItem>
-                      <SelectItem value="photo">Photos</SelectItem>
-                      <SelectItem value="video">Videos</SelectItem>
-                      <SelectItem value="moment">Moments</SelectItem>
-                    </SelectContent>
-                  </Select>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {cameraDest === 'photo' ? 'Photo captures open the Photos composer.' : 'Videos route to Videos when the destination is Photos.'}
-                  </p>
-                </div>
-                <div className="flex flex-col sm:flex-row items-stretch gap-3 w-full min-w-0">
-                  <Button
-                    onClick={() => void handleCameraCapture()}
-                    disabled={!cameraReady || isCapturing || isUploading}
-                    variant="outline"
-                    className="w-full sm:flex-1"
-                  >
-                    <Camera className="h-4 w-4 mr-2" />
-                    Photo
-                  </Button>
-                  <Button
-                    onClick={handleCameraRecordToggle}
-                    disabled={!cameraReady || isUploading}
-                    variant={isCapturing ? 'destructive' : 'default'}
-                    className="w-full sm:flex-1"
-                  >
-                    {isCapturing ? (
-                      <>
-                        <Square className="h-4 w-4 mr-2" />
-                        Stop & Send
-                      </>
-                    ) : (
-                      <>
-                        <Video className="h-4 w-4 mr-2" />
-                        Record
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                Captures land directly in the chosen composer's queue — you see the preview and the caption before posting.
-                {planCaps?.maxVideoSec ? ` Plan allows up to ${Math.floor(planCaps.maxVideoSec / 60)} min of video.` : ''}
-              </p>
-            </CardContent>
-          </Card>
+            </div>
+          </div>
         </TabsContent>
       </Tabs>
 

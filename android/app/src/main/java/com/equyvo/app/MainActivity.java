@@ -53,7 +53,16 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
         // Must run before super.onCreate / setContentView (modern edge-to-edge).
-        EdgeToEdge.enable(this);
+        try {
+            EdgeToEdge.enable(this);
+        } catch (Throwable ignored) {}
+        if (android.os.Build.VERSION.SDK_INT >= 35) {
+            try {
+                if (getWindow() != null) {
+                    getWindow().setDecorFitsSystemWindows(false);
+                }
+            } catch (Throwable ignored) {}
+        }
         super.onCreate(savedInstanceState);
 
         final View content = findViewById(android.R.id.content);
