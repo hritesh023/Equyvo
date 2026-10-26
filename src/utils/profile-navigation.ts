@@ -124,7 +124,9 @@ export const getProfileUrl = (userId?: string | number, username?: string) => {
   if (userName && !isPlaceholderId(userName)) {
     return `/profile/@${encodeURIComponent(userName)}`;
   }
-  return '/app/profile';
+  // No resolvable identity: send to search rather than silently opening the
+  // viewer's own profile (which displayed the wrong account).
+  return '/app/search';
 };
 
 export const getUserId = (user: User) => {

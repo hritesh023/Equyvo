@@ -366,7 +366,7 @@ export const api = {
 
   // Profile
   getProfile: (userId: string) =>
-    request<{ data: any; error: null }>(`/profile/${userId}`),
+    request<{ data: any; error: null }>(`/profile/${encodeURIComponent(userId)}`),
 
   updateProfile: (data: any) =>
     request<{ data: any; error: null }>('/profile', {

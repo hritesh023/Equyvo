@@ -1,10 +1,12 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Lock } from 'lucide-react';
 import FollowButton from './FollowButton';
 import type { SocialProfile } from '@/lib/social';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 interface FollowListModalProps {
   open: boolean;
@@ -22,6 +24,11 @@ interface FollowListModalProps {
  * counts are shown — never the names — matching the server gate.
  */
 export function FollowListModal({ open, onOpenChange, title, list, restricted, loading, emptyHint }: FollowListModalProps) {
+  const navigate = useNavigate();
+  const openProfile = (person: SocialProfile) => {
+    onOpenChange(false);
+    navigateToProfile(navigate, person.id, person.username || person.name);
+  };
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-sm p-0">
@@ -42,14 +49,22 @@ export function FollowListModal({ open, onOpenChange, title, list, restricted, l
           ) : (
             list.map((p) => (
               <div key={p.id} className="flex items-center gap-3 px-4 py-2.5 hover:bg-secondary/20">
-                <Avatar className="h-9 w-9">
-                  <AvatarImage src={p.avatar} />
-                  <AvatarFallback>{(p.name || p.username || '?')[0]?.toUpperCase()}</AvatarFallback>
-                </Avatar>
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium">{p.username || p.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">{p.name}</p>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => openProfile(p)}
+                  className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                  aria-label={`Open ${p.username || p.name || 'profile'}'s profile`}
+                  title={`Open ${p.username || p.name || 'profile'}'s profile`}
+                >
+                  <Avatar className="h-9 w-9 shrink-0 cursor-pointer">
+                    <AvatarImage src={p.avatar} />
+                    <AvatarFallback>{(p.name || p.username || '?')[0]?.toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium hover:underline">{p.username || p.name}</p>
+                    <p className="truncate text-xs text-muted-foreground">{p.name}</p>
+                  </div>
+                </button>
                 <FollowButton userId={p.id} userName={p.username || p.name} size="sm" />
               </div>
             ))

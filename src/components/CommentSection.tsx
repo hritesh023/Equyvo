@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,6 +15,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import api from '@/lib/api';
 import { myCommentIdentity, refreshMyCommentIdentity, type CommentIdentity } from '@/lib/comment-identity';
 import { resolveAvatar, avatarInitials } from '@/utils/avatar';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 interface CommentReply {
   id: string;
@@ -92,6 +94,7 @@ const CommentSection: React.FC<CommentSectionProps> = ({
   const [me, setMe] = useState<CommentIdentity>(() => myCommentIdentity());
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const navigate = useNavigate();
 
   const load = useCallback(async () => {
     if (!postId) return;
@@ -465,10 +468,18 @@ const CommentSection: React.FC<CommentSectionProps> = ({
     const mineRow = me.id !== '' && String(c.authorId) === String(me.id);
     return (
       <div key={c.id} className={`flex gap-2.5 ${isTop ? '' : 'ml-9 mt-2.5 border-l-2 border-border/60 pl-3'}`}>
-        <Avatar className={`${isTop ? 'h-9 w-9' : 'h-7 w-7'} shrink-0`}>
-          {avatar ? <AvatarImage src={avatar} alt={name} /> : null}
-          <AvatarFallback className="text-[11px] font-semibold">{initialsOf(name)}</AvatarFallback>
-        </Avatar>
+        <button
+          type="button"
+          onClick={() => navigateToProfile(navigate, c.authorId, c.authorUsername || c.authorName)}
+          className="shrink-0 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+          aria-label={`Open ${name}'s profile`}
+          title={`Open ${name}'s profile`}
+        >
+          <Avatar className={`${isTop ? 'h-9 w-9' : 'h-7 w-7'} shrink-0 cursor-pointer`}>
+            {avatar ? <AvatarImage src={avatar} alt={name} /> : null}
+            <AvatarFallback className="text-[11px] font-semibold">{initialsOf(name)}</AvatarFallback>
+          </Avatar>
+        </button>
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
             {isTop && (c as CommentItem).isPinned && (
@@ -476,7 +487,14 @@ const CommentSection: React.FC<CommentSectionProps> = ({
                 <Pin className="h-2.5 w-2.5" /> Pinned
               </span>
             )}
-            <span className="truncate text-sm font-semibold">{name}</span>
+            <button
+              type="button"
+              onClick={() => navigateToProfile(navigate, c.authorId, c.authorUsername || c.authorName)}
+              className="truncate text-sm font-semibold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              title={`Open ${name}'s profile`}
+            >
+              {name}
+            </button>
             {mineRow && (
               <span className="rounded-full bg-primary/10 px-1.5 py-px text-[10px] font-medium text-primary">You</span>
             )}

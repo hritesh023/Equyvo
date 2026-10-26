@@ -87,23 +87,57 @@ const createDefaultProfile = (user?: { email?: string; fullName?: string; userna
   };
 };
 
+const normalizeIdentity = (value: unknown): string => {
+  let raw = String(value ?? '').trim();
+  try { raw = decodeURIComponent(raw); } catch { /* keep raw */ }
+  return raw.replace(/^@+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+};
+
+const createTargetPlaceholder = (target: string) => ({
+  ...createDefaultProfile({}),
+  id: '',
+  name: target,
+  username: target.startsWith('@') ? target : `@${target}`,
+  bio: '',
+  posts: [] as Post[],
+  _placeholder: true,
+});
+
+const readCachedOwnProfile = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem('userProfile');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+};
+
 const ProfilePage = () => {
   const { userId, username } = useParams();
   const _storedUser = getStoredUser();
+  const viewerId = String(_storedUser?.id || '').trim();
+  const viewerEmail = String(_storedUser?.email || '').trim().toLowerCase();
+  const viewerUsername = normalizeIdentity(_storedUser?.username || _storedUser?.fullName || '');
   // A route is the viewer's OWN profile only when the target matches their
-  // account (id, username, or email). Otherwise someone else's is viewed —
-  // the fallback for empty params stays the own-profile screen.
+  // account id or username. Email is never an identity for routing — legacy
+  // email links resolve through the server's canonical account mapping.
+  const rawRouteTarget = String(userId || username || '').trim();
   const routeTarget = (() => {
-    const raw = String(userId || username || '').trim();
-    try { return decodeURIComponent(raw).replace(/^@/, ''); } catch { return raw.replace(/^@/, ''); }
+    try { return decodeURIComponent(rawRouteTarget).replace(/^@+/, '').trim(); } catch { return rawRouteTarget.replace(/^@+/, '').trim(); }
   })();
-  const isOwnProfile = !routeTarget
-    ? true
-    : !!_storedUser && (
-        routeTarget === _storedUser.id ||
-        routeTarget === _storedUser.username ||
-        routeTarget === _storedUser.email
-      );
+  const hasRouteTarget = routeTarget.length > 0;
+  const isOwnProfile = !hasRouteTarget || (
+    // With a stored account id, only an id match is self. Username/display-name
+    // routes go through the server canonicalizer so a same-named stranger is
+    // never mistaken for the viewer. Fall back to the name only when the
+    // session has no id at all.
+    viewerId
+      ? normalizeIdentity(routeTarget) === normalizeIdentity(viewerId)
+      : (!!viewerUsername && normalizeIdentity(routeTarget) === viewerUsername)
+  );
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -141,178 +175,210 @@ const ProfilePage = () => {
   const [isSeeking, setIsSeeking] = useState(false);
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
 
-  // Load profile from localStorage on mount
+  // The profile shown is ALWAYS the routed target. Viewing someone else never
+  // starts from the viewer's cached profile (that was the bug where a clicked
+  // user appeared to be "you").
   const [userProfile, setUserProfile] = useState(() => {
-    // Try loading saved profile from localStorage first
-    const savedProfile = typeof window !== 'undefined' ? localStorage.getItem('userProfile') : null;
-    if (savedProfile) {
-      try {
-        return JSON.parse(savedProfile);
-      } catch {}
+    if (hasRouteTarget && !isOwnProfile) {
+      return createTargetPlaceholder(routeTarget);
     }
-    
-    // Fall back to creating a default from the authenticated user
-    const currentUser = getStoredUser();
-    return createDefaultProfile(currentUser);
+    const savedProfile = readCachedOwnProfile();
+    if (savedProfile) return savedProfile;
+    return createDefaultProfile(getStoredUser());
   });
+  const [resolvedTargetId, setResolvedTargetId] = useState('');
+  const [profileLookupFailed, setProfileLookupFailed] = useState(false);
+  // The loaded profile is self only when the route is self or the server
+  // resolved the target to the viewer's own account id.
+  const isSelfView = isOwnProfile || (
+    !!viewerId && normalizeIdentity((userProfile as { id?: string })?.id) === normalizeIdentity(viewerId)
+  );
+  // Saved / history / reacted content belongs to the signed-in viewer. It must
+  // never be merged into another person's profile.
+  const viewerReactedPosts = isSelfView
+    ? userReactedPosts.map(post => ({ ...post, isReacted: true }))
+    : [];
 
-  // Load saved profile from localStorage on client side
+  // One-time local collections for the signed-in account (saved/history/etc).
   React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      const currentUser = getStoredUser();
-      const rawTarget = String(userId || username || '').trim();
-      // /profile/@:username routes carry no '@'; /profile/:userId may carry a
-      // URL-encoded value. Strip any leading @ and decode for safe compare.
-      let target = rawTarget;
-      try { target = decodeURIComponent(rawTarget).replace(/^@/, ''); } catch { /* keep raw */ }
-      const isSelfTarget = !!currentUser && (
-        target === currentUser.id ||
-        target === currentUser.username ||
-        target === currentUser.email
-      );
-
-      if (target && !isSelfTarget) {
-        // Viewing ANOTHER account. Never leak the viewer's own profile as a
-        // stand-in: start from an honest placeholder for the target account
-        // (filled by the server fetch when the account exists, otherwise the
-        // shows the real handle with an empty state instead of someone
-        // else's content).
-        setUserProfile({
-          ...createDefaultProfile({ email: '', username: target, id: target } as any),
-          name: target,
-          username: target,
-          posts: [],
-        } as any);
-
-        api.getProfile(target).then((serverProfile) => {
-          if (serverProfile?.data) {
-            setUserProfile((prev: any) => ({
-              ...prev,
-              ...serverProfile.data,
-              // The server row is authoritative for the viewed account.
-              id: serverProfile.data.id || target,
-              username: serverProfile.data.username || serverProfile.data.name || target,
-              posts: [],
-            }));
-          }
-        }).catch(() => {});
-
-        api.getUserContent(target).then(({ data, error }) => {
-          if (error || !data || typeof data !== 'object') return;
-          const serverItems = [
-            ...((data as any).posts || []),
-            ...((data as any).thoughts || []).map((t: any) => ({ ...t, type: t.type || 'thought' })),
-            ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
-            ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
-          ];
-          setUserProfile((prev: any) => ({ ...prev, posts: serverItems }));
-        }).catch(() => {});
-
-        return;
-      }
-
-      const savedProfile = localStorage.getItem('userProfile');
-
-      if (savedProfile && currentUser) {
-        const parsed = JSON.parse(savedProfile);
-        // Only load cached profile if it belongs to the current user
-        if (parsed._userEmail === currentUser.email || parsed.id === currentUser.id) {
-          setUserProfile(parsed);
-        } else {
-          // Stale profile from a different user — discard and create fresh default
-          const fresh = createDefaultProfile(currentUser);
-          setUserProfile(fresh);
-          localStorage.setItem('userProfile', JSON.stringify(fresh));
-        }
-      } else if (savedProfile && !currentUser) {
-        // No signed-in user — discard orphaned profile
-        localStorage.removeItem('userProfile');
-      } else if (!savedProfile && currentUser) {
-        // Signed-in user with no saved profile yet — create one
-        const fresh = createDefaultProfile(currentUser);
-        setUserProfile(fresh);
-        localStorage.setItem('userProfile', JSON.stringify(fresh));
-      }
-
-      // Also try to fetch profile from the API for latest data
-      if (currentUser?.id) {
-        api.getProfile(currentUser.id).then(serverProfile => {
-          if (serverProfile?.data) {
-            setUserProfile(prev => ({
-              ...prev,
-              ...serverProfile.data,
-              _userEmail: currentUser?.email || prev._userEmail,
-              posts: prev.posts || [],
-            }));
-          }
-        }).catch(() => {});
-
-        // Fetch ALL of the user's server content (posts + thoughts + stories
-        // + moments) and merge with the local cache, so uploads from any
-        // device appear in the profile and stay visible to other accounts.
-        api.getUserContent(currentUser.id).then(({ data, error }) => {
-          if (error || !data || typeof data !== 'object') return;
-          const serverItems = [
-            ...((data as any).posts || []),
-            ...((data as any).thoughts || []).map((t: any) => ({ ...t, type: t.type || 'thought' })),
-            ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
-            ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
-          ];
-          if (!serverItems.length) return;
-          setUserProfile(prev => {
-            const existing = prev.posts || [];
-            const serverById = new Map(serverItems.map((p: any) => [p.id, p]));
-            // Server wins on conflicts (authoritative across devices).
-            const posts = [...serverItems, ...existing.filter(p => !serverById.has(p.id))];
-            return { ...prev, posts };
-          });
-        }).catch(() => {});
-        // Legacy fallback: posts-only endpoint.
-        api.getUserPosts(currentUser.id).then(({ data, error }) => {
-          if (error || !Array.isArray(data)) return;
-          setUserProfile(prev => {
-            const existing = prev.posts || [];
-            const serverById = new Map(data.map(p => [p.id, p]));
-            const posts = [...data, ...existing.filter(p => !serverById.has(p.id))];
-            return { ...prev, posts };
-          });
-        }).catch(() => {});
-      }
-
-      // Load saved posts, saved stories, and watch history
+    if (typeof window === 'undefined') return;
+    try {
       const saved = localStorage.getItem('savedPosts');
-      if (saved) {
-        setSavedPosts(new Set(JSON.parse(saved)));
-      }
-
+      if (saved) setSavedPosts(new Set(JSON.parse(saved)));
+    } catch { /* ignore corrupt cache */ }
+    try {
       const savedStoriesData = localStorage.getItem('savedStories');
-      if (savedStoriesData) {
-        setSavedStories(new Set(JSON.parse(savedStoriesData)));
-      }
-
+      if (savedStoriesData) setSavedStories(new Set(JSON.parse(savedStoriesData)));
+    } catch { /* ignore corrupt cache */ }
+    try {
       const history = localStorage.getItem('watchHistory');
       if (history) {
-        setWatchHistory(JSON.parse(history));
+        const parsed = JSON.parse(history);
+        if (Array.isArray(parsed)) setWatchHistory(parsed);
       }
-
-      // Load user reacted thoughts from localStorage
+    } catch { /* ignore corrupt cache */ }
+    try {
       const savedReactedThoughts = localStorage.getItem('userReactedThoughts');
       if (savedReactedThoughts) {
-        try {
-          const reactedThoughts = JSON.parse(savedReactedThoughts);
-          setUserReactedPosts(reactedThoughts as Post[]);
-        } catch (error) {
-        }
+        const reactedThoughts = JSON.parse(savedReactedThoughts);
+        if (Array.isArray(reactedThoughts)) setUserReactedPosts(reactedThoughts as Post[]);
       }
-    }
+    } catch { /* ignore corrupt cache */ }
   }, []);
 
-  // Save profile to localStorage whenever it changes
+  // Resolve the routed profile. Re-runs whenever the route target changes, so
+  // clicking from one profile to another never leaves the previous account on
+  // screen (and never falls back to the viewer's own profile).
   React.useEffect(() => {
-    if (typeof window !== 'undefined') {
-      localStorage.setItem('userProfile', JSON.stringify(userProfile));
+    let cancelled = false;
+    const currentUser = getStoredUser();
+    const currentId = String(currentUser?.id || '').trim();
+    setProfileLookupFailed(false);
+
+    if (hasRouteTarget && !isOwnProfile) {
+      setResolvedTargetId('');
+      setUserProfile(createTargetPlaceholder(routeTarget));
+
+      (async () => {
+        const profileRes = await api.getProfile(routeTarget);
+        if (cancelled) return;
+        const data = profileRes?.data;
+        if (!data || profileRes.error) {
+          setProfileLookupFailed(true);
+          return;
+        }
+        // The server resolves @handle/username/name aliases to the canonical
+        // account id. Content is then loaded for that id — never the alias.
+        const canonicalId = String(data.id || '').trim() || routeTarget;
+        setResolvedTargetId(canonicalId);
+        setUserProfile({
+          ...createTargetPlaceholder(routeTarget),
+          ...data,
+          id: canonicalId,
+          name: data.name || routeTarget,
+          username: data.username || data.name || routeTarget,
+          posts: [] as Post[],
+          // Server data is real, not a placeholder any more. The persistence
+          // effect still writes only when this is the viewer's own account.
+          _placeholder: false,
+        } as typeof userProfile);
+
+        const contentRes = await api.getUserContent(canonicalId);
+        if (cancelled) return;
+        let serverItems: Post[] = [];
+        if (!contentRes.error && contentRes.data && typeof contentRes.data === 'object') {
+          const d = contentRes.data as any;
+          serverItems = [
+            ...((d.posts || []) as Post[]),
+            ...((d.thoughts || []) as any[]).map((t: any) => ({ ...t, type: t.type || 'thought' })),
+            ...((d.stories || []) as any[]).map((s: any) => ({ ...s, type: s.type || 'story' })),
+            ...((d.moments || []) as any[]).map((m: any) => ({ ...m, type: 'moment' })),
+          ] as Post[];
+        }
+        if (serverItems.length) {
+          setUserProfile(prev => ({ ...prev, posts: serverItems }));
+          return;
+        }
+        // Legacy fallback: posts-only endpoint for accounts whose content
+        // predates the aggregate endpoint.
+        const legacy = await api.getUserPosts(canonicalId);
+        if (cancelled || legacy.error || !Array.isArray(legacy.data)) return;
+        setUserProfile(prev => {
+          const existing = prev.posts || [];
+          const serverById = new Map((legacy.data as Post[]).map((p) => [p.id, p]));
+          return { ...prev, posts: [...(legacy.data as Post[]), ...existing.filter(p => !serverById.has(p.id))] };
+        });
+      })().catch(() => {
+        if (!cancelled) setProfileLookupFailed(true);
+      });
+
+      return () => { cancelled = true; };
     }
-  }, [userProfile]);
+
+    // ── OWN PROFILE (/app/profile or a route that is truly the viewer) ──
+    setResolvedTargetId(currentId);
+    const savedProfile = readCachedOwnProfile();
+
+    if (savedProfile && currentUser) {
+      const belongsToViewer =
+        normalizeIdentity(savedProfile.id) === normalizeIdentity(currentUser.id) ||
+        (!!currentUser.email && String(savedProfile._userEmail || '').toLowerCase() === String(currentUser.email).toLowerCase());
+      if (belongsToViewer) {
+        setUserProfile(savedProfile);
+      } else {
+        const fresh = createDefaultProfile(currentUser);
+        setUserProfile(fresh);
+        try { localStorage.setItem('userProfile', JSON.stringify(fresh)); } catch { /* ignore */ }
+      }
+    } else if (savedProfile && !currentUser) {
+      try { localStorage.removeItem('userProfile'); } catch { /* ignore */ }
+    } else if (!savedProfile && currentUser) {
+      const fresh = createDefaultProfile(currentUser);
+      setUserProfile(fresh);
+      try { localStorage.setItem('userProfile', JSON.stringify(fresh)); } catch { /* ignore */ }
+    }
+
+    if (currentUser?.id) {
+      api.getProfile(currentUser.id).then(serverProfile => {
+        if (cancelled || !serverProfile?.data) return;
+        setUserProfile(prev => ({
+          ...prev,
+          ...serverProfile.data,
+          _userEmail: currentUser?.email || prev._userEmail,
+          posts: prev.posts || [],
+        }));
+      }).catch(() => {});
+
+      // Fetch ALL of the user's server content (posts + thoughts + stories
+      // + moments) and merge with the local cache, so uploads from any
+      // device appear in the profile and stay visible to other accounts.
+      api.getUserContent(currentUser.id).then(({ data, error }) => {
+        if (cancelled || error || !data || typeof data !== 'object') return;
+        const serverItems = [
+          ...((data as any).posts || []),
+          ...((data as any).thoughts || []).map((t: any) => ({ ...t, type: t.type || 'thought' })),
+          ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
+          ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
+        ];
+        if (!serverItems.length) return;
+        setUserProfile(prev => {
+          const existing = prev.posts || [];
+          const serverById = new Map(serverItems.map((p: any) => [p.id, p]));
+          // Server wins on conflicts (authoritative across devices).
+          const posts = [...serverItems, ...existing.filter(p => !serverById.has(p.id))];
+          return { ...prev, posts };
+        });
+      }).catch(() => {});
+      // Legacy fallback: posts-only endpoint.
+      api.getUserPosts(currentUser.id).then(({ data, error }) => {
+        if (cancelled || error || !Array.isArray(data)) return;
+        setUserProfile(prev => {
+          const existing = prev.posts || [];
+          const serverById = new Map(data.map(p => [p.id, p]));
+          const posts = [...data, ...existing.filter(p => !serverById.has(p.id))];
+          return { ...prev, posts };
+        });
+      }).catch(() => {});
+    }
+
+    return () => { cancelled = true; };
+  }, [hasRouteTarget, isOwnProfile, routeTarget]);
+
+  // Persist ONLY the signed-in viewer's own profile. Previously every viewed
+  // profile was written to `userProfile`, which corrupted local identity and
+  // made CreatePage stamp uploads with the wrong author.
+  React.useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (!isSelfView) return;
+    const profile = userProfile as Record<string, unknown>;
+    if (!profile || profile._placeholder === true) return;
+    const currentUser = getStoredUser();
+    if (!currentUser) return;
+    const idMatch = !!viewerId && normalizeIdentity(profile.id) === normalizeIdentity(viewerId);
+    const emailMatch = !!viewerEmail && String(profile._userEmail || profile.email || '').toLowerCase() === viewerEmail;
+    if (!idMatch && !emailMatch) return;
+    try { localStorage.setItem('userProfile', JSON.stringify(profile)); } catch { /* storage is best-effort */ }
+  }, [userProfile, isSelfView, viewerId, viewerEmail]);
 
   // Save saved posts to localStorage whenever they change
   useEffect(() => {
@@ -410,6 +476,9 @@ const ProfilePage = () => {
     };
 
     const handleUserPostCreated = (_event: CustomEvent) => {
+      // Local cache belongs to the viewer only. Never replace another user's
+      // profile with the viewer's own posts while visiting their page.
+      if (!isSelfView) return;
       try {
         const saved = localStorage.getItem('userProfile');
         if (saved) setUserProfile(JSON.parse(saved));
@@ -417,6 +486,7 @@ const ProfilePage = () => {
     };
 
     const handleUserPostDeleted = (_event: CustomEvent) => {
+      if (!isSelfView) return;
       try {
         const saved = localStorage.getItem('userProfile');
         if (saved) setUserProfile(JSON.parse(saved));
@@ -438,7 +508,7 @@ const ProfilePage = () => {
       window.removeEventListener('userPostCreated', handleUserPostCreated as EventListener);
       window.removeEventListener('userPostDeleted', handleUserPostDeleted as EventListener);
     };
-  }, [savedPosts, userProfile.posts, watchHistory]); // Add missing dependencies
+  }, [savedPosts, userProfile.posts, watchHistory, isSelfView]); // Add missing dependencies
 
   // Handle split view video selection
   useEffect(() => {
@@ -904,13 +974,14 @@ const ProfilePage = () => {
   const [restrictedFollowing, setRestrictedFollowing] = useState(false);
   const [listsLoading, setListsLoading] = useState(false);
 
+  // Followers/following always belong to the routed profile. Use the canonical
+  // id the server resolved for that target; fall back to the route alias only
+  // while the lookup is still in flight. Never fall back to the viewer's id —
+  // that showed the viewer's own lists on someone else's profile.
   const targetProfileId: string = (() => {
-    try {
-      const u = getStoredUser();
-      return String((userId as string) || (username as string) || u?.id || (userProfile as { id?: string })?.id || '');
-    } catch {
-      return String((userProfile as { id?: string })?.id || '');
-    }
+    if (resolvedTargetId) return resolvedTargetId;
+    if (hasRouteTarget && !isOwnProfile) return routeTarget;
+    return String((userProfile as { id?: string })?.id || viewerId || '');
   })();
 
   const openFollowers = async () => {
@@ -1170,6 +1241,12 @@ const ProfilePage = () => {
     <div className="space-y-6">
       {/* Profile Header */}
       <Card className="p-4 md:p-6">
+        {profileLookupFailed && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+            <AlertTriangle className="h-4 w-4 shrink-0" />
+            <span>This profile could not be loaded. Check the name or username and try again.</span>
+          </div>
+        )}
         <div className="flex flex-col items-center text-center">
           <Avatar className="h-20 w-20 md:h-24 md:w-24 mb-3 md:mb-4">
             {userProfile.avatar ? (
@@ -1200,7 +1277,7 @@ const ProfilePage = () => {
             </button>
           </div>
           <div className="flex gap-2 flex-wrap justify-center">
-            {isOwnProfile ? (
+            {isSelfView ? (
               <>
                 <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={handleEditProfile}>
                   <Edit className="h-3 w-3 md:h-4 md:w-4" /> <span className="hidden xs:inline">Edit Profile</span><span className="xs:hidden">Edit</span>
@@ -1218,7 +1295,7 @@ const ProfilePage = () => {
               </>
             ) : (
               <>
-                <FollowButton userId={userId || username || ''} />
+                <FollowButton userId={resolvedTargetId || routeTarget} />
                 <Button variant="outline" size="sm" className="flex items-center gap-2 text-xs md:text-sm" onClick={() => setShowReportProfile(true)}>
                   <AlertTriangle className="h-3 w-3 md:h-4 md:w-4" /> Report
                 </Button>
@@ -1236,8 +1313,12 @@ const ProfilePage = () => {
           <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
           <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
           <TabsTrigger value="thoughts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Thoughts</TabsTrigger>
-          <TabsTrigger value="history" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">History</TabsTrigger>
-          <TabsTrigger value="saved" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Saved</TabsTrigger>
+          {isSelfView && (
+            <>
+              <TabsTrigger value="history" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">History</TabsTrigger>
+              <TabsTrigger value="saved" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Saved</TabsTrigger>
+            </>
+          )}
           <span aria-hidden="true" className="w-1 shrink-0 md:hidden" />
         </TabsList>
         <TabsContent value="posts" className="mt-4 md:mt-6 space-y-3 md:space-y-4">
@@ -1248,12 +1329,12 @@ const ProfilePage = () => {
           ].length > 0 ? (
             <>
               {/* Filter moments and render them with Moments component */}
-              {[...userReactedPosts.map(post => ({ ...post, isReacted: true })), ...userProfile.posts]
+              {[...viewerReactedPosts, ...userProfile.posts]
                 .filter(post => post.type === 'moment').length > 0 && (
                 <div className="space-y-4">
                   <h4 className="text-sm font-medium text-muted-foreground">Moments</h4>
                   <Moments
-                    moments={[...userReactedPosts.map(post => ({ ...post, isReacted: true })), ...userProfile.posts]
+                    moments={[...viewerReactedPosts, ...userProfile.posts]
                       .filter(post => post.type === 'moment').map(post => ({
                         id: post.id,
                         user: post.user,
@@ -1275,7 +1356,7 @@ const ProfilePage = () => {
                         views: post.views || 0
                       }))}
                     onFullscreen={(moment) => {
-                      const fullPost = [...userReactedPosts.map(post => ({ ...post, isReacted: true })), ...userProfile.posts]
+                      const fullPost = [...viewerReactedPosts, ...userProfile.posts]
                         .find(p => p.id === moment.id) || moment as unknown as Post;
                       addToWatchHistory(fullPost);
                       handleFullscreen(fullPost);
@@ -1296,7 +1377,7 @@ const ProfilePage = () => {
               )}
 
               {/* Render non-moment posts as regular cards */}
-              {[...userReactedPosts.map(post => ({ ...post, isReacted: true })), ...userProfile.posts]
+              {[...viewerReactedPosts, ...userProfile.posts]
                 .filter(post => post.type !== 'moment').map((post) => (
                 <Card key={post.id} className={`p-3 md:p-4 slide-up ${post.isReacted ? 'border-green-200 bg-green-50/50' : ''}`}>
                   <CardHeader className="flex flex-row items-center justify-between p-0 mb-3 md:mb-4">
@@ -1691,8 +1772,8 @@ const ProfilePage = () => {
         </TabsContent>
 
         <TabsContent value="thoughts" className="mt-6 space-y-4">
-          {[...userReactedPosts.map(post => ({ ...post, isReacted: true })), ...userProfile.posts.filter(p => p.type === 'thought')].length > 0 ? (
-            [...userReactedPosts.map(post => ({ ...post, isReacted: true })), ...userProfile.posts.filter(p => p.type === 'thought')].map((post) => (
+          {[...viewerReactedPosts, ...userProfile.posts.filter(p => p.type === 'thought')].length > 0 ? (
+            [...viewerReactedPosts, ...userProfile.posts.filter(p => p.type === 'thought')].map((post) => (
               <Card key={post.id} className={`p-4 slide-up ${post.isReacted ? 'border-green-200 bg-green-50/50' : ''}`}>
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
@@ -1904,24 +1985,27 @@ const ProfilePage = () => {
           )}
         </TabsContent>
 
-        <TabsContent value="history" className="mt-6 space-y-4">
-          <WatchHistorySection
-            watchHistory={watchHistory}
-            savedPosts={savedPosts}
-            onClearHistory={() => {
-              setWatchHistory([]);
-              localStorage.removeItem('watchHistory');
-              showSuccess('Watch history cleared');
-            }}
-            onRemoveItem={(index) => {
-              setWatchHistory(prev => prev.filter((_, i) => i !== index));
-            }}
-            onFullscreen={handleFullscreen}
-            onSave={handleSave}
-          />
-        </TabsContent>
+        {isSelfView && (
+          <TabsContent value="history" className="mt-6 space-y-4">
+            <WatchHistorySection
+              watchHistory={watchHistory}
+              savedPosts={savedPosts}
+              onClearHistory={() => {
+                setWatchHistory([]);
+                localStorage.removeItem('watchHistory');
+                showSuccess('Watch history cleared');
+              }}
+              onRemoveItem={(index) => {
+                setWatchHistory(prev => prev.filter((_, i) => i !== index));
+              }}
+              onFullscreen={handleFullscreen}
+              onSave={handleSave}
+            />
+          </TabsContent>
+        )}
 
-        <TabsContent value="saved" className="mt-6 space-y-4">
+        {isSelfView && (
+          <TabsContent value="saved" className="mt-6 space-y-4">
           {/* All Saved Content */}
           <Card className="p-6">
             <CardTitle className="flex items-center gap-2 mb-4">
@@ -2039,7 +2123,8 @@ const ProfilePage = () => {
               </div>
             )}
           </Card>
-        </TabsContent>
+          </TabsContent>
+        )}
       </Tabs>
 
       {/* Report Profile Modal */}
@@ -2047,7 +2132,7 @@ const ProfilePage = () => {
         <ReportModal
           isOpen={showReportProfile}
           onClose={() => setShowReportProfile(false)}
-          contentId={userId || username || ''}
+          contentId={resolvedTargetId || routeTarget}
           contentType="profile"
         />
       )}

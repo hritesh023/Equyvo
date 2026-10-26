@@ -20,6 +20,40 @@ interface SearchSuggestProps {
   hideKeyboardShortcuts?: boolean;
 }
 
+type SearchPerson = { id: string; username?: string; name?: string; avatar?: string; bio?: string; verified?: boolean; handle?: string };
+
+const normalizeSearchValue = (value: unknown): string => {
+  let raw = String(value ?? '').trim();
+  try { raw = decodeURIComponent(raw); } catch { /* keep raw */ }
+  return raw.replace(/^@+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+};
+
+/**
+ * Pick the person a typed query clearly refers to. Exact matches win; a
+ * prefix match (e.g. "rish" → "rishi") is accepted so partial names still open
+ * the right profile. Arbitrary substring matches are ignored to avoid
+ * hijacking content searches. Never returns the signed-in user as a fallback —
+ * the server only returns real matching accounts.
+ */
+const pickPersonMatch = (query: string, people: SearchPerson[]): SearchPerson | null => {
+  const q = normalizeSearchValue(query);
+  if (q.length < 2 || !Array.isArray(people) || people.length === 0) return null;
+  let best: { person: SearchPerson; rank: number } | null = null;
+  for (const person of people) {
+    if (!person?.id) continue;
+    const identities = [person.username, person.name, person.handle]
+      .map(normalizeSearchValue)
+      .filter(Boolean);
+    if (identities.length === 0) continue;
+    const exact = identities.some((v) => v === q);
+    const prefix = identities.some((v) => v.startsWith(q));
+    const rank = exact ? 2 : prefix ? 1 : 0;
+    if (rank === 0) continue;
+    if (!best || rank > best.rank) best = { person, rank };
+  }
+  return best?.person || null;
+};
+
 const SearchSuggest: React.FC<SearchSuggestProps> = ({
   onSearch,
   onClose,
@@ -204,39 +238,52 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     }, 150);
   };
 
-  const handleSearch = useCallback(() => {
-    const searchQuery = query.trim();
-    if (searchQuery) {
-      setIsSearching(true);
-      trackSearchEvent(searchQuery, 'search_executed');
-      saveSearch(searchQuery);
-
-      // If the query matches a person, go straight to their profile.
-      const normalized = searchQuery.toLowerCase().replace(/^@/, '');
-      const personMatch = people.find((p) => {
-        const uname = String(p.username || p.name || '').toLowerCase().replace(/^@/, '');
-        return uname === normalized;
-      });
-      if (!onSearch && personMatch) {
-        setIsSearching(false);
-        setIsOpen(false);
-        navigate(`/profile/${encodeURIComponent(personMatch.id)}`);
-        return;
-      }
-      
-      if (onSearch) {
-        onSearch(searchQuery);
-      } else {
-        // Use React Router's navigate for reliable SPA navigation
-        navigate(`/app/search?q=${encodeURIComponent(searchQuery)}`);
-      }
-      
-      setTimeout(() => {
-        setIsSearching(false);
-        setIsOpen(false);
-      }, 300);
+  // Resolve a typed query to a real account. Uses already-loaded people first,
+  // then asks the server (covers fast Enter presses before the debounce fired).
+  const resolvePersonMatch = useCallback(async (searchQuery: string): Promise<SearchPerson | null> => {
+    const local = pickPersonMatch(searchQuery, people as SearchPerson[]);
+    if (local) return local;
+    try {
+      const { data, error } = await api.search(searchQuery, 8);
+      if (error || !data) return null;
+      const users = ((data as unknown as { users?: SearchPerson[] }).users || []);
+      return pickPersonMatch(searchQuery, users);
+    } catch {
+      return null;
     }
-  }, [query, onSearch, trackSearchEvent, saveSearch, navigate, people]);
+  }, [people]);
+
+  const handleSearch = useCallback(async () => {
+    const searchQuery = query.trim();
+    if (!searchQuery) return;
+    setIsSearching(true);
+    trackSearchEvent(searchQuery, 'search_executed');
+    saveSearch(searchQuery);
+
+    // A person match always opens THAT person's profile — never a content
+    // results page that could bounce back to the viewer's own identity.
+    const personMatch = await resolvePersonMatch(searchQuery);
+    if (personMatch?.id) {
+      setIsSearching(false);
+      setIsOpen(false);
+      setSelectedIndex(-1);
+      onClose?.();
+      navigate(`/profile/${encodeURIComponent(personMatch.id)}`);
+      return;
+    }
+
+    if (onSearch) {
+      onSearch(searchQuery);
+    } else {
+      // Use React Router's navigate for reliable SPA navigation
+      navigate(`/app/search?q=${encodeURIComponent(searchQuery)}`);
+    }
+
+    setTimeout(() => {
+      setIsSearching(false);
+      setIsOpen(false);
+    }, 300);
+  }, [query, onSearch, onClose, trackSearchEvent, saveSearch, navigate, resolvePersonMatch]);
 
   const handleSuggestionClick = useCallback((suggestion: SearchSuggestion) => {
     setQuery(suggestion.label);

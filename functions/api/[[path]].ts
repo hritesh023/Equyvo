@@ -292,6 +292,7 @@ async function ensureProfile(env, u) {
       createdAt: new Date().toISOString(),
     };
     await env.EQUYVO_KV.put(KEYS.PROFILE(id), JSON.stringify(profile));
+    await invalidateProfileIndex(env);
     return profile;
   } catch { return null; }
 }
@@ -343,6 +344,314 @@ async function profileWithFallback(env, pid) {
   return created || null;
 }
 
+// ── Profile identity resolution ──────────────────────────────────────────
+// Profile rows are keyed by account id, but legacy data also contains rows
+// keyed by email and duplicate rows for one email. Those must never become a
+// canonical identity: routes/search resolve to the real account id instead.
+const PROFILE_INDEX_KEY = 'maint:profile_index_v1';
+const PROFILE_INDEX_TTL_MS = 60 * 1000;
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+
+function isEmailLike(value: unknown): boolean {
+  return EMAIL_RE.test(String(value || '').trim());
+}
+
+function normalizeProfileAlias(value: unknown): string {
+  let s = String(value ?? '').trim();
+  try { s = decodeURIComponent(s); } catch { /* keep raw */ }
+  return s.replace(/^@+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function profileEmailOf(profile: any): string {
+  if (!profile || typeof profile !== 'object') return '';
+  return String(profile.email || profile._userEmail || '').trim().toLowerCase();
+}
+
+async function canonicalAuthIdForEmail(env: any, email: string): Promise<string> {
+  const clean = String(email || '').trim().toLowerCase();
+  if (!clean) return '';
+  try {
+    const raw = await env.EQUYVO_KV.get('auth:user:' + clean);
+    if (!raw) return '';
+    const user = JSON.parse(raw);
+    return user && user.id ? String(user.id) : '';
+  } catch { return ''; }
+}
+
+async function invalidateProfileIndex(env: any): Promise<void> {
+  try { await env.EQUYVO_KV.delete(PROFILE_INDEX_KEY); } catch { /* best effort */ }
+}
+
+/**
+ * Bounded profile index: summaries only (never passwords/tokens), cached for a
+ * minute. Duplicate rows sharing one email collapse to the canonical account
+ * (the auth:user record), while their names/handles remain searchable aliases.
+ */
+async function buildProfileIndex(env: any): Promise<any[]> {
+  try {
+    const cached = await env.EQUYVO_KV.get(PROFILE_INDEX_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && Array.isArray(parsed.profiles) && (Date.now() - Number(parsed.t || 0)) < PROFILE_INDEX_TTL_MS) {
+        return parsed.profiles;
+      }
+    }
+  } catch { /* rebuild below */ }
+
+  const ids: string[] = [];
+  try {
+    let cursor: string | undefined;
+    do {
+      const page: any = await env.EQUYVO_KV.list({ prefix: 'profile:', cursor, limit: 1000 });
+      for (const key of (page.keys || [])) {
+        const id = String(key.name || '').slice('profile:'.length);
+        if (id) ids.push(id);
+      }
+      cursor = page.list_complete ? undefined : page.cursor;
+    } while (cursor && ids.length < 5000);
+  } catch { return []; }
+
+  const rows: any[] = [];
+  for (let i = 0; i < ids.length; i += 20) {
+    const slice = ids.slice(i, i + 20);
+    const loaded = await Promise.all(slice.map(async (id) => {
+      try {
+        const raw = await env.EQUYVO_KV.get(KEYS.PROFILE(id));
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
+    }));
+    loaded.forEach((profile, offset) => {
+      if (!profile || typeof profile !== 'object') return;
+      const keyId = slice[offset];
+      const id = String(profile.id || keyId);
+      rows.push({
+        id,
+        keyId,
+        name: String(profile.name || ''),
+        username: String(profile.username || ''),
+        avatar: String(profile.avatar || ''),
+        bio: typeof profile.bio === 'string' ? String(profile.bio) : '',
+        isPrivate: profile.isPrivate === true,
+        followers: Number(profile.followers || 0) || 0,
+        following: Number(profile.following || 0) || 0,
+        verified: profile.verified === true,
+        isSeed: profile.isSeed === true,
+        email: profileEmailOf(profile),
+        createdAt: String(profile.createdAt || ''),
+      });
+    });
+  }
+
+  // Canonical row per account email (auth record wins). Duplicate display
+  // names/handles from the other rows are kept as aliases for search.
+  const byEmail = new Map<string, any[]>();
+  for (const row of rows) {
+    if (!row.email) continue;
+    if (!byEmail.has(row.email)) byEmail.set(row.email, []);
+    byEmail.get(row.email)!.push(row);
+  }
+  const canonicalByEmail = new Map<string, string>();
+  const emails = [...byEmail.keys()];
+  for (let i = 0; i < emails.length; i += 20) {
+    const batch = emails.slice(i, i + 20);
+    const authIds = await Promise.all(batch.map((email) => canonicalAuthIdForEmail(env, email)));
+    batch.forEach((email, offset) => {
+      const group = byEmail.get(email) || [];
+      const authId = authIds[offset];
+      let canonical = authId && group.some((r) => String(r.id) === authId) ? authId : '';
+      if (!canonical) {
+        const real = group.filter((r) => !isEmailLike(r.id) && !isEmailLike(r.keyId));
+        real.sort((a, b) =>
+          (Number(b.followers || 0) - Number(a.followers || 0)) ||
+          String(b.createdAt || '').localeCompare(String(a.createdAt || '')) ||
+          String(a.id).localeCompare(String(b.id)),
+        );
+        canonical = String((real[0] || group[0] || {}).id || '');
+      }
+      if (canonical) canonicalByEmail.set(email, canonical);
+    });
+  }
+
+  const aliasesByCanonical = new Map<string, Set<string>>();
+  for (const row of rows) {
+    const canonicalId = row.email ? (canonicalByEmail.get(row.email) || row.id) : row.id;
+    if (!aliasesByCanonical.has(canonicalId)) aliasesByCanonical.set(canonicalId, new Set());
+    const aliases = aliasesByCanonical.get(canonicalId)!;
+    for (const value of [row.name, row.username, row.id]) {
+      const alias = normalizeProfileAlias(value);
+      if (alias) aliases.add(alias);
+    }
+  }
+
+  const profiles = rows.map((row) => {
+    const canonicalId = row.email ? (canonicalByEmail.get(row.email) || row.id) : row.id;
+    return {
+      ...row,
+      canonicalId,
+      emailKeyed: isEmailLike(row.id) || isEmailLike(row.keyId),
+      aliases: [...(aliasesByCanonical.get(canonicalId) || [])],
+    };
+  });
+  try {
+    await env.EQUYVO_KV.put(PROFILE_INDEX_KEY, JSON.stringify({ t: Date.now(), profiles }));
+  } catch { /* cache is best-effort */ }
+  return profiles;
+}
+
+/** All stored ids/emails that belong to one account (duplicate rows included). */
+async function refsForAccount(env: any, profile: any): Promise<{ ids: string[]; refs: Set<string> }> {
+  const ids = new Set<string>();
+  const refs = new Set<string>();
+  const add = (value: unknown) => {
+    const clean = String(value || '').trim();
+    if (clean) {
+      ids.add(clean);
+      refs.add(clean.toLowerCase());
+    }
+  };
+  add(profile?.id);
+  add(profile?.email);
+  add(profile?._userEmail);
+  const addAlias = (value: unknown) => {
+    const alias = normalizeProfileAlias(value);
+    if (alias) {
+      refs.add(alias);
+      refs.add('@' + alias);
+    }
+  };
+  addAlias(profile?.username);
+  addAlias(profile?.name);
+  const email = profileEmailOf(profile);
+  if (email) {
+    try {
+      const index = await buildProfileIndex(env);
+      for (const row of index) {
+        if (profileEmailOf(row) !== email) continue;
+        add(row.id);
+        add(row.keyId);
+        addAlias(row.name);
+        addAlias(row.username);
+      }
+    } catch { /* ignore */ }
+  }
+  return { ids: [...ids], refs };
+}
+
+/**
+ * Owner matching for content: explicit id fields win. Display-name fields are
+ * only consulted for legacy rows with no id at all, so two accounts sharing a
+ * name can never inherit each other's posts.
+ */
+function itemBelongsToAccount(item: any, refs: Set<string>): boolean {
+  if (!item || typeof item !== 'object') return false;
+  const lower = (value: unknown) => String(value || '').trim().toLowerCase();
+  const strong = [item.ownerId, item.userId, item.user_id, item.authorId]
+    .map(lower).filter(Boolean);
+  if (strong.length) return strong.some((value) => refs.has(value));
+  const legacy = [item.creatorId, item.username, item.handle]
+    .map(lower).filter(Boolean);
+  if (legacy.length) return legacy.some((value) => refs.has(value));
+  const display = [item.creator, item.user].map(lower).filter(Boolean);
+  return display.some((value) => refs.has(value));
+}
+
+/**
+ * Resolve any route target (account id, legacy email id, @handle, username or
+ * display name) to the canonical account. Exact alias matches only; ambiguity
+ * is resolved deterministically, and email targets resolve through the auth
+ * account rather than an email-keyed legacy profile row.
+ */
+async function resolveProfileRef(env: any, target: string): Promise<any | null> {
+  const raw = String(target || '').trim();
+  if (!raw) return null;
+  let decoded = raw;
+  try { decoded = decodeURIComponent(raw); } catch { /* keep raw */ }
+  const cleaned = decoded.replace(/^@+/, '').trim();
+  if (!cleaned) return null;
+  if (SEED_PROFILE_IDS.has(cleaned)) return null;
+
+  // 1) Direct account id. Duplicate rows for the same email are folded onto
+  //    the canonical account so stale links cannot open a second identity.
+  if (!isEmailLike(cleaned)) {
+    const direct = await getStoredProfile(env, cleaned);
+    if (direct) {
+      const email = profileEmailOf(direct);
+      if (email) {
+        const authId = await canonicalAuthIdForEmail(env, email);
+        if (authId && authId !== cleaned) {
+          const canonical = await getStoredProfile(env, authId);
+          if (canonical) return { id: authId, profile: canonical, via: 'canonical-id' };
+        }
+        if (isEmailLike(direct.id) && cleaned !== direct.id) {
+          // Row is a legacy email-keyed duplicate — never canonical.
+        }
+      }
+      return { id: String(direct.id || cleaned), profile: direct, via: 'id' };
+    }
+  } else {
+    // Legacy email link: map to the real auth account, never the legacy row.
+    const authId = await canonicalAuthIdForEmail(env, cleaned);
+    if (!authId) return null;
+    const profile = await getStoredProfile(env, authId);
+    if (profile) return { id: authId, profile, via: 'email' };
+    return null;
+  }
+
+  // 2) Exact username / display-name alias from the bounded profile index.
+  const needle = normalizeProfileAlias(cleaned);
+  if (needle.length < 2) return null;
+  const index = await buildProfileIndex(env);
+  const matches = index.filter((row) =>
+    !row.emailKeyed &&
+    !row.isSeed &&
+    !SEED_PROFILE_IDS.has(String(row.id)) &&
+    (normalizeProfileAlias(row.username) === needle ||
+      normalizeProfileAlias(row.name) === needle ||
+      (Array.isArray(row.aliases) && row.aliases.includes(needle))),
+  );
+  const byCanonical = new Map<string, any>();
+  for (const row of matches) {
+    const canonicalId = String(row.canonicalId || row.id);
+    const existing = byCanonical.get(canonicalId);
+    // Prefer the canonical row itself over a duplicate row that merely
+    // carries the searched alias.
+    if (!existing || (String(row.id) === canonicalId && String(existing.id) !== canonicalId)) {
+      byCanonical.set(canonicalId, row);
+    }
+  }
+  const candidates = [...byCanonical.values()];
+  if (!candidates.length) return null;
+  candidates.sort((a, b) =>
+    (Number(b.verified === true) - Number(a.verified === true)) ||
+    (Number(b.followers || 0) - Number(a.followers || 0)) ||
+    String(a.id).localeCompare(String(b.id)),
+  );
+  const chosen = candidates[0];
+  const canonicalId = String(chosen.canonicalId || chosen.id);
+  const profile = (await getStoredProfile(env, canonicalId)) || chosen;
+  return {
+    id: String(profile.id || canonicalId),
+    profile,
+    via: 'alias',
+    ambiguous: candidates.length > 1,
+  };
+}
+
+/**
+ * Follow graph keys are canonical account ids. Route targets may arrive as
+ * @handles, display names, legacy emails or duplicate profile ids, so resolve
+ * them before touching FOLLOWING/FOLLOWERS/FOLLOW_REQ.
+ */
+async function canonicalTargetId(env: any, target: string): Promise<string> {
+  const raw = String(target || '').trim();
+  if (!raw) return '';
+  try {
+    const resolved = await resolveProfileRef(env, raw);
+    if (resolved?.id) return String(resolved.id);
+  } catch { /* fall through to the raw target */ }
+  return raw;
+}
+
 async function readIdList(env, key) {
   try {
     const raw = await env.EQUYVO_KV.get(key);
@@ -383,7 +692,15 @@ async function getViewer(request, env) {
     const h = request.headers.get('X-User-Id') || request.headers.get('X-User-Email') || '';
     const q = new URL(request.url).searchParams;
     const id = String(h || q.get('viewerId') || q.get('viewer') || q.get('userId') || q.get('user_id') || '').slice(0, 200);
-    if (id) return { id, email: id.includes('@') ? id : '' };
+    if (id) {
+      // Legacy clients occasionally send the account email as their id. Map
+      // it to the canonical account so ownership checks never silently fail.
+      if (isEmailLike(id)) {
+        const authId = await canonicalAuthIdForEmail(env, id);
+        if (authId) return { id: authId, email: id.toLowerCase() };
+      }
+      return { id, email: id.includes('@') ? id : '' };
+    }
   } catch { /* ignore */ }
   return null;
 }
@@ -1544,6 +1861,10 @@ async function getActor(request, env, body) {
   }
   const id = String(headerId || bodyId || '').slice(0, 200);
   if (!id) return null;
+  if (isEmailLike(id)) {
+    const authId = await canonicalAuthIdForEmail(env, id);
+    if (authId) return { id: authId, email: id.toLowerCase(), username: '', verified: false };
+  }
   return { id, email: id.includes('@') ? id : '', username: '', verified: false };
 }
 
@@ -2941,16 +3262,26 @@ export const onRequest = async (context) => {
     // public-safe subset (avatar + basic details, no media/content), like
     // Facebook/Instagram. Owners and followers receive the full profile.
     if (path.match(/^\/api\/profile\//) && method === 'GET') {
-      const userId = decodeURIComponent(path.split('/api/profile/')[1] || '');
-      if (SEED_PROFILE_IDS.has(userId)) {
+      const rawUserId = decodeURIComponent(path.split('/api/profile/')[1] || '');
+      if (SEED_PROFILE_IDS.has(rawUserId)) {
         return json({ data: null, error: 'Profile not found' }, 404, cors);
       }
-      const profile = await kv.get(KEYS.PROFILE(userId));
-      if (!profile) return json({ data: null, error: 'Profile not found' }, 404, cors);
-      const parsed = JSON.parse(profile);
+      // Resolve ids, legacy email ids, @handles, usernames and display names
+      // to the canonical account id — never a duplicate/email-keyed row.
+      const resolved = await resolveProfileRef(env, rawUserId);
+      if (!resolved || !resolved.profile) return json({ data: null, error: 'Profile not found' }, 404, cors);
+      const userId = String(resolved.id || resolved.profile.id || '');
+      const parsed = { ...resolved.profile, id: userId };
+      // Email/password material is owner-only and never part of a public row.
+      delete parsed.password;
+      delete parsed.salt;
+      const viewer = await getViewer(request, env);
+      const isOwner = !!(viewer && String(viewer.id) === userId);
+      if (!isOwner) {
+        delete parsed.email;
+        delete parsed._userEmail;
+      }
       if (parsed && parsed.isPrivate === true) {
-        const viewer = await getViewer(request, env);
-        const isOwner = !!(viewer && viewer.id === userId);
         const follower = isOwner ? true : viewer ? await isFollowingPair(env, viewer.id, userId) : false;
         if (!isOwner && !follower) {
           let pending = false;
@@ -2958,10 +3289,13 @@ export const onRequest = async (context) => {
             const reqs = await readIdList(env, KEYS.FOLLOW_REQ(userId));
             pending = viewer ? reqs.some((x) => String(x).toLowerCase() === String(viewer.id).toLowerCase()) : false;
           } catch { /* ignore */ }
-          return json({ data: { ...publicSafeProfile(parsed), followStatus: viewer ? { isFollowing: false, pending } : undefined }, error: null }, 200, cors);
+          const safe = publicSafeProfile(parsed);
+          delete safe.email;
+          delete safe._userEmail;
+          return json({ data: { ...safe, id: userId, followStatus: viewer ? { isFollowing: false, pending } : undefined }, error: null }, 200, cors);
         }
         if (viewer && !isOwner) {
-          return json({ data: { ...parsed, followStatus: { isFollowing: true, pending: false } }, error: null }, 200, cors);
+          return json({ data: { ...parsed, id: userId, followStatus: { isFollowing: true, pending: false } }, error: null }, 200, cors);
         }
       }
       return json({ data: parsed, error: null }, 200, cors);
@@ -3076,6 +3410,7 @@ export const onRequest = async (context) => {
       };
       if (verifiedPatch) Object.assign(merged, verifiedPatch);
       await kv.put(KEYS.PROFILE(id), JSON.stringify(merged));
+      await invalidateProfileIndex(env);
       return json({ data: merged, error: null }, 200, cors);
     }
 
@@ -3142,70 +3477,60 @@ export const onRequest = async (context) => {
       };
       const ranked = base.map((item) => ({ item, s: scoreItem(item) })).sort((a, b) => b.s - a.s);
       const personalized = Object.keys(interests).length > 0;
-      // ── People search: match real user profiles (username / name / bio) ──
-      // Bounded KV scan (max 200 profiles) so search stays lag-free. Seed and
-      // test profiles are never returned. Private accounts are included as
-      // people results (public-safe subset) — their media stays gated by
-      // filterVisibleItems on content, mirroring Instagram-style search.
+      // ── People search: match real user profiles (name / username / bio) ──
+      // Uses the shared profile index, so duplicate rows for one account are
+      // collapsed to a single canonical result (never an email-keyed row) and
+      // searching any part of a name/username still finds the person.
       let matchedUsers = [];
       try {
-        const ql = query.toLowerCase().trim();
+        const ql = normalizeProfileAlias(query);
         if (ql) {
-          let listed = null;
-          try {
-            listed = await kv.list({ prefix: 'profile:', limit: 200 });
-          } catch { listed = null; }
-          const keys = listed && Array.isArray(listed.keys) ? listed.keys.map((k) => k.name) : [];
-          const head = keys.slice(0, 200);
-          const profiles = [];
-          for (let i = 0; i < head.length; i += 20) {
-            const slice = head.slice(i, i + 20);
-            const rows = await Promise.all(slice.map(async (k) => {
-              try {
-                const raw = await kv.get(k);
-                return raw ? JSON.parse(raw) : null;
-              } catch { return null; }
-            }));
-            for (const r of rows) if (r) profiles.push(r);
-          }
+          const profiles = await buildProfileIndex(env);
           const scoredUsers = [];
           for (const p of profiles) {
             if (!p || typeof p !== 'object') continue;
+            const canonicalId = String(p.canonicalId || p.id || '');
             const pid = String(p.id || '');
-            if (!pid || SEED_PROFILE_IDS.has(pid)) continue;
-            if (p.isSeed === true) continue;
-            const email = String(p.email || '');
-            if (/@test\.com$/i.test(email) || /^pwsrc_/i.test(pid)) continue;
-            const username = String(p.username || p.name || '').toLowerCase();
+            if (!canonicalId || pid !== canonicalId) continue; // one row per account
+            if (SEED_PROFILE_IDS.has(canonicalId) || p.isSeed === true) continue;
+            if (isEmailLike(canonicalId) || p.emailKeyed) continue;
+            if (/@test\.com$/i.test(String(p.email || '')) || /^pwsrc_/i.test(pid)) continue;
+            const username = String(p.username || '').toLowerCase();
             const name = String(p.name || '').toLowerCase();
             const bio = String(p.bio || '').toLowerCase();
-            const idl = pid.toLowerCase();
-            const handle = username.startsWith('@') ? username : '@' + username;
+            const aliases = Array.from(new Set([
+              normalizeProfileAlias(username),
+              normalizeProfileAlias(name),
+              ...(Array.isArray(p.aliases) ? p.aliases : []),
+            ].filter(Boolean)));
+            const handles = Array.from(new Set(aliases.flatMap((a) => [a, '@' + a])));
             let s = 0;
-            if (username === ql || handle === ql || idl === ql) s += 200;
-            else if (username === ql.replace(/^@/, '')) s += 180;
-            if (username.includes(ql) || ql.includes(username) && username) s += 120;
-            if (handle.includes(ql)) s += 110;
-            if (name && (name.includes(ql) || ql.includes(name))) s += 100;
-            if (idl.includes(ql) && ql.length >= 3) s += 60;
+            for (const alias of handles) {
+              const flatAlias = alias.replace(/\s+/g, '');
+              const flatQuery = ql.replace(/\s+/g, '');
+              if (alias === ql || flatAlias === flatQuery) s = Math.max(s, 220);
+              else if (alias.startsWith(ql)) s = Math.max(s, 170);
+              else if (alias.includes(ql) || (ql.includes(alias) && alias.length >= 3)) s = Math.max(s, 130);
+            }
             if (bio && bio.includes(ql)) s += 40;
             const qtoks = ql.split(/\s+/).filter((w) => w.length > 1);
             for (const tok of qtoks) {
-              if (username.includes(tok)) s += 25;
-              else if (name.includes(tok)) s += 20;
+              if (aliases.some((a) => a.includes(tok))) s += 25;
               else if (bio.includes(tok)) s += 10;
             }
             if (s > 0) {
               const isPrivate = p.isPrivate === true;
+              const displayName = p.name || p.username || canonicalId;
+              const displayHandle = p.username || p.name || canonicalId;
               scoredUsers.push({
                 s,
                 user: isPrivate
-                  ? { id: pid, name: p.name, username: p.username, avatar: p.avatar || '', bio: typeof p.bio === 'string' ? String(p.bio).slice(0, 160) : '', isPrivate: true, restricted: true, followers: Number(p.followers || 0) || 0, following: Number(p.following || 0) || 0, verified: !!p.verified }
-                  : { id: pid, name: p.name || p.username || pid, username: p.username || p.name || pid, avatar: cleanCommentAvatar(p.avatar || ''), bio: typeof p.bio === 'string' ? String(p.bio).slice(0, 160) : '', isPrivate: false, followers: Number(p.followers || 0) || 0, following: Number(p.following || 0) || 0, verified: !!p.verified },
+                  ? { id: canonicalId, name: displayName, username: displayHandle, avatar: p.avatar || '', bio: typeof p.bio === 'string' ? String(p.bio).slice(0, 160) : '', isPrivate: true, restricted: true, followers: Number(p.followers || 0) || 0, following: Number(p.following || 0) || 0, verified: !!p.verified }
+                  : { id: canonicalId, name: displayName, username: displayHandle, avatar: cleanCommentAvatar(p.avatar || ''), bio: typeof p.bio === 'string' ? String(p.bio).slice(0, 160) : '', isPrivate: false, followers: Number(p.followers || 0) || 0, following: Number(p.following || 0) || 0, verified: !!p.verified },
               });
             }
           }
-          scoredUsers.sort((a, b) => b.s - a.s);
+          scoredUsers.sort((a, b) => b.s - a.s || String(a.user.id).localeCompare(String(b.user.id)));
           matchedUsers = scoredUsers.slice(0, limit).map((x) => x.user);
         }
       } catch { matchedUsers = []; }
@@ -3340,7 +3665,8 @@ export const onRequest = async (context) => {
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
       const clean = sanitizeBody(body);
-      const target = String(clean.target || clean.userId || '').slice(0, 200);
+      const rawTarget = String(clean.target || clean.userId || '').slice(0, 200);
+      const target = await canonicalTargetId(env, rawTarget);
       if (!target || target === actor.id) return json({ error: 'Invalid target' }, 400, cors);
       const rl = await rateLimit(kv, 'engagement', actor.id, 60);
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
@@ -3384,7 +3710,8 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const target = decodeURIComponent(path.split('/api/follow/')[1] || '').split('?')[0];
+      const rawTarget = decodeURIComponent(path.split('/api/follow/')[1] || '').split('?')[0];
+      const target = await canonicalTargetId(env, rawTarget);
       if (!target) return json({ error: 'Invalid target' }, 400, cors);
       const [following, followers, reqs] = await Promise.all([
         readIdList(env, KEYS.FOLLOWING(actor.id)),
@@ -3418,14 +3745,21 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const target = String(url.searchParams.get('target') || '').slice(0, 200);
-      if (!target) return json({ error: 'target required' }, 400, cors);
+      const rawTarget = String(url.searchParams.get('target') || '').slice(0, 200);
+      if (!rawTarget) return json({ error: 'target required' }, 400, cors);
+      const resolved = await resolveProfileRef(env, rawTarget);
+      const target = resolved?.id ? String(resolved.id) : rawTarget;
+      // A follow list may still contain an old alias/duplicate id for the same
+      // account, so match any ref that belongs to the resolved profile.
+      const targetRefs = resolved?.profile
+        ? (await refsForAccount(env, resolved.profile)).refs
+        : new Set<string>([target.toLowerCase()]);
       const following = await readIdList(env, KEYS.FOLLOWING(actor.id));
-      const isFollowing = following.some((x) => x === target);
+      const isFollowing = following.some((x) => targetRefs.has(String(x).trim().toLowerCase()));
       let pending = false;
       if (!isFollowing) {
         const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
-        pending = reqs.some((x) => x === actor.id);
+        pending = reqs.some((x) => String(x).toLowerCase() === String(actor.id).toLowerCase());
       }
       return json({ data: { isFollowing, pending }, error: null }, 200, cors);
     }
@@ -3434,7 +3768,10 @@ export const onRequest = async (context) => {
     // id lists. Private accounts expose these only to owners/followers.
     if ((path.match(/^\/api\/followers\//) || path.match(/^\/api\/following\//)) && method === 'GET') {
       const isFollowers = path.startsWith('/api/followers/');
-      const userId = decodeURIComponent((isFollowers ? path.split('/api/followers/')[1] : path.split('/api/following/')[1] || '').split('?')[0]);
+      const rawUserId = decodeURIComponent((isFollowers ? path.split('/api/followers/')[1] : path.split('/api/following/')[1] || '').split('?')[0]);
+      // Accept @handle / display-name / legacy-email links and always read the
+      // canonical account's graph.
+      const userId = await canonicalTargetId(env, rawUserId);
       const viewer = await getViewer(request, env);
       const target = await getStoredProfile(env, userId);
       if (target && target.isPrivate === true) {
@@ -3482,7 +3819,8 @@ export const onRequest = async (context) => {
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
       const clean = sanitizeBody(body);
-      const requester = String(clean.requester || clean.userId || '').slice(0, 200);
+      const rawRequester = String(clean.requester || clean.userId || '').slice(0, 200);
+      const requester = await canonicalTargetId(env, rawRequester);
       if (!requester) return json({ error: 'requester required' }, 400, cors);
       const reqs = await readIdList(env, KEYS.FOLLOW_REQ(actor.id));
       await kv.put(KEYS.FOLLOW_REQ(actor.id), JSON.stringify(reqs.filter((x) => x !== requester)));
@@ -4183,21 +4521,22 @@ export const onRequest = async (context) => {
     // stories + moments), visibility-enforced. This is what makes an upload
     // on one device appear on every other device and for other accounts.
     if (path.match(/^\/api\/users\//) && path.endsWith('/content') && method === 'GET') {
-      const userId = decodeURIComponent(path.split('/api/users/')[1].replace('/content', ''));
+      const rawUserId = decodeURIComponent(path.split('/api/users/')[1].replace('/content', ''));
+      const resolved = await resolveProfileRef(env, rawUserId);
+      const effectiveId = String(resolved?.id || rawUserId);
+      const account = resolved?.profile || { id: effectiveId };
+      const { refs } = await refsForAccount(env, account);
+      refs.add(String(rawUserId || '').toLowerCase());
       const viewer = await getViewer(request, env);
-      const isOwner = !!(viewer && String(viewer.id).toLowerCase() === String(userId).toLowerCase());
+      const isOwner = !!(viewer && refs.has(String(viewer.id).toLowerCase()));
       if (!isOwner) {
-        const target = await getStoredProfile(env, userId);
+        const target = account;
         if (target && target.isPrivate === true) {
-          const ok = viewer ? await isFollowingPair(env, viewer.id, userId) : false;
+          const ok = viewer ? await isFollowingPair(env, viewer.id, effectiveId) : false;
           if (!ok) return json({ data: { posts: [], thoughts: [], stories: [], moments: [] }, error: null }, 200, cors);
         }
       }
-      const matchOwner = (p) => {
-        const cands = [p.ownerId, p.userId, p.user_id, p.creator, p.user, p.username, p.handle];
-        const want = String(userId).toLowerCase();
-        return cands.some((c) => typeof c === 'string' && c && (c === userId || c.toLowerCase() === want));
-      };
+      const matchOwner = (p) => itemBelongsToAccount(p, refs);
       const [postIds, thoughtIds, storyIds, momentIds] = await Promise.all([
         cleanOrphans(env, KEYS.POSTS, KEYS.POST),
         cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT),
@@ -4224,13 +4563,18 @@ export const onRequest = async (context) => {
     // USER POSTS (visibility-enforced; private accounts reveal content only
     // to themselves and their followers — everyone else gets []).
     if (path.match(/^\/api\/users\//) && path.endsWith('/posts') && method === 'GET') {
-      const userId = decodeURIComponent(path.split('/api/users/')[1].replace('/posts', ''));
+      const rawUserId = decodeURIComponent(path.split('/api/users/')[1].replace('/posts', ''));
+      const resolved = await resolveProfileRef(env, rawUserId);
+      const effectiveId = String(resolved?.id || rawUserId);
+      const account = resolved?.profile || { id: effectiveId };
+      const { refs } = await refsForAccount(env, account);
+      refs.add(String(rawUserId || '').toLowerCase());
       const viewer = await getViewer(request, env);
-      const isOwner = !!(viewer && String(viewer.id).toLowerCase() === String(userId).toLowerCase());
+      const isOwner = !!(viewer && refs.has(String(viewer.id).toLowerCase()));
       if (!isOwner) {
-        const target = await getStoredProfile(env, userId);
+        const target = account;
         if (target && target.isPrivate === true) {
-          const ok = viewer ? await isFollowingPair(env, viewer.id, userId) : false;
+          const ok = viewer ? await isFollowingPair(env, viewer.id, effectiveId) : false;
           if (!ok) return json({ data: [], error: null }, 200, cors);
         }
       }
@@ -4239,11 +4583,7 @@ export const onRequest = async (context) => {
         const p = await kv.get(KEYS.POST(id));
         return p ? transformItem(JSON.parse(p)) : null;
       }))).filter(Boolean);
-      const want = String(userId || '').toLowerCase();
-      const userPosts = posts.filter((p) => {
-        const candidates = [p.ownerId, p.userId, p.user_id, p.user, p.creator, p.username, p.handle];
-        return candidates.some((c) => typeof c === 'string' && c && c.toLowerCase() === want);
-      });
+      const userPosts = posts.filter((p) => itemBelongsToAccount(p, refs));
       const visible = await filterVisibleItems(env, viewer, await filterSeed(env, userPosts));
       const limit = clamp(parseInt(url.searchParams.get('limit') || '50', 10), 1, 100);
       return json({ data: visible.slice(0, limit), error: null }, 200, cors);

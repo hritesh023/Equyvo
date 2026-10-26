@@ -19,6 +19,7 @@ import { cn } from '@/lib/utils';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 type SearchItem = ContentIndexItem;
 
@@ -171,6 +172,23 @@ const SearchPage: React.FC = () => {
     }
   }, [query, filterResults]);
 
+  // Direct search URLs for a real name/username open that person's profile
+  // instead of a generic results page (deep links, shared search links, and
+  // fast Enter presses all land on the correct account).
+  useEffect(() => {
+    if (!query || isLoading || isInitialLoad || userResults.length === 0) return;
+    const normalize = (value: unknown) =>
+      String(value ?? '').replace(/^@+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const q = normalize(query);
+    if (!q) return;
+    const exact = userResults.find((u) =>
+      [u.username, u.name].some((identity) => normalize(identity) === q),
+    );
+    if (exact?.id) {
+      navigate(`/profile/${encodeURIComponent(exact.id)}`, { replace: true });
+    }
+  }, [query, isLoading, isInitialLoad, userResults, navigate]);
+
   // Show tag bar if URL contains a tag-like query
   useEffect(() => {
     if (query && !showTagBar) {
@@ -192,8 +210,9 @@ const SearchPage: React.FC = () => {
   };
 
   const handleOpenProfile = (u: SearchedUser) => {
-    if (!u?.id) return;
-    navigate(`/profile/${encodeURIComponent(u.id)}`);
+    // Route by the canonical id the server returned, falling back to the
+    // username route — never to the viewer's own profile.
+    navigateToProfile(navigate, u.id, u.username || u.name);
   };
 
   const handleSortChange = (value: string) => {

@@ -109,4 +109,38 @@ Outputs (after every release build):
 
 Bump `versionCode` (+1, integer) and `versionName` in
 `android/app/build.gradle` every release: Play never accepts a reused
-versionCode — current: `versionCode 15` / `1.0.2`.
+versionCode. The new code must be higher than the highest code already
+uploaded to **any** track (internal/closed/open/production), not just the
+track you are updating. Current: `versionCode 40` / `1.2.18`.
+
+Before uploading, verify the generated bundle actually contains the new
+code. A stale file from a previous build is the usual cause of Play's
+"This release does not add or remove any app bundles" error:
+
+```bash
+# from Equyvo/android
+java -jar bundletool.jar dump manifest \
+  --bundle app/build/outputs/bundle/release/app-release.aab \
+  | findstr versionCode
+```
+
+Upload `android/app/build/outputs/bundle/release/app-release.aab` directly.
+If you copy it to the repo root as `equyvo-app.aab`, overwrite it in the
+same step and re-run the check on the copy.
+
+### Play Console rollout errors
+
+- **"This release does not add or remove any app bundles"** — the uploaded
+  AAB's `versionCode` is already in Play's bundle library (or the file is a
+  stale copy from an earlier build). Rebuild with a higher code; do not
+  re-upload an old file.
+- **"You can't roll out this release because it doesn't allow any existing
+  users to upgrade…"** — same root cause: `versionCode` is not strictly
+  higher, or the package name / upload signing key changed. Keep
+  `applicationId` and `equyvo-release.keystore` unchanged.
+- Device support must never shrink. Do not raise `minSdkVersion`, do not
+  add required `<uses-feature>` entries, and do not add `abiFilters`. The
+  camera/mic features are already declared `android:required="false"`, and
+  the bundle contains no native `.so` files, so no ABI splits are dropped.
+  Check **Play Console → Reach and devices → Device catalog** after upload
+  if Play reports a device-support regression.
