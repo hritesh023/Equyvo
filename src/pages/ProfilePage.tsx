@@ -46,6 +46,7 @@ import ReportModal from '@/components/ReportModal';
 import FollowListModal from '@/components/FollowListModal';
 import FollowButton from '@/components/FollowButton';
 import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
+import { navigateToProfile } from '@/utils/profile-navigation';
 import api from '@/lib/api';
 
 const ownerIdOf = (post: unknown): string => {
@@ -1777,12 +1778,27 @@ const ProfilePage = () => {
               <Card key={post.id} className={`p-4 slide-up ${post.isReacted ? 'border-green-200 bg-green-50/50' : ''}`}>
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
-                    <Avatar className="h-10 w-10">
-                      {post.avatar ? <AvatarImage src={post.avatar} /> : null}
-                      <AvatarFallback>{typeof post.user === 'string' ? post.user.substring(0, 2).toUpperCase() : (post.user && typeof post.user === 'object' && 'username' in post.user ? String((post.user as any).username).substring(0, 2).toUpperCase() : 'U')}</AvatarFallback>
-                    </Avatar>
+                    <button
+                      type="button"
+                      onClick={() => navigateToProfile(navigate, ownerIdOf(post), typeof post.user === 'string' ? post.user : undefined)}
+                      className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                      aria-label={`Open ${typeof post.user === 'string' ? post.user : 'author'}'s profile`}
+                      title={`Open ${typeof post.user === 'string' ? post.user : 'author'}'s profile`}
+                    >
+                      <Avatar className="h-10 w-10 cursor-pointer">
+                        {post.avatar ? <AvatarImage src={post.avatar} /> : null}
+                        <AvatarFallback>{typeof post.user === 'string' ? post.user.substring(0, 2).toUpperCase() : (post.user && typeof post.user === 'object' && 'username' in post.user ? String((post.user as any).username).substring(0, 2).toUpperCase() : 'U')}</AvatarFallback>
+                      </Avatar>
+                    </button>
                     <div>
-                      <CardTitle className={`text-base ${post.isReacted ? 'text-green-600' : ''}`}>{post.user}</CardTitle>
+                      <button
+                        type="button"
+                        onClick={() => navigateToProfile(navigate, ownerIdOf(post), typeof post.user === 'string' ? post.user : undefined)}
+                        className="text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                        title={`Open ${typeof post.user === 'string' ? post.user : 'author'}'s profile`}
+                      >
+                        <CardTitle className={`text-base ${post.isReacted ? 'text-green-600' : ''}`}>{post.user}</CardTitle>
+                      </button>
                       <p className="text-sm text-muted-foreground">
                         {post.time}
                         {post.isReacted && ` • Reacted to ${(post as any).originalAuthor}'s post`}

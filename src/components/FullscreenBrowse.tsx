@@ -11,6 +11,7 @@ import { useI18n } from '@/lib/i18n';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { navItems } from '@/components/Navbar';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 
 interface FullscreenBrowseProps {
   isOpen: boolean;
@@ -232,16 +233,36 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                         <CardContent className="p-4">
                           <div className="flex items-start justify-between mb-3">
                             <div className="flex items-center gap-2">
-                              <Avatar className="h-8 w-8">
-                                {avatarOf(content) ? <AvatarImage src={avatarOf(content)} /> : null}
-                                <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
-                                  {(content.creator || 'U').substring(0, 2).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  navigateToProfile(navigate, ownerIdOf(content) || content.creatorId, content.creator);
+                                }}
+                                className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                                aria-label={`Open ${content.creator || 'creator'}'s profile`}
+                                title={`Open ${content.creator || 'creator'}'s profile`}
+                              >
+                                <Avatar className="h-8 w-8 cursor-pointer">
+                                  {avatarOf(content) ? <AvatarImage src={avatarOf(content)} /> : null}
+                                  <AvatarFallback className="bg-gradient-to-r from-purple-500 to-pink-500 text-white text-xs">
+                                    {(content.creator || 'U').substring(0, 2).toUpperCase()}
+                                  </AvatarFallback>
+                                </Avatar>
+                              </button>
                               <div>
                                 <h3 className="text-white font-semibold text-sm line-clamp-1">{content.title}</h3>
                                 <div className="flex items-center gap-2">
-                                  <span className="text-gray-400 text-xs">{content.creator}</span>
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      navigateToProfile(navigate, ownerIdOf(content) || content.creatorId, content.creator);
+                                    }}
+                                    className="text-gray-400 text-xs hover:text-white hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+                                  >
+                                    {content.creator}
+                                  </button>
                                   {content.verified && (
                                     <Badge className="bg-blue-500 rounded-full p-0.5 h-3 w-3 p-0 flex items-center justify-center">
                                       <span className="sr-only">Verified</span>

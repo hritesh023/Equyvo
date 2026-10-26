@@ -603,17 +603,30 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); refreshThreads(); }} aria-label="Back to chat list" title="Back to chat list">
               <ArrowLeft className="w-4 h-4" />
             </Button>
-            <Avatar className="h-8 w-8">
-              <AvatarImage src={activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
-              <AvatarFallback>{(activeChat.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
-            </Avatar>
-            <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm truncate">{activeChat.peerName}</p>
-              <p className="text-xs text-muted-foreground">
-                {activeChat.relation === 'mutual' ? 'You follow each other' : activeChat.relation === 'follower' ? 'Follows you' : 'You follow them'}
-                {activeChat.online ? ' · Online' : ''}
-              </p>
-            </div>
+            <button
+              type="button"
+              onClick={() => {
+                // Close the conversation before routing so the chat overlay
+                // never covers the profile being opened.
+                setActiveId(null);
+                navigateToProfile(navigate, activeChat.peerId, activeChat.peerName);
+              }}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              aria-label={`Open ${activeChat.peerName}'s profile`}
+              title={`Open ${activeChat.peerName}'s profile`}
+            >
+              <Avatar className="h-8 w-8 shrink-0 cursor-pointer">
+                <AvatarImage src={activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
+                <AvatarFallback>{(activeChat.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm truncate hover:underline">{activeChat.peerName}</p>
+                <p className="text-xs text-muted-foreground">
+                  {activeChat.relation === 'mutual' ? 'You follow each other' : activeChat.relation === 'follower' ? 'Follows you' : 'You follow them'}
+                  {activeChat.online ? ' · Online' : ''}
+                </p>
+              </div>
+            </button>
             {/* Background selector reachable even while the chat is open
                 (the desktop sidebar header sits under the chat panel overlay). */}
             <ChatThemeSelector>
