@@ -196,7 +196,7 @@ export function notifyFollowRequest(fromName: string, fromId?: string): AppNotif
     body: `${fromName} requested to follow you. Approve or decline from notifications.`,
     actorId: fromId,
     actorName: fromName,
-    link: '/app/profile',
+    link: fromId ? `/profile/${encodeURIComponent(fromId)}` : '/app/profile',
   });
 }
 
@@ -207,7 +207,7 @@ export function notifyFollowAccepted(byName: string, byId?: string): AppNotifica
     body: `${byName} accepted your follow request. You can now see their posts and chat.`,
     actorId: byId,
     actorName: byName,
-    link: '/app/profile',
+    link: byId ? `/profile/${encodeURIComponent(byId)}` : '/app/profile',
   });
 }
 
@@ -278,6 +278,7 @@ export async function syncNotificationsFromServer(): Promise<AppNotification[]> 
             read: false,
             actorId: String(r),
             actorName: String(r),
+            link: `/profile/${encodeURIComponent(String(r))}`,
           });
         }
       }

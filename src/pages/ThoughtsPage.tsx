@@ -49,7 +49,7 @@ import FullscreenViewer from '@/components/FullscreenViewer';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { useMemo } from 'react';
 import { withInFeedAds } from '@/lib/feed-ads';
 import { shouldShowAds } from '@/lib/ads-config';
@@ -1012,7 +1012,11 @@ const ThoughtsPage = memo(() => {
                         className="h-12 w-12 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                         onClick={() => {
                           // Navigate to user profile when avatar is clicked
-                          navigateToProfile(navigate, thought.user?.id, thought.user?.username);
+                          navigateToProfile(
+                            navigate,
+                            ownerIdOf(thought) || thought.user?.id,
+                            thought.user?.username,
+                          );
                         }}
                         title={`${thought.user?.username}'s Profile`}
                       >

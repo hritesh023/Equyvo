@@ -11,7 +11,7 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
 import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, videoUrlOf, withoutHidden } from '@/lib/feed-store';
@@ -705,7 +705,7 @@ const MomentsPage = () => {
                   onClick={() => {
                     // Navigate to the CREATOR's profile — owner id from the
                     // moment row, username route only as last resort.
-                    navigateToProfile(navigate, moment.ownerId || moment.userId || (moment as any).user_id || undefined, moment.user);
+                    navigateToProfile(navigate, ownerIdOf(moment) || undefined, moment.user);
                   }}
                   title={`${moment.user}'s Profile`}
                 >

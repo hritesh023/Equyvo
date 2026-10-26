@@ -76,8 +76,57 @@ export function setToken(token: string): void {
 }
 
 export function clearToken(): void {
+  clearViewerCaches();
   clearStoredUser();
   storeToken(null);
+}
+
+/**
+ * Remove every cache that belongs to the signed-in viewer (saved items, watch
+ * history, reactions, local follow/chat caches, notifications). Prevents the
+ * next account on the same device from inheriting another person's data.
+ * Device settings (theme, language, ad/notification preferences) are kept.
+ */
+export function clearViewerCaches(): void {
+  if (typeof localStorage === 'undefined') return;
+  const keys = [
+    'userProfile',
+    'savedContentData',
+    'savedPosts',
+    'savedStories',
+    'savedThoughts',
+    'userReactedThoughts',
+    'watchHistory',
+    'equyvo_watch_history',
+    'equyvo_saved_ids',
+    'equyvo_liked_stories',
+    'userUploadedStories',
+    'equyvo_hidden_ids',
+    'equyvo_following',
+    'equyvo_social_profiles',
+    'equyvo_chat_contacts',
+    'equyvo_chat_v2_threads',
+    'equyvo_chat_v2_messages',
+    'equyvo_notif_dismissed_v1',
+    'equyvo_notifications_v1',
+    'equyvo_search_history',
+    'search_events',
+    'equyvo_active_plan',
+    'equyvo_last_plan',
+    'equyvo_active_live',
+    'equyvo_live_notifications',
+    'posts',
+    'thoughts',
+    'stories',
+    'moments',
+    'userMoments',
+    'userThoughts',
+    'contentData',
+    'equyvo_content_cache',
+  ];
+  for (const key of keys) {
+    try { localStorage.removeItem(key); } catch { /* best-effort */ }
+  }
 }
 
 export function getStoredUser(): User | null {
@@ -105,6 +154,19 @@ export function getStoredUser(): User | null {
 }
 
 function storeUser(user: User): void {
+  try {
+    // Switching accounts on one device must never inherit the previous
+    // viewer's saved items, history, reactions, follow/chat caches or profile.
+    const prevRaw = localStorage.getItem(USER_KEY);
+    if (prevRaw) {
+      try {
+        const prev = JSON.parse(prevRaw) as Partial<User> | null;
+        const prevId = String(prev?.id || prev?.email || '').trim().toLowerCase();
+        const nextId = String(user?.id || user?.email || '').trim().toLowerCase();
+        if (prevId && nextId && prevId !== nextId) clearViewerCaches();
+      } catch { /* ignore corrupt cache */ }
+    }
+  } catch { /* ignore storage errors */ }
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
 
@@ -341,6 +403,7 @@ export async function signOutUser() {
   if (t) {
     try { await fetch(API_BASE + '/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } }); } catch { /* ignore */ }
   }
+  clearViewerCaches();
   clearStoredUser();
   storeToken(null);
   return { success: true };

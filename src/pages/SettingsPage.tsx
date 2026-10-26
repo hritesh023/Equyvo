@@ -22,7 +22,7 @@ import {
   Type as TypeIcon,
   ZoomIn
 } from 'lucide-react';
-import { getAuthenticatedUser, signOutUser } from '@/lib/auth';
+import { getAuthenticatedUser, signOutUser, clearViewerCaches } from '@/lib/auth';
 import { showSuccess, showError } from '@/utils/toast';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '@/components/theme-provider';
@@ -285,9 +285,6 @@ const SettingsPage = () => {
     return localStorage.getItem('privateProfile') === 'true';
   });
   const [privacySaving, setPrivacySaving] = useState(false);
-  const [showEmail, setShowEmail] = useState(() => {
-    return localStorage.getItem('showEmail') === 'true';
-  });
   const [emailNotifications, setEmailNotifications] = useState(() => {
     return localStorage.getItem('emailNotifications') !== 'false';
   });
@@ -377,10 +374,6 @@ const SettingsPage = () => {
   }, [privateProfile]);
 
   useEffect(() => {
-    localStorage.setItem('showEmail', showEmail.toString());
-  }, [showEmail]);
-
-  useEffect(() => {
     localStorage.setItem('emailNotifications', emailNotifications.toString());
   }, [emailNotifications]);
 
@@ -423,17 +416,6 @@ const SettingsPage = () => {
       window.dispatchEvent(new CustomEvent('settingsChanged', { detail: { key, value } }));
     } catch { /* ignore */ }
     showSuccess(value ? onMsg : offMsg);
-  };
-
-  const handleShowEmailChange = async (next: boolean) => {
-    setShowEmail(next);
-    applyToggle('showEmail', next, 'Your email will be shown on your profile.', 'Your email is hidden from your profile.');
-    // Persist to the server profile too so it applies on every device.
-    try {
-      if (user?.id) {
-        await api.updateProfile({ id: user.id, showEmail: next });
-      }
-    } catch { /* local flag is the fallback */ }
   };
 
   const handleCompactChange = (next: boolean) => {
@@ -479,20 +461,21 @@ const SettingsPage = () => {
   const handleDeleteAccount = async () => {
     if (confirm("Are you sure you want to delete your account? All your data will be permanently removed. This action cannot be undone.")) {
       try {
-        // Delete user data from the server
-        const userId = user?.id || localStorage.getItem('equyvo_cognito_user') || '';
+        // Delete user data from the server. Use the real stored account id —
+        // never the raw JSON blob from localStorage.
+        let userId = String(user?.id || '').trim();
+        if (!userId) {
+          try {
+            const stored = JSON.parse(localStorage.getItem('equyvo_cognito_user') || 'null');
+            userId = String(stored?.id || stored?.email || '').trim();
+          } catch { /* ignore corrupt cache */ }
+        }
         if (userId) {
           const { error } = await api.deleteUserData(userId);
           if (error) console.error('Failed to delete user data:', error);
         }
-        // Clear all local data
-        localStorage.removeItem('userProfile');
-        localStorage.removeItem('savedPosts');
-        localStorage.removeItem('savedStories');
-        localStorage.removeItem('watchHistory');
-        localStorage.removeItem('savedContentData');
-        localStorage.removeItem('userReactedThoughts');
-        localStorage.removeItem('equyvo_search_history');
+        // Clear all local data (account-scoped caches).
+        clearViewerCaches();
         // Sign out
         const result = await signOutUser();
         if (result.success) {
@@ -563,17 +546,12 @@ const SettingsPage = () => {
 
           <Separator />
 
-          <div className="flex items-center justify-between">
-            <div>
-              <Label>Show Email</Label>
-              <p className="text-sm text-muted-foreground">
-                Display email on your profile
-              </p>
-            </div>
-            <Switch 
-              checked={showEmail}
-              onCheckedChange={handleShowEmailChange}
-            />
+          <div>
+            <Label>Email privacy</Label>
+            <p className="text-sm text-muted-foreground">
+              Your email is private. It is never shown on your profile or in search —
+              people find you by name or username.
+            </p>
           </div>
         </CardContent>
       </Card>

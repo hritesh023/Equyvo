@@ -989,7 +989,10 @@ const CreatePage = () => {
       const savedProfile = localStorage.getItem('userProfile');
       if (savedProfile) {
         const profile = JSON.parse(savedProfile);
-        if (profile.name || profile.username) {
+        const cacheOwner = String(profile.id || profile._userEmail || '').trim().toLowerCase();
+        const authorOwner = String(author.userId || '').trim().toLowerCase();
+        const ownsCache = !cacheOwner || !authorOwner || cacheOwner === authorOwner;
+        if (ownsCache && (profile.name || profile.username)) {
           const pid = profile.id || author.userId || getCurrentUserInfo().userId;
           await api.indexContent({
             id: 'profile-' + pid,
@@ -1010,8 +1013,22 @@ const CreatePage = () => {
     } catch (err) { console.error('Failed to index content:', err); }
     try {
       const savedProfile = localStorage.getItem('userProfile');
-      const profile = savedProfile
-        ? JSON.parse(savedProfile)
+      const cached = savedProfile ? JSON.parse(savedProfile) : null;
+      // Only ever write new posts into the signed-in author's own cached
+      // profile. A cache left by a previous account on this device is ignored.
+      const authorKeys = new Set(
+        [author.userId].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean),
+      );
+      const cacheOwnerKeys = [
+        cached?.id,
+        cached?._userEmail,
+        cached?.email,
+      ].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean);
+      const belongsToAuthor = !!cached && (
+        cacheOwnerKeys.length === 0 || cacheOwnerKeys.some((k) => authorKeys.has(k))
+      );
+      const profile = belongsToAuthor
+        ? cached
         : {
             _userEmail: author.userId,
             id: author.userId,

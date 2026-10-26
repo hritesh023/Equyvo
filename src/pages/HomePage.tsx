@@ -27,7 +27,7 @@ import { deleteContent } from '@/utils/delete';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
 import { sendHumanEval, evalVote } from '@/lib/human-eval';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
@@ -738,7 +738,7 @@ const HomePage = () => {
                           className="w-full h-full border-2 border-black cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200"
                           onClick={(e) => {
                             e.stopPropagation();
-                            navigateToProfile(navigate, story.userId, story.user);
+                            navigateToProfile(navigate, ownerIdOf(story) || story.userId, story.user);
                           }}
                           title={`${story.user}'s Profile`}
                         >

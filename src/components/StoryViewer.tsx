@@ -20,7 +20,7 @@ import { useBackOverlay } from '@/lib/back-navigation';
 import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
 import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
-import { navigateToProfile } from '@/utils/profile-navigation';
+import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -485,7 +485,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                 // Real creator profile — owner id first, username as fallback.
                 navigateToProfile(
                   navigate,
-                  (currentStory as any)?.userId || (currentStory as any)?.user_id || '',
+                  ownerIdOf(currentStory) || (currentStory as any)?.userId || (currentStory as any)?.user_id || '',
                   currentStory.user,
                 );
               }}
@@ -497,7 +497,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               e.stopPropagation();
               navigateToProfile(
                 navigate,
-                (currentStory as any)?.userId || (currentStory as any)?.user_id || '',
+                ownerIdOf(currentStory) || (currentStory as any)?.userId || (currentStory as any)?.user_id || '',
                 currentStory.user,
               );
             }}>

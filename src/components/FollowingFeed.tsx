@@ -236,11 +236,12 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                   </div>
                   
                   <div className="flex items-center gap-2">
-                    <FollowButton userName={post.user} />
+                    <FollowButton userId={ownerIdOf(post)} userName={post.user} />
                     
                     <StandardPostMenu
                       postId={post.id}
-                      postUserId={post.user}
+                      postUserId={ownerIdOf(post) || post.user}
+                      postOwnerId={ownerIdOf(post)}
                       currentUserId={currentUserId}
                       isProfilePage={isProfilePage}
                       onReport={handleReport}

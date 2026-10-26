@@ -237,7 +237,9 @@ function normalizeVisibility(v, fallback = 'public') {
 
 function itemOwnerId(item) {
   if (!item || typeof item !== 'object') return '';
-  return String(item.ownerId || item.userId || item.user_id || '');
+  // ownerId/userId/user_id are authoritative; authorId/creatorId cover legacy
+  // index rows so old content still resolves to its real account.
+  return String(item.ownerId || item.userId || item.user_id || item.authorId || item.creatorId || '');
 }
 
 function itemVisibility(item, authorProfile) {
@@ -354,6 +356,39 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 
 function isEmailLike(value: unknown): boolean {
   return EMAIL_RE.test(String(value || '').trim());
+}
+
+/**
+ * Email addresses are never a public identity. If legacy data used an email as
+ * a display name, render the local part instead so the address is never
+ * exposed on profiles, feeds, comments, search or notifications.
+ */
+function maskEmailDisplay(value: unknown): string {
+  const s = String(value ?? '').trim();
+  if (!s) return '';
+  if (!isEmailLike(s)) return s;
+  const local = s.split('@')[0].replace(/[._-]+/g, ' ').trim();
+  return local.slice(0, 80) || 'User';
+}
+
+/** First non-email display value (name → username → fallback), masked if needed. */
+function publicDisplayName(...values: unknown[]): string {
+  for (const value of values) {
+    const s = String(value ?? '').trim();
+    if (s && !isEmailLike(s)) return s.slice(0, 80);
+  }
+  for (const value of values) {
+    const s = String(value ?? '').trim();
+    if (s) return maskEmailDisplay(s);
+  }
+  return 'User';
+}
+
+/** Replace email addresses embedded in generated notification text. */
+function scrubEmailText(value: unknown): string {
+  const s = String(value ?? '');
+  if (!s) return '';
+  return s.replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, (m) => maskEmailDisplay(m));
 }
 
 function normalizeProfileAlias(value: unknown): string {
@@ -478,6 +513,10 @@ async function buildProfileIndex(env: any): Promise<any[]> {
     if (!aliasesByCanonical.has(canonicalId)) aliasesByCanonical.set(canonicalId, new Set());
     const aliases = aliasesByCanonical.get(canonicalId)!;
     for (const value of [row.name, row.username, row.id]) {
+      // Emails are excluded from public search/identity. Duplicate rows still
+      // fold onto the canonical account for legacy links, but their email is
+      // never a searchable alias.
+      if (isEmailLike(value)) continue;
       const alias = normalizeProfileAlias(value);
       if (alias) aliases.add(alias);
     }
@@ -652,12 +691,168 @@ async function canonicalTargetId(env: any, target: string): Promise<string> {
   return raw;
 }
 
+/**
+ * Canonicalize any stored account reference (account id, duplicate/legacy
+ * profile id, email, @handle, username) to the one canonical account id.
+ * Duplicate rows for an email collapse onto the auth:user account, so follow
+ * lists, chat peers, ownership checks and viewer identity all agree.
+ */
+async function canonicalAccountId(env: any, value: unknown): Promise<string> {
+  const raw = String(value || '').trim().slice(0, 200);
+  if (!raw) return '';
+  if (isEmailLike(raw)) {
+    const authId = await canonicalAuthIdForEmail(env, raw);
+    return authId || raw.toLowerCase();
+  }
+  try {
+    const direct = await getStoredProfile(env, raw);
+    if (direct) {
+      const email = profileEmailOf(direct);
+      if (email) {
+        const authId = await canonicalAuthIdForEmail(env, email);
+        if (authId) return authId;
+      }
+      const directId = String(direct.id || raw);
+      if (isEmailLike(directId)) {
+        const authId = await canonicalAuthIdForEmail(env, directId);
+        if (authId) return authId;
+      }
+      return directId;
+    }
+  } catch { /* fall through to the index */ }
+  try {
+    const index = await buildProfileIndex(env);
+    const needle = raw.toLowerCase();
+    const row = index.find((r) =>
+      String(r.id || '').toLowerCase() === needle ||
+      String(r.keyId || '').toLowerCase() === needle,
+    );
+    if (row) return String(row.canonicalId || row.id || raw);
+  } catch { /* fall through */ }
+  // Last resort for legacy unverified clients that send a display name.
+  try {
+    const resolved = await resolveProfileRef(env, raw);
+    if (resolved?.id) return String(resolved.id);
+  } catch { /* keep raw */ }
+  return raw;
+}
+
+/**
+ * Canonical identity for an authenticated caller. The account email is the
+ * strongest signal (it always maps to auth:user:<email>), then the supplied id.
+ * Returns a usable fallback so a missing profile can never break a request.
+ */
+async function canonicalIdentity(env: any, id: unknown, email: unknown): Promise<{ id: string; email: string }> {
+  const rawId = String(id || '').trim().slice(0, 200);
+  const rawEmail = String(email || '').trim().toLowerCase().slice(0, 254);
+  let canonical = '';
+  if (rawEmail) canonical = await canonicalAuthIdForEmail(env, rawEmail);
+  if (!canonical && rawId) canonical = await canonicalAccountId(env, rawId);
+  if (!canonical && rawEmail) canonical = await canonicalAccountId(env, rawEmail);
+  return {
+    id: canonical || rawId || rawEmail,
+    email: rawEmail || (isEmailLike(rawId) ? rawId.toLowerCase() : ''),
+  };
+}
+
+/**
+ * Every stored reference (ids, emails, aliases) that belongs to one account.
+ * Used for follow/chat/ownership matching so a legacy duplicate ref can never
+ * split one person into two identities.
+ */
+async function accountRefSet(env: any, account: any): Promise<Set<string>> {
+  const base = account && typeof account === 'object' ? account : {};
+  const { refs } = await refsForAccount(env, base);
+  const add = (value: unknown) => {
+    const clean = String(value || '').trim().toLowerCase();
+    if (clean) refs.add(clean);
+    const alias = normalizeProfileAlias(value);
+    if (alias) { refs.add(alias); refs.add('@' + alias); }
+  };
+  add(base.id);
+  add(base.email);
+  add(base._userEmail);
+  add(base.username);
+  return refs;
+}
+
 async function readIdList(env, key) {
   try {
     const raw = await env.EQUYVO_KV.get(key);
     const arr = raw ? JSON.parse(raw) : [];
     return Array.isArray(arr) ? arr.filter((x) => typeof x === 'string') : [];
   } catch { return []; }
+}
+
+/**
+ * Fold every legacy ref in a stored id list onto its canonical account id and
+ * drop duplicates. `had` reports whether the account was already present under
+ * any ref (so counters are not incremented twice), `changed` whether the stored
+ * list needs rewriting.
+ */
+async function normalizeRefList(env, rawList, account, canonicalId) {
+  const refs = await accountRefSet(env, account || { id: canonicalId });
+  refs.add(String(canonicalId).toLowerCase());
+  const out = [];
+  const seen = new Set();
+  let had = false;
+  for (const value of Array.isArray(rawList) ? rawList : []) {
+    const clean = String(value || '').trim();
+    if (!clean) continue;
+    const key = clean.toLowerCase();
+    let next = clean;
+    if (refs.has(key)) {
+      had = true;
+      next = canonicalId;
+    }
+    const nextKey = String(next).toLowerCase();
+    if (seen.has(nextKey)) continue;
+    seen.add(nextKey);
+    out.push(next);
+  }
+  return {
+    ids: out,
+    had,
+    changed: JSON.stringify(out) !== JSON.stringify(rawList || []),
+  };
+}
+
+/**
+ * Canonicalize + dedupe a follower/following id list. The bounded profile index
+ * supplies duplicate-id -> canonical-id mappings in one read; anything not in
+ * the index is kept as-is (it is already an account id or a legacy email).
+ */
+async function canonicalizeIdList(env, ids) {
+  let index = [];
+  try { index = await buildProfileIndex(env); } catch { index = []; }
+  const map = new Map();
+  const put = (key, canonical) => {
+    const k = String(key || '').trim().toLowerCase();
+    if (k && canonical) map.set(k, String(canonical));
+  };
+  for (const row of index) {
+    const canonical = String(row.canonicalId || row.id || '');
+    if (!canonical) continue;
+    put(row.id, canonical);
+    put(row.keyId, canonical);
+    if (row.email) put(row.email, canonical);
+  }
+  const out = [];
+  const seen = new Set();
+  for (const raw of Array.isArray(ids) ? ids : []) {
+    const clean = String(raw || '').trim();
+    if (!clean) continue;
+    let canonical = map.get(clean.toLowerCase());
+    if (!canonical && isEmailLike(clean)) {
+      canonical = (await canonicalAuthIdForEmail(env, clean)) || clean;
+    }
+    canonical = String(canonical || clean);
+    const key = canonical.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(canonical);
+  }
+  return out;
 }
 
 async function isFollowingPair(env, viewerId, authorId) {
@@ -668,8 +863,21 @@ async function isFollowingPair(env, viewerId, authorId) {
       readIdList(env, KEYS.FOLLOWERS(authorId)),
     ]);
     const vl = String(viewerId).toLowerCase();
-    if (following.some((x) => String(x).toLowerCase() === String(authorId).toLowerCase())) return true;
+    const al = String(authorId).toLowerCase();
+    if (following.some((x) => String(x).toLowerCase() === al)) return true;
     if (followers.some((x) => String(x).toLowerCase() === vl)) return true;
+    // Legacy follow lists can still hold a duplicate/email ref for either
+    // account. Match every ref that belongs to the pair before denying access.
+    const [viewerProfile, authorProfile] = await Promise.all([
+      getStoredProfile(env, viewerId),
+      getStoredProfile(env, authorId),
+    ]);
+    const [viewerRefs, authorRefs] = await Promise.all([
+      accountRefSet(env, viewerProfile || { id: viewerId }),
+      accountRefSet(env, authorProfile || { id: authorId }),
+    ]);
+    if (following.some((x) => authorRefs.has(String(x).trim().toLowerCase()))) return true;
+    if (followers.some((x) => viewerRefs.has(String(x).trim().toLowerCase()))) return true;
     return false;
   } catch { return false; }
 }
@@ -683,8 +891,11 @@ async function getViewer(request, env) {
     if (auth.startsWith('Bearer ')) {
       const token = auth.slice(7).trim();
       if (token) {
-        const user = await verifyCognitoToken(token, env);
-        if (user) return { id: user.id, email: user.email || '' };
+        const user = (await verifyCognitoToken(token, env)) || (await verifyCentralJWT(token, env));
+        if (user) {
+          const who = await canonicalIdentity(env, user.id, user.email);
+          if (who.id) return { id: who.id, email: who.email };
+        }
       }
     }
   } catch { /* fall through to header */ }
@@ -693,27 +904,37 @@ async function getViewer(request, env) {
     const q = new URL(request.url).searchParams;
     const id = String(h || q.get('viewerId') || q.get('viewer') || q.get('userId') || q.get('user_id') || '').slice(0, 200);
     if (id) {
-      // Legacy clients occasionally send the account email as their id. Map
-      // it to the canonical account so ownership checks never silently fail.
-      if (isEmailLike(id)) {
-        const authId = await canonicalAuthIdForEmail(env, id);
-        if (authId) return { id: authId, email: id.toLowerCase() };
-      }
-      return { id, email: id.includes('@') ? id : '' };
+      // Legacy clients occasionally send the account email or a duplicate
+      // profile id. Map it to the canonical account so privacy/ownership
+      // checks never silently fail.
+      const who = await canonicalIdentity(env, id, isEmailLike(id) ? id : '');
+      if (who.id) return { id: who.id, email: who.email };
     }
   } catch { /* ignore */ }
   return null;
 }
 
+/** Canonical owner id for a content row, memoized per feed request. */
+async function canonicalOwnerId(env, rawOwner, cache?) {
+  const raw = String(rawOwner || '').trim();
+  if (!raw) return '';
+  const key = 'canon:' + raw.toLowerCase();
+  if (cache && cache.has(key)) return cache.get(key);
+  let id = '';
+  try { id = await canonicalAccountId(env, raw); } catch { id = ''; }
+  const out = id || raw;
+  if (cache) cache.set(key, out);
+  return out;
+}
+
 async function canViewerSeeItem(env, viewer, item, profileCache) {
+  const owner = await canonicalOwnerId(env, itemOwnerId(item), profileCache);
   if (isRemovedItem(item)) {
     // Owners can still see their own quarantined item (so delete works);
     // everyone else cannot.
-    const owner = itemOwnerId(item);
     if (viewer && owner && viewer.id === owner) return true;
     return false;
   }
-  const owner = itemOwnerId(item);
   if (viewer && owner && viewer.id === owner) return true;
   const vis = itemVisibility(item, null);
   if (vis === 'private' || vis === 'hidden') return false; // owner-only (owner checked above)
@@ -750,14 +971,30 @@ async function filterVisibleItems(env, viewer, items) {
         // changes reflect on all surfaces (Discover, Moments, feeds,
         // search) on next fetch, on every device and account.
         try {
-          const owner = itemOwnerId(it);
-          let profile = cache.get(owner);
+          const owner = await canonicalOwnerId(env, itemOwnerId(it), cache);
+          let profile = owner ? cache.get(owner) : undefined;
           if (profile === undefined && owner) {
             profile = await getStoredProfile(env, owner);
             cache.set(owner, profile);
           }
           applyAuthorIdentity(it, profile);
+          // Expose the canonical owner id so every client click/ownership
+          // path opens the real account, never a duplicate/legacy row.
+          if (owner) {
+            it.ownerId = owner;
+            if (it.userId) it.userId = owner;
+            if (it.user_id) it.user_id = owner;
+            if (it.authorId) it.authorId = owner;
+          }
         } catch { /* display overlay is best-effort */ }
+        // Never expose account email/auth material on public content rows.
+        try {
+          delete it.email;
+          delete it.userEmail;
+          delete it._userEmail;
+          delete it.password;
+          delete it.salt;
+        } catch { /* frozen row */ }
         out.push(it);
       }
     } catch { /* skip undecidable items */ }
@@ -770,8 +1007,8 @@ async function filterVisibleItems(env, viewer, items) {
 // refreshed here so updates propagate immediately everywhere.
 function applyAuthorIdentity(item, authorProfile) {
   if (!item || typeof item !== 'object' || !authorProfile || typeof authorProfile !== 'object') return;
-  const name = String(authorProfile.username || authorProfile.name || '').slice(0, 80);
-  if (name) {
+  const name = publicDisplayName(authorProfile.username, authorProfile.name, '');
+  if (name && name !== 'User') {
     item.user = name;
     item.creator = name;
   }
@@ -788,8 +1025,8 @@ function publicSafeProfile(profile) {
   if (!profile || typeof profile !== 'object') return null;
   return {
     id: profile.id,
-    name: profile.name,
-    username: profile.username,
+    name: publicDisplayName(profile.name, profile.username, profile.id),
+    username: publicDisplayName(profile.username, profile.name, profile.id),
     avatar: profile.avatar || '',
     bio: typeof profile.bio === 'string' ? String(profile.bio).slice(0, 300) : '',
     isPrivate: true,
@@ -1174,27 +1411,107 @@ async function readThreadLedger(env, a, b, limit) {
   return merged.slice(-n);
 }
 
+/**
+ * Read one 1:1 ledger under canonical ids, folding in history that legacy
+ * clients stored under a duplicate/email pair token. Returned messages are
+ * re-keyed to the canonical accounts so ticks/fromMe stay correct.
+ */
+async function readThreadLedgerResolved(env, actorId, peerId, limit, rawPeer?) {
+  const primary = await readThreadLedger(env, actorId, peerId, limit);
+  if (primary.length) return primary;
+  const [actorProfile, peerProfile] = await Promise.all([
+    getStoredProfile(env, actorId),
+    getStoredProfile(env, peerId),
+  ]);
+  const [actorRefs, peerRefs] = await Promise.all([
+    refsForAccount(env, actorProfile || { id: actorId }),
+    refsForAccount(env, peerProfile || { id: peerId }),
+  ]);
+  const canonicalActor = String(actorId).toLowerCase();
+  const canonicalPeer = String(peerId).toLowerCase();
+  const rawPeerClean = String(rawPeer || '').trim();
+  const duplicateActorIds = actorRefs.ids.filter((id) => id && !isEmailLike(id) && String(id).toLowerCase() !== canonicalActor);
+  const duplicatePeerIds = peerRefs.ids.filter((id) => id && !isEmailLike(id) && String(id).toLowerCase() !== canonicalPeer);
+  const peerDiffers = !!rawPeerClean && rawPeerClean.toLowerCase() !== canonicalPeer;
+  if (!peerDiffers && !duplicateActorIds.length && !duplicatePeerIds.length) return primary;
+  const actorIds = [actorId, ...duplicateActorIds].slice(0, 4);
+  const peerIds = [peerId, ...(peerDiffers ? [rawPeerClean] : []), ...duplicatePeerIds].slice(0, 4);
+  const pairs = [];
+  const seen = new Set();
+  for (const a of actorIds) {
+    for (const p of peerIds) {
+      if (!a || !p) continue;
+      if (String(a) === String(actorId) && String(p) === String(peerId)) continue;
+      const key = chatPairToken(a, p);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      pairs.push([a, p]);
+      if (pairs.length >= 6) break;
+    }
+    if (pairs.length >= 6) break;
+  }
+  if (!pairs.length) return primary;
+  const ledgers = await Promise.all(pairs.map(([a, p]) => readThreadLedger(env, a, p, limit)));
+  const actorSet = new Set(actorIds.map((x) => String(x).toLowerCase()));
+  const peerSet = new Set(peerIds.map((x) => String(x).toLowerCase()));
+  const mapAccount = (value) => {
+    const key = String(value || '').toLowerCase();
+    if (key === canonicalActor) return actorId;
+    if (key === canonicalPeer) return peerId;
+    if (actorSet.has(key)) return actorId;
+    if (peerSet.has(key)) return peerId;
+    return value;
+  };
+  const out = new Map();
+  for (const list of ledgers) {
+    for (const m of list) {
+      if (!m || !m.id || out.has(m.id)) continue;
+      const next = { ...m, from: mapAccount(m.from), to: mapAccount(m.to) };
+      if (Array.isArray(next.deletedFor)) next.deletedFor = next.deletedFor.map(mapAccount);
+      out.set(next.id, next);
+    }
+  }
+  const merged = [...out.values()].sort(
+    (x, y) => (new Date(x.createdAt).getTime() || 0) - (new Date(y.createdAt).getTime() || 0),
+  );
+  const n = Math.min(300, Math.max(1, Number(limit) || 100));
+  return merged.slice(-n);
+}
+
 async function pushUserNotification(env, userId, item) {
   if (!userId || !item) return;
   try {
-    const raw = await env.EQUYVO_KV.get(KEYS.NOTIF(userId));
+    // Always write to the canonical account, and canonicalize the actor ref in
+    // the payload so tapping a notification opens the real profile.
+    const target = (await canonicalAccountId(env, userId)) || String(userId);
+    const payload = { id: generateId(), at: new Date().toISOString(), read: false, ...item };
+    if (payload.actorId) {
+      payload.actorId = (await canonicalAccountId(env, payload.actorId)) || String(payload.actorId);
+      // Every notification about a person links to THAT person's profile.
+      if (!payload.link) payload.link = '/profile/' + encodeURIComponent(payload.actorId);
+    }
+    if (payload.actorName && isEmailLike(payload.actorName)) payload.actorName = 'Someone';
+    for (const key of ['title', 'body']) {
+      if (typeof payload[key] === 'string') payload[key] = scrubEmailText(payload[key]);
+    }
+    const raw = await env.EQUYVO_KV.get(KEYS.NOTIF(target));
     const arr = raw ? JSON.parse(raw) : [];
     const list = Array.isArray(arr) ? arr : [];
-    list.unshift({ id: generateId(), at: new Date().toISOString(), read: false, ...item });
-    await env.EQUYVO_KV.put(KEYS.NOTIF(userId), JSON.stringify(list.slice(0, 100)));
+    list.unshift(payload);
+    await env.EQUYVO_KV.put(KEYS.NOTIF(target), JSON.stringify(list.slice(0, 100)));
   } catch { /* never block on notify */ }
 }
 
 function profileSummary(p, fallbackId) {
   if (!p || typeof p !== 'object') {
-    const f = String(fallbackId || '');
-    return { id: f, name: f.replace(/^@/, ''), username: f.startsWith('@') ? f : '@' + f, avatar: '' };
+    const f = publicDisplayName(fallbackId, '');
+    return { id: String(fallbackId || ''), name: f, username: f.startsWith('@') ? f : '@' + f, avatar: '' };
   }
   const id = String(p.id || fallbackId || '');
-  const username = String(p.username || p.name || id);
+  const username = publicDisplayName(p.username, p.name, id);
   return {
     id,
-    name: String(p.name || username),
+    name: publicDisplayName(p.name, username, id),
     username: username.startsWith('@') ? username : '@' + username,
     avatar: String(p.avatar || ''),
     isPrivate: p.isPrivate === true,
@@ -1214,6 +1531,17 @@ async function canChat(env, viewerId, peerId) {
     const t = String(peerId).toLowerCase();
     if (a.some((x) => String(x).toLowerCase() === t)) return true;
     if (b.some((x) => String(x).toLowerCase() === t)) return true;
+    // Legacy lists may carry duplicate/email refs for either account.
+    const [viewerProfile, peerProfile] = await Promise.all([
+      getStoredProfile(env, viewerId),
+      getStoredProfile(env, peerId),
+    ]);
+    const [viewerRefs, peerRefs] = await Promise.all([
+      accountRefSet(env, viewerProfile || { id: viewerId }),
+      accountRefSet(env, peerProfile || { id: peerId }),
+    ]);
+    if (a.some((x) => peerRefs.has(String(x).trim().toLowerCase()))) return true;
+    if (b.some((x) => peerRefs.has(String(x).trim().toLowerCase()))) return true;
     const [c, d] = await Promise.all([
       readIdList(env, KEYS.FOLLOWING(peerId)),
       readIdList(env, KEYS.FOLLOWERS(peerId)),
@@ -1221,6 +1549,8 @@ async function canChat(env, viewerId, peerId) {
     const v = String(viewerId).toLowerCase();
     if (c.some((x) => String(x).toLowerCase() === v)) return true;
     if (d.some((x) => String(x).toLowerCase() === v)) return true;
+    if (c.some((x) => viewerRefs.has(String(x).trim().toLowerCase()))) return true;
+    if (d.some((x) => viewerRefs.has(String(x).trim().toLowerCase()))) return true;
     return false;
   } catch { return false; }
 }
@@ -1317,10 +1647,11 @@ function cleanCommentAvatar(url) {
 }
 
 function cleanCommentName(name, actor) {
-  const n = String(name || '').trim().slice(0, 80);
+  const raw = String(name || '').trim();
+  const n = raw && !isEmailLike(raw) ? raw.slice(0, 80) : '';
   if (n && n.toLowerCase() !== 'user') return n;
   const a = String((actor && (actor.username || (actor.email ? String(actor.email).split('@')[0] : ''))) || '').trim().slice(0, 80);
-  return a || 'User';
+  return maskEmailDisplay(a) || 'User';
 }
 
 async function resolveCommentAuthor(env, actor, stored) {
@@ -1335,14 +1666,23 @@ async function resolveCommentAuthor(env, actor, stored) {
 }
 
 // Public comment shape. likedBy stays server-side; viewers get hasLiked.
-function toPublicComment(c, viewerId) {
+function toPublicComment(c, viewerId, viewerRefs?: Set<string>) {
   if (!c || typeof c !== 'object') return null;
   const likedBy = Array.isArray(c.likedBy) ? c.likedBy : [];
   const { likedBy: _drop, ...rest } = c;
+  const hasLiked = viewerRefs
+    ? likedBy.some((x) => viewerRefs.has(String(x).trim().toLowerCase()))
+    : viewerId
+      ? likedBy.some((x) => String(x) === String(viewerId))
+      : false;
+  const masked = { ...rest };
+  for (const key of ['user', 'name', 'author', 'creator', 'username', 'authorName', 'authorUsername']) {
+    if (typeof masked[key] === 'string') masked[key] = maskEmailDisplay(masked[key]);
+  }
   return {
-    ...rest,
+    ...masked,
     likes: Number(c.likes || 0) || 0,
-    hasLiked: viewerId ? likedBy.some((x) => String(x) === String(viewerId)) : false,
+    hasLiked,
   };
 }
 
@@ -1836,7 +2176,8 @@ async function getActor(request, env, body) {
         const raw = await env.EQUYVO_KV.get('auth:session:' + token);
         if (raw) {
           const u = JSON.parse(raw);
-          return { id: u.id, email: u.email, username: u.username || u.name || '', verified: true };
+          const who = await canonicalIdentity(env, u.id, u.email);
+          return { id: who.id, email: who.email, username: u.username || u.name || '', verified: true };
         }
       } catch { /* fall through */ }
     }
@@ -1845,9 +2186,15 @@ async function getActor(request, env, body) {
     const token = auth.slice(7).trim();
     if (token) {
       const user = await verifyCognitoToken(token, env);
-      if (user) return user;
+      if (user) {
+        const who = await canonicalIdentity(env, user.id, user.email);
+        return { ...user, id: who.id, email: who.email };
+      }
       const central = await verifyCentralJWT(token, env);
-      if (central) return central;
+      if (central) {
+        const who = await canonicalIdentity(env, central.id, central.email);
+        return { ...central, id: who.id, email: who.email };
+      }
       // A present-but-invalid Bearer token is an auth failure, not a
       // fallback opportunity: reject rather than trusting headers.
       if (requiresVerifiedWrites(env)) return null;
@@ -1861,11 +2208,9 @@ async function getActor(request, env, body) {
   }
   const id = String(headerId || bodyId || '').slice(0, 200);
   if (!id) return null;
-  if (isEmailLike(id)) {
-    const authId = await canonicalAuthIdForEmail(env, id);
-    if (authId) return { id: authId, email: id.toLowerCase(), username: '', verified: false };
-  }
-  return { id, email: id.includes('@') ? id : '', username: '', verified: false };
+  const who = await canonicalIdentity(env, id, isEmailLike(id) ? id : '');
+  if (!who.id) return null;
+  return { id: who.id, email: who.email, username: '', verified: false };
 }
 
 function actorResponse(actor, env, cors) {
@@ -2374,6 +2719,33 @@ function owns(item, actor) {
   return false;
 }
 
+/**
+ * Ownership check that understands duplicate/legacy account refs. `owns()` is
+ * kept as the cheap synchronous fast path; this expands the caller to every
+ * id/email/alias that belongs to their account before matching, so an owner is
+ * never locked out of content written under a duplicate profile id.
+ */
+async function ownsAccount(env, item, actor) {
+  if (!item || !actor) return false;
+  if (owns(item, actor)) return true;
+  try {
+    const rawOwner = itemOwnerId(item) || String(item.creatorId || '');
+    if (rawOwner) {
+      const canonicalOwner = await canonicalAccountId(env, rawOwner);
+      if (canonicalOwner && canonicalOwner === actor.id) return true;
+    }
+    let profile = await getStoredProfile(env, actor.id);
+    if (!profile && actor.email) {
+      const authId = await canonicalAuthIdForEmail(env, actor.email);
+      if (authId) profile = await getStoredProfile(env, authId);
+    }
+    const refs = await accountRefSet(env, profile || {
+      id: actor.id, email: actor.email, username: actor.username,
+    });
+    return itemBelongsToAccount(item, refs);
+  } catch { return false; }
+}
+
 async function createItem(context, kind, listKey, itemKey, cors) {
   const { request, env } = context;
   const kv = env.EQUYVO_KV;
@@ -2431,7 +2803,13 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   // item, regardless of what display-name fields the client sent. Only the
   // owning account can ever delete this item; other accounts may only hide
   // it from their own view (enforced in deleteItem + hide is per-viewer).
-  const displayName = String(clean.user || clean.creator || actor.username || actor.email?.split('@')[0] || 'Unknown').slice(0, 80);
+  const displayName = publicDisplayName(
+    clean.user,
+    clean.creator,
+    actor.username,
+    actor.email?.split('@')[0],
+    'Unknown',
+  ).slice(0, 80);
   // Per-item visibility: explicit client choice wins; otherwise inherit the
   // author's account type (private accounts default to followers-only).
   let visibility = 'public';
@@ -2460,9 +2838,15 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     ownerId: actor.id,
     userId: actor.id,
     user: displayName,
-    creator: String(clean.creator || displayName).slice(0, 80),
+    creator: publicDisplayName(clean.creator, displayName),
     visibility,
   };
+  // Never persist credentials or the account email on public content.
+  delete item.email;
+  delete item.userEmail;
+  delete item._userEmail;
+  delete item.password;
+  delete item.salt;
   delete item.audience;
   if (safety === 'review') {
     // Quarantine: owner-only until review clears. Never exposed as an error
@@ -2583,7 +2967,7 @@ async function deleteItem(context, listKey, itemKey, id, cors) {
   // account id stored at all), which a verified signer may clean up.
   const owner = parsed && (parsed.ownerId || parsed.userId || parsed.user_id || '');
   const namedOwner = parsed && (parsed.creator || parsed.user || '');
-  const owned = owns(parsed, actor);
+  const owned = await ownsAccount(env, parsed, actor);
   const ownerless = !owner || owner === 'anonymous';
   const canDelete = owned || (actor.verified && ownerless && (!namedOwner || namedOwner === 'anonymous'));
   if (!canDelete) return json({ error: 'Only the account that posted this can delete it.' }, 403, cors);
@@ -3040,7 +3424,7 @@ export const onRequest = async (context) => {
       const visible = await filterVisibleItems(
         env,
         viewer,
-        await filterSeed(env, raw.map((t) => ({ ...t, ownerId: t.userId || t.ownerId || t.user || t.authorId }))),
+        await filterSeed(env, raw.map((t) => ({ ...t, ownerId: itemOwnerId(t) || t.creatorId }))),
       );
 
       const pops = {};
@@ -3280,14 +3664,33 @@ export const onRequest = async (context) => {
       if (!isOwner) {
         delete parsed.email;
         delete parsed._userEmail;
+        // Internal account bookkeeping and payment references stay private.
+        delete parsed.nameChangesUsed;
+        delete parsed.nameChangeQuota;
+        delete parsed.nameGrantPayments;
+        delete parsed.nameBonusPlans;
+        delete parsed.nameLockUntil;
+        delete parsed.verifiedNamePending;
+        delete parsed.verifiedNameAt;
+        // Legacy rows sometimes stored the account email as the display
+        // name/handle. Never expose it publicly.
+        parsed.name = publicDisplayName(parsed.name, parsed.username, parsed.id);
+        parsed.username = publicDisplayName(parsed.username, parsed.name, parsed.id);
+        if (parsed.verifiedName) parsed.verifiedName = maskEmailDisplay(parsed.verifiedName);
       }
       if (parsed && parsed.isPrivate === true) {
         const follower = isOwner ? true : viewer ? await isFollowingPair(env, viewer.id, userId) : false;
         if (!isOwner && !follower) {
           let pending = false;
           try {
-            const reqs = await readIdList(env, KEYS.FOLLOW_REQ(userId));
-            pending = viewer ? reqs.some((x) => String(x).toLowerCase() === String(viewer.id).toLowerCase()) : false;
+            if (viewer) {
+              const [reqs, viewerProfile] = await Promise.all([
+                readIdList(env, KEYS.FOLLOW_REQ(userId)),
+                getStoredProfile(env, viewer.id),
+              ]);
+              const viewerRefs = await accountRefSet(env, viewerProfile || viewer);
+              pending = reqs.some((x) => viewerRefs.has(String(x).trim().toLowerCase()));
+            }
           } catch { /* ignore */ }
           const safe = publicSafeProfile(parsed);
           delete safe.email;
@@ -3306,13 +3709,26 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env, body);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const id = (typeof body.id === 'string' && body.id) || actor.id;
-      if (id !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
+      // The stored profile id is always the authenticated account id. A client
+      // may send a legacy duplicate/email id for the same person (allowed,
+      // folded onto the canonical row), but never another account's id.
+      const requestedId = typeof body.id === 'string' ? body.id.trim() : '';
+      if (requestedId && requestedId !== actor.id) {
+        const requestedCanonical = await canonicalAccountId(env, requestedId);
+        if (requestedCanonical !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
+      }
+      const id = actor.id;
       const { planId } = await resolvePlan(env, actor, bearerFrom(request));
       const rl = await rateLimit(kv, 'profile', actor.id, rateLimitFor(planId, 'profile'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
       clean.id = id;
+      // The profile email is account-owned. A client can never point its row at
+      // another account's email (that would alias two identities together).
+      const actorEmail = String(actor.email || '').trim().toLowerCase();
+      if (actorEmail) clean.email = actorEmail;
+      else { delete clean.email; delete clean._userEmail; }
+      delete clean._userEmail;
       // Quota + verified-badge counters are server-owned: forged client values
       // are dropped and the stored counters are merged back on save.
       delete clean.nameChangesUsed;
@@ -3324,6 +3740,18 @@ export const onRequest = async (context) => {
       delete clean.verifiedNameAt;
       delete clean.nameLockUntil;
       delete clean.verifiedNamePending;
+      // Follower/following counters, live status and account age are derived
+      // from the real follow graph / live sessions / first save. A client can
+      // never inflate them by writing them into its profile row.
+      delete clean.followers;
+      delete clean.following;
+      delete clean.isLive;
+      delete clean.createdAt;
+      delete clean.isSeed;
+      delete clean.isAdmin;
+      delete clean.role;
+      delete clean.plan;
+      delete clean.planId;
       // Account type: public/private toggle (signup page + settings).
       // Accepts isPrivate boolean and/or accountType string; stored as
       // canonical isPrivate + accountType. Never trusts the client for
@@ -3337,8 +3765,15 @@ export const onRequest = async (context) => {
         clean.accountType = clean.isPrivate ? 'private' : 'public';
       }
       if (typeof clean.bio === 'string') clean.bio = clean.bio.slice(0, 500);
-      if (typeof clean.name === 'string') clean.name = clean.name.slice(0, 80);
-      if (typeof clean.username === 'string') clean.username = clean.username.slice(0, 80);
+      if (typeof clean.name === 'string') {
+        clean.name = clean.name.slice(0, 80);
+        // An email is never a public display name, even if the client sends it.
+        if (isEmailLike(clean.name)) clean.name = maskEmailDisplay(clean.name);
+      }
+      if (typeof clean.username === 'string') {
+        clean.username = clean.username.slice(0, 80);
+        if (isEmailLike(clean.username)) clean.username = maskEmailDisplay(clean.username);
+      }
       // Display-name quota: avatar/bio/username edits are unlimited; only an
       // actual change of the display `name` consumes quota. The first-ever
       // name on a fresh profile is free (establishing, not changing).
@@ -3430,7 +3865,7 @@ export const onRequest = async (context) => {
       const searchViewer = await getViewer(request, env);
       const base = await filterVisibleItems(env, searchViewer, unseeded.map((e) => ({
         ...e,
-        ownerId: e.authorId || e.ownerId || e.userId,
+        ownerId: e.ownerId || e.userId || e.user_id || e.authorId,
       })));
       // NOTE: do not early-return on empty content here — people results are
       // resolved below and must still be returned when there is no content.
@@ -3502,8 +3937,10 @@ export const onRequest = async (context) => {
               normalizeProfileAlias(username),
               normalizeProfileAlias(name),
               ...(Array.isArray(p.aliases) ? p.aliases : []),
-            ].filter(Boolean)));
+            ].filter(Boolean))).filter((a) => !isEmailLike(a));
             const handles = Array.from(new Set(aliases.flatMap((a) => [a, '@' + a])));
+            // An email query is never a people search.
+            if (isEmailLike(ql)) continue;
             let s = 0;
             for (const alias of handles) {
               const flatAlias = alias.replace(/\s+/g, '');
@@ -3520,8 +3957,8 @@ export const onRequest = async (context) => {
             }
             if (s > 0) {
               const isPrivate = p.isPrivate === true;
-              const displayName = p.name || p.username || canonicalId;
-              const displayHandle = p.username || p.name || canonicalId;
+              const displayName = publicDisplayName(p.name, p.username, canonicalId);
+              const displayHandle = publicDisplayName(p.username, p.name, canonicalId);
               scoredUsers.push({
                 s,
                 user: isPrivate
@@ -3566,7 +4003,7 @@ export const onRequest = async (context) => {
       const viewerForFeed = await getViewer(request, env);
       const norm = await filterVisibleItems(env, viewerForFeed, [
         ...posts.map((p) => ({ kind: 'post', ...p })),
-        ...thoughts.map((t) => ({ kind: 'thought', id: t.id, content: t.content, user: t.user_id, ownerId: t.ownerId || t.userId, visibility: t.visibility, createdAt: t.created_at, likes: t.likes_count, comments: t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
+        ...thoughts.map((t) => ({ ...t, kind: 'thought', id: t.id, content: t.content, user: t.user || t.user_id, ownerId: itemOwnerId(t) || t.creatorId, visibility: t.visibility, createdAt: t.createdAt || t.created_at, likes: t.likes ?? t.likes_count, comments: t.comments ?? t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
         ...moments.map((m) => ({ kind: 'moment', ...m })),
       ]);
       const scored = norm.map((it) => ({
@@ -3670,36 +4107,71 @@ export const onRequest = async (context) => {
       if (!target || target === actor.id) return json({ error: 'Invalid target' }, 400, cors);
       const rl = await rateLimit(kv, 'engagement', actor.id, 60);
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
-      const targetProfile = await getStoredProfile(env, target);
-      if (targetProfile && targetProfile.isPrivate === true) {
-        const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
-        if (!reqs.some((x) => x === actor.id)) {
-          reqs.unshift(actor.id);
+      const actorProfile = (await getStoredProfile(env, actor.id)) || {
+        id: actor.id, email: actor.email, username: actor.username,
+      };
+      const [targetProfile, rawFollowing] = await Promise.all([
+        getStoredProfile(env, target),
+        readIdList(env, KEYS.FOLLOWING(actor.id)),
+      ]);
+      // Fold any legacy duplicate/email refs onto canonical ids before
+      // deciding whether this relationship already exists.
+      const normFollowing = await normalizeRefList(
+        env, rawFollowing, targetProfile || { id: target }, target,
+      );
+      if (normFollowing.changed) {
+        await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(normFollowing.ids.slice(0, 5000)));
+      }
+      const alreadyFollowing = normFollowing.had;
+      if (targetProfile && targetProfile.isPrivate === true && !alreadyFollowing) {
+        const rawReqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
+        const normReqs = await normalizeRefList(env, rawReqs, actorProfile, actor.id);
+        const reqs = normReqs.ids;
+        if (!normReqs.had) reqs.unshift(actor.id);
+        if (!normReqs.had || normReqs.changed) {
           await kv.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.slice(0, 1000)));
         }
         return json({ data: { isFollowing: false, pending: true, isPrivate: true }, error: null }, 200, cors);
       }
-      const [following, followers] = await Promise.all([
-        readIdList(env, KEYS.FOLLOWING(actor.id)),
-        readIdList(env, KEYS.FOLLOWERS(target)),
-      ]);
-      let added = false;
-      if (!following.some((x) => x === target)) {
+      const rawFollowers = await readIdList(env, KEYS.FOLLOWERS(target));
+      const normFollowers = await normalizeRefList(
+        env, rawFollowers, actorProfile, actor.id,
+      );
+      const following = normFollowing.ids;
+      const followers = normFollowers.ids;
+      let addedFollowing = false;
+      let addedFollower = false;
+      if (!alreadyFollowing) {
         following.unshift(target);
-        await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.slice(0, 5000)));
-        added = true;
+        addedFollowing = true;
       }
-      if (!followers.some((x) => x === actor.id)) {
+      if (!normFollowers.had) {
         followers.unshift(actor.id);
-        await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.slice(0, 50000)));
-        added = true;
+        addedFollower = true;
       }
-      if (added) {
+      if (addedFollowing || normFollowing.changed) {
+        await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.slice(0, 5000)));
+      }
+      if (addedFollower || normFollowers.changed) {
+        await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.slice(0, 50000)));
+      }
+      // Counters are derived from the authoritative list lengths (not blind
+      // increments) so duplicate/legacy refs and retried requests can never
+      // drift them. Each side reflects its own list.
+      if (addedFollowing || normFollowing.changed) {
         try {
-          const tp = await getStoredProfile(env, target);
-          if (tp) { tp.followers = (Number(tp.followers || 0) + 1); await kv.put(KEYS.PROFILE(target), JSON.stringify(tp)); }
-          const ap = await getStoredProfile(env, actor.id);
-          if (ap) { ap.following = (Number(ap.following || 0) + 1); await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap)); }
+          const ap = (await getStoredProfile(env, actor.id)) || actorProfile;
+          ap.following = Math.min(following.length, 5000);
+          await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap));
+        } catch { /* best-effort */ }
+      }
+      if (addedFollower || normFollowers.changed) {
+        try {
+          const tp = (await getStoredProfile(env, target)) || targetProfile;
+          if (tp) {
+            tp.followers = Math.min(followers.length, 50000);
+            await kv.put(KEYS.PROFILE(target), JSON.stringify(tp));
+          }
         } catch { /* best-effort */ }
       }
       return json({ data: { isFollowing: true, pending: false }, error: null }, 200, cors);
@@ -3713,28 +4185,43 @@ export const onRequest = async (context) => {
       const rawTarget = decodeURIComponent(path.split('/api/follow/')[1] || '').split('?')[0];
       const target = await canonicalTargetId(env, rawTarget);
       if (!target) return json({ error: 'Invalid target' }, 400, cors);
+      const actorProfile = (await getStoredProfile(env, actor.id)) || {
+        id: actor.id, email: actor.email, username: actor.username,
+      };
+      const targetProfile = await getStoredProfile(env, target);
       const [following, followers, reqs] = await Promise.all([
         readIdList(env, KEYS.FOLLOWING(actor.id)),
         readIdList(env, KEYS.FOLLOWERS(target)),
         readIdList(env, KEYS.FOLLOW_REQ(target)),
       ]);
-      const wasFollowing = following.some((x) => x === target);
-      const wasFollower = followers.some((x) => x === actor.id);
-      await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(following.filter((x) => x !== target)));
-      await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(followers.filter((x) => x !== actor.id)));
-      if (reqs.some((x) => x === actor.id)) {
-        await kv.put(KEYS.FOLLOW_REQ(target), JSON.stringify(reqs.filter((x) => x !== actor.id)));
+      const actorRefs = await accountRefSet(env, actorProfile);
+      const targetRefs = await accountRefSet(env, targetProfile || { id: target });
+      const has = (list, refs) => list.some((x) => refs.has(String(x).trim().toLowerCase()));
+      const wasFollowing = has(following, targetRefs);
+      const wasFollower = has(followers, actorRefs);
+      const hadRequest = has(reqs, actorRefs);
+      const nextFollowing = following.filter((x) => !targetRefs.has(String(x).trim().toLowerCase()));
+      const nextFollowers = followers.filter((x) => !actorRefs.has(String(x).trim().toLowerCase()));
+      await kv.put(KEYS.FOLLOWING(actor.id), JSON.stringify(nextFollowing));
+      await kv.put(KEYS.FOLLOWERS(target), JSON.stringify(nextFollowers));
+      if (hadRequest) {
+        await kv.put(KEYS.FOLLOW_REQ(target), JSON.stringify(
+          reqs.filter((x) => !actorRefs.has(String(x).trim().toLowerCase())),
+        ));
       }
-      if (wasFollowing || wasFollower) {
+      // Derive counters from the authoritative list lengths so retries and
+      // legacy refs can never leave them drifting.
+      if (wasFollowing) {
         try {
-          if (wasFollower) {
-            const tp = await getStoredProfile(env, target);
-            if (tp) { tp.followers = Math.max(0, Number(tp.followers || 0) - 1); await kv.put(KEYS.PROFILE(target), JSON.stringify(tp)); }
-          }
-          if (wasFollowing) {
-            const ap = await getStoredProfile(env, actor.id);
-            if (ap) { ap.following = Math.max(0, Number(ap.following || 0) - 1); await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap)); }
-          }
+          const ap = (await getStoredProfile(env, actor.id)) || actorProfile;
+          ap.following = nextFollowing.length;
+          await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap));
+        } catch { /* best-effort */ }
+      }
+      if (wasFollower) {
+        try {
+          const tp = (await getStoredProfile(env, target)) || targetProfile;
+          if (tp) { tp.followers = nextFollowers.length; await kv.put(KEYS.PROFILE(target), JSON.stringify(tp)); }
         } catch { /* best-effort */ }
       }
       return json({ data: { isFollowing: false, pending: false }, error: null }, 200, cors);
@@ -3748,18 +4235,23 @@ export const onRequest = async (context) => {
       const rawTarget = String(url.searchParams.get('target') || '').slice(0, 200);
       if (!rawTarget) return json({ error: 'target required' }, 400, cors);
       const resolved = await resolveProfileRef(env, rawTarget);
-      const target = resolved?.id ? String(resolved.id) : rawTarget;
+      const target = resolved?.id ? String(resolved.id) : await canonicalTargetId(env, rawTarget);
+      const targetProfile = resolved?.profile || (await getStoredProfile(env, target));
+      const actorProfile = (await getStoredProfile(env, actor.id)) || {
+        id: actor.id, email: actor.email, username: actor.username,
+      };
       // A follow list may still contain an old alias/duplicate id for the same
       // account, so match any ref that belongs to the resolved profile.
-      const targetRefs = resolved?.profile
-        ? (await refsForAccount(env, resolved.profile)).refs
-        : new Set<string>([target.toLowerCase()]);
+      const [targetRefs, actorRefs] = await Promise.all([
+        accountRefSet(env, targetProfile || { id: target }),
+        accountRefSet(env, actorProfile),
+      ]);
       const following = await readIdList(env, KEYS.FOLLOWING(actor.id));
       const isFollowing = following.some((x) => targetRefs.has(String(x).trim().toLowerCase()));
       let pending = false;
       if (!isFollowing) {
         const reqs = await readIdList(env, KEYS.FOLLOW_REQ(target));
-        pending = reqs.some((x) => String(x).toLowerCase() === String(actor.id).toLowerCase());
+        pending = reqs.some((x) => actorRefs.has(String(x).trim().toLowerCase()));
       }
       return json({ data: { isFollowing, pending }, error: null }, 200, cors);
     }
@@ -3774,15 +4266,16 @@ export const onRequest = async (context) => {
       const userId = await canonicalTargetId(env, rawUserId);
       const viewer = await getViewer(request, env);
       const target = await getStoredProfile(env, userId);
+      const ids = await canonicalizeIdList(
+        env, await readIdList(env, isFollowers ? KEYS.FOLLOWERS(userId) : KEYS.FOLLOWING(userId)),
+      );
       if (target && target.isPrivate === true) {
         const isOwner = !!(viewer && viewer.id === userId);
         const ok = isOwner || (viewer ? await isFollowingPair(env, viewer.id, userId) : false);
         if (!ok) {
-          const c = await Promise.all([readIdList(env, KEYS.FOLLOWERS(userId)), readIdList(env, KEYS.FOLLOWING(userId))]);
-          return json({ data: { count: isFollowers ? c[0].length : c[1].length, ids: [], restricted: true }, error: null }, 200, cors);
+          return json({ data: { count: ids.length, ids: [], restricted: true }, error: null }, 200, cors);
         }
       }
-      const ids = await readIdList(env, isFollowers ? KEYS.FOLLOWERS(userId) : KEYS.FOLLOWING(userId));
       // Lightweight profiles (bounded to 100) so sheets render names/avatars
       // without N+1 client fetches. Best-effort; ids are always authoritative.
       let profiles = [];
@@ -3809,7 +4302,7 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const reqs = await readIdList(env, KEYS.FOLLOW_REQ(actor.id));
+      const reqs = await canonicalizeIdList(env, await readIdList(env, KEYS.FOLLOW_REQ(actor.id)));
       return json({ data: { requests: reqs }, error: null }, 200, cors);
     }
 
@@ -3822,35 +4315,59 @@ export const onRequest = async (context) => {
       const rawRequester = String(clean.requester || clean.userId || '').slice(0, 200);
       const requester = await canonicalTargetId(env, rawRequester);
       if (!requester) return json({ error: 'requester required' }, 400, cors);
+      const actorProfile = (await getStoredProfile(env, actor.id)) || {
+        id: actor.id, email: actor.email, username: actor.username,
+      };
+      const requesterProfile = await getStoredProfile(env, requester);
       const reqs = await readIdList(env, KEYS.FOLLOW_REQ(actor.id));
-      await kv.put(KEYS.FOLLOW_REQ(actor.id), JSON.stringify(reqs.filter((x) => x !== requester)));
+      const requesterRefs = await accountRefSet(env, requesterProfile || { id: requester });
+      const pending = reqs.some((x) => requesterRefs.has(String(x).trim().toLowerCase()));
+      if (!pending) return json({ error: 'No pending request from this account.' }, 404, cors);
+      // Remove every legacy ref of the requester, not just the canonical id.
+      await kv.put(KEYS.FOLLOW_REQ(actor.id), JSON.stringify(
+        reqs.filter((x) => !requesterRefs.has(String(x).trim().toLowerCase())),
+      ));
       if (path === '/api/follow/accept') {
-        const [following, followers] = await Promise.all([
+        const [rawFollowing, rawFollowers] = await Promise.all([
           readIdList(env, KEYS.FOLLOWING(requester)),
           readIdList(env, KEYS.FOLLOWERS(actor.id)),
         ]);
+        const normFollowing = await normalizeRefList(
+          env, rawFollowing, actorProfile, actor.id,
+        );
+        const normFollowers = await normalizeRefList(
+          env, rawFollowers, requesterProfile || { id: requester }, requester,
+        );
+        const following = normFollowing.ids;
+        const followers = normFollowers.ids;
         let addedFollowing = false;
-        if (!following.some((x) => x === actor.id)) {
+        let addedFollower = false;
+        if (!normFollowing.had) {
           following.unshift(actor.id);
-          await kv.put(KEYS.FOLLOWING(requester), JSON.stringify(following.slice(0, 5000)));
           addedFollowing = true;
         }
-        let addedFollower = false;
-        if (!followers.some((x) => x === requester)) {
+        if (!normFollowers.had) {
           followers.unshift(requester);
-          await kv.put(KEYS.FOLLOWERS(actor.id), JSON.stringify(followers.slice(0, 50000)));
           addedFollower = true;
         }
-        if (addedFollowing || addedFollower) {
+        if (addedFollowing || normFollowing.changed) {
+          await kv.put(KEYS.FOLLOWING(requester), JSON.stringify(following.slice(0, 5000)));
+        }
+        if (addedFollower || normFollowers.changed) {
+          await kv.put(KEYS.FOLLOWERS(actor.id), JSON.stringify(followers.slice(0, 50000)));
+        }
+        // Counters reflect the authoritative list lengths on each side.
+        if (addedFollowing || normFollowing.changed) {
           try {
-            if (addedFollowing) {
-              const rp = await getStoredProfile(env, requester);
-              if (rp) { rp.following = (Number(rp.following || 0) + 1); await kv.put(KEYS.PROFILE(requester), JSON.stringify(rp)); }
-            }
-            if (addedFollower) {
-              const ap = await getStoredProfile(env, actor.id);
-              if (ap) { ap.followers = (Number(ap.followers || 0) + 1); await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap)); }
-            }
+            const rp = (await getStoredProfile(env, requester)) || requesterProfile;
+            if (rp) { rp.following = Math.min(following.length, 5000); await kv.put(KEYS.PROFILE(requester), JSON.stringify(rp)); }
+          } catch { /* best-effort */ }
+        }
+        if (addedFollower || normFollowers.changed) {
+          try {
+            const ap = (await getStoredProfile(env, actor.id)) || actorProfile;
+            ap.followers = Math.min(followers.length, 50000);
+            await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(ap));
           } catch { /* best-effort */ }
         }
         // Notify the requester (in-app + system push on their device).
@@ -3886,7 +4403,7 @@ export const onRequest = async (context) => {
       if (!raw) return json({ error: 'Not found' }, 404, cors);
       let parsed = {};
       try { parsed = JSON.parse(raw); } catch { return json({ error: 'Not found' }, 404, cors); }
-      if (!owns(parsed, actor)) return json({ error: 'Only the account that posted this can edit it.' }, 403, cors);
+      if (!(await ownsAccount(env, parsed, actor))) return json({ error: 'Only the account that posted this can edit it.' }, 403, cors);
       const clean = sanitizeBody(body);
       // Safety re-check on edited text.
       if (typeof clean.content === 'string' || typeof clean.title === 'string' || typeof clean.description === 'string') {
@@ -3966,17 +4483,20 @@ export const onRequest = async (context) => {
       const rl = await rateLimit(kv, 'engagement', actor.id, 30);
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       // Owners cannot report their own profile.
-      if (kind === 'profile' && id === actor.id) return json({ data: { ok: true }, error: null }, 200, cors);
+      if (kind === 'profile') {
+        const profileTarget = await canonicalAccountId(env, id);
+        if (profileTarget && profileTarget === actor.id) return json({ data: { ok: true }, error: null }, 200, cors);
+      }
       const getKey = kind === 'post' ? KEYS.POST : kind === 'thought' ? KEYS.THOUGHT : kind === 'story' ? KEYS.STORY : kind === 'moment' ? KEYS.MOMENT : null;
       let parsed = {};
       if (getKey) {
         const raw = await kv.get(getKey(id));
         if (!raw) return json({ data: { ok: true }, error: null }, 200, cors);
         try { parsed = JSON.parse(raw); } catch { return json({ data: { ok: true }, error: null }, 200, cors); }
-        if (owns(parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
+        if (await ownsAccount(env, parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
       }
       // Owners cannot report their own content into removal; they can delete it.
-      if (owns(parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
+      if (await ownsAccount(env, parsed, actor)) return json({ data: { ok: true }, error: null }, 200, cors);
       const report = {
         id: generateId(), kind, contentId: id, reason, reasons,
         details: String(clean.details || clean.additionalInfo || '').slice(0, 1000),
@@ -4050,14 +4570,26 @@ export const onRequest = async (context) => {
 
     // DELETE ALL USER DATA
     if (path.match(/^\/api\/user\//) && path.endsWith('/data') && method === 'DELETE') {
-      const userId = decodeURIComponent(path.split('/api/user/')[1].replace('/data', ''));
+      const rawUserId = decodeURIComponent(path.split('/api/user/')[1].replace('/data', '')).split('?')[0];
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      if (actor.id !== userId) return json({ error: 'Forbidden' }, 403, cors);
+      // Legacy clients may call this with a duplicate/email id. Always delete
+      // the canonical account's data, and never another account's.
+      const userId = await canonicalAccountId(env, rawUserId);
+      if (!userId || userId !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
       const { planId } = await resolvePlan(env, actor, bearerFrom(request));
       const rl = await rateLimit(kv, 'delete', actor.id, rateLimitFor(planId, 'delete'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+
+      const accountProfile = (await getStoredProfile(env, userId)) || {
+        id: userId, email: actor.email, username: actor.username,
+      };
+      const { ids: accountIds, refs } = await refsForAccount(env, accountProfile);
+      refs.add(String(userId).toLowerCase());
+      refs.add(String(rawUserId || '').toLowerCase());
+      if (actor.email) refs.add(String(actor.email).toLowerCase());
+      if (actor.username) refs.add(normalizeProfileAlias(actor.username));
 
       let deletedPosts = 0, deletedThoughts = 0, deletedStories = 0, deletedMoments = 0;
       // Index rows carry the display name (not user id) as creator — track
@@ -4074,7 +4606,7 @@ export const onRequest = async (context) => {
           const item = await kv.get(getKey(id));
           if (item) {
             const parsed = JSON.parse(item);
-            if (parsed.userId === userId || parsed.user_id === userId) {
+            if (itemBelongsToAccount(parsed, refs)) {
               await purgeStoredMedia(env, parsed);
               try {
                 const { bytes } = await resolveStoredMedia(env, parsed);
@@ -4092,8 +4624,11 @@ export const onRequest = async (context) => {
         return deleted;
       };
 
-      // Delete profile
-      await kv.delete(KEYS.PROFILE(userId));
+      // Delete every profile row that belongs to the account (canonical +
+      // duplicate/email-keyed legacy rows).
+      await Promise.all([...new Set([...accountIds, userId, rawUserId])].filter(Boolean).map(
+        (pid) => kv.delete(KEYS.PROFILE(String(pid))).catch(() => {}),
+      ));
 
       // Delete all user content
       deletedPosts = await filterList(KEYS.POSTS, KEYS.POST, KEYS.POST);
@@ -4106,7 +4641,9 @@ export const onRequest = async (context) => {
       if (idxJson) {
         const idx = JSON.parse(idxJson);
         await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(
-          idx.filter(i => i && !deletedIds.has(i.id) && i.creator?.toLowerCase() !== userId.toLowerCase() && i.id !== `profile-${userId}`)
+          idx.filter((i) => i && !deletedIds.has(i.id) && !refs.has(String(i.creator || '').toLowerCase())
+            && !accountIds.some((pid) => i.id === `profile-${pid}`)
+            && i.id !== `profile-${userId}`)
         ));
       }
       // Drop interest graph + popularity crumbs for deleted items.
@@ -4646,8 +5183,22 @@ export const onRequest = async (context) => {
     }
 
     if (path.match(/^\/api\/creator\//) && method === 'GET') {
-      const userId = decodeURIComponent(path.split('/api/creator/')[1] || '');
-      const raw = await kv.get(KEYS.CREATOR(userId));
+      const rawUserId = decodeURIComponent(path.split('/api/creator/')[1] || '').split('?')[0];
+      // Accept @handle / display-name / legacy-email links and always read the
+      // canonical account's creator settings.
+      const userId = await canonicalTargetId(env, rawUserId);
+      let raw = await kv.get(KEYS.CREATOR(userId));
+      // Legacy payouts were keyed by a duplicate/email id. Only fall back to a
+      // row that actually belongs to the resolved account.
+      if (!raw && rawUserId && rawUserId !== userId) {
+        const legacy = await kv.get(KEYS.CREATOR(rawUserId));
+        if (legacy) {
+          try {
+            const parsed = JSON.parse(legacy);
+            if (String(parsed?.userId || '') === userId) raw = legacy;
+          } catch { /* ignore malformed legacy row */ }
+        }
+      }
       if (!raw) return json({ data: null, error: null }, 200, cors);
       return json({ data: JSON.parse(raw), error: null }, 200, cors);
     }
@@ -4661,7 +5212,7 @@ export const onRequest = async (context) => {
       const rl = await rateLimit(kv, 'tips', actor.id, rateLimitFor(planId, 'tips'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
-      const to = String(clean.to || clean.creator || '').slice(0, 200);
+      const to = await canonicalAccountId(env, String(clean.to || clean.creator || '').slice(0, 200));
       const amountInr = Math.floor(Number(clean.amountInr || 0));
       if (!to || to === actor.id) return json({ error: 'Invalid recipient' }, 400, cors);
       if (!Number.isFinite(amountInr) || amountInr < 10 || amountInr > 100000) {
@@ -4694,7 +5245,7 @@ export const onRequest = async (context) => {
       const rl = await rateLimit(kv, 'subs', actor.id, rateLimitFor(planId, 'subs'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       const clean = sanitizeBody(body);
-      const creator = String(clean.creator || '').slice(0, 200);
+      const creator = await canonicalAccountId(env, String(clean.creator || '').slice(0, 200));
       const plan = String(clean.plan || 'monthly').slice(0, 20);
       const amountInr = Math.floor(Number(clean.amountInr || 0));
       if (!creator || creator === actor.id) return json({ error: 'Invalid creator' }, 400, cors);
@@ -4859,7 +5410,8 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/send', '')).split('?')[0];
+      const rawPeer = decodeURIComponent(path.split('/api/chat/')[1].replace('/send', '')).split('?')[0];
+      const peer = await canonicalAccountId(env, rawPeer);
       if (!peer || peer === actor.id) return json({ error: 'Invalid peer' }, 400, cors);
       const rl = await rateLimit(kv, 'engagement', actor.id, 60);
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
@@ -4919,13 +5471,14 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/messages', '')).split('?')[0];
+      const rawPeer = decodeURIComponent(path.split('/api/chat/')[1].replace('/messages', '')).split('?')[0];
+      const peer = await canonicalAccountId(env, rawPeer);
       if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
       if (!(await canChat(env, actor.id, peer))) {
         return json({ error: 'Forbidden' }, 403, cors);
       }
       const limit = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
-      const all = await readThreadLedger(env, actor.id, peer, 300);
+      const all = await readThreadLedgerResolved(env, actor.id, peer, 300, rawPeer);
       let touched = false;
       for (const m of all) {
         if (m && m.to === actor.id && m.status === 'sent') {
@@ -4964,9 +5517,10 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/seen', '')).split('?')[0];
+      const rawPeer = decodeURIComponent(path.split('/api/chat/')[1].replace('/seen', '')).split('?')[0];
+      const peer = await canonicalAccountId(env, rawPeer);
       if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
-      const all = await readThreadLedger(env, actor.id, peer, 300);
+      const all = await readThreadLedgerResolved(env, actor.id, peer, 300, rawPeer);
       const pair = chatPairToken(actor.id, peer);
       const flips = [];
       for (const m of all) {
@@ -4984,11 +5538,12 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delivered', '')).split('?')[0];
+      const rawPeer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delivered', '')).split('?')[0];
+      const peer = await canonicalAccountId(env, rawPeer);
       if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
       let raw; try { raw = await readJson(request); } catch { raw = {}; }
       const id = String((raw && raw.id) || '').slice(0, 64);
-      const all = await readThreadLedger(env, actor.id, peer, 300);
+      const all = await readThreadLedgerResolved(env, actor.id, peer, 300, rawPeer);
       const m = all.find((x) => x && x.id === id);
       if (m && m.status === 'sent') {
         m.status = 'delivered';
@@ -5003,13 +5558,14 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const peer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delete', '')).split('?')[0];
+      const rawPeer = decodeURIComponent(path.split('/api/chat/')[1].replace('/delete', '')).split('?')[0];
+      const peer = await canonicalAccountId(env, rawPeer);
       if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
       let raw; try { raw = await readJson(request); } catch { raw = {}; }
       const id = String((raw && raw.id) || '').slice(0, 64);
       const forEveryone = !!(raw && raw.forEveryone);
       if (!id) return json({ error: 'Invalid id' }, 400, cors);
-      const all = await readThreadLedger(env, actor.id, peer, 300);
+      const all = await readThreadLedgerResolved(env, actor.id, peer, 300, rawPeer);
       const m = all.find((x) => x && x.id === id);
       if (!m) return json({ error: 'Not found' }, 404, cors);
       if (forEveryone && m.from !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
@@ -5030,10 +5586,17 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const [following, followers] = await Promise.all([
+      const [rawFollowing, rawFollowers] = await Promise.all([
         readIdList(env, KEYS.FOLLOWING(actor.id)),
         readIdList(env, KEYS.FOLLOWERS(actor.id)),
       ]);
+      // Duplicate/legacy refs collapse to canonical ids so one person cannot
+      // appear twice (or open the wrong profile) in the chat list.
+      const [following, followers] = await Promise.all([
+        canonicalizeIdList(env, rawFollowing),
+        canonicalizeIdList(env, rawFollowers),
+      ]);
+      const followingSet = new Set(following.map((x) => String(x).toLowerCase()));
       const seen = new Set();
       const threads = [];
       const pushPeer = (pid, relation) => {
@@ -5042,7 +5605,7 @@ export const onRequest = async (context) => {
         seen.add(k);
         threads.push({ id: pid, peerId: pid, relation });
       };
-      followers.forEach((f) => pushPeer(f, following.some((x) => String(x).toLowerCase() === String(f).toLowerCase()) ? 'mutual' : 'follower'));
+      followers.forEach((f) => pushPeer(f, followingSet.has(String(f).toLowerCase()) ? 'mutual' : 'follower'));
       following.forEach((f) => pushPeer(f, 'following'));
       return json({ data: { threads: threads.slice(0, 300) }, error: null }, 200, cors);
     }
@@ -5054,19 +5617,46 @@ export const onRequest = async (context) => {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
-      const [stored, reqs] = await Promise.all([
-        (async () => { try { const r = await kv.get(KEYS.NOTIF(actor.id)); const a = r ? JSON.parse(r) : []; return Array.isArray(a) ? a : []; } catch { return []; } })(),
+      const actorProfile = (await getStoredProfile(env, actor.id)) || actor;
+      const { ids: accountIds } = await refsForAccount(env, actorProfile);
+      // Legacy notifications were written under a duplicate/email account id.
+      // Merge every row that belongs to this account so they never disappear.
+      const notifKeys = [...new Set([actor.id, ...accountIds])].filter(Boolean).slice(0, 10);
+      const [storedRows, reqs] = await Promise.all([
+        Promise.all(notifKeys.map(async (nid) => {
+          try {
+            const r = await kv.get(KEYS.NOTIF(nid));
+            const a = r ? JSON.parse(r) : [];
+            return Array.isArray(a) ? a : [];
+          } catch { return []; }
+        })),
         readIdList(env, KEYS.FOLLOW_REQ(actor.id)),
       ]);
-      const items = [...stored];
-      for (const r of reqs.slice(0, 20)) {
-        if (!items.some((n) => n && n.id === 'followreq-' + r)) {
-          items.unshift({
-            id: 'followreq-' + r, kind: 'follow_request', title: 'New follow request',
-            body: r + ' requested to follow you. Approve or decline from notifications.',
-            at: new Date().toISOString(), read: false, actorId: r, actorName: r,
-          });
-        }
+      const byId = new Map();
+      for (const row of storedRows.flat()) {
+        if (!row || typeof row !== 'object' || !row.id) continue;
+        if (row.actorName) row.actorName = maskEmailDisplay(row.actorName);
+        if (row.title) row.title = scrubEmailText(row.title);
+        if (row.body) row.body = scrubEmailText(row.body);
+        if (!byId.has(String(row.id))) byId.set(String(row.id), row);
+      }
+      const items = [...byId.values()];
+      const requestIds = (await canonicalizeIdList(env, reqs)).slice(0, 20);
+      for (const r of requestIds) {
+        if (items.some((n) => n && n.id === 'followreq-' + r)) continue;
+        let display = String(r);
+        try {
+          const p = await profileWithFallback(env, r);
+          const nm = p && (p.name || p.username);
+          if (nm && !isEmailLike(nm)) display = String(nm);
+        } catch { /* keep canonical id */ }
+        if (isEmailLike(display)) display = 'Someone';
+        items.unshift({
+          id: 'followreq-' + r, kind: 'follow_request', title: 'New follow request',
+          body: display + ' requested to follow you. Approve or decline from notifications.',
+          at: new Date().toISOString(), read: false, actorId: r, actorName: display,
+          link: '/profile/' + encodeURIComponent(r),
+        });
       }
       return json({ data: { items: items.slice(0, 100) }, error: null }, 200, cors);
     }
@@ -5326,7 +5916,10 @@ export const onRequest = async (context) => {
       if (!found) return json({ error: 'Content not found' }, 404, cors);
       const viewer = await getViewer(request, env);
       const settings = await getCommentSettings(env, contentId, found.item);
-      const ownerId = itemOwnerId(found.item);
+      const ownerId = await canonicalOwnerId(env, itemOwnerId(found.item));
+      const viewerProfile = viewer ? await getStoredProfile(env, viewer.id) : null;
+      const viewerRefs = viewer ? await accountRefSet(env, viewerProfile || viewer) : undefined;
+      const authorIds = new Map();
       const ids = await readCommentList(env, contentId);
       const rows = await Promise.all(ids.slice(0, 200).map(async (cid) => {
         try {
@@ -5342,7 +5935,13 @@ export const onRequest = async (context) => {
       for (const c of rows) {
         if (!c || typeof c !== 'object' || c.contentId !== contentId) continue;
         try {
-          const p = await getStoredProfile(env, c.authorId);
+          const rawAuthor = String(c.authorId || '').toLowerCase();
+          if (!authorIds.has(rawAuthor)) {
+            authorIds.set(rawAuthor, c.authorId ? await canonicalAccountId(env, c.authorId) : '');
+          }
+          const authorId = authorIds.get(rawAuthor);
+          if (authorId) c.authorId = authorId;
+          const p = await getStoredProfile(env, authorId);
           if (p) {
             const nm = cleanCommentName(p.username || p.name, { username: c.authorUsername, email: '' });
             if (nm) { c.authorName = nm; c.authorUsername = nm; }
@@ -5376,8 +5975,8 @@ export const onRequest = async (context) => {
         return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
       });
       const pub = tops.map((t) => {
-        const o = toPublicComment(t, viewer ? viewer.id : '');
-        if (o && Array.isArray(t.replies)) o.replies = t.replies.map((r) => toPublicComment(r, viewer ? viewer.id : ''));
+        const o = toPublicComment(t, viewer ? viewer.id : '', viewerRefs);
+        if (o && Array.isArray(t.replies)) o.replies = t.replies.map((r) => toPublicComment(r, viewer ? viewer.id : '', viewerRefs));
         return o;
       }).filter(Boolean);
       return json({ data: {
@@ -5405,8 +6004,8 @@ export const onRequest = async (context) => {
       if (!text) return json({ error: 'Comment text required' }, 400, cors);
       const found = await findContentById(env, contentId);
       if (!found) return json({ error: 'Content not found' }, 404, cors);
-      const ownerId = itemOwnerId(found.item);
-      const isOwner = !!(ownerId && actor.id === ownerId);
+      const ownerId = await canonicalOwnerId(env, itemOwnerId(found.item));
+      const isOwner = await ownsAccount(env, found.item, actor);
       const settings = await getCommentSettings(env, contentId, found.item);
       if (!settings.commentsEnabled && !isOwner) {
         return json({ error: 'Comments are turned off for this post.' }, 403, cors);
@@ -5481,8 +6080,11 @@ export const onRequest = async (context) => {
             actorId: actor.id, actorName: author.name, contentId,
           });
         }
-        if (parent && parent.authorId && parent.authorId !== actor.id && parent.authorId !== ownerId) {
-          await pushUserNotification(env, parent.authorId, {
+        const parentAuthorId = parent && parent.authorId
+          ? await canonicalAccountId(env, parent.authorId)
+          : '';
+        if (parentAuthorId && parentAuthorId !== actor.id && parentAuthorId !== ownerId) {
+          await pushUserNotification(env, parentAuthorId, {
             kind: 'reply', title: 'New reply',
             body: author.name + ' replied: ' + text.slice(0, 120),
             actorId: actor.id, actorName: author.name, contentId,
@@ -5504,7 +6106,6 @@ export const onRequest = async (context) => {
       let comment = null;
       try { comment = JSON.parse(craw); } catch { return json({ error: 'Comment not found' }, 404, cors); }
       const found = await findContentById(env, comment.contentId);
-      const ownerId = found ? itemOwnerId(found.item) : '';
 
       if (method === 'PUT' && !action) {
         let raw;
@@ -5512,7 +6113,8 @@ export const onRequest = async (context) => {
         const actor = await getActor(request, env, raw);
         const denied = actorResponse(actor, env, cors);
         if (denied) return denied;
-        if (String(comment.authorId) !== String(actor.id)) return json({ error: 'Only the author can edit this comment.' }, 403, cors);
+        const authorCanonical = comment.authorId ? await canonicalAccountId(env, comment.authorId) : '';
+        if (authorCanonical !== actor.id) return json({ error: 'Only the author can edit this comment.' }, 403, cors);
         const clean = sanitizeBody(raw);
         const text = String(clean.text || clean.content || '').trim().slice(0, 1000);
         if (!text) return json({ error: 'Comment text required' }, 400, cors);
@@ -5521,6 +6123,7 @@ export const onRequest = async (context) => {
         } catch (e) {
           return json({ error: (e && e.message) || 'Comment violates community guidelines.' }, (e && e.status) || 400, cors);
         }
+        comment.authorId = actor.id;
         comment.text = text;
         comment.isEdited = true;
         comment.updatedAt = new Date().toISOString();
@@ -5532,8 +6135,9 @@ export const onRequest = async (context) => {
         const actor = await getActor(request, env);
         const denied = actorResponse(actor, env, cors);
         if (denied) return denied;
-        const isAuthor = String(comment.authorId) === String(actor.id);
-        const isContentOwner = !!(ownerId && String(ownerId) === String(actor.id));
+        const authorCanonical = comment.authorId ? await canonicalAccountId(env, comment.authorId) : '';
+        const isAuthor = authorCanonical === actor.id;
+        const isContentOwner = found ? await ownsAccount(env, found.item, actor) : false;
         if (!isAuthor && !isContentOwner) return json({ error: 'Only the author or the post owner can delete this comment.' }, 403, cors);
         // Delete the comment + its direct replies (single-level threads).
         const ids = await readCommentList(env, comment.contentId);
@@ -5571,14 +6175,18 @@ export const onRequest = async (context) => {
         const actor = await getActor(request, env);
         const denied = actorResponse(actor, env, cors);
         if (denied) return denied;
+        const actorProfile = (await getStoredProfile(env, actor.id)) || actor;
+        const actorRefs = await accountRefSet(env, actorProfile);
         const likedBy = Array.isArray(comment.likedBy) ? comment.likedBy.map(String) : [];
-        const has = likedBy.some((x) => x === String(actor.id));
-        const next = has ? likedBy.filter((x) => x !== String(actor.id)) : [String(actor.id), ...likedBy].slice(0, 5000);
+        const has = likedBy.some((x) => actorRefs.has(String(x).trim().toLowerCase()));
+        // Normalize legacy/duplicate refs to the canonical id while toggling.
+        const others = likedBy.filter((x) => !actorRefs.has(String(x).trim().toLowerCase()));
+        const next = has ? others : [String(actor.id), ...others].slice(0, 5000);
         comment.likedBy = next;
         comment.likes = next.length;
         await kv.put(KEYS.COMMENT(cid), JSON.stringify(comment));
         try { await aiBumpPop(env, comment.contentId, has ? -1 : 1); } catch {}
-        return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 200, cors);
+        return json({ data: { comment: toPublicComment(comment, actor.id, actorRefs) }, error: null }, 200, cors);
       }
 
       if (method === 'POST' && action === 'share') {
@@ -5597,7 +6205,7 @@ export const onRequest = async (context) => {
         if (denied) return denied;
         // Flexible: the account the media belongs to can pin ANY comment
         // (their own or anyone else's) and unpin it again.
-        if (!ownerId || String(ownerId) !== String(actor.id)) {
+        if (!(found && await ownsAccount(env, found.item, actor))) {
           return json({ error: 'Only the post owner can pin comments.' }, 403, cors);
         }
         comment.isPinned = !comment.isPinned;
@@ -5619,7 +6227,7 @@ export const onRequest = async (context) => {
       if (denied) return denied;
       const found = await findContentById(env, contentId);
       if (!found) return json({ error: 'Content not found' }, 404, cors);
-      if (!owns(found.item, actor)) return json({ error: 'Only the account that posted this can change comment settings.' }, 403, cors);
+      if (!(await ownsAccount(env, found.item, actor))) return json({ error: 'Only the account that posted this can change comment settings.' }, 403, cors);
       const clean = sanitizeBody(raw);
       const enabled = clean.enabled !== false && clean.commentsEnabled !== false && clean.disabled !== true;
       const saved = await setCommentSettings(env, contentId, enabled);

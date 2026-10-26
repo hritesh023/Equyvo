@@ -14,6 +14,8 @@ import {
   type AppNotification,
 } from '@/lib/notifications';
 import { useBackOverlay } from '@/lib/back-navigation';
+import { useNavigate } from 'react-router-dom';
+import { navigateToProfile } from '@/utils/profile-navigation';
 
 const kindLabel: Record<AppNotification['kind'], string> = {
   follow_request: 'Follow request',
@@ -32,6 +34,7 @@ const kindLabel: Record<AppNotification['kind'], string> = {
  *  - Desktop : anchored card near the bell (never overlaps off-screen).
  */
 export function NotificationBell() {
+  const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   // Hardware/system back: the first press closes this panel and returns to
   // the page underneath — never exits the app (it's a custom portal, so the
@@ -92,6 +95,21 @@ export function NotificationBell() {
     } finally {
       setBusy(null);
       refresh();
+    }
+  };
+
+  // Tapping a notification opens the person it is about — never the viewer's
+  // own profile. Accept/Decline buttons stop propagation so they stay actions.
+  const handleOpenNotification = (n: AppNotification) => {
+    if (!n.read) { markRead(n.id); refresh(); }
+    if (n.actorId) {
+      setOpen(false);
+      navigateToProfile(navigate, n.actorId, n.actorName);
+      return;
+    }
+    if (n.link && n.link.startsWith('/')) {
+      setOpen(false);
+      navigate(n.link);
     }
   };
 
@@ -159,8 +177,8 @@ export function NotificationBell() {
               {items.map((n) => (
                 <div
                   key={n.id}
-                  className={`border-b border-border/40 px-3 py-2.5 last:border-0 ${n.read ? 'opacity-75' : 'bg-primary/5'}`}
-                  onClick={() => { if (!n.read) { markRead(n.id); refresh(); } }}
+                  className={`border-b border-border/40 px-3 py-2.5 last:border-0 cursor-pointer ${n.read ? 'opacity-75' : 'bg-primary/5'}`}
+                  onClick={() => handleOpenNotification(n)}
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">

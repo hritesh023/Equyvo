@@ -17,7 +17,7 @@ import "./globals.css";
  * (stored user/token, profile/avatar, plans, settings, theme, language) is
  * NEVER touched.
  */
-const EQUYVO_DATA_SCHEMA_V = "2026-10-24-native-nav-fix";
+const EQUYVO_DATA_SCHEMA_V = "2026-10-26-identity-email-privacy";
 try {
   if (localStorage.getItem("equyvo_data_schema_v") !== EQUYVO_DATA_SCHEMA_V) {
     const CONTENT_CACHE_KEYS = [
@@ -35,6 +35,9 @@ try {
       "equyvo_following",          // local follow graph
       "equyvo_social_profiles",    // cached follower/following profiles
       "equyvo_chat_contacts",      // cached chat contacts
+      "equyvo_chat_v2_threads",    // cached chat thread list (account-scoped)
+      "equyvo_chat_v2_messages",   // cached chat messages (account-scoped)
+      "equyvo_notifications_v1",   // cached notification rows (account-scoped)
       "equyvo_notif_dismissed_v1", // dismissed notification ids
       "equyvo_active_live",        // stale "someone is live" banner
       "equyvo_live_notifications", // stale live notification history

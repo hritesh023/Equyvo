@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from "@/components/ui/button";
 import { UserPlus, UserCheck } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { isFollowing as isFollowingUser, setFollowing } from '@/lib/feed-store';
 import api from '@/lib/api';
 import { getStoredUser } from '@/lib/auth';
@@ -73,7 +73,10 @@ const FollowButton: React.FC<FollowButtonProps> = ({
       }
       if (isFollowing) {
         const { error } = await api.unfollow(target);
-        if (error) throw new Error(error);
+        if (error) {
+          showError(error);
+          return;
+        }
         setFollowing(key, false);
         if (serverTarget && serverTarget !== key) setFollowing(serverTarget, false);
         setIsFollowingState(false);
@@ -81,7 +84,10 @@ const FollowButton: React.FC<FollowButtonProps> = ({
         showSuccess(`Unfollowed ${userName}`);
       } else {
         const { data, error } = await api.follow(target);
-        if (error) throw new Error(error);
+        if (error) {
+          showError(error);
+          return;
+        }
         if (data?.pending) {
           // Private account: request sent, awaits owner approval.
           setIsPending(true);
@@ -94,14 +100,9 @@ const FollowButton: React.FC<FollowButtonProps> = ({
         }
       }
     } catch {
-      // Server unreachable: keep the instant local mirror so the UI still
-      // responds; it reconciles on the next load.
-      try {
-        const next = !isFollowing;
-        setFollowing(key, next);
-        setIsFollowingState(next);
-        showSuccess(next ? `Now following ${userName}!` : `Unfollowed ${userName}`);
-      } catch { /* ignore */ }
+      // Real network failure: do not claim success. The next refresh reconciles
+      // with the server graph, which stays the source of truth.
+      showError('Could not update follow. Check your connection and try again.');
     } finally {
       setIsLoading(false);
     }

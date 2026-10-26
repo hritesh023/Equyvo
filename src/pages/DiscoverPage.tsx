@@ -19,7 +19,7 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
-import { navigateToProfile, isPlaceholderId } from '@/utils/profile-navigation';
+import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
@@ -1001,7 +1001,7 @@ const DiscoverPage = () => {
                       onClick={(e) => {
                         e.stopPropagation();
                         // Navigate to user profile when avatar is clicked
-                        navigateToProfile(navigate, item.creatorId, item.creator);
+                        navigateToProfile(navigate, ownerIdOf(item) || item.creatorId, item.creator);
                       }}
                       title={`${item.creator}'s Profile`}
                     >
@@ -1113,7 +1113,7 @@ const DiscoverPage = () => {
                       onClick={(e) => {
                         e.stopPropagation();
                         // Navigate to user profile when avatar is clicked
-                        navigateToProfile(navigate, item.creatorId, item.creator);
+                        navigateToProfile(navigate, ownerIdOf(item) || item.creatorId, item.creator);
                       }}
                       title={`${item.creator}'s Profile`}
                     >
@@ -1242,7 +1242,7 @@ const DiscoverPage = () => {
                   onClick={(e) => {
                     e.stopPropagation();
                     // Navigate to user profile when avatar is clicked
-                    navigateToProfile(navigate, item.creatorId, item.creator);
+                    navigateToProfile(navigate, ownerIdOf(item) || item.creatorId, item.creator);
                   }}
                   title={`${item.creator}'s Profile`}
                 >

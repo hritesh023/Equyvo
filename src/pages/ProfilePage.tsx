@@ -39,7 +39,7 @@ import Moments from '@/components/Moments';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
 import { evalLike, evalVote } from '@/lib/human-eval';
-import { getStoredUser } from '@/lib/auth';
+import { getStoredUser, clearViewerCaches } from '@/lib/auth';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
 import ReportModal from '@/components/ReportModal';
@@ -940,14 +940,9 @@ const ProfilePage = () => {
       if (error) {
         showError('Failed to delete data: ' + error);
       } else {
-        // Clear all local data
-        localStorage.removeItem('userProfile');
-        localStorage.removeItem('savedPosts');
-        localStorage.removeItem('savedStories');
-        localStorage.removeItem('watchHistory');
-        localStorage.removeItem('savedContentData');
-        localStorage.removeItem('userReactedThoughts');
-        localStorage.removeItem('equyvo_search_history');
+        // Clear every viewer-scoped local cache (saved items, history,
+        // reactions, local follow/chat caches, notifications).
+        clearViewerCaches();
         setUserProfile(createDefaultProfile(currentUser));
         setSavedPosts(new Set());
         setSavedStories(new Set());
@@ -1402,7 +1397,7 @@ const ProfilePage = () => {
                     {/* 3-dot menu — every item (post, video, story, thought) is manageable here */}
                     <StandardPostMenu
                       postId={post.id}
-                      postUserId={typeof post.user === 'string' ? post.user : String((post as { creator?: unknown }).creator || '')}
+                      postUserId={ownerIdOf(post) || (typeof post.user === 'string' ? post.user : String((post as { creator?: unknown }).creator || ''))}
                       postOwnerId={ownerIdOf(post)}
                       currentUserId={myAccountId()}
                       contentType={String(post.type || (post as { mediaType?: string }).mediaType || 'post')}
@@ -1618,7 +1613,7 @@ const ProfilePage = () => {
                     >
                       <StandardPostMenu
                         postId={story.id}
-                        postUserId={typeof story.user === 'string' ? story.user : ''}
+                        postUserId={ownerIdOf(story) || (typeof story.user === 'string' ? story.user : '')}
                         postOwnerId={ownerIdOf(story)}
                         currentUserId={myAccountId()}
                         contentType="story"
@@ -1730,7 +1725,7 @@ const ProfilePage = () => {
                   >
                     <StandardPostMenu
                       postId={video.id}
-                      postUserId={typeof video.user === 'string' ? video.user : ''}
+                      postUserId={ownerIdOf(video) || (typeof video.user === 'string' ? video.user : '')}
                       postOwnerId={ownerIdOf(video)}
                       currentUserId={myAccountId()}
                       contentType="video"
@@ -1808,7 +1803,7 @@ const ProfilePage = () => {
                   {!(post as { isReacted?: boolean }).isReacted && (
                     <StandardPostMenu
                       postId={post.id}
-                      postUserId={typeof post.user === 'string' ? post.user : ''}
+                      postUserId={ownerIdOf(post) || (typeof post.user === 'string' ? post.user : '')}
                       postOwnerId={ownerIdOf(post)}
                       currentUserId={myAccountId()}
                       contentType="thought"
