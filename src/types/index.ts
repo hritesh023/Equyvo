@@ -112,7 +112,6 @@ export interface Story {
   content?: string;
   userId?: string;
   createdAt?: string;
-  isBotContent?: boolean;
   isFollowing?: boolean;
   isOwn?: boolean;
   // Server-preserved media fields (custom covers, playable URLs, counts).

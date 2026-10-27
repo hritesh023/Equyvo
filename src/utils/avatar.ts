@@ -21,6 +21,7 @@ export function resolveAvatar(...candidates: Array<unknown>): string {
       low.includes('unsplash') ||
       low.includes('placehold.co') ||
       low.includes('via.placeholder') ||
+      low.includes('placeholder.svg') ||
       low.includes('dummyimage') ||
       low.includes('loremflickr') ||
       low.includes('fakeimg') ||

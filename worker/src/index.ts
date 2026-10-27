@@ -4,7 +4,7 @@ import {
   getStories, createStory, getMoments, createMoment,
   getProfile, upsertProfile, searchContent, likePost, unlikePost, voteThought,
   indexContent, deletePost, deleteThought, deleteStory, deleteMoment, deleteUserData,
-  KEYS, purgeSeedData, SEED_PROFILE_IDS, SEED_PURGED_KEY,
+  KEYS, purgeSeedData, SEED_PROFILE_IDS, SEED_PURGED_KEY, SEED_PURGE_VERSION,
   getInterests, recordEngagement, bumpPopularity, brainSearchSuggest, brainFeedSuggest,
   rankFeedItems, ensureContentIndex,
   getActor, bearerFrom, requiresVerifiedWrites, sanitizeBody, rateLimit, rateLimitFor,
@@ -70,10 +70,11 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
 
   // Lag fix: never block a response on maintenance writes. The old code did
   // a KV write + full seed-purge scan (hundreds of reads) on EVERY request.
-  // Now: one cheap flag read; the one-time purge runs in the background.
+  // Now: one cheap flag read; the versioned one-time purge runs in the
+  // background.
   try {
     const purged = await env.EQUYVO_KV.get(SEED_PURGED_KEY);
-    if (!purged) {
+    if (purged !== SEED_PURGE_VERSION) {
       const p = (async () => {
         try { await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true'); } catch {}
         try { await purgeSeedData(env); } catch {}
@@ -1074,7 +1075,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
             : { 'Content-Type': 'application/json' },
           body: JSON.stringify(body),
         });
-        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        const data: Record<string, any> = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
         if (upstream.ok && path === '/api/verify-payment' && data && data.ok) {
           try {
             const paidPlan = String(data.plan || body.plan || '').slice(0, 64);
@@ -1115,7 +1116,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
           headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + bearer },
           body: JSON.stringify({}),
         });
-        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        const data: Record<string, any> = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
         return respond(data, upstream.status);
       } catch {
         return respondError('Billing service unreachable. Please try again.', 502);
@@ -1144,7 +1145,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         const upstream = await fetch(base + '/v1/billing/status?product=equyvo', {
           headers: { Authorization: 'Bearer ' + bearer },
         });
-        const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
+        const data: Record<string, any> = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
         return respond(data, upstream.status);
       } catch {
         return respondError('Billing service unreachable. Please try again.', 502);

@@ -1,108 +1,97 @@
+// Device-native sharing only.
+//
+// Every share entry point in the app funnels through openShareSheet(). It
+// opens the OS share sheet — the Capacitor Share plugin on native builds,
+// navigator.share (Web Share API) on web — and never renders a custom
+// in-app "share sheet". When the device exposes no share target at all
+// (e.g. an older desktop browser), the link is copied to the clipboard
+// instead, so the gesture always does something useful.
+
+import { Capacitor } from '@capacitor/core';
+import { Share } from '@capacitor/share';
+import { showError, showSuccess } from '@/utils/toast';
+
 export interface SharePayload {
   title: string;
   text?: string;
   url?: string;
 }
 
-export interface SharePlatformUsage {
-  count: number;
-  lastUsedAt: number;
-}
-
-const USAGE_STORAGE_KEY = 'equyvo_share_platform_usage_v1';
-export const SHARE_SHEET_EVENT = 'equyvo:open-share-sheet';
-
-/**
- * Read the user's per-platform share usage ledger so the Share Sheet can rank
- * platforms by recent and frequent usage. If the user has no recorded history
- * yet, we also check document.referrer / navigator.userAgent for an initial
- * platform hint (e.g. opened from WhatsApp, Instagram, Telegram, X, Facebook).
- */
-export function getSharePlatformUsage(): Record<string, SharePlatformUsage> {
-  if (typeof window === 'undefined') return {};
-  let stored: Record<string, SharePlatformUsage> = {};
+async function copyLinkFallback(url: string): Promise<{ success: boolean; error?: string }> {
   try {
-    const raw = localStorage.getItem(USAGE_STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object') stored = parsed;
+    if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      await navigator.clipboard.writeText(url);
+    } else {
+      const ta = document.createElement('textarea');
+      ta.value = url;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
     }
+    showSuccess('Link copied to clipboard');
+    return { success: true };
   } catch {
-    stored = {};
-  }
-
-  // Seed a subtle referrer/in-app browser hint if no history exists yet.
-  if (Object.keys(stored).length === 0) {
-    try {
-      const context = `${document.referrer || ''} ${navigator.userAgent || ''}`.toLowerCase();
-      const hints: Array<[string, RegExp]> = [
-        ['whatsapp', /whatsapp|wa\.me/],
-        ['instagram', /instagram|ig\.me/],
-        ['telegram', /telegram|t\.me/],
-        ['x', /twitter|x\.com|t\.co/],
-        ['facebook', /facebook|fb\.com|fbav|fban/],
-        ['reddit', /reddit/],
-        ['linkedin', /linkedin/],
-        ['snapchat', /snapchat/],
-      ];
-      const now = Date.now();
-      for (const [id, re] of hints) {
-        if (re.test(context)) {
-          stored[id] = { count: 1, lastUsedAt: now };
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-
-  return stored;
-}
-
-/** Record that the user chose a platform so it sorts first next time. */
-export function recordSharePlatformUsage(platformId: string): void {
-  if (typeof window === 'undefined' || !platformId) return;
-  try {
-    const current = getSharePlatformUsage();
-    const prev = current[platformId] || { count: 0, lastUsedAt: 0 };
-    current[platformId] = {
-      count: (Number(prev.count) || 0) + 1,
-      lastUsedAt: Date.now(),
-    };
-    localStorage.setItem(USAGE_STORAGE_KEY, JSON.stringify(current));
-  } catch {
-    /* ignore storage errors */
+    const error = 'Sharing is not available on this device';
+    showError(error);
+    return { success: false, error };
   }
 }
 
 /**
- * Open the app-wide Share Sheet with platform options ranked by the user's
- * recent app/platform usage. Never auto-copies to the clipboard on open —
- * copying only happens when the user explicitly taps "Copy link".
+ * Open the device's default share UI for the given payload. Safe to call
+ * fire-and-forget from click handlers: it never rejects and never renders an
+ * in-app picker. A user-dismissed OS share sheet counts as success.
  */
-export function openShareSheet(payload: SharePayload): { success: boolean } {
+export async function openShareSheet(payload: SharePayload): Promise<{ success: boolean; error?: string }> {
   if (typeof window === 'undefined') {
-    return { success: false };
+    return { success: false, error: 'Sharing is not available right now' };
   }
-  const detail: Required<SharePayload> = {
-    title: String(payload.title || 'Check this out on Equyvo').trim(),
-    text: String(payload.text || '').trim(),
-    url: String(payload.url || window.location.href).trim(),
-  };
-  window.dispatchEvent(new CustomEvent(SHARE_SHEET_EVENT, { detail }));
-  return { success: true };
+  const title = String(payload.title || 'Check this out on Equyvo').trim();
+  const text = String(payload.text || '').trim();
+  const url = String(payload.url || window.location.href).trim();
+
+  // Native builds (APK/AAB): the Capacitor plugin opens the Android/iOS
+  // system share intent directly.
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await Share.share({ title, text: text || title, url, dialogTitle: title });
+      return { success: true };
+    } catch (err) {
+      const msg = String((err as Error)?.message || '').toLowerCase();
+      // User dismissed the system sheet — not an error.
+      if (msg.includes('cancel')) return { success: true };
+      // Otherwise fall through to the web share / clipboard path.
+    }
+  }
+
+  // Web (mobile browsers + PWAs): the Web Share API opens the OS sheet.
+  if (typeof navigator !== 'undefined' && typeof navigator.share === 'function') {
+    try {
+      await navigator.share({ title, text: text || title, url });
+      return { success: true };
+    } catch (err) {
+      // User dismissed the OS sheet — not an error.
+      if ((err as Error)?.name === 'AbortError') return { success: true };
+      // Any other failure (lost gesture, no share targets) → copy fallback.
+    }
+  }
+
+  return copyLinkFallback(url);
 }
 
 export const shareContent = async (title: string, text: string, url?: string) => {
   if (typeof window === 'undefined') {
     return { success: false, error: 'Sharing is not available right now' };
   }
-  openShareSheet({
+  return openShareSheet({
     title: title || 'Check this out on Equyvo',
     text: text || '',
     url: url || window.location.origin,
   });
-  return { success: true, sheet: true };
 };
 
 export const sharePost = async (post: {

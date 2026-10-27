@@ -34,7 +34,6 @@ import { useFeedBanner } from './hooks/use-feed-banner';
 import { useInterstitialTrigger } from './hooks/use-interstitial';
 import AdBanner from './components/ads/AdBanner';
 import WebInterstitialAd from './components/ads/WebInterstitialAd';
-import ShareSheet from './components/ShareSheet';
 import { initBackNavigation, setGoBack, trackNavigation } from './lib/back-navigation';
 
 function extractTokenFromUrl(): string | null {
@@ -270,7 +269,6 @@ const AppContent = () => {
           free plan only. Native uses the AdMob overlay instead. */}
       <AdBanner pathname={location.pathname} />
       <WebInterstitialAd pathname={location.pathname} />
-      <ShareSheet />
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
       {shouldShowNavbar && <MobileBottomNav />}

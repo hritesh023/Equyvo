@@ -378,7 +378,10 @@ function transformItem<T extends Record<string, any>>(item: T): T {
   return item;
 }
 
-const TEST_TEXT_PATTERNS = [/@test\.com$/i, /^pwsrc_/i];
+// Bot/test author signals: automated-account email domains, the Playwright id
+// prefix, and smoke-test display names (e.g. "SmokeAlice"). Author identity
+// fields only — free-text content is never matched.
+const TEST_TEXT_PATTERNS = [/@test\.com$/i, /^pwsrc_/i, /^smoke/i];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T/;
 
 function isSeedItem(item: any): boolean {
@@ -396,13 +399,16 @@ function isSeedItem(item: any): boolean {
     ...(Array.isArray(item.media) ? item.media.map((m: any) => m && m.url).filter(Boolean) : []),
   ].filter(Boolean);
   if (refs.some((r: any) => String(r).includes('res.cloudinary.com/'))) return false;
+  // Legacy demo media (Google sample-video bucket / picsum seed placeholders)
+  // and the bundled placeholder.svg art used by smoke-test posts.
   if (refs.some((r: any) =>
     String(r).includes('gtv-videos-bucket/sample/') ||
-    String(r).includes('picsum.photos/seed/')
+    String(r).includes('picsum.photos/seed/') ||
+    String(r).includes('/placeholder.svg')
   )) return true;
-  // Automated test/bot content: only the author email and the Playwright id
-  // prefix are reliable signals. Deliberately NOT matching content/id/user so a
-  // real post whose text starts with "Test " or similar is never dropped.
+  // Automated test/bot content: only author identity fields are reliable
+  // signals (email, ids, display names). Deliberately NOT matching free-text
+  // content/id so a real post is never dropped because of its wording.
   const authorSignals = [
     item.email,
     item.userId,
@@ -410,26 +416,39 @@ function isSeedItem(item: any): boolean {
     item.creator,
     item.username,
     item.handle,
+    item.user,
+    item.name,
   ].filter((t: any) => typeof t === 'string');
   if (authorSignals.some((t: string) => TEST_TEXT_PATTERNS.some((re) => re.test(t)))) return true;
   if (typeof item.publishedAt === 'string' && !ISO_DATE_RE.test(item.publishedAt)) return true;
   return false;
 }
 
-export const SEED_PROFILE_IDS = new Set(['user1', 'user2']);
+// Legacy demo profiles (user1/user2) plus the 2026-10 smoke-test accounts:
+// the "SmokeAlice" author and its companion "liker" account.
+export const SEED_PROFILE_IDS = new Set([
+  'user1',
+  'user2',
+  'e5c51ad9-93d4-43a9-a79d-aeedd91f5768',
+  '2b950fe3-0732-4c61-88d8-907ed16f70d2',
+]);
 export const SEED_PURGED_KEY = 'seed_purged';
+// Bump when purge logic/bot patterns change so production KV re-runs the
+// purge exactly once after the deploy. Must stay in sync with
+// functions/api/[[path]].ts (Pages Functions is the production backend).
+export const SEED_PURGE_VERSION = '2';
 
 export async function purgeSeedData(env: Env): Promise<void> {
   const kv = env.EQUYVO_KV;
   // Fast path: single KV read. The old code ran a full multi-list scan on
   // EVERY request (hundreds of KV reads) which made every feed/search slow.
-  // Now the scan runs at most once ever (flag) and callers should fire it
-  // via waitUntil so it never blocks the response.
+  // Now the scan runs at most once per purge version (flag) and callers
+  // should fire it via waitUntil so it never blocks the response.
   let flag: string | null = null;
   try {
     flag = await kv.get(SEED_PURGED_KEY);
   } catch { return; }
-  if (flag) return;
+  if (flag === SEED_PURGE_VERSION) return;
 
   const removedUserIds = new Set<string>();
 
@@ -476,7 +495,7 @@ export async function purgeSeedData(env: Env): Promise<void> {
     await kv.delete(KEYS.PROFILE(uid));
   }
 
-  await kv.put(SEED_PURGED_KEY, 'true');
+  await kv.put(SEED_PURGED_KEY, SEED_PURGE_VERSION);
 }
 
 function filterSeed<T>(items: T[], hasReal: boolean): T[] {

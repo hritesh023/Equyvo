@@ -1983,7 +1983,11 @@ function asPhotoItem(item) {
 // carries real user-uploaded media (a Cloudinary URL), because such media can
 // only have come from a real user upload. This guarantees the seed filter can
 // never wipe genuine user content regardless of its text.
-const TEST_TEXT_PATTERNS = [/@test\.com$/i, /^pwsrc_/i];
+// Bot/test author signals: automated-account email domains, the Playwright id
+// prefix, and smoke-test display names (e.g. "SmokeAlice"). These are author
+// identity fields only — post CONTENT text is never matched, so a real post
+// that happens to contain the word "test" or "smoke" is never dropped.
+const TEST_TEXT_PATTERNS = [/@test\.com$/i, /^pwsrc_/i, /^smoke/i];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T/;
 
 function isSeedItem(item) {
@@ -2004,13 +2008,15 @@ function isSeedItem(item) {
   ].filter(Boolean);
   if (refs.some((r) => String(r).includes('res.cloudinary.com/'))) return false;
   // Legacy demo media (Google sample-video bucket / picsum seed placeholders)
+  // and the bundled placeholder.svg art used by smoke-test posts.
   if (refs.some((r) =>
     String(r).includes('gtv-videos-bucket/sample/') ||
-    String(r).includes('picsum.photos/seed/')
+    String(r).includes('picsum.photos/seed/') ||
+    String(r).includes('/placeholder.svg')
   )) return true;
-  // Automated test/bot content: only the author email and the Playwright id
-  // prefix are reliable signals. Deliberately NOT matching content/id/user so a
-  // real post whose text starts with "Test " or similar is never dropped.
+  // Automated test/bot content: only author identity fields are reliable
+  // signals (email, ids, display names). Deliberately NOT matching free-text
+  // content/id so a real post is never dropped because of its wording.
   const authorSignals = [
     item.email,
     item.userId,
@@ -2018,6 +2024,8 @@ function isSeedItem(item) {
     item.creator,
     item.username,
     item.handle,
+    item.user,
+    item.name,
   ].filter((t) => typeof t === 'string');
   if (authorSignals.some((t) => TEST_TEXT_PATTERNS.some((re) => re.test(t)))) return true;
   // Legacy seeded search-index entries store relative timestamps, not ISO dates
@@ -2037,13 +2045,24 @@ async function filterSeed(env, items) {
 // first request after real users exist, then marks itself done. This removes
 // the demo posts/thoughts/stories/moments, the seeded search index, and the
 // seeded bot profiles from storage entirely (not just from responses).
+// Bump SEED_PURGE_VERSION whenever the purge logic or bot patterns change so
+// production KV re-runs the purge exactly once after the deploy.
 const SEED_PURGED_KEY = 'seed_purged';
+const SEED_PURGE_VERSION = '2';
 
-const SEED_PROFILE_IDS = new Set(['user1', 'user2']);
+// Legacy demo profiles (user1/user2) plus the 2026-10 smoke-test accounts:
+// the "SmokeAlice" author and its companion "liker" account. Both are removed
+// from storage and blocked from every read path.
+const SEED_PROFILE_IDS = new Set([
+  'user1',
+  'user2',
+  'e5c51ad9-93d4-43a9-a79d-aeedd91f5768',
+  '2b950fe3-0732-4c61-88d8-907ed16f70d2',
+]);
 
 async function purgeSeedData(env) {
   const kv = env.EQUYVO_KV;
-  if (await kv.get(SEED_PURGED_KEY)) return;
+  if ((await kv.get(SEED_PURGED_KEY)) === SEED_PURGE_VERSION) return;
 
   const removedUserIds = new Set();
 
@@ -2091,7 +2110,7 @@ async function purgeSeedData(env) {
     await kv.delete(KEYS.PROFILE(uid));
   }
 
-  await kv.put(SEED_PURGED_KEY, 'true');
+  await kv.put(SEED_PURGED_KEY, SEED_PURGE_VERSION);
 }
 
 // Hex SHA-1 digest for Cloudinary signature generation
@@ -3154,10 +3173,10 @@ export const onRequest = async (context) => {
 
   try {
     // Lag fix: never block responses on maintenance. One cheap flag read;
-    // the one-time seed purge runs in the background via waitUntil.
+    // the versioned one-time seed purge runs in the background via waitUntil.
     try {
       const purged = await env.EQUYVO_KV.get(SEED_PURGED_KEY);
-      if (!purged) {
+      if (purged !== SEED_PURGE_VERSION) {
         const bg = (async () => {
           try { await env.EQUYVO_KV.put(KEYS.HAS_REAL_USERS, 'true'); } catch {}
           try { await purgeSeedData(env); } catch {}
@@ -3182,6 +3201,12 @@ export const onRequest = async (context) => {
       const isPrivate = body.isPrivate === true || body.accountType === 'private';
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
       if (!password || password.length < 6) return json({ error: 'Password must be at least 6 characters.' }, 400, cors);
+      // Bot guard: automated test/smoke accounts can never register. Matches
+      // the same author signals the read-path seed filter uses, so no bot
+      // identity can create content that later has to be purged.
+      if (/@test\.com$/i.test(email) || /^pwsrc_/i.test(name) || /^smoke/i.test(name)) {
+        return json({ error: 'Automated test accounts are not allowed to register.' }, 403, cors);
+      }
       // Abuse guard: signup spam creates real KV rows and profiles.
       const signupIp = request.headers.get('cf-connecting-ip') || 'unknown';
       if (!(await rateLimit(kv, 'auth_signup', 'ip:' + signupIp, 5)).ok) {
@@ -3227,6 +3252,11 @@ export const onRequest = async (context) => {
       const raw = await kv.get('auth:user:' + email);
       let user;
       if (!raw) {
+        // Bot guard: auto-provisioning must never create a test/smoke account.
+        const loginName = email.split('@')[0];
+        if (/@test\.com$/i.test(email) || /^pwsrc_/i.test(loginName) || /^smoke/i.test(loginName)) {
+          return json({ error: 'Invalid email or password.' }, 401, cors);
+        }
         // Auto-provision on login so returning/legacy users are never
         // blocked by a missing record (treats login as sign-up fallback).
         const salt = crypto.randomUUID();
@@ -4168,6 +4198,9 @@ export const onRequest = async (context) => {
             if (SEED_PROFILE_IDS.has(canonicalId) || p.isSeed === true) continue;
             if (isEmailLike(canonicalId) || p.emailKeyed) continue;
             if (/@test\.com$/i.test(String(p.email || '')) || /^pwsrc_/i.test(pid)) continue;
+            // Bot display names (smoke/test accounts) never surface in people
+            // search — same author signals as the content seed filter.
+            if (isSeedItem(p)) continue;
             const username = String(p.username || '').toLowerCase();
             const name = String(p.name || '').toLowerCase();
             const bio = String(p.bio || '').toLowerCase();
