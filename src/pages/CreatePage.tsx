@@ -491,6 +491,11 @@ const CreatePage = () => {
   // Active recording container (probed mimeType) + start time.
   const recorderMimeRef = useRef('');
   const recordingStartRef = useRef(0);
+  // True while this screen owns a live broadcast; used by the unmount cleanup
+  // so leaving/refreshing the page never leaves a phantom "live" flag.
+  const liveActiveRef = useRef(false);
+  const liveStreamRef = useRef<MediaStream | null>(null);
+  const liveRecorderRef = useRef<MediaRecorder | null>(null);
   // Camera tab: live preview stream + recorder.
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -523,6 +528,28 @@ const CreatePage = () => {
         }
       }).catch(() => {});
     } catch { /* ignore */ }
+  }, []);
+
+  // Leaving the composer (navigation, refresh, app background kill) must end
+  // any live broadcast cleanly: stop the camera/mic and tell the server we are
+  // offline so other accounts stop seeing a phantom live badge.
+  useEffect(() => () => {
+    try {
+      if (liveActiveRef.current || localStorage.getItem('equyvo_active_live')) {
+        localStorage.removeItem('equyvo_active_live');
+        window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+        void api.liveStop().catch(() => {});
+      }
+    } catch { /* ignore */ }
+    try {
+      if (liveRecorderRef.current && liveRecorderRef.current.state !== 'inactive') {
+        liveRecorderRef.current.stop();
+      }
+    } catch { /* ignore */ }
+    try { liveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+    liveStreamRef.current = null;
+    liveRecorderRef.current = null;
+    liveActiveRef.current = false;
   }, []);
 
   // Load everything this account ever published into management, so the
@@ -1212,10 +1239,12 @@ const CreatePage = () => {
       case 'moment':
         if (safeFiles.length > 0) {
           const validFiles = safeFiles.filter(file => {
-            const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
+            // Moments are the short-VIDEO surface. Photos belong in Photos —
+            // accepting images here was how photos ended up in the video feed.
+            const isValidType = file.type.startsWith('video/');
             const isValidSize = file.size <= 200 * 1024 * 1024;
             if (!isValidType) {
-              showError('Please select only images or videos');
+              showError('Moments are video-only. To share a photo, use the Photos tab.');
               return false;
             }
             if (!isValidSize) {
@@ -2202,6 +2231,7 @@ const CreatePage = () => {
         return;
       }
       setStream(mediaStream);
+      liveStreamRef.current = mediaStream;
 
       // Modern recording: probe containers instead of the hard-coded vp9
       // webm (which throws on many Android WebViews and silently killed live).
@@ -2268,6 +2298,22 @@ const CreatePage = () => {
         showError('Live announcement sync failed (other devices may not see it): ' + liveErr);
       }
 
+      // Tell the backend we are live so EVERY account (not just this tab's
+      // localStorage) can discover the stream. Best-effort: recording still
+      // starts if the presence write fails, and it is retried on the next
+      // start; the server auto-expires stale flags after 4 hours.
+      try {
+        const { error: presenceErr } = await api.liveStart({
+          contentId: liveId,
+          title: liveTitle || 'Live now',
+          thumbnail: liveThumbnailUrl || '',
+        });
+        if (presenceErr) console.warn('Live presence sync failed:', presenceErr);
+      } catch (e) {
+        console.warn('Live presence sync failed:', e);
+      }
+      liveActiveRef.current = true;
+
       // Store active live stream info in localStorage for other pages
       localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent));
 
@@ -2302,6 +2348,7 @@ const CreatePage = () => {
       };
 
       setMediaRecorder(recorder);
+      liveRecorderRef.current = recorder;
       setRecordedChunks(chunks);
 
       // Camera secured → recording → announcement done: only now is it LIVE.
@@ -2328,6 +2375,12 @@ const CreatePage = () => {
     setIsRecording(false);
     setMediaRecorder(null);
     setStream(null);
+    liveActiveRef.current = false;
+    liveStreamRef.current = null;
+    liveRecorderRef.current = null;
+
+    // Server-side presence off (retry-safe; the endpoint is idempotent).
+    try { await api.liveStop(); } catch { /* best-effort */ }
 
     // Clear active live stream
     localStorage.removeItem('equyvo_active_live');
@@ -4736,13 +4789,13 @@ const CreatePage = () => {
               </div>
               <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
                 <Upload className="h-12 w-12 mx-auto mb-4 text-muted-foreground" />
-                <p className="text-lg font-semibold mb-2">Upload Moment Media</p>
+                <p className="text-lg font-semibold mb-2">Upload a Moment Video</p>
                 <p className="text-sm text-muted-foreground mb-4">
-                  Photos or Videos
+                  Videos only (photos belong in the Photos tab)
                 </p>
                 <Input
                   type="file"
-                  accept="image/*,video/*"
+                  accept="video/*"
                   multiple
                   onChange={(e) => handleFileUpload(e.target.files, 'moment')}
                   className="max-w-xs mx-auto"

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { BrowserRouter as Router, Routes, Route, useLocation, useNavigate, useNavigationType } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
@@ -12,7 +12,7 @@ import ErrorBoundary from './components/ErrorBoundary';
 import SplashScreen from './components/SplashScreen'; 
 import { NetworkProvider } from './contexts/NetworkContext';
 import { AudioProvider } from './contexts/AudioContext';
-import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, setToken, User } from './lib/auth';
+import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, clearToken, setToken, User } from './lib/auth';
 import { claimBilling } from './lib/billing';
 import HomePage from './pages/HomePage';
 import AuthPage from './pages/AuthPage';
@@ -32,6 +32,9 @@ import { initializeAds } from './lib/admob-service';
 import { useAdPlan } from './hooks/use-ad-plan';
 import { useFeedBanner } from './hooks/use-feed-banner';
 import { useInterstitialTrigger } from './hooks/use-interstitial';
+import AdBanner from './components/ads/AdBanner';
+import WebInterstitialAd from './components/ads/WebInterstitialAd';
+import ShareSheet from './components/ShareSheet';
 import { initBackNavigation, setGoBack, trackNavigation } from './lib/back-navigation';
 
 function extractTokenFromUrl(): string | null {
@@ -45,6 +48,13 @@ function extractTokenFromUrl(): string | null {
   }
   return null;
 }
+
+/** Shared links use /posts/:id (and the older /profile/posts/:id); both open
+ *  the post in the feed instead of dead-ending on the 404 page. */
+const SharedPostRedirect = () => {
+  const { postId } = useParams();
+  return <Navigate to={`/app/home?post=${encodeURIComponent(postId || '')}`} replace />;
+};
 
 const AppContent = () => {
   const [user, setUser] = useState<AppUser | null>(null);
@@ -150,9 +160,30 @@ const AppContent = () => {
 
   useEffect(() => {
     if (!isLoading && !user && !isAuthPage && !isPricingPage) {
-      navigate('/auth');
+      // Preserve the deep link (shared post, profile, search) across sign-in.
+      const next = location.pathname + location.search;
+      navigate('/auth?next=' + encodeURIComponent(next), { replace: true });
     }
-  }, [isLoading, user, isAuthPage, isPricingPage, navigate]);
+  }, [isLoading, user, isAuthPage, isPricingPage, navigate, location.pathname, location.search]);
+
+  // A token the server rejects (expired/revoked session) must not leave the
+  // app looking signed-in while every write silently fails. Sign out once and
+  // send the user back through auth, returning to where they were.
+  const sessionExpiryHandled = useRef(0);
+  useEffect(() => {
+    const onSessionExpired = () => {
+      const now = Date.now();
+      if (now - sessionExpiryHandled.current < 5000) return;
+      sessionExpiryHandled.current = now;
+      clearToken();
+      setUser(null);
+      if (window.location.pathname === '/auth') return;
+      const next = window.location.pathname + window.location.search;
+      navigate('/auth?next=' + encodeURIComponent(next), { replace: true });
+    };
+    window.addEventListener('equyvo:session-expired', onSessionExpired);
+    return () => window.removeEventListener('equyvo:session-expired', onSessionExpired);
+  }, [navigate]);
 
   if (isLoading) {
     return (
@@ -202,6 +233,10 @@ const AppContent = () => {
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
         <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain' : ''} edge-fill`}>
+        {/* Page-local boundary: a failure in one route renders an inline
+            recovery card (navbar/bottom nav stay usable) and resets on the
+            next navigation instead of a full-app "reload" wall. */}
+        <ErrorBoundary>
         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />
@@ -210,6 +245,8 @@ const AppContent = () => {
           <Route path="/app/moments" element={<MomentsPage />} />
           <Route path="/app/thoughts" element={<ThoughtsPage />} />
           <Route path="/app/profile" element={<ProfilePage />} />
+          <Route path="/app/profile/:userId" element={<ProfilePage />} />
+          <Route path="/app/profile/@:username" element={<ProfilePage />} />
           <Route path="/app/settings" element={<SettingsPage />} />
           <Route path="/app/search" element={<SearchPage />} />
           <Route path="/discover" element={<DiscoverPage />} />
@@ -217,6 +254,8 @@ const AppContent = () => {
           <Route path="/moments" element={<MomentsPage />} />
           <Route path="/thoughts" element={<ThoughtsPage />} />
           <Route path="/profile" element={<ProfilePage />} />
+          <Route path="/profile/posts/:postId" element={<SharedPostRedirect />} />
+          <Route path="/posts/:postId" element={<SharedPostRedirect />} />
           <Route path="/profile/:userId" element={<ProfilePage />} />
           <Route path="/profile/@:username" element={<ProfilePage />} />
           <Route path="/pricing" element={<PricingPage />} />
@@ -225,7 +264,13 @@ const AppContent = () => {
           <Route path="/search" element={<SearchPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
+        </ErrorBoundary>
       </main>
+      {/* Web banner ad: in-flow above the bottom nav, every non-auth page,
+          free plan only. Native uses the AdMob overlay instead. */}
+      <AdBanner pathname={location.pathname} />
+      <WebInterstitialAd pathname={location.pathname} />
+      <ShareSheet />
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
       {shouldShowNavbar && <MobileBottomNav />}

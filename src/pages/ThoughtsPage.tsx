@@ -42,7 +42,7 @@ import {
 } from "@/components/ui/dialog";
 import { Textarea } from "@/components/ui/textarea";
 import VotingButtons from '@/components/VotingButtons';
-import { getThoughts, voteOnThought, getThoughtVotes, likeThought } from '@/lib/thoughts';
+import { getThoughts, voteOnThought, getThoughtVotes } from '@/lib/thoughts';
 import { evalVote, evalLike } from '@/lib/human-eval';
 import { Thought, ThoughtMedia } from '@/types/thoughts';
 import FullscreenViewer from '@/components/FullscreenViewer';
@@ -50,6 +50,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 import { useMemo } from 'react';
 import { withInFeedAds } from '@/lib/feed-ads';
 import { shouldShowAds } from '@/lib/ads-config';
@@ -544,11 +545,12 @@ const ThoughtsPage = memo(() => {
       
       setThoughts(updatedThoughts);
       
-      // Try to sync with database (will fail gracefully with mock data)
-      try {
-        await likeThought({ thought_id: thoughtId });
-      } catch {
-        // Database sync failed (expected with mock data)
+      // Persist the like on the server (real engagement + owner notification).
+      const { data } = await api.like(thoughtId, newUserHasLiked ? 'like' : 'unlike');
+      if (data && typeof data.likes === 'number') {
+        setThoughts(prev => prev.map(t => t.id === thoughtId
+          ? { ...t, likes_count: data.likes, user_has_liked: newUserHasLiked }
+          : t));
       }
     } catch {
       // Database sync failed (expected with mock data)
@@ -605,24 +607,15 @@ const ThoughtsPage = memo(() => {
       setSharing(thoughtId);
       const thought = thoughts.find(t => t.id === thoughtId);
       if (thought) {
-        // Deep-link into the real list route (query param) so shared links
-        // never land on a 404 — there is no /thoughts/:id route.
-        const shareUrl = `${window.location.origin}/app/thoughts?post=${encodeURIComponent(thoughtId)}`;
-
-        if (navigator.share) {
-          await navigator.share({
-            title: `Thought by ${thought.user?.username}`,
-            text: thought.content.substring(0, 100) + '...',
-            url: shareUrl
-          });
-        } else {
-          // Fallback: copy to clipboard
-          await navigator.clipboard.writeText(shareUrl);
-          showSuccess('Link copied to clipboard!');
-        }
+        const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(thoughtId)}`;
+        openShareSheet({
+          title: `Thought by ${thought.user?.username || 'creator'} on Equyvo`,
+          text: String(thought.content || '').slice(0, 140),
+          url: shareUrl,
+        });
       }
-    } catch (e) {
-      if ((e as Error)?.name !== 'AbortError') showError('Could not share this thought.');
+    } catch {
+      showError('Could not share this thought.');
     } finally {
       setSharing(null);
     }
@@ -655,7 +648,7 @@ const ThoughtsPage = memo(() => {
 
   const handleCopyLink = async (thoughtId: string) => {
     try {
-      const shareUrl = `${window.location.origin}/app/thoughts?post=${encodeURIComponent(thoughtId)}`;
+      const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(thoughtId)}`;
       await navigator.clipboard.writeText(shareUrl);
       showSuccess('Link copied to clipboard!');
     } catch {

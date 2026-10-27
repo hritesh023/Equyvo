@@ -48,6 +48,7 @@ import FollowButton from '@/components/FollowButton';
 import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import api from '@/lib/api';
+import { isVideoItem } from '@/lib/feed-store';
 
 const ownerIdOf = (post: unknown): string => {
   const p = (post || {}) as Record<string, unknown>;
@@ -131,13 +132,11 @@ const ProfilePage = () => {
   })();
   const hasRouteTarget = routeTarget.length > 0;
   const isOwnProfile = !hasRouteTarget || (
-    // With a stored account id, only an id match is self. Username/display-name
-    // routes go through the server canonicalizer so a same-named stranger is
-    // never mistaken for the viewer. Fall back to the name only when the
-    // session has no id at all.
-    viewerId
-      ? normalizeIdentity(routeTarget) === normalizeIdentity(viewerId)
-      : (!!viewerUsername && normalizeIdentity(routeTarget) === viewerUsername)
+    // Only an explicit account-id match counts as self before the server
+    // resolves the route target. Username/display-name routes go through the
+    // server canonicalizer so another person's profile is never treated as the
+    // viewer's own page.
+    !!viewerId && normalizeIdentity(routeTarget) === normalizeIdentity(viewerId)
   );
   const location = useLocation();
   const navigate = useNavigate();
@@ -187,13 +186,33 @@ const ProfilePage = () => {
     if (savedProfile) return savedProfile;
     return createDefaultProfile(getStoredUser());
   });
-  const [resolvedTargetId, setResolvedTargetId] = useState('');
+  const [resolvedTarget, setResolvedTarget] = useState<{ route: string; id: string; isOwner: boolean }>({
+    route: '',
+    id: '',
+    isOwner: false,
+  });
+  const resolvedTargetId = resolvedTarget.route === routeTarget ? resolvedTarget.id : '';
   const [profileLookupFailed, setProfileLookupFailed] = useState(false);
-  // The loaded profile is self only when the route is self or the server
-  // resolved the target to the viewer's own account id.
-  const isSelfView = isOwnProfile || (
-    !!viewerId && normalizeIdentity((userProfile as { id?: string })?.id) === normalizeIdentity(viewerId)
+  // The loaded profile is self ONLY when the route is self (/app/profile,
+  // /profile, or /profile/<viewerId>) or the server resolved THIS exact route
+  // target to the signed-in viewer's own account. Viewing any other person's
+  // profile is never self-view — not even for a single transition frame.
+  const isSelfView = !hasRouteTarget || isOwnProfile || (
+    resolvedTarget.route === routeTarget &&
+    (resolvedTarget.isOwner ||
+      (!!viewerId && !!resolvedTarget.id && normalizeIdentity(resolvedTarget.id) === normalizeIdentity(viewerId)))
   );
+  const [activeTab, setActiveTab] = useState<string>('posts');
+  // History and Saved are strictly private to the owner's own profile page.
+  // Another person's profile must never show or activate those tabs.
+  const effectiveTab = !isSelfView && (activeTab === 'history' || activeTab === 'saved')
+    ? 'posts'
+    : activeTab;
+  React.useEffect(() => {
+    if (!isSelfView && (activeTab === 'history' || activeTab === 'saved')) {
+      setActiveTab('posts');
+    }
+  }, [isSelfView, activeTab, routeTarget]);
   // Saved / history / reacted content belongs to the signed-in viewer. It must
   // never be merged into another person's profile.
   const viewerReactedPosts = isSelfView
@@ -237,7 +256,7 @@ const ProfilePage = () => {
     setProfileLookupFailed(false);
 
     if (hasRouteTarget && !isOwnProfile) {
-      setResolvedTargetId('');
+      setResolvedTarget({ route: routeTarget, id: '', isOwner: false });
       setUserProfile(createTargetPlaceholder(routeTarget));
 
       (async () => {
@@ -251,7 +270,10 @@ const ProfilePage = () => {
         // The server resolves @handle/username/name aliases to the canonical
         // account id. Content is then loaded for that id — never the alias.
         const canonicalId = String(data.id || '').trim() || routeTarget;
-        setResolvedTargetId(canonicalId);
+        const isOwner =
+          data.isOwner === true ||
+          (!!currentId && normalizeIdentity(canonicalId) === normalizeIdentity(currentId));
+        setResolvedTarget({ route: routeTarget, id: canonicalId, isOwner });
         setUserProfile({
           ...createTargetPlaceholder(routeTarget),
           ...data,
@@ -297,7 +319,7 @@ const ProfilePage = () => {
     }
 
     // ── OWN PROFILE (/app/profile or a route that is truly the viewer) ──
-    setResolvedTargetId(currentId);
+    setResolvedTarget({ route: routeTarget, id: currentId, isOwner: true });
     const savedProfile = readCachedOwnProfile();
 
     if (savedProfile && currentUser) {
@@ -596,6 +618,12 @@ const ProfilePage = () => {
 
     setLikedPosts(newLikedPosts);
     setPostLikes(newPostLikes);
+    // Persist so the owner is notified and the count is shared across devices.
+    api.like(postId, liking ? 'like' : 'unlike').then(({ data }) => {
+      if (data && typeof data.likes === 'number') {
+        setPostLikes(prev => ({ ...prev, [postId]: data.likes }));
+      }
+    }).catch(() => undefined);
   };
 
   const handleVote = async (thoughtId: string, voteType: 'upvote' | 'downvote') => {
@@ -719,6 +747,12 @@ const ProfilePage = () => {
 
     setReactedPosts(newReactedPosts);
     setPostReacts(newPostReacts);
+    // Persist the reaction (owner notification + cross-device count).
+    api.react(postId, reactedPosts.has(postId) ? 'unreact' : 'react').then(({ data }) => {
+      if (data && typeof data.reacts === 'number') {
+        setPostReacts(prev => ({ ...prev, [postId]: data.reacts }));
+      }
+    }).catch(() => undefined);
   };
 
 
@@ -729,13 +763,7 @@ const ProfilePage = () => {
       content: post.content || '',
       image: post.media || post.image
     });
-    if (result.success) {
-      if ('fallback' in result && result.fallback) {
-        showSuccess(result.message || 'Link copied to clipboard!');
-      } else {
-        showSuccess('Shared successfully!');
-      }
-    } else {
+    if (!result.success) {
       showError(result.error || 'Share failed');
     }
   };
@@ -1033,6 +1061,48 @@ const ProfilePage = () => {
     }
   };
 
+  // Live follower/following counters. Following someone dispatches
+  // `followChanged` from FollowButton; adjust the visible counters immediately
+  // (the target's followers, and the viewer's own following) and refresh an
+  // open followers/following sheet. The next profile read still derives the
+  // authoritative numbers from the follow graph server-side.
+  React.useEffect(() => {
+    let cancelled = false;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent).detail || {};
+      const followed = detail.following === true;
+      const pending = detail.pending === true;
+      const target = String(detail.target || detail.userId || '');
+      if (!target || pending) return;
+      const me = normalizeIdentity(myId());
+      const targetKey = normalizeIdentity(target);
+      const shownKey = normalizeIdentity(targetProfileId);
+      const isTargetProfile = !!targetKey && !!shownKey && targetKey === shownKey;
+      const isViewer = !!me && targetKey === me;
+      setUserProfile(prev => {
+        let followers = Number(prev.followers || 0);
+        let following = Number(prev.following || 0);
+        if (isTargetProfile && targetKey !== me) {
+          followers = Math.max(0, followers + (followed ? 1 : -1));
+        }
+        if (isSelfView && !isViewer) {
+          following = Math.max(0, following + (followed ? 1 : -1));
+        }
+        return { ...prev, followers, following };
+      });
+      if (cancelled) return;
+      if (showFollowers) void openFollowers();
+      if (showFollowing) void openFollowing();
+    };
+    window.addEventListener('followChanged', refresh as EventListener);
+    return () => {
+      cancelled = true;
+      window.removeEventListener('followChanged', refresh as EventListener);
+    };
+    // openFollowers/openFollowing intentionally re-created with the sheet state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [targetProfileId, isSelfView, showFollowers, showFollowing, viewerId]);
+
   const handleReport = (postId: string) => {
     const post = userProfile.posts.find(p => p.id === postId);
     const t = String(post?.type || 'post').toLowerCase();
@@ -1074,25 +1144,21 @@ const ProfilePage = () => {
   };
 
   const handleCopyLink = (postId: string) => {
-    const shareUrl = `${window.location.origin}/profile/posts/${postId}`;
-    navigator.clipboard.writeText(shareUrl);
-    showSuccess('🔗 Link copied to clipboard!');
+    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .catch(() => showError("Couldn't copy the link."));
   };
 
   const handleMenuShare = (postId: string) => {
     const post = userProfile.posts.find(p => p.id === postId);
     if (post) {
-      const shareUrl = `${window.location.origin}/profile/posts/${postId}`;
-      if (navigator.share) {
-        navigator.share({
-          title: `Post by ${post.user}`,
-          text: post.content,
-          url: shareUrl
-        });
-      } else {
-        navigator.clipboard.writeText(shareUrl);
-        showSuccess('🔗 Link copied to clipboard!');
-      }
+      void sharePost({
+        id: post.id,
+        user: post.user,
+        content: post.content || '',
+        image: post.media || post.image,
+      });
     }
   };
 
@@ -1301,9 +1367,18 @@ const ProfilePage = () => {
         </div>
       </Card>
 
-      {/* User Content Tabs */}
-      <Tabs defaultValue="posts" className="w-full">
-        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid md:grid-cols-7 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
+      {/* User Content Tabs — History and Saved are strictly private to the
+          signed-in owner's own profile page and are never rendered or
+          selectable when viewing another person's profile. */}
+      <Tabs
+        value={effectiveTab}
+        onValueChange={(val) => {
+          if (!isSelfView && (val === 'history' || val === 'saved')) return;
+          setActiveTab(val);
+        }}
+        className="w-full"
+      >
+        <TabsList className={`flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid ${isSelfView ? 'md:grid-cols-7' : 'md:grid-cols-5'} md:overflow-visible md:bg-muted md:rounded-md md:pr-1`}>
           <TabsTrigger value="posts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">All Posts</TabsTrigger>
           <TabsTrigger value="stories" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Stories</TabsTrigger>
           <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
@@ -1318,20 +1393,20 @@ const ProfilePage = () => {
           <span aria-hidden="true" className="w-1 shrink-0 md:hidden" />
         </TabsList>
         <TabsContent value="posts" className="mt-4 md:mt-6 space-y-3 md:space-y-4">
-          {/* Combine user's original posts with reacted posts */}
+          {/* Combine user's original posts with reacted posts (owner only) */}
           {[
-            ...userReactedPosts.map(post => ({ ...post, isReacted: true })),
+            ...viewerReactedPosts,
             ...userProfile.posts
           ].length > 0 ? (
             <>
               {/* Filter moments and render them with Moments component */}
               {[...viewerReactedPosts, ...userProfile.posts]
-                .filter(post => post.type === 'moment').length > 0 && (
+                .filter(post => post.type === 'moment' && isVideoItem(post as any)).length > 0 && (
                 <div className="space-y-4">
                   <h4 className="text-sm font-medium text-muted-foreground">Moments</h4>
                   <Moments
                     moments={[...viewerReactedPosts, ...userProfile.posts]
-                      .filter(post => post.type === 'moment').map(post => ({
+                      .filter(post => post.type === 'moment' && isVideoItem(post as any)).map(post => ({
                         id: post.id,
                         user: post.user,
                         userId: ownerIdOf(post) || undefined,
@@ -1643,16 +1718,18 @@ const ProfilePage = () => {
                   <CardContent className="p-3">
                     <p className="text-sm font-medium line-clamp-2 leading-tight mb-1">{story.content || 'Story'}</p>
                     <p className="text-xs text-muted-foreground mb-2">{story.time || ''}{typeof story.views !== 'undefined' ? ` • ${story.views} views` : ''}</p>
-                    <div className="flex gap-2 flex-wrap">
-                      {story.type !== 'text-story' && story.thumbnail ? (
-                        <Button variant="outline" size="sm" className="text-xs" onClick={() => handleRemoveStoryCover(story.id)}>
-                          <X className="h-3 w-3 mr-1" /> Remove cover
+                    {isSelfView && (
+                      <div className="flex gap-2 flex-wrap">
+                        {story.type !== 'text-story' && story.thumbnail ? (
+                          <Button variant="outline" size="sm" className="text-xs" onClick={() => handleRemoveStoryCover(story.id)}>
+                            <X className="h-3 w-3 mr-1" /> Remove cover
+                          </Button>
+                        ) : null}
+                        <Button variant="destructive" size="sm" className="text-xs" onClick={() => handleDeletePost(story.id)}>
+                          <Trash className="h-3 w-3 mr-1" /> Delete story
                         </Button>
-                      ) : null}
-                      <Button variant="destructive" size="sm" className="text-xs" onClick={() => handleDeletePost(story.id)}>
-                        <Trash className="h-3 w-3 mr-1" /> Delete story
-                      </Button>
-                    </div>
+                      </div>
+                    )}
                   </CardContent>
                 </Card>
               ))}
@@ -1667,7 +1744,7 @@ const ProfilePage = () => {
 
         <TabsContent value="moments" className="mt-6">
           <Moments
-            moments={userProfile.posts.filter(post => post.type === 'moment').map(post => ({
+            moments={userProfile.posts.filter(post => post.type === 'moment' && isVideoItem(post as any)).map(post => ({
               id: post.id,
               user: post.user,
               userId: ownerIdOf(post) || undefined,

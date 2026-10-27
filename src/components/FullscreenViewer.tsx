@@ -9,6 +9,7 @@ import CommentSection from '@/components/CommentSection';
 import { showSuccess } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { navigateToProfile, ownerIdOf, isPlaceholderId } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 import { avatarOf } from '@/utils/avatar';
 import { useBackOverlay } from '@/lib/back-navigation';
 import { useVideo2xPress } from '@/lib/video-2x';
@@ -16,6 +17,7 @@ import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts'
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
+import api from '@/lib/api';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
@@ -661,11 +663,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   };
 
   const handleLike = () => {
-    setIsLiked(prev => {
-      const next = !prev;
-      setLikeCount(current => Math.max(0, current + (next ? 1 : -1)));
-      return next;
-    });
+    const next = !isLiked;
+    setIsLiked(next);
+    setLikeCount(current => Math.max(0, current + (next ? 1 : -1)));
+    // Persist the like so the creator is notified and counts agree everywhere.
+    const itemId = String(actualContent?.id || actualContent?.videoId || actualContent?.imageId || '').trim();
+    if (!itemId || itemId.startsWith('live-')) return;
+    api.like(itemId, next ? 'like' : 'unlike').then(({ data }) => {
+      if (data && typeof data.likes === 'number') setLikeCount(data.likes);
+    }).catch(() => undefined);
   };
 
   const handleComment = () => {
@@ -677,34 +683,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     }
   };
 
+  // Every share surface (header, video, image, split) points at the exact
+  // item, never at whichever route the viewer happens to be on.
+  const shareContentId = String(actualContent?.id || actualContent?.videoId || actualContent?.imageId || '').trim();
+  const shareContentUrl = shareContentId
+    ? `${window.location.origin}/app/home?post=${encodeURIComponent(shareContentId)}`
+    : window.location.href;
+
   const handleShare = () => {
     if (onShare) {
       onShare(actualContent);
     } else {
-      // Fallback share functionality
-      const shareData = {
-        title: actualContent?.title || actualContent?.content || 'Check out this content',
-        text: actualContent?.content || actualContent?.description || `Check out this ${actualType} by ${actualContent?.creator || 'Unknown Creator'}`,
-        url: window.location.href
-      };
-      
-      if (navigator.share) {
-        navigator.share(shareData).then(() => {
-          showSuccess('Content shared successfully!');
-        }).catch(() => {
-          navigator.clipboard.writeText(window.location.href).then(() => {
-            showSuccess('🔗 Link copied to clipboard!');
-          }).catch(() => {
-            showSuccess('🔗 Link ready to share!');
-          });
-        });
-      } else {
-        navigator.clipboard.writeText(window.location.href).then(() => {
-          showSuccess('🔗 Link copied to clipboard!');
-        }).catch(() => {
-          showSuccess('🔗 Link ready to share!');
-        });
-      }
+      openShareSheet({
+        title: actualContent?.title || actualContent?.content || 'Check out this content on Equyvo',
+        text: actualContent?.content || actualContent?.description || `Check out this ${actualType} by ${actualContent?.creator || 'creator'}`,
+        url: shareContentUrl,
+      });
     }
   };
 
@@ -1491,24 +1485,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               size="sm"
               className="text-white hover:bg-white/20 hover:text-white transition-all duration-200"
               onClick={() => {
-                if (onShare) {
-                  onShare(actualContent);
-                } else {
-                  // Fallback share functionality
-                  if (navigator.share) {
-                    navigator.share({
-                      title: actualContent.title,
-                      text: actualContent.content || `Check out this ${actualContent.type} by ${actualContent.creator}`,
-                      url: window.location.href
-                    }).catch(() => {
-                      navigator.clipboard.writeText(window.location.href);
-                      showSuccess('Link copied to clipboard!');
-                    });
-                  } else {
-                    navigator.clipboard.writeText(window.location.href);
-                    showSuccess('Link copied to clipboard!');
-                  }
-                }
+                handleShare();
               }}
               title="Share video"
             >
@@ -1629,24 +1606,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               size="sm"
               className="text-white hover:bg-white/20 hover:text-white transition-all duration-200"
               onClick={() => {
-                if (onShare) {
-                  onShare(actualContent);
-                } else {
-                  // Fallback share functionality
-                  if (navigator.share) {
-                    navigator.share({
-                      title: actualContent.title,
-                      text: actualContent.content || `Check out this ${actualContent.type} by ${actualContent.creator}`,
-                      url: window.location.href
-                    }).catch(() => {
-                      navigator.clipboard.writeText(window.location.href);
-                      showSuccess('Link copied to clipboard!');
-                    });
-                  } else {
-                    navigator.clipboard.writeText(window.location.href);
-                    showSuccess('Link copied to clipboard!');
-                  }
-                }
+                handleShare();
               }}
               title="Share image"
             >
@@ -1830,23 +1790,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               className="text-white hover:bg-white/20 hover:text-white transition-all duration-200"
               onClick={(e) => {
                 e.stopPropagation();
-                if (onShare) {
-                  onShare(actualContent);
-                } else {
-                  if (navigator.share) {
-                    navigator.share({
-                      title: actualContent.title,
-                      text: actualContent.content || `Check out this ${actualContent.type} by ${actualContent.creator}`,
-                      url: window.location.href
-                    }).catch(() => {
-                      navigator.clipboard.writeText(window.location.href);
-                      showSuccess('Link copied to clipboard!');
-                    });
-                  } else {
-                    navigator.clipboard.writeText(window.location.href);
-                    showSuccess('Link copied to clipboard!');
-                  }
-                }
+                handleShare();
               }}
               title="Share image"
             >

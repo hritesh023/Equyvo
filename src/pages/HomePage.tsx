@@ -11,23 +11,25 @@ import StoryViewer from '@/components/StoryViewer';
 import Moments from '@/components/Moments';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import ForYouFeed from '@/components/ForYouFeed';
 import FollowingFeed from '@/components/FollowingFeed';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
-import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
+import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, isVideoItem, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
+import api from '@/lib/api';
 import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
 import { sendHumanEval, evalVote } from '@/lib/human-eval';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
@@ -75,7 +77,7 @@ const HomePage = () => {
   }, []);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
-  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string } | null>(null);
+  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string } | null>(null);
   useEffect(() => {
     const savedProfile = localStorage.getItem('userProfile');
     if (savedProfile) {
@@ -275,10 +277,12 @@ const HomePage = () => {
       try {
         setIsLoadingMoments(true);
         const items = await fetchMoments();
-        // Strict routing: only moment-type items in the Moments rail.
+        // Strict routing: moments are the short-VIDEO surface. Photos that
+        // legacy clients filed as moments (or items with no playable video)
+        // never enter this rail — they belong to the photo feed.
         setMoments(
           (items as any[]).filter((m: any) =>
-            allowedForSurface(String((m as any).type || 'moment'), 'moments'),
+            allowedForSurface(String((m as any).type || 'moment'), 'moments') && isVideoItem(m as any),
           ),
         );
       } catch {
@@ -302,29 +306,67 @@ const HomePage = () => {
     };
   }, []);
 
-  // Check for active live stream and listen for live notifications
+  // Live discovery: poll the server (every account sees who is live), not just
+  // this tab's localStorage. Same-tab events still update instantly.
   useEffect(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setInterval> | null = null;
+
+    const applyLive = (list: any[]) => {
+      if (cancelled) return;
+      let meId = '';
+      try { meId = String(getStoredUser()?.id || '').toLowerCase(); } catch { /* ignore */ }
+      const others = (list || []).filter((x) => x && x.id && String(x.id).toLowerCase() !== meId);
+      const top = others[0];
+      if (top) {
+        setLiveNotification({
+          title: String(top.title || top.liveTitle || 'Live now'),
+          user: String(top.name || top.username || 'Someone'),
+          thumbnail: String(top.thumbnail || top.avatar || ''),
+          contentId: String(top.contentId || top.liveContentId || ''),
+          userId: String(top.id || ''),
+        });
+      } else if (!localStorage.getItem('equyvo_active_live')) {
+        setLiveNotification(null);
+      }
+    };
+
+    const load = async () => {
+      try {
+        const { data, error } = await api.liveNow();
+        if (!error && data) applyLive(Array.isArray(data.live) ? data.live : []);
+      } catch { /* offline: keep the current banner */ }
+    };
+
     const activeLive = localStorage.getItem('equyvo_active_live');
     if (activeLive) {
       try {
         const liveData = JSON.parse(activeLive);
-        setLiveNotification({ title: liveData.title, user: liveData.user, thumbnail: liveData.thumbnail || '' });
-      } catch {}
+        setLiveNotification({ title: liveData.title, user: liveData.user, thumbnail: liveData.thumbnail || '', contentId: liveData.id, userId: liveData.userId });
+      } catch { /* ignore */ }
     }
 
     const handleUserWentLive = (e: Event) => {
-      const detail = (e as CustomEvent).detail;
-      setLiveNotification({ title: detail.title, user: detail.user, thumbnail: detail.thumbnail || '' });
+      const detail = (e as CustomEvent).detail || {};
+      setLiveNotification({ title: detail.title, user: detail.user, thumbnail: detail.thumbnail || '', contentId: detail.id, userId: detail.userId });
+      void load();
     };
     const handleUserWentOffline = () => {
       setLiveNotification(null);
+      void load();
     };
 
+    void load();
+    timer = setInterval(load, 20000);
     window.addEventListener('userWentLive', handleUserWentLive);
     window.addEventListener('userWentOffline', handleUserWentOffline);
+    window.addEventListener('followChanged', load as EventListener);
     return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
       window.removeEventListener('userWentLive', handleUserWentLive);
       window.removeEventListener('userWentOffline', handleUserWentOffline);
+      window.removeEventListener('followChanged', load as EventListener);
     };
   }, []);
 
@@ -435,6 +477,10 @@ const HomePage = () => {
     });
     // Human eval: every like/unlike labels the feed ranking algorithm.
     evalLike(momentId, liking, `moment:${momentId}`);
+    // Persist the like so the owner is notified and other devices agree.
+    // Best-effort: a local/demo item that the server does not know simply
+    // keeps its optimistic UI state instead of surfacing an error.
+    void api.like(momentId, liking ? 'like' : 'unlike').catch(() => undefined);
   };
 
   const handleCloseFullscreen = () => {
@@ -474,6 +520,15 @@ const HomePage = () => {
         ? { ...post, likes: likedPosts.has(postId) ? post.likes - 1 : post.likes + 1 }
         : post
     ));
+    // Persist the like (owner notification + cross-device count). The server
+    // is authoritative; if it answers, adopt its count so retries/dedupe can
+    // never drift the UI.
+    api.like(postId, liking ? 'like' : 'unlike').then(({ data }) => {
+      if (!data || typeof data.likes !== 'number') return;
+      setEnhancedPosts(prev => prev.map(post =>
+        post.id === postId ? { ...post, likes: data.likes } : post,
+      ));
+    }).catch(() => undefined);
   };
 
   const handleCommentPost = (postId: string, postUser?: string) => {
@@ -527,6 +582,13 @@ const HomePage = () => {
         ? { ...post, reacts: commentedPosts.has(postId) ? post.reacts - 1 : post.reacts + 1 }
         : post
     ));
+    // Persist the reaction (owner notification + cross-device count).
+    api.react(postId, reacting ? 'react' : 'unreact').then(({ data }) => {
+      if (!data || typeof data.reacts !== 'number') return;
+      setEnhancedPosts(prev => prev.map(post =>
+        post.id === postId ? { ...post, reacts: data.reacts } : post,
+      ));
+    }).catch(() => undefined);
   };
 
   const handleSharePost = (post: Post) => {
@@ -544,19 +606,12 @@ const HomePage = () => {
       tags: (post as any)?.tags,
       creator: (post as any)?.user,
     });
-    if (navigator.share) {
-      navigator.share({
-        title: 'Check out this post!',
-        text: 'Amazing content on Equyvo',
-        url: window.location.href
-      }).catch(() => {
-        navigator.clipboard.writeText(window.location.href);
-        showSuccess('🔗 Post link copied to clipboard!');
-      });
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      showSuccess('🔗 Post link copied to clipboard!');
-    }
+    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`;
+    openShareSheet({
+      title: `Post by ${(post as any)?.user || 'creator'} on Equyvo`,
+      text: post?.content || 'Amazing content on Equyvo',
+      url: shareUrl,
+    });
   };
 
   const handleSavePost = (postId: string) => {
@@ -613,8 +668,116 @@ const HomePage = () => {
     setFullscreenType(postType === 'moment' || postType === 'video' ? postType : 'post');
   };
 
+  // Deep link: /app/home?post=<id> (also reached via /posts/:id). Opens the
+  // exact post; when it is older than the loaded feed it is fetched directly
+  // so a shared link never lands on the wrong content or a dead end.
+  const location = useLocation();
+  const deepLinkHandled = useRef('');
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const wanted = params.get('post');
+    const commentId = params.get('comment');
+    if (!wanted) {
+      deepLinkHandled.current = '';
+      return;
+    }
+    if (isLoadingPosts || deepLinkHandled.current === wanted) return;
+    deepLinkHandled.current = wanted;
+    const openComment = (userName: unknown) => {
+      if (!commentId) return;
+      setSelectedPostId(wanted);
+      setSelectedPostUser(String(userName || 'Unknown'));
+      setCommentSectionOpen(true);
+    };
+    const fromFeed = enhancedPosts.find((p) => String(p.id) === wanted);
+    if (fromFeed) {
+      handleFullscreenPost(fromFeed);
+      openComment((fromFeed as any).user);
+      navigate('/app/home', { replace: true });
+      return;
+    }
+    (async () => {
+      const res = await api.getContentItem(wanted);
+      const raw = (res as { data?: any } | null)?.data;
+      if (raw) {
+        // Normalize the stored row to the same display shape the feed uses,
+        // so an older/shared item opens with real media and author identity.
+        const mediaArr = Array.isArray(raw.media) ? raw.media : [];
+        const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+        const videoUrl = firstMedia?.type === 'video' ? firstMedia.url || '' : (raw.videoUrl || raw.video || '');
+        const image = firstMedia && firstMedia.type !== 'video'
+          ? firstMedia.url || firstMedia.thumbnail || ''
+          : (raw.image || raw.image_url || raw.thumbnail || '');
+        const item = {
+          ...raw,
+          user: raw.user?.username || raw.creator || (typeof raw.user === 'string' ? raw.user : '') || raw.user_id || 'Unknown',
+          avatar: raw.user?.avatar_url || raw.avatar || '',
+          content: raw.content || raw.title || raw.description || '',
+          image,
+          thumbnail: firstMedia?.thumbnail || image,
+          media: firstMedia?.url || (typeof raw.media === 'string' ? raw.media : '') || image,
+          videoUrl,
+          mediaType: videoUrl ? 'video' : (image ? 'image' : 'text'),
+          likes: raw.likes_count ?? raw.likes ?? 0,
+          comments: raw.comments_count ?? raw.comments ?? 0,
+          shares: raw.shares_count ?? raw.shares ?? 0,
+          time: raw.createdAt ? new Date(raw.createdAt).toLocaleString() : (raw.time || 'just now'),
+          type: raw.type || raw.contentType || (videoUrl ? 'video' : image ? 'image' : 'post'),
+        };
+        handleFullscreenPost(item);
+        openComment(item.user);
+      } else {
+        showError('This post is unavailable or was deleted.');
+      }
+      navigate('/app/home', { replace: true });
+    })();
+  }, [location.search, isLoadingPosts, enhancedPosts, navigate]);
+
   const handleReportPost = (postId: string) => {
     setReportModalOpen(postId);
+  };
+
+  // Watch a live broadcast discovered through the server banner. The event
+  // previously had no listener anywhere, so "Watch" did nothing. Resolve the
+  // announced content id and open the viewer; when the stream has no playable
+  // media yet (or was deleted) fall back to the Discover live rail instead of
+  // dead-ending.
+  const handleWatchLive = async () => {
+    const live = liveNotification;
+    if (!live) return;
+    const contentId = String(live.contentId || '').trim();
+    if (contentId) {
+      try {
+        const res = await api.getContentItem(contentId);
+        const raw = (res as { data?: any } | null)?.data;
+        if (raw) {
+          const mediaArr = Array.isArray(raw.media) ? raw.media : [];
+          const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+          const videoUrl = firstMedia?.type === 'video' ? firstMedia.url || '' : (raw.videoUrl || raw.video || '');
+          const image = firstMedia && firstMedia.type !== 'video'
+            ? firstMedia.url || firstMedia.thumbnail || ''
+            : (raw.image || raw.image_url || raw.thumbnail || '');
+          if (videoUrl || image) {
+            setFullscreenContent({
+              ...raw,
+              user: raw.user?.username || (typeof raw.user === 'string' ? raw.user : '') || live.user,
+              avatar: raw.user?.avatar_url || raw.avatar || '',
+              content: raw.content || raw.title || live.title || 'Live now',
+              image,
+              thumbnail: firstMedia?.thumbnail || image,
+              media: firstMedia?.url || (typeof raw.media === 'string' ? raw.media : '') || image,
+              videoUrl,
+              mediaType: videoUrl ? 'video' : 'image',
+              type: 'live',
+              isLive: true,
+            } as FullscreenContent);
+            setFullscreenType('live');
+            return;
+          }
+        }
+      } catch { /* fall through to Discover */ }
+    }
+    navigate('/app/discover?tab=live');
   };
 
   const handleDeletePost = (postId: string) => {
@@ -677,9 +840,7 @@ const HomePage = () => {
               size="sm"
               variant="secondary"
               className="flex-shrink-0"
-              onClick={() => {
-                window.dispatchEvent(new CustomEvent('viewLiveStream', { detail: liveNotification }));
-              }}
+              onClick={() => { void handleWatchLive(); }}
             >
               <Play className="h-3 w-3 mr-1" /> Watch
             </Button>

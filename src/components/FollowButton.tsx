@@ -63,6 +63,15 @@ const FollowButton: React.FC<FollowButtonProps> = ({
   const handleFollow = async () => {
     if (!key) return;
     setIsLoading(true);
+    // Broadcast the graph change so every mounted surface (profiles, feeds,
+    // suggestions) re-reads follower/following counts without a page reload.
+    const emitFollowChanged = (following: boolean, pending = false) => {
+      try {
+        window.dispatchEvent(new CustomEvent('followChanged', {
+          detail: { userId: serverTarget || key, target: serverTarget || key, following, pending },
+        }));
+      } catch { /* ignore */ }
+    };
     try {
       const me = getStoredUser();
       const target = serverTarget || key;
@@ -82,6 +91,7 @@ const FollowButton: React.FC<FollowButtonProps> = ({
         setIsFollowingState(false);
         setIsPending(false);
         showSuccess(`Unfollowed ${userName}`);
+        emitFollowChanged(false);
       } else {
         const { data, error } = await api.follow(target);
         if (error) {
@@ -92,11 +102,13 @@ const FollowButton: React.FC<FollowButtonProps> = ({
           // Private account: request sent, awaits owner approval.
           setIsPending(true);
           showSuccess(`Follow request sent to ${userName}. You'll see their posts once they approve.`);
+          emitFollowChanged(false, true);
         } else {
           setFollowing(key, true);
           if (serverTarget && serverTarget !== key) setFollowing(serverTarget, true);
           setIsFollowingState(true);
           showSuccess(`Now following ${userName}! Their uploads will appear in Following.`);
+          emitFollowChanged(true);
         }
       }
     } catch {

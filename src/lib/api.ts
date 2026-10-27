@@ -105,6 +105,32 @@ function warnLocalApiOnce(path: string, status: number | string): void {
   }
 }
 
+// Every request is bounded. Without a timeout a dropped mobile connection
+// leaves the UI spinning forever; uploads still get a generous budget.
+const REQUEST_TIMEOUT_MS = { read: 12_000, write: 30_000, upload: 180_000 } as const;
+
+function isFormBody(body: BodyInit | null | undefined): boolean {
+  try {
+    return typeof FormData !== 'undefined' && body instanceof FormData;
+  } catch {
+    return false;
+  }
+}
+
+function requestTimeout(options: RequestInit | undefined, isGet: boolean): number {
+  if (isFormBody(options?.body)) return REQUEST_TIMEOUT_MS.upload;
+  return isGet ? REQUEST_TIMEOUT_MS.read : REQUEST_TIMEOUT_MS.write;
+}
+
+/** True when this device still holds a token that the server just rejected. */
+function hasStoredToken(): boolean {
+  try {
+    return !!localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return false;
+  }
+}
+
 async function request<T = any>(
   path: string,
   options?: RequestInit
@@ -116,23 +142,30 @@ async function request<T = any>(
   const attempts = isGet ? 2 : 1;
   let lastError: string | null = null;
   for (let attempt = 0; attempt < attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), requestTimeout(options, isGet));
     try {
       // Add cache-busting timestamp to GET requests
       const separator = path.includes('?') ? '&' : '?';
       const url = isGet ? `${API_BASE}${path}${separator}_t=${Date.now()}` : `${API_BASE}${path}`;
       const headers: Record<string, string> = authHeaders();
-      const isFormData = options?.body instanceof FormData;
-      if (!isFormData) {
+      if (!isFormBody(options?.body)) {
         headers['Content-Type'] = 'application/json';
       }
       const res = await fetch(url, {
         headers,
         ...options,
+        signal: controller.signal,
       });
       // Error pages (vite proxy 500s, gateway HTML) are not JSON — never let
       // body parsing itself become the reported error.
       const json = await res.json().catch(() => ({} as Record<string, unknown>));
       if (!res.ok) {
+        // A token the server rejects means the local session is dead. Tell the
+        // app once so it can re-authenticate instead of looping on 401s.
+        if (res.status === 401 && hasStoredToken()) {
+          try { window.dispatchEvent(new CustomEvent('equyvo:session-expired')); } catch { /* ignore */ }
+        }
         // Transient gateway/server hiccup on a read: one silent retry.
         if (isGet && attempt === 0 && (res.status === 502 || res.status === 503 || res.status === 504)) {
           lastError = `Request failed with status ${res.status}`;
@@ -148,12 +181,18 @@ async function request<T = any>(
       }
       return json as T;
     } catch (err: any) {
+      const aborted = err?.name === 'AbortError';
+      const message = aborted
+        ? 'Request timed out. Check your connection and try again.'
+        : (err?.message || 'Network error');
       if (isGet && attempt === 0) {
-        lastError = err?.message || 'Network error';
+        lastError = message;
         continue;
       }
       warnLocalApiOnce(path, 'network');
-      return { error: err?.message || lastError || 'Network error' };
+      return { error: message || lastError || 'Network error' };
+    } finally {
+      clearTimeout(timer);
     }
   }
   warnLocalApiOnce(path, lastError || 'network');
@@ -320,6 +359,11 @@ export const api = {
   // Posts
   getPosts: (limit = 50) =>
     request<{ data: any[]; error: null }>(`/posts?limit=${limit}`),
+
+  // One content item (post / thought / story / moment) by id — used by
+  // shared links so /posts/:id never dead-ends on a 404 or the feed top.
+  getContentItem: (id: string) =>
+    request<{ data: any; error: null }>(`/content/${encodeURIComponent(id)}`),
 
   createPost: (data: any) =>
     request<{ data: any; error: null }>('/posts', {
@@ -505,9 +549,37 @@ export const api = {
   chatThreads: () =>
     request<{ data: { threads: any[] }; error: null }>('/chat/threads'),
 
-  // Who is live now (best-effort; empty when nobody is live).
+  // Who is live now (all discoverable live accounts; followed first).
   liveNow: () =>
     request<{ data: { live: any[] }; error: null }>('/live/now'),
+
+  // Broadcast presence — makes "Go live" visible to every account, not just
+  // this device's localStorage.
+  liveStart: (data: { contentId?: string; title?: string; thumbnail?: string } = {}) =>
+    request<{ data: { live: boolean; liveAt: string | null }; error: null }>('/live/start', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  liveStop: () =>
+    request<{ data: { live: boolean; liveAt: string | null }; error: null }>('/live/stop', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
+  // Real (server-persisted) likes/reactions. `action: toggle` makes the server
+  // decide from its own ledger, so double taps cannot double-count.
+  like: (itemId: string, action: 'like' | 'unlike' | 'toggle' = 'toggle') =>
+    request<{ data: { id: string; likes: number; reacts: number; hasLiked: boolean }; error: null }>('/likes', {
+      method: 'POST',
+      body: JSON.stringify({ itemId, action }),
+    }),
+
+  react: (itemId: string, action: 'react' | 'unreact' | 'toggle' = 'toggle') =>
+    request<{ data: { id: string; likes: number; reacts: number; hasLiked: boolean }; error: null }>('/react', {
+      method: 'POST',
+      body: JSON.stringify({ itemId, action }),
+    }),
 
   // Follow graph (server-side source of truth; works across devices).
   follow: (target: string) =>

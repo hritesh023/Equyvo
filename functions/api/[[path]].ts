@@ -97,6 +97,10 @@ const KEYS = {
   // caller + stored profile — never invented on the client.
   COMMENTS: (contentId) => 'comments:' + contentId,
   COMMENT: (id) => 'comment:' + id,
+  // Per-author ledger of comment ids. Lets account deletion purge comments the
+  // account left on OTHER people's posts (not reachable from its own lists)
+  // and keep those posts' comment counters honest.
+  USER_COMMENTS: (authorId) => 'usercomments:' + authorId,
   CSETTINGS: (contentId) => 'csettings:' + contentId,
 };
 
@@ -471,6 +475,13 @@ async function buildProfileIndex(env: any): Promise<any[]> {
         following: Number(profile.following || 0) || 0,
         verified: profile.verified === true,
         isSeed: profile.isSeed === true,
+        // Live presence is part of the public summary so /api/live/now can
+        // discover every live account (not just the viewer's following graph)
+        // from the same bounded index — no full-KV scan per request.
+        isLive: profile.isLive === true,
+        liveAt: typeof profile.liveAt === 'string' ? profile.liveAt : '',
+        liveTitle: typeof profile.liveTitle === 'string' ? profile.liveTitle.slice(0, 160) : '',
+        liveContentId: typeof profile.liveContentId === 'string' ? profile.liveContentId.slice(0, 64) : '',
         email: profileEmailOf(profile),
         createdAt: String(profile.createdAt || ''),
       });
@@ -882,15 +893,29 @@ async function isFollowingPair(env, viewerId, authorId) {
   } catch { return false; }
 }
 
-// Light viewer resolution for PUBLIC reads: verified JWT when present,
-// otherwise the plain X-User-Id header. Never rejects — anonymous viewers
-// simply see public content only.
+// Light viewer resolution for PUBLIC reads: verified session/JWT when present,
+// otherwise anonymous. Never rejects — anonymous viewers simply see public
+// content only. An unverified X-User-Id header (or ?viewerId / ?userId query)
+// must never grant viewer identity: anyone could claim a private account and
+// read its followers-only posts. Header fallback stays available only when
+// verified writes are explicitly relaxed for a deliberate rollback.
 async function getViewer(request, env) {
   try {
     const auth = request.headers.get('Authorization') || '';
     if (auth.startsWith('Bearer ')) {
       const token = auth.slice(7).trim();
       if (token) {
+        // Equyvo's own sessions are opaque KV tokens.
+        try {
+          const raw = await env.EQUYVO_KV.get('auth:session:' + token);
+          if (raw) {
+            const u = JSON.parse(raw);
+            if (!(await sessionRevoked(env, u))) {
+              const who = await canonicalIdentity(env, u.id, u.email);
+              if (who.id) return { id: who.id, email: who.email };
+            }
+          }
+        } catch { /* fall through to JWT verification */ }
         const user = (await verifyCognitoToken(token, env)) || (await verifyCentralJWT(token, env));
         if (user) {
           const who = await canonicalIdentity(env, user.id, user.email);
@@ -899,10 +924,11 @@ async function getViewer(request, env) {
       }
     }
   } catch { /* fall through to header */ }
+  if (requiresVerifiedWrites(env)) return null;
   try {
     const h = request.headers.get('X-User-Id') || request.headers.get('X-User-Email') || '';
     const q = new URL(request.url).searchParams;
-    const id = String(h || q.get('viewerId') || q.get('viewer') || q.get('userId') || q.get('user_id') || '').slice(0, 200);
+    const id = String(h || q.get('viewerId') || q.get('viewer') || '').slice(0, 200);
     if (id) {
       // Legacy clients occasionally send the account email or a duplicate
       // profile id. Map it to the canonical account so privacy/ownership
@@ -1700,6 +1726,34 @@ async function writeCommentList(env, contentId, ids) {
   } catch { /* best-effort */ }
 }
 
+// Per-author comment ledger (newest first, capped). Best-effort: a failed
+// ledger write never blocks posting a comment; read-time tombstone filtering
+// still hides comments from deleted accounts.
+async function addCommentToAuthorLedger(env, authorId, commentId) {
+  const key = String(authorId || '').trim().toLowerCase();
+  if (!key || !commentId) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.USER_COMMENTS(key));
+    const arr = raw ? JSON.parse(raw) : [];
+    const list = Array.isArray(arr) ? arr.map(String).filter((x) => x !== commentId) : [];
+    list.unshift(String(commentId));
+    await env.EQUYVO_KV.put(KEYS.USER_COMMENTS(key), JSON.stringify(list.slice(0, 1000)));
+  } catch { /* best-effort */ }
+}
+
+async function removeCommentsFromAuthorLedger(env, authorId, removedIds) {
+  const key = String(authorId || '').trim().toLowerCase();
+  const gone = new Set((removedIds || []).map(String));
+  if (!key || !gone.size) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.USER_COMMENTS(key));
+    if (!raw) return;
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return;
+    await env.EQUYVO_KV.put(KEYS.USER_COMMENTS(key), JSON.stringify(arr.filter((x) => !gone.has(String(x)))));
+  } catch { /* best-effort */ }
+}
+
 // Keep the parent content's comment counter in sync (all type variants).
 async function syncContentCommentCount(env, found, count) {
   if (!found) return;
@@ -1838,6 +1892,31 @@ function transformItem(item) {
   if (item.createdAt) {
     item.time = computeRelativeTime(item.createdAt);
   }
+  // ── Content-type truth (server-enforced) ────────────────────────────────
+  // Every surface relies on `type` to choose its renderer. Legacy clients wrote
+  // photos into the moments collection and videos into photo posts; without
+  // normalization those items appear in the wrong place (a photo in the
+  // short-video feed, a video in the photo grid). Enforce the truth here once:
+  //   • moment WITHOUT playable video → photo
+  //   • legacy type "image"          → photo
+  //   • video/image types follow the actual media (videoUrl/mediaType wins)
+  const rawType = String(item.type || item.contentType || '').toLowerCase();
+  const hasVideo = itemHasPlayableVideo(item);
+  if (rawType === 'moment' && !hasVideo) {
+    item.type = 'photo';
+    item.contentType = 'photo';
+    item.mediaType = 'image';
+    if (!item.image) item.image = item.thumbnail || item.media || '';
+  } else if (rawType === 'image') {
+    item.type = 'photo';
+    item.contentType = item.contentType && String(item.contentType).toLowerCase() !== 'image'
+      ? item.contentType
+      : 'photo';
+  } else if (hasVideo && ['photo', 'image'].includes(rawType) && !item.image && !item.thumbnail) {
+    // A video-only item mislabeled as a photo is a video post, not a still.
+    item.type = 'video';
+    item.contentType = 'video';
+  }
   return item;
 }
 
@@ -1863,6 +1942,36 @@ async function cleanOrphans(env, listKey, getKey) {
     return fixed;
   }
   return ids;
+}
+
+// Content-type truth: a "moment" is the short-video surface. Any item stored
+// as a moment without playable video (legacy/photo uploads) is NOT a moment —
+// callers bucket it back into the photo feed instead of the video rail.
+function itemHasPlayableVideo(item) {
+  if (!item || typeof item !== 'object') return false;
+  if (String(item.mediaType || '').toLowerCase() === 'video') {
+    return Boolean(item.videoUrl || item.video || item.media);
+  }
+  const video = String(item.videoUrl || item.video || item.playbackUrl || '').trim();
+  if (video && !/\.(jpe?g|png|gif|webp|avif|bmp|svg)(\?|$)/i.test(video)) return true;
+  const media = item.media;
+  if (Array.isArray(media)) {
+    return media.some((m) => m && String(m.type || '').toLowerCase() === 'video' && m.url);
+  }
+  if (media && typeof media === 'object' && String(media.type || '').toLowerCase() === 'video' && media.url) return true;
+  return false;
+}
+
+// Reset the bucket of an item stored as a moment but carrying only a photo.
+function asPhotoItem(item) {
+  return {
+    ...item,
+    type: 'photo',
+    contentType: 'photo',
+    videoUrl: '',
+    mediaType: 'image',
+    image: item.image || item.thumbnail || item.media || '',
+  };
 }
 
 // Filter out seed/bot/test content when real users exist.
@@ -2164,8 +2273,23 @@ async function verifyCentralJWT(token, env) {
 //    REQUIRE_VERIFIED_WRITES !== 'true'. Production sets it to 'true',
 //    so spoofed headers cannot write as someone else.
 // Returns null when no identity can be established.
-function requiresVerifiedWrites(env) {
-  return String(env.REQUIRE_VERIFIED_WRITES || '').toLowerCase() === 'true';
+async function requiresVerifiedWrites(env) {
+  // Secure by default: account identity must come from a real session token,
+  // never from a client-supplied X-User-Id (which anyone can forge). Set
+  // REQUIRE_VERIFIED_WRITES="false" only for a deliberate temporary rollback.
+  const flag = String(env.REQUIRE_VERIFIED_WRITES ?? '').trim().toLowerCase();
+  return flag !== 'false' && flag !== '0';
+}
+
+/** A deleted account's leftover sessions must stop working immediately. */
+async function sessionRevoked(env, sessionUser) {
+  const email = String(sessionUser?.email || '').trim().toLowerCase();
+  if (!email) return false;
+  try {
+    return !!(await env.EQUYVO_KV.get('auth:blocked:' + email));
+  } catch {
+    return false;
+  }
 }
 async function getActor(request, env, body) {
   const auth = request.headers.get('Authorization') || '';
@@ -2176,8 +2300,11 @@ async function getActor(request, env, body) {
         const raw = await env.EQUYVO_KV.get('auth:session:' + token);
         if (raw) {
           const u = JSON.parse(raw);
-          const who = await canonicalIdentity(env, u.id, u.email);
-          return { id: who.id, email: who.email, username: u.username || u.name || '', verified: true };
+          if (!(await sessionRevoked(env, u))) {
+            const who = await canonicalIdentity(env, u.id, u.email);
+            return { id: who.id, email: who.email, username: u.username || u.name || '', verified: true };
+          }
+          try { await env.EQUYVO_KV.delete('auth:session:' + token); } catch { /* ignore */ }
         }
       } catch { /* fall through */ }
     }
@@ -2859,6 +2986,19 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     item.created_at = now;
     item.updated_at = now;
   }
+  // Moments are short-video only. If a client sends an image-only "moment"
+  // (legacy composer or a spoofed request), store it as a photo post instead
+  // of letting it pollute the video feed.
+  if (kind === 'moments' && !itemHasPlayableVideo(item)) {
+    kind = 'posts';
+    listKey = KEYS.POSTS;
+    itemKey = KEYS.POST;
+    item.type = 'photo';
+    item.contentType = 'photo';
+    item.mediaType = 'image';
+    if (!item.image) item.image = item.thumbnail || item.media || '';
+    item.videoUrl = '';
+  }
 
   await kv.put(itemKey(id), JSON.stringify(item));
   const listJson = await kv.get(listKey);
@@ -3042,6 +3182,11 @@ export const onRequest = async (context) => {
       const isPrivate = body.isPrivate === true || body.accountType === 'private';
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
       if (!password || password.length < 6) return json({ error: 'Password must be at least 6 characters.' }, 400, cors);
+      // Abuse guard: signup spam creates real KV rows and profiles.
+      const signupIp = request.headers.get('cf-connecting-ip') || 'unknown';
+      if (!(await rateLimit(kv, 'auth_signup', 'ip:' + signupIp, 5)).ok) {
+        return json({ error: 'Too many sign-up attempts. Please wait a minute and try again.' }, 429, cors);
+      }
       // Deleted/banned emails stay unavailable (tombstone wins over signup).
       if (await kv.get('auth:blocked:' + email)) {
         return json({ error: 'This email is no longer available.' }, 403, cors);
@@ -3064,6 +3209,16 @@ export const onRequest = async (context) => {
       const email = String(body.email || '').trim().toLowerCase().slice(0, 254);
       const password = String(body.password || '');
       if (!email || !password) return json({ error: 'Email and password are required.' }, 400, cors);
+      // Brute-force guard: per-IP and per-email windows. A failed password no
+      // longer allows unlimited guesses against an account.
+      const loginIp = request.headers.get('cf-connecting-ip') || 'unknown';
+      const [ipRl, emailRl] = await Promise.all([
+        rateLimit(kv, 'auth_login_ip', 'ip:' + loginIp, 30),
+        rateLimit(kv, 'auth_login_email', 'e:' + email, 10),
+      ]);
+      if (!ipRl.ok || !emailRl.ok) {
+        return json({ error: 'Too many sign-in attempts. Please wait a minute and try again.' }, 429, cors);
+      }
       // Deleted/banned accounts stay dead: without this tombstone, the
       // auto-provision fallback below would resurrect them on login.
       if (await kv.get('auth:blocked:' + email)) {
@@ -3108,7 +3263,23 @@ export const onRequest = async (context) => {
       if (!raw) return json({ error: 'Not authenticated.' }, 401, cors);
       let u;
       try { u = JSON.parse(raw); } catch { return json({ error: 'Not authenticated.' }, 401, cors); }
-      return json({ success: true, user: u }, 200, cors);
+      if (await sessionRevoked(env, u)) {
+        try { await kv.delete('auth:session:' + token); } catch { /* ignore */ }
+        return json({ error: 'Not authenticated.' }, 401, cors);
+      }
+      // Sliding session: a user who launches the app at least once a week never
+      // gets logged out mid-use. Renew at most once a day to avoid KV writes on
+      // every screen that asks who the viewer is.
+      try {
+        const now = Date.now();
+        const last = Number(u.renewedAt || 0) || 0;
+        if (now - last > 24 * 60 * 60 * 1000) {
+          const next = { ...u, renewedAt: now };
+          await kv.put('auth:session:' + token, JSON.stringify(next), { expirationTtl: 60 * 60 * 24 * 7 });
+          u = next;
+        }
+      } catch { /* best-effort */ }
+      return json({ success: true, user: u, token }, 200, cors);
     }
 
     if (path === '/api/auth/logout' && method === 'POST') {
@@ -3374,6 +3545,23 @@ export const onRequest = async (context) => {
       return await createItem(context, 'posts', KEYS.POSTS, KEYS.POST, cors);
     }
 
+    // ONE CONTENT ITEM BY ID ───────────────────────────────────────────────
+    // Shared links (/posts/:id, /profile/posts/:id) redirect to
+    // /app/home?post=<id>; the feed fetches any post that is not on the
+    // current page here. Same visibility rules as the feeds: private,
+    // followers-only, removed and seed content are never exposed.
+    if (path.startsWith('/api/content/') && method === 'GET') {
+      const contentId = decodeURIComponent(path.slice('/api/content/'.length)).split('?')[0].slice(0, 64);
+      if (!contentId) return json({ error: 'Content id is required.' }, 400, cors);
+      const found = await findContentById(env, contentId);
+      if (!found) return json({ error: 'This content is unavailable or was deleted.' }, 404, cors);
+      const viewer = await getViewer(request, env);
+      const item = transformItem({ ...found.item, id: found.item.id || found.id });
+      const [visible] = await filterVisibleItems(env, viewer, await filterSeed(env, [item]));
+      if (!visible) return json({ error: 'This content is unavailable or was deleted.' }, 404, cors);
+      return json({ data: visible, error: null }, 200, cors);
+    }
+
     // THOUGHTS (visibility-enforced; see POSTS).
     if (path === '/api/thoughts' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '20', 10), 1, 100);
@@ -3532,7 +3720,11 @@ export const onRequest = async (context) => {
         return m ? transformItem(JSON.parse(m)) : null;
       }))).filter(Boolean);
       const visible = await filterVisibleItems(env, viewer, await filterSeed(env, moments));
-      return json({ data: visible.slice(0, limit), error: null }, 200, cors);
+      // Moments is the short-VIDEO surface. Photo-only items that were stored
+      // here by legacy clients are never shown as moments (they remain visible
+      // in the photo feed / profile via asPhotoItem bucketing).
+      const videoOnly = visible.filter((m) => itemHasPlayableVideo(m));
+      return json({ data: videoOnly.slice(0, limit), error: null }, 200, cors);
     }
 
     if (path === '/api/moments' && method === 'POST') {
@@ -3656,14 +3848,48 @@ export const onRequest = async (context) => {
       if (!resolved || !resolved.profile) return json({ data: null, error: 'Profile not found' }, 404, cors);
       const userId = String(resolved.id || resolved.profile.id || '');
       const parsed = { ...resolved.profile, id: userId };
+      // Follower/following counters are DERIVED from the authoritative graph
+      // lists, not trusted from the stored profile row. KV is eventually
+      // consistent across colos and a follow can land its list write before
+      // the counter write is visible, which previously showed "following 0"
+      // right after following someone. Reading the lists here makes the number
+      // correct on every device immediately (and repairs legacy drift).
+      try {
+        const [followersRaw, followingRaw] = await Promise.all([
+          readIdList(env, KEYS.FOLLOWERS(userId)),
+          readIdList(env, KEYS.FOLLOWING(userId)),
+        ]);
+        const countUnique = (list: string[]) => {
+          const seen = new Set<string>();
+          for (const value of list) {
+            const key = String(value || '').trim().toLowerCase();
+            if (key) seen.add(key);
+          }
+          return seen.size;
+        };
+        parsed.followers = countUnique(followersRaw);
+        parsed.following = countUnique(followingRaw);
+      } catch { /* keep stored counters as a fallback */ }
       // Email/password material is owner-only and never part of a public row.
       delete parsed.password;
       delete parsed.salt;
       const viewer = await getViewer(request, env);
       const isOwner = !!(viewer && String(viewer.id) === userId);
+      parsed.isOwner = isOwner;
       if (!isOwner) {
         delete parsed.email;
         delete parsed._userEmail;
+        // Private viewer-only collections (watch history, saved items, local
+        // post/reaction caches) are NEVER exposed on another person's profile.
+        delete parsed.posts;
+        delete parsed.watchHistory;
+        delete parsed.history;
+        delete parsed.saved;
+        delete parsed.savedPosts;
+        delete parsed.savedStories;
+        delete parsed.savedContent;
+        delete parsed.allSavedContent;
+        delete parsed.userReactedPosts;
         // Internal account bookkeeping and payment references stay private.
         delete parsed.nameChangesUsed;
         delete parsed.nameChangeQuota;
@@ -3752,6 +3978,18 @@ export const onRequest = async (context) => {
       delete clean.role;
       delete clean.plan;
       delete clean.planId;
+      delete clean.isOwner;
+      // Never persist client-side feed/history/saved arrays inside the profile
+      // KV record (content has its own buckets; history & saved are owner-only).
+      delete clean.posts;
+      delete clean.watchHistory;
+      delete clean.history;
+      delete clean.saved;
+      delete clean.savedPosts;
+      delete clean.savedStories;
+      delete clean.savedContent;
+      delete clean.allSavedContent;
+      delete clean.userReactedPosts;
       // Account type: public/private toggle (signup page + settings).
       // Accepts isPrivate boolean and/or accountType string; stored as
       // canonical isPrivate + accountType. Never trusts the client for
@@ -4001,10 +4239,14 @@ export const onRequest = async (context) => {
         Promise.all(mIds.map(async (id) => { const m = await kv.get(KEYS.MOMENT(id)); return m ? transformItem(JSON.parse(m)) : null; })).then((a) => a.filter(Boolean)).catch(() => []),
       ]);
       const viewerForFeed = await getViewer(request, env);
+      const momentPhotoFallback = moments
+        .filter((m) => !itemHasPlayableVideo(m))
+        .map((m) => ({ ...asPhotoItem(m), kind: 'post' }));
       const norm = await filterVisibleItems(env, viewerForFeed, [
         ...posts.map((p) => ({ kind: 'post', ...p })),
+        ...momentPhotoFallback,
         ...thoughts.map((t) => ({ ...t, kind: 'thought', id: t.id, content: t.content, user: t.user || t.user_id, ownerId: itemOwnerId(t) || t.creatorId, visibility: t.visibility, createdAt: t.createdAt || t.created_at, likes: t.likes ?? t.likes_count, comments: t.comments ?? t.comments_count, tags: t.tags || [], category: 'Thoughts' })),
-        ...moments.map((m) => ({ kind: 'moment', ...m })),
+        ...moments.filter((m) => itemHasPlayableVideo(m)).map((m) => ({ kind: 'moment', ...m })),
       ]);
       const scored = norm.map((it) => ({
         it,
@@ -4047,6 +4289,119 @@ export const onRequest = async (context) => {
         }, 2500).catch(() => null);
       } catch { /* ignore */ }
       return json({ data: { ok: true, interests: Object.keys(interests).length } }, 200, cors);
+    }
+
+    // LIKES / REACTIONS — the real engagement write path.
+    // Every like is persisted on the item (counter + likedBy ledger) and the
+    // content OWNER gets a notification. Previously likes only changed local
+    // React state, so the owner never heard about them and every device showed
+    // a different count.
+    if ((path === '/api/likes' || path === '/api/react') && method === 'POST') {
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body || {});
+      const itemId = String(clean.itemId || clean.item_id || clean.contentId || clean.postId || clean.id || '').slice(0, 64);
+      if (!itemId) return json({ error: 'itemId required' }, 400, cors);
+      const rl = await rateLimit(kv, 'likes', actor.id, 120);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const found = await findContentById(env, itemId);
+      if (!found) return json({ error: 'Content not found' }, 404, cors);
+      const viewer = { id: actor.id, email: actor.email };
+      if (!(await canViewerSeeItem(env, viewer, transformItem(found.item)))) {
+        return json({ error: 'Content not found' }, 404, cors);
+      }
+      const isReact = path === '/api/react' || String(clean.kind || '').toLowerCase() === 'react';
+      const counterKey = isReact ? 'reacts' : 'likes';
+      const ledgerKey = isReact ? 'reactedBy' : 'likedBy';
+      const action = String(clean.action || 'toggle').toLowerCase();
+      const item = { ...found.item };
+      const existing = Array.isArray(item[ledgerKey]) ? item[ledgerKey].map((x: unknown) => String(x).toLowerCase()) : [];
+      const actorRefs = new Set([String(actor.id).toLowerCase()]);
+      if (actor.email) actorRefs.add(String(actor.email).toLowerCase());
+      if (actor.username) actorRefs.add(String(actor.username).replace(/^@/, '').toLowerCase());
+      const had = existing.some((x: string) => actorRefs.has(x));
+      const wantLiked = action === 'unlike' || action === 'unreact' ? false : action === 'like' || action === 'react' ? true : !had;
+      let nextLedger = existing.filter((x: string) => !actorRefs.has(x));
+      if (wantLiked) nextLedger = [String(actor.id).toLowerCase(), ...nextLedger];
+      nextLedger = [...new Set(nextLedger)].slice(0, 5000);
+      const storedCount = Number(item[counterKey] ?? item[counterKey + '_count'] ?? 0) || 0;
+      const nextCount = Math.max(0, wantLiked
+        ? (had ? storedCount : storedCount + 1)
+        : (had ? storedCount - 1 : storedCount));
+      item[ledgerKey] = nextLedger;
+      item[counterKey] = nextCount;
+      if (counterKey === 'likes' && 'likes_count' in item) item.likes_count = nextCount;
+      if (counterKey === 'reacts' && 'reacts_count' in item) item.reacts_count = nextCount;
+      try {
+        await kv.put(found.getKey(itemId), JSON.stringify(item));
+      } catch {
+        return json({ error: 'Could not save your like. Please try again.' }, 500, cors);
+      }
+      // Popularity / interest signals stay best-effort.
+      try {
+        void aiBumpPop(env, itemId, wantLiked ? 3 : -1);
+        void aiRecordEngagement(env, actor.id, {
+          category: String(item.category || ''),
+          tags: Array.isArray(item.tags) ? item.tags.slice(0, 10) : [],
+          creator: String(item.user || item.creator || ''),
+          action: wantLiked ? 'like' : 'unlike',
+        });
+      } catch { /* never block */ }
+      // Notify the owner exactly once per actor+item even if they toggle.
+      if (wantLiked && !had) {
+        try {
+          const ownerId = await canonicalOwnerId(env, itemOwnerId(item));
+          if (ownerId && ownerId.toLowerCase() !== String(actor.id).toLowerCase()) {
+            let already = false;
+            const noteKey = 'like:notified:' + actor.id.toLowerCase() + ':' + itemId;
+            try { already = !!(await kv.get(noteKey)); } catch { already = false; }
+            if (!already) {
+              const me = (await getStoredProfile(env, actor.id)) || actor;
+              const name = publicDisplayName(me.username, me.name, actor.username, actor.email?.split('@')[0], 'Someone');
+              const snippet = String(item.content || item.title || item.description || '').trim().slice(0, 80);
+              const what = isReact ? 'reacted to' : 'liked';
+              await pushUserNotification(env, ownerId, {
+                kind: isReact ? 'reaction' : 'like',
+                title: name + ' ' + what + ' your post',
+                body: snippet || 'Tap to see who liked your content.',
+                actorId: actor.id,
+                actorName: name,
+                contentId: itemId,
+                link: '/app/home?post=' + encodeURIComponent(itemId),
+              });
+              try { await kv.put(noteKey, '1', { expirationTtl: 60 * 60 * 24 }); } catch { /* best-effort */ }
+            }
+          }
+        } catch { /* notifications never block the like */ }
+      }
+      return json({ data: { id: itemId, likes: nextCount, reacts: Number(item.reacts || 0) || 0, hasLiked: wantLiked }, error: null }, 200, cors);
+    }
+
+    // GET /api/likes?itemId= — authoritative like state for the viewer.
+    if ((path === '/api/likes' || path === '/api/react') && method === 'GET') {
+      const itemId = String(url.searchParams.get('itemId') || url.searchParams.get('contentId') || '').slice(0, 64);
+      if (!itemId) return json({ error: 'itemId required' }, 400, cors);
+      const isReact = path === '/api/react';
+      const found = await findContentById(env, itemId);
+      if (!found) return json({ data: null, error: 'Content not found' }, 404, cors);
+      const viewer = await getViewer(request, env);
+      const item = found.item;
+      const ledger = Array.isArray(item[isReact ? 'reactedBy' : 'likedBy'])
+        ? item[isReact ? 'reactedBy' : 'likedBy'].map((x: unknown) => String(x).toLowerCase())
+        : [];
+      const refs = viewer ? new Set([String(viewer.id).toLowerCase()]) : new Set<string>();
+      if (viewer?.email) refs.add(String(viewer.email).toLowerCase());
+      return json({
+        data: {
+          id: itemId,
+          likes: Number(item.likes ?? item.likes_count ?? 0) || 0,
+          reacts: Number(item.reacts ?? item.reacts_count ?? 0) || 0,
+          hasLiked: [...refs].some((x) => ledger.includes(x)),
+        },
+        error: null,
+      }, 200, cors);
     }
 
     // SUGGEST — AI search suggestions via brain proxy with local fallback.
@@ -4596,28 +4951,50 @@ export const onRequest = async (context) => {
       // deleted item ids so their index rows are purged explicitly too.
       const deletedIds = new Set();
 
-      const filterList = async (listKey, getKey, delKey) => {
-        const listJson = await kv.get(listKey);
-        if (!listJson) return 0;
-        const ids = JSON.parse(listJson);
+      // Content-index snapshot: it records authorId for every item, so account
+      // deletion also catches content whose collection list is momentarily
+      // stale (KV eventual consistency let an immediately-created post survive
+      // deletion and stay publicly readable). Never trust one list alone.
+      let contentIndex: any[] = [];
+      try {
+        const idxJson = await kv.get(KEYS.CONTENT_INDEX);
+        const parsed = idxJson ? JSON.parse(idxJson) : [];
+        contentIndex = Array.isArray(parsed) ? parsed : [];
+      } catch { contentIndex = []; }
+
+      const filterList = async (listKey, getKey, delKey, indexType) => {
+        let ids: string[] = [];
+        try {
+          const listJson = await kv.get(listKey);
+          const parsed = listJson ? JSON.parse(listJson) : [];
+          ids = Array.isArray(parsed) ? parsed.map(String) : [];
+        } catch { ids = []; }
+        const listed = new Set(ids);
+        const extraIds = contentIndex
+          .filter((i) => i && String(i.type || '') === indexType &&
+            (refs.has(String(i.authorId || '').toLowerCase()) ||
+             refs.has(String(i.creator || '').toLowerCase())))
+          .map((i) => String(i.id || ''))
+          .filter((id) => id && !listed.has(id));
         const remaining = [];
         let deleted = 0;
-        for (const id of ids) {
-          const item = await kv.get(getKey(id));
-          if (item) {
-            const parsed = JSON.parse(item);
-            if (itemBelongsToAccount(parsed, refs)) {
-              await purgeStoredMedia(env, parsed);
-              try {
-                const { bytes } = await resolveStoredMedia(env, parsed);
-                if (bytes > 0) await subtractUsage(env, userId, bytes);
-              } catch { /* ignore */ }
-              await kv.delete(delKey(id));
-              deletedIds.add(id);
-              deleted++;
-            } else {
-              remaining.push(id);
-            }
+        for (const id of [...listed, ...extraIds]) {
+          let item = null;
+          try { item = await kv.get(getKey(id)); } catch { item = null; }
+          if (!item) continue;
+          let parsed = null;
+          try { parsed = JSON.parse(item); } catch { parsed = null; }
+          if (parsed && itemBelongsToAccount(parsed, refs)) {
+            await purgeStoredMedia(env, parsed);
+            try {
+              const { bytes } = await resolveStoredMedia(env, parsed);
+              if (bytes > 0) await subtractUsage(env, userId, bytes);
+            } catch { /* ignore */ }
+            await kv.delete(delKey(id));
+            deletedIds.add(id);
+            deleted++;
+          } else if (listed.has(id)) {
+            remaining.push(id);
           }
         }
         await kv.put(listKey, JSON.stringify(remaining));
@@ -4631,28 +5008,115 @@ export const onRequest = async (context) => {
       ));
 
       // Delete all user content
-      deletedPosts = await filterList(KEYS.POSTS, KEYS.POST, KEYS.POST);
-      deletedThoughts = await filterList(KEYS.THOUGHTS, KEYS.THOUGHT, KEYS.THOUGHT);
-      deletedStories = await filterList(KEYS.STORIES, KEYS.STORY, KEYS.STORY);
-      deletedMoments = await filterList(KEYS.MOMENTS, KEYS.MOMENT, KEYS.MOMENT);
+      deletedPosts = await filterList(KEYS.POSTS, KEYS.POST, KEYS.POST, 'post');
+      deletedThoughts = await filterList(KEYS.THOUGHTS, KEYS.THOUGHT, KEYS.THOUGHT, 'thought');
+      deletedStories = await filterList(KEYS.STORIES, KEYS.STORY, KEYS.STORY, 'story');
+      deletedMoments = await filterList(KEYS.MOMENTS, KEYS.MOMENT, KEYS.MOMENT, 'moment');
 
       // Remove from content index (by deleted item id AND creator match).
-      const idxJson = await kv.get(KEYS.CONTENT_INDEX);
-      if (idxJson) {
-        const idx = JSON.parse(idxJson);
-        await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(
-          idx.filter((i) => i && !deletedIds.has(i.id) && !refs.has(String(i.creator || '').toLowerCase())
-            && !accountIds.some((pid) => i.id === `profile-${pid}`)
-            && i.id !== `profile-${userId}`)
-        ));
-      }
+      await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(
+        contentIndex.filter((i) => i && !deletedIds.has(String(i.id)) && !refs.has(String(i.creator || '').toLowerCase())
+          && !accountIds.some((pid) => i.id === `profile-${pid}`)
+          && i.id !== `profile-${userId}`)
+      ));
       // Drop interest graph + popularity crumbs for deleted items.
       try {
         await kv.delete(KEYS.INTERESTS(userId));
         await Promise.all([...deletedIds].slice(0, 100).map((id) => kv.delete(KEYS.POP(id)).catch(() => {})));
       } catch { /* best-effort */ }
 
-      return json({ data: { success: true, deletedPosts, deletedThoughts, deletedStories, deletedMoments }, error: null }, 200, cors);
+      // Comments this account left on OTHER accounts' posts are not reachable
+      // from its own content lists. The per-author ledger makes them findable,
+      // so they are physically purged (not merely tombstoned at read time) and
+      // the host posts' counters are recomputed.
+      let deletedComments = 0;
+      try {
+        const authorRefs = [...new Set([...accountIds, userId].map((x) => String(x || '').toLowerCase()).filter(Boolean))];
+        const touchedContent = new Map<string, Set<string>>();
+        for (const ref of authorRefs) {
+          const ledgerKey = KEYS.USER_COMMENTS(ref);
+          let cids: string[] = [];
+          try {
+            const rawLedger = await kv.get(ledgerKey);
+            const parsed = rawLedger ? JSON.parse(rawLedger) : [];
+            cids = Array.isArray(parsed) ? parsed.map(String) : [];
+          } catch { cids = []; }
+          for (const cid of cids.slice(0, 500)) {
+            let c: any = null;
+            try {
+              const craw = await kv.get(KEYS.COMMENT(cid));
+              c = craw ? JSON.parse(craw) : null;
+            } catch { c = null; }
+            if (!c) continue;
+            const parentId = c.parentId ? String(c.parentId) : '';
+            try { await kv.delete(KEYS.COMMENT(cid)); } catch { /* ignore */ }
+            deletedComments++;
+            const contentKey = String(c.contentId || '');
+            if (contentKey) {
+              if (!touchedContent.has(contentKey)) touchedContent.set(contentKey, new Set());
+              touchedContent.get(contentKey)!.add(String(cid));
+            }
+            if (parentId) {
+              try {
+                const rraw = await kv.get(KEYS.COMMENT(parentId));
+                if (rraw) {
+                  const root = JSON.parse(rraw);
+                  root.repliesCount = Math.max(0, Number(root.repliesCount || 1) - 1);
+                  await kv.put(KEYS.COMMENT(parentId), JSON.stringify(root));
+                }
+              } catch { /* ignore */ }
+            }
+          }
+          try { await kv.delete(ledgerKey); } catch { /* ignore */ }
+        }
+        for (const [contentKey, removed] of touchedContent) {
+          const remaining = (await readCommentList(env, contentKey)).filter((x) => !removed.has(String(x)));
+          await writeCommentList(env, contentKey, remaining);
+          const refound = await findContentById(env, contentKey);
+          if (refound) await syncContentCommentCount(env, refound, remaining.length);
+        }
+      } catch { /* best-effort */ }
+
+      // Account-level cleanup: credentials, live sessions, privacy graph,
+      // notifications, quota/creator records. Without this the "deleted"
+      // account could still log in, its old session token stayed valid, and
+      // notifications/usage lingered forever.
+      const emails = new Set<string>();
+      const addEmail = (value: unknown) => {
+        const email = String(value || '').trim().toLowerCase();
+        if (email) emails.add(email);
+      };
+      addEmail(actor.email);
+      addEmail(accountProfile.email);
+      addEmail(profileEmailOf(accountProfile));
+      try {
+        for (const email of emails) {
+          await kv.put('auth:blocked:' + email, JSON.stringify({ at: Date.now(), reason: 'deleted' }));
+          await kv.delete('auth:user:' + email);
+        }
+        // Identity-level marker: comments on OTHER people's posts are not
+        // reachable from this account's content lists, so reads check this
+        // marker and never render a deleted account's comments.
+        for (const accountId of new Set([...accountIds, userId].filter(Boolean))) {
+          await kv.put('auth:blockedid:' + String(accountId).toLowerCase(), JSON.stringify({ at: Date.now(), reason: 'deleted' }));
+        }
+      } catch { /* best-effort */ }
+      try {
+        await Promise.all([
+          kv.delete(KEYS.NOTIF(userId)),
+          kv.delete(KEYS.FOLLOWING(userId)),
+          kv.delete(KEYS.FOLLOWERS(userId)),
+          kv.delete(KEYS.FOLLOW_REQ(userId)),
+          kv.delete(KEYS.USAGE(userId)),
+          kv.delete(KEYS.PLAN_CACHE(userId)),
+          kv.delete(KEYS.CREATOR(userId)),
+          kv.delete(KEYS.BIZ(userId)),
+          kv.delete(KEYS.INTERESTS(userId)),
+        ]);
+      } catch { /* best-effort */ }
+      await invalidateProfileIndex(env);
+
+      return json({ data: { success: true, deletedPosts, deletedThoughts, deletedStories, deletedMoments, deletedComments }, error: null }, 200, cors);
     }
 
     // MEDIA UPLOAD — R2 primary warehouse (zero egress), Cloudinary selective.
@@ -5089,11 +5553,15 @@ export const onRequest = async (context) => {
       const mine = (arr) => arr.filter(matchOwner);
       const seeded = await filterSeed(env, [...mine(posts), ...mine(thoughts), ...mine(stories), ...mine(moments)]);
       const visible = await filterVisibleItems(env, viewer, seeded);
+      const isMoment = (x) => String(x.type || '').toLowerCase() === 'moment';
+      // Photos mis-filed as moments by legacy clients are returned in the
+      // photo feed bucket (never the short-video surface).
+      const photoMoments = visible.filter((x) => isMoment(x) && !itemHasPlayableVideo(x)).map(asPhotoItem);
       return json({ data: {
-        posts: visible.filter((x) => !['thought', 'story', 'text-story', 'moment'].includes(String(x.type || '').toLowerCase())),
+        posts: [...visible.filter((x) => !['thought', 'story', 'text-story', 'moment'].includes(String(x.type || '').toLowerCase())), ...photoMoments],
         thoughts: visible.filter((x) => String(x.type || '').toLowerCase() === 'thought'),
         stories: visible.filter((x) => ['story', 'text-story'].includes(String(x.type || '').toLowerCase())),
-        moments: visible.filter((x) => String(x.type || '').toLowerCase() === 'moment'),
+        moments: visible.filter((x) => isMoment(x) && itemHasPlayableVideo(x)),
       }, error: null }, 200, cors);
     }
 
@@ -5846,17 +6314,32 @@ export const onRequest = async (context) => {
     // ── LIVE PRESENCE ──────────────────────────────────────────────────────
     // POST /api/live/start|stop — owner toggles their live flag; followers
     // get a "X is live now" notification (bounded 50, background).
+    // The flag lives on the profile row AND is mirrored into the bounded
+    // profile index, so /api/live/now can show the stream to every account —
+    // not just people who already follow the broadcaster.
+    const LIVE_MAX_MS = 4 * 60 * 60 * 1000;
     if ((path === '/api/live/start' || path === '/api/live/stop') && method === 'POST') {
-      const actor = await getActor(request, env);
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
       const starting = path === '/api/live/start';
+      const clean = sanitizeBody(body || {});
+      const liveTitle = String(clean.title || clean.liveTitle || '').trim().slice(0, 160);
+      const liveContentId = String(clean.contentId || clean.liveContentId || clean.id || '').slice(0, 64);
+      const liveThumbnail = String(clean.thumbnail || clean.liveThumbnail || '').slice(0, 1000);
       try {
         const me = (await getStoredProfile(env, actor.id)) || { id: actor.id };
         me.isLive = starting;
         me.liveAt = starting ? new Date().toISOString() : null;
+        me.liveTitle = starting ? liveTitle : '';
+        me.liveContentId = starting ? liveContentId : '';
+        me.liveThumbnail = starting ? liveThumbnail : '';
         await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(me));
-      } catch { /* ignore */ }
+        // The profile index is cached for a minute; drop it so the new live
+        // state is discoverable on the next request instead of the next TTL.
+        await invalidateProfileIndex(env);
+      } catch { /* best-effort */ }
       if (starting) {
         const fan = (async () => {
           try {
@@ -5867,30 +6350,63 @@ export const onRequest = async (context) => {
               kind: 'live', title: name + ' is live now',
               body: 'Tap to watch ' + name + ' live.',
               actorId: actor.id, actorName: String(name),
+              contentId: liveContentId || undefined,
             }).catch(() => {})));
           } catch { /* ignore */ }
         })();
         if (context && typeof context.waitUntil === 'function') { try { context.waitUntil(fan); } catch {} }
         else { void fan; }
       }
-      return json({ data: { live: starting }, error: null }, 200, cors);
+      return json({ data: { live: starting, liveAt: starting ? new Date().toISOString() : null }, error: null }, 200, cors);
     }
 
-    // GET /api/live/now — who among the caller's following is live (bounded).
+    // GET /api/live/now — EVERY account that is live right now (public
+    // discoverability), plus a `following` flag so the UI can surface followed
+    // creators first. Private accounts are only visible to their followers.
     if (path === '/api/live/now' && method === 'GET') {
       const viewer = await getViewer(request, env);
       if (!viewer) return json({ data: { live: [] }, error: null }, 200, cors);
-      const following = await readIdList(env, KEYS.FOLLOWING(viewer.id));
-      const live = [];
-      for (const pid of following.slice(0, 200)) {
-        try {
-          const p = await getStoredProfile(env, pid);
-          if (p && p.isLive === true) live.push(profileSummary(p, pid));
-        } catch { /* ignore */ }
-        if (live.length >= 20) break;
-      }
-      return json({ data: { live }, error: null }, 200, cors);
+      let followingIds: string[] = [];
+      try {
+        followingIds = await canonicalizeIdList(env, await readIdList(env, KEYS.FOLLOWING(viewer.id)));
+      } catch { followingIds = []; }
+      const followingSet = new Set(followingIds.map((x) => String(x).toLowerCase()));
+      const live: any[] = [];
+      try {
+        const index = await buildProfileIndex(env);
+        const now = Date.now();
+        for (const row of index) {
+          if (!row || row.isLive !== true) continue;
+          const id = String(row.canonicalId || row.id || '');
+          if (!id || id === viewer.id) continue;
+          if (row.isSeed === true) continue;
+          const liveAt = Date.parse(String(row.liveAt || ''));
+          // Auto-expire abandoned streams (app crash / lost network) instead
+          // of showing a dead "live" badge forever.
+          if (!liveAt || now - liveAt > LIVE_MAX_MS) continue;
+          const isFollowing = followingSet.has(id.toLowerCase());
+          // Private broadcasters are discoverable only by their followers.
+          if (row.isPrivate === true && !isFollowing) continue;
+          live.push({
+            ...profileSummary(row, id),
+            isLive: true,
+            liveAt: row.liveAt,
+            title: String(row.liveTitle || 'Live now'),
+            liveTitle: String(row.liveTitle || 'Live now'),
+            thumbnail: String(row.avatar || ''),
+            contentId: String(row.liveContentId || ''),
+            liveContentId: String(row.liveContentId || ''),
+            isFollowing,
+          });
+        }
+      } catch { /* index unavailable: return empty rather than fail */ }
+      live.sort((a, b) =>
+        Number(b.isFollowing) - Number(a.isFollowing) ||
+        String(b.liveAt || '').localeCompare(String(a.liveAt || '')),
+      );
+      return json({ data: { live: live.slice(0, 30) }, error: null }, 200, cors);
     }
+
 
     if (path === '/api/trending/topics' && method === 'GET') {
       const data = await aiFetchJson(aiBrainBase(env) + '/v1/trending', {
@@ -5915,6 +6431,11 @@ export const onRequest = async (context) => {
       const found = await findContentById(env, contentId);
       if (!found) return json({ error: 'Content not found' }, 404, cors);
       const viewer = await getViewer(request, env);
+      // Comments inherit the content's visibility: a private/followers-only
+      // post's discussion must not be readable by id alone.
+      if (!(await canViewerSeeItem(env, viewer, transformItem(found.item)))) {
+        return json({ error: 'Content not found' }, 404, cors);
+      }
       const settings = await getCommentSettings(env, contentId, found.item);
       const ownerId = await canonicalOwnerId(env, itemOwnerId(found.item));
       const viewerProfile = viewer ? await getStoredProfile(env, viewer.id) : null;
@@ -5932,15 +6453,31 @@ export const onRequest = async (context) => {
       // Placeholder/demo avatar hosts are stripped so no comment can ever
       // carry a bot/fake picture; the client renders real initials instead.
       const fresh = [];
+      // Deleted accounts are tombstoned under auth:blockedid:<id>. Their
+      // comments on other people's posts are not reachable from the deleted
+      // account's own content lists, so they would otherwise linger forever
+      // with a stale name/avatar. One cached check per author per request.
+      const blockedAuthors = new Map<string, boolean>();
+      const authorIsBlocked = async (id: unknown): Promise<boolean> => {
+        const key = String(id || '').trim().toLowerCase();
+        if (!key) return false;
+        if (!blockedAuthors.has(key)) {
+          try { blockedAuthors.set(key, !!(await kv.get('auth:blockedid:' + key))); }
+          catch { blockedAuthors.set(key, false); }
+        }
+        return blockedAuthors.get(key) === true;
+      };
       for (const c of rows) {
         if (!c || typeof c !== 'object' || c.contentId !== contentId) continue;
         try {
+          if (await authorIsBlocked(c.authorId)) continue;
           const rawAuthor = String(c.authorId || '').toLowerCase();
           if (!authorIds.has(rawAuthor)) {
             authorIds.set(rawAuthor, c.authorId ? await canonicalAccountId(env, c.authorId) : '');
           }
           const authorId = authorIds.get(rawAuthor);
           if (authorId) c.authorId = authorId;
+          if (await authorIsBlocked(authorId)) continue;
           const p = await getStoredProfile(env, authorId);
           if (p) {
             const nm = cleanCommentName(p.username || p.name, { username: c.authorUsername, email: '' });
@@ -6004,6 +6541,11 @@ export const onRequest = async (context) => {
       if (!text) return json({ error: 'Comment text required' }, 400, cors);
       const found = await findContentById(env, contentId);
       if (!found) return json({ error: 'Content not found' }, 404, cors);
+      // Never let a signed-in caller comment on content they cannot see
+      // (private account / followers-only / removed).
+      if (!(await canViewerSeeItem(env, { id: actor.id, email: actor.email }, transformItem(found.item)))) {
+        return json({ error: 'Content not found' }, 404, cors);
+      }
       const ownerId = await canonicalOwnerId(env, itemOwnerId(found.item));
       const isOwner = await ownsAccount(env, found.item, actor);
       const settings = await getCommentSettings(env, contentId, found.item);
@@ -6054,6 +6596,7 @@ export const onRequest = async (context) => {
         isEdited: false,
       };
       await kv.put(KEYS.COMMENT(comment.id), JSON.stringify(comment));
+      await addCommentToAuthorLedger(env, author.id, comment.id);
       const ids = await readCommentList(env, contentId);
       ids.unshift(comment.id);
       await writeCommentList(env, contentId, ids);
@@ -6142,17 +6685,33 @@ export const onRequest = async (context) => {
         // Delete the comment + its direct replies (single-level threads).
         const ids = await readCommentList(env, comment.contentId);
         const toDelete = [cid];
+        const replyAuthors = new Map<string, string[]>();
         for (const otherId of ids) {
           if (otherId === cid) continue;
           try {
             const oraw = await kv.get(KEYS.COMMENT(otherId));
             const o = oraw ? JSON.parse(oraw) : null;
-            if (o && String(o.parentId || '') === String(cid)) toDelete.push(otherId);
+            if (o && String(o.parentId || '') === String(cid)) {
+              toDelete.push(otherId);
+              const a = String(o.authorId || '').trim();
+              if (a) {
+                if (!replyAuthors.has(a)) replyAuthors.set(a, []);
+                replyAuthors.get(a)!.push(String(otherId));
+              }
+            }
           } catch { /* ignore */ }
         }
         for (const d of toDelete) {
           try { await kv.delete(KEYS.COMMENT(d)); } catch { /* ignore */ }
         }
+        // Keep per-author ledgers in sync so account deletion later does not
+        // chase comments that are already gone.
+        try {
+          await removeCommentsFromAuthorLedger(env, comment.authorId, [cid]);
+          for (const [authorId, list] of replyAuthors) {
+            await removeCommentsFromAuthorLedger(env, authorId, list);
+          }
+        } catch { /* ignore */ }
         const gone = new Set(toDelete);
         await writeCommentList(env, comment.contentId, ids.filter((x) => !gone.has(x)));
         if (comment.parentId) {

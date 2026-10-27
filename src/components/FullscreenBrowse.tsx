@@ -12,6 +12,8 @@ import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { navItems } from '@/components/Navbar';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
+import api from '@/lib/api';
 
 interface FullscreenBrowseProps {
   isOpen: boolean;
@@ -42,6 +44,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
     .sort((a, b) => (Number(b?.views) || 0) - (Number(a?.views) || 0));
 
   const handleLike = (itemId: string) => {
+    const liking = !likedItems.has(itemId);
     setLikedItems(prev => {
       const newSet = new Set(prev);
       if (newSet.has(itemId)) {
@@ -53,22 +56,22 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
       }
       return newSet;
     });
+    // Persist so the creator is notified and the count is shared.
+    if (itemId && !itemId.startsWith('live-')) {
+      void api.like(itemId, liking ? 'like' : 'unlike').catch(() => undefined);
+    }
   };
 
   const handleShare = (content: any) => {
-    if (navigator.share) {
-      navigator.share({
-        title: content.title,
-        text: `Check out this ${content.type} by ${content.creator}!`,
-        url: window.location.href
-      }).catch(() => {
-        navigator.clipboard.writeText(window.location.href);
-        showSuccess('🔗 Link copied to clipboard!');
-      });
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      showSuccess('🔗 Link copied to clipboard!');
-    }
+    const contentId = String(content?.id || content?.videoId || '').trim();
+    const shareUrl = contentId
+      ? `${window.location.origin}/app/home?post=${encodeURIComponent(contentId)}`
+      : window.location.href;
+    openShareSheet({
+      title: content?.title || 'Check this out on Equyvo',
+      text: `Check out this ${content?.type || 'post'} by ${content?.creator || 'creator'}!`,
+      url: shareUrl,
+    });
   };
 
   const handleComment = (content: any) => {

@@ -10,7 +10,7 @@ import {
   LayoutGrid as Grid, ThumbsUp, MessageCircle, Share2, MoreVertical, Hash,
   Filter, SortDesc, Clock, TrendingUp, ChevronDown, List, Monitor, Maximize2
 } from 'lucide-react';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import FullscreenBrowse from '@/components/FullscreenBrowse';
 import CommentSection from '@/components/CommentSection';
@@ -20,12 +20,14 @@ import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
 import { fetchMoments, fetchPosts } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
 import { evalLike } from '@/lib/human-eval';
+import api from '@/lib/api';
 
 /** Image that never shows a broken-image icon: renders a neutral placeholder
  *  when the URL is empty or fails to load (production hardening). */
@@ -151,6 +153,32 @@ const DiscoverPage = () => {
   const handleOpenFullscreen = (content: FullscreenContent, type: ContentType) => {
     setFullscreenContent(content);
     setFullscreenType(type);
+    // A live card only knows the broadcaster's presence. Resolve the actual
+    // stream/publish item so the viewer opens real media instead of a poster.
+    const contentId = String((content as any)?.id || '');
+    if ((content as any)?.isLive && !(content as any)?.videoUrl && contentId && !contentId.startsWith('live-')) {
+      void api.getContentItem(contentId).then(({ data }) => {
+        const raw = data as any;
+        if (!raw) return;
+        const mediaArr = Array.isArray(raw.media) ? raw.media : [];
+        const first = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+        const videoUrl = first?.type === 'video' ? first.url || '' : (raw.videoUrl || raw.video || '');
+        const image = first && first.type !== 'video'
+          ? first.url || first.thumbnail || ''
+          : (raw.image || raw.thumbnail || '');
+        if (!videoUrl && !image) return;
+        setFullscreenContent(prev => (prev && String((prev as any).id) === contentId
+          ? {
+              ...prev,
+              videoUrl: videoUrl || (prev as any).videoUrl,
+              mediaUrl: videoUrl || image || (prev as any).mediaUrl,
+              image: image || (prev as any).image,
+              thumbnail: image || (prev as any).thumbnail,
+              content: raw.content || raw.title || (prev as any).content,
+            } as FullscreenContent
+          : prev));
+      }).catch(() => undefined);
+    }
   };
 
   const baseLikesOf = (contentId: string): number => {
@@ -192,6 +220,16 @@ const DiscoverPage = () => {
       }
       return newSet;
     });
+    // Persist the like (creator notification + cross-device count).
+    api.like(contentId, liking ? 'like' : 'unlike').then(({ data }) => {
+      if (data && typeof data.likes === 'number') {
+        setPostLikes(prevLikes => {
+          const newLikes = new Map(prevLikes);
+          newLikes.set(contentId, data.likes);
+          return newLikes;
+        });
+      }
+    }).catch(() => undefined);
   };
 
   const handleComment = (contentId: string, user?: string) => {
@@ -211,19 +249,14 @@ const DiscoverPage = () => {
       newSet.add(content.id);
       return newSet;
     });
-    if (navigator.share) {
-      navigator.share({
-        title: content.title || 'Discover Content',
-        text: 'Check out this content!',
-        url: window.location.href
-      }).catch(() => {
-        navigator.clipboard.writeText(window.location.href);
-        showSuccess('🔗 Link copied to clipboard!');
-      });
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      showSuccess('🔗 Link copied to clipboard!');
-    }
+    const shareUrl = content?.id
+      ? `${window.location.origin}/app/home?post=${encodeURIComponent(content.id)}`
+      : window.location.href;
+    openShareSheet({
+      title: content?.title || 'Discover on Equyvo',
+      text: content?.description || content?.content || 'Check out this content on Equyvo!',
+      url: shareUrl,
+    });
   };
 
   const handleCloseFullscreen = () => {
@@ -240,9 +273,10 @@ const DiscoverPage = () => {
   };
 
   const handleCopyLink = (postId: string) => {
-    const shareUrl = `${window.location.origin}/discover/${postId}`;
-    navigator.clipboard.writeText(shareUrl);
-    showSuccess('🔗 Link copied to clipboard!');
+    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .catch(() => showError("Couldn't copy the link."));
   };
 
   // Handle reopening fullscreen from minimized state
@@ -321,10 +355,12 @@ const DiscoverPage = () => {
     const load = async () => {
       try {
         setIsLoadingDiscover(true);
-        const [posts, moments] = await Promise.all([
+        const [posts, moments, liveRes] = await Promise.all([
           fetchPosts(undefined, 50).catch(() => []),
           fetchMoments(30).catch(() => []),
+          api.liveNow().catch(() => ({ data: { live: [] } }) as any),
         ]);
+        const liveRows: any[] = Array.isArray((liveRes as any)?.data?.live) ? (liveRes as any).data.live : [];
         const thoughtsRes = await getThoughts(30, 0).catch(() => ({ data: [] as never[] }));
         const thoughts = ((thoughtsRes as { data: any[] }).data || []).map((t: any) => {
           const mediaArr = Array.isArray(t.media) ? t.media : [];
@@ -381,18 +417,22 @@ const DiscoverPage = () => {
           ...(moments as any[]).map((m: any) => {
             const vid = videoUrlOf(m);
             const img = imageUrlOf(m);
+            // Moments are the short-video surface: a moment without playable
+            // video is a photo — bucket it as a photo item so it is never
+            // rendered by the video/moment player.
+            const hasVideo = !!vid;
             return {
               id: m.id,
-              type: 'moment',
-              contentType: vid ? 'video' : 'image',
-              title: String(m.content || 'Moment').slice(0, 80),
+              type: hasVideo ? 'moment' : 'photo',
+              contentType: hasVideo ? 'video' : 'image',
+              title: String(m.content || (hasVideo ? 'Moment' : 'Photo')).slice(0, 80),
               content: m.content || '',
               creator: creatorOf(m),
               creatorId: discoverCreatorId(m),
               image: img,
               thumbnail: img || m.thumbnail || '',
               videoUrl: vid,
-              mediaType: vid ? 'video' : 'image',
+              mediaType: hasVideo ? 'video' : 'image',
               likes: m.likes ?? 0,
               comments: m.comments ?? 0,
               views: m.views ?? 0,
@@ -403,6 +443,34 @@ const DiscoverPage = () => {
               duration: m.duration || '0:30',
             };
           }),
+          // Live presence from the server index: every account that is live
+          // right now (privacy-gated server-side, followed first). This makes
+          // the Live rail show other people's streams, not just this tab.
+          ...liveRows.map((l: any) => ({
+            id: String(l.contentId || l.liveContentId || `live-${l.id || ''}`),
+            type: 'live',
+            contentType: 'live',
+            title: String(l.title || l.liveTitle || 'Live now').slice(0, 80),
+            content: String(l.liveTitle || l.title || 'Live now'),
+            creator: String(l.name || l.username || 'Someone'),
+            creatorId: String(l.id || ''),
+            avatar: String(l.avatar || ''),
+            image: String(l.avatar || l.thumbnail || ''),
+            thumbnail: String(l.thumbnail || l.avatar || ''),
+            videoUrl: '',
+            mediaType: 'video',
+            likes: 0,
+            comments: 0,
+            views: 0,
+            category: 'Live',
+            tags: [],
+            timestamp: l.liveAt || new Date().toISOString(),
+            createdAt: l.liveAt,
+            isLive: true,
+            live: true,
+            liveContentId: String(l.contentId || l.liveContentId || ''),
+            isFollowing: l.isFollowing === true,
+          })),
           ...thoughts.map((t: any) => ({
             ...t,
             contentType: t.videoUrl ? 'video' : t.image || t.thumbnail ? 'image' : 'text',
@@ -422,13 +490,17 @@ const DiscoverPage = () => {
     window.addEventListener('momentCreated', refresh);
     window.addEventListener('thoughtCreated', refresh);
     window.addEventListener('profileUpdated', refresh);
+    window.addEventListener('followChanged', refresh);
+    const liveTimer = setInterval(refresh, 30000);
     return () => {
       cancelled = true;
+      clearInterval(liveTimer);
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('thoughtCreated', refresh);
       window.removeEventListener('profileUpdated', refresh);
+      window.removeEventListener('followChanged', refresh);
     };
   }, []);
 

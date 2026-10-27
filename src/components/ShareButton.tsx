@@ -1,7 +1,8 @@
 import React from 'react';
 import { Button } from "@/components/ui/button";
 import { Share2 } from 'lucide-react';
-import { showSuccess, showError } from '@/utils/toast';
+import { showError } from '@/utils/toast';
+import { openShareSheet } from '@/utils/share';
 import { Post } from '@/types';
 
 interface ShareButtonProps {
@@ -35,51 +36,14 @@ const ShareButton: React.FC<ShareButtonProps> = ({
 
   const handleShare = async () => {
     try {
-      const shareData = {
-        title: `Post by ${post.user}`,
+      openShareSheet({
+        title: `Post by ${post.user || 'creator'} on Equyvo`,
         text: post.content || 'Check out this post!',
-        // There is no /post/:id route — link to the real feed with a query
-        // param so shared links open the app instead of a 404.
-        url: `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`
-      };
-
-      // Check if Web Share API is available
-      if (navigator.share && window.isSecureContext) {
-        await navigator.share(shareData);
-        showSuccess('Post shared successfully!');
-      } else {
-        // Fallback to clipboard
-        const shareText = `${shareData.title}\n\n${shareData.text}\n\n${shareData.url}`;
-        
-        if (navigator.clipboard && window.isSecureContext) {
-          await navigator.clipboard.writeText(shareText);
-          showSuccess('Link copied to clipboard!');
-        } else {
-          // Fallback for older browsers
-          const textArea = document.createElement('textarea');
-          textArea.value = shareText;
-          textArea.style.position = 'fixed';
-          textArea.style.opacity = '0';
-          document.body.appendChild(textArea);
-          textArea.focus();
-          textArea.select();
-          
-          try {
-            document.execCommand('copy');
-            showSuccess('Link copied to clipboard!');
-          } catch (err) {
-            showError('Failed to copy link');
-          } finally {
-            document.body.removeChild(textArea);
-          }
-        }
-      }
-
+        url: `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`,
+      });
       onShare?.();
-    } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        showError('Failed to share post');
-      }
+    } catch {
+      showError('Failed to share post');
     }
   };
 

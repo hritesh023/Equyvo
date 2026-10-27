@@ -20,6 +20,19 @@ function resolveApiBase(): string {
 const API_BASE = resolveApiBase();
 const CENTRAL_BILLING = 'https://api.acronous.com';
 
+// Payment calls are bounded so a hung gateway can never freeze checkout.
+const BILLING_TIMEOUT_MS = 25_000;
+
+async function billingFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), BILLING_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function centralPath(path: string): string | null {
   if (path.startsWith('/create-order')) return '/v1/billing/order';
   if (path.startsWith('/verify-payment')) return '/v1/billing/verify';
@@ -31,7 +44,7 @@ async function centralReq<T>(path: string, init?: RequestInit): Promise<T> {
   const c = centralPath(path);
   if (!c) throw new Error('Request failed (404)');
   const t = (await getAuthToken()) || getToken();
-  const r = await fetch(CENTRAL_BILLING + c, {
+  const r = await billingFetch(CENTRAL_BILLING + c, {
     ...init,
     headers: {
       'Content-Type': 'application/json',
@@ -66,7 +79,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(API_BASE + path, { ...init, headers: await authHeaders() });
+  const r = await billingFetch(API_BASE + path, { ...init, headers: await authHeaders() });
   const ct = r.headers.get('content-type') || '';
   const txt = await r.text();
   let j: unknown = null;

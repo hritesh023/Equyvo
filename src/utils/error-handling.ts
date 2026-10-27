@@ -77,18 +77,60 @@ class ErrorReportingService {
   private errors: ErrorReport[] = [];
   private maxErrors = 100; // Keep last 100 errors
   private reportingEndpoint?: string;
+  // Dedupe map: identical uncaught errors (e.g. one failed image requested by
+  // many components) must not stack banners or fill the report buffer.
+  private recentSignatures = new Map<string, number>();
 
   constructor() {
     // Setup global error handlers
     this.setupGlobalHandlers();
   }
 
+  /**
+   * Errors that are not app failures: aborted fetches, transient network
+   * drops, failed image/video resources, ResizeObserver loop warnings and
+   * cross-origin "Script error." noise. These are logged at debug level at
+   * most and NEVER surface a user-facing banner.
+   */
+  private isIgnorable(message: string, code: string = ''): boolean {
+    const text = String(message || '').trim();
+    if (!text) return true;
+    if (code === 'RESOURCE_ERROR') return true;
+    return (
+      /resizeobserver loop/i.test(text) ||
+      /^script error\.?$/i.test(text) ||
+      /aborterror|the operation was aborted|the user aborted a request/i.test(text) ||
+      /aborted without reason/i.test(text) ||
+      /^(failed to fetch|load failed|networkerror|network error|fetch failed)$/i.test(text) ||
+      /err_(network|internet|connection|name_not_resolved|timed_out)/i.test(text) ||
+      /play\(\) request was interrupted/i.test(text) ||
+      /loading chunk|chunkloaderror|dynamically imported module/i.test(text) ||
+      /the play\(\) request was interrupted by a (call to )?pause\(\)/i.test(text)
+    );
+  }
+
+  private shouldThrottle(signature: string, windowMs = 15000): boolean {
+    const now = Date.now();
+    const last = this.recentSignatures.get(signature) || 0;
+    if (now - last < windowMs) return true;
+    this.recentSignatures.set(signature, now);
+    if (this.recentSignatures.size > 200) {
+      for (const [key, at] of this.recentSignatures) {
+        if (now - at > 60000) this.recentSignatures.delete(key);
+      }
+    }
+    return false;
+  }
+
   private setupGlobalHandlers() {
     // Catch unhandled promise rejections
     window.addEventListener('unhandledrejection', (event) => {
+      const reason: any = event.reason;
+      const message = String(reason?.message || reason || 'Unhandled Promise Rejection');
+      if (this.isIgnorable(message, String(reason?.name || ''))) return;
       this.reportError(
         new AppError(
-          event.reason?.message || 'Unhandled Promise Rejection',
+          message,
           'UNHANDLED_PROMISE',
           'high',
           'Global Promise Handler'
@@ -98,11 +140,20 @@ class ErrorReportingService {
 
     // Catch uncaught errors
     window.addEventListener('error', (event) => {
+      // Resource load failures (img/script/css) fire a plain Event with the
+      // element as target and no message — they are handled locally by the
+      // media placeholders, never by the app error banner.
+      const target = event.target as EventTarget | null;
+      if (target && target !== window && (target as any).nodeType === 1) {
+        return;
+      }
+      const message = String(event.message || '');
+      if (this.isIgnorable(message)) return;
       this.reportError(
         new AppError(
-          event.message,
+          message,
           'UNCAUGHT_ERROR',
-          'critical',
+          'high',
           'Global Error Handler'
         )
       );
@@ -114,6 +165,10 @@ class ErrorReportingService {
   }
 
   reportError(error: Error | AppError, context?: string, component?: string) {
+    const signature = `${(error instanceof AppError ? error.code : 'UNKNOWN')}:${String(error?.message || '').slice(0, 160)}`;
+    // Identical failures repeating within 15s (retries, multiple images,
+    // several list rows) are one event, not a banner storm.
+    if (this.shouldThrottle(signature)) return;
     const errorReport: ErrorReport = {
       error: error instanceof AppError ? error : new AppError(error.message, 'UNKNOWN'),
       context,

@@ -5,6 +5,57 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import "./globals.css";
 
 /*
+ * GLOBAL MEDIA FAILSAFE.
+ *
+ * Deleted content, expired CDN URLs and blocked hosts previously left the
+ * browser's broken-image icon inline in feeds, profiles and comments. One
+ * capture-phase listener swaps any failed <img> for a neutral Equyvo
+ * placeholder (once per element), so a stale URL degrades quietly instead of
+ * looking like a broken app. Local components with their own fallbacks still
+ * win because their React onError runs after this and can replace the src.
+ */
+const MEDIA_PLACEHOLDER =
+  "data:image/svg+xml;charset=utf-8," +
+  encodeURIComponent(
+    `<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160">
+      <defs>
+        <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stop-color="#2a2a33"/>
+          <stop offset="1" stop-color="#17171d"/>
+        </linearGradient>
+      </defs>
+      <rect width="160" height="160" fill="url(#g)"/>
+      <g fill="none" stroke="#6b7280" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="40" y="48" width="80" height="64" rx="10"/>
+        <circle cx="62" cy="70" r="8"/>
+        <path d="M44 104l24-24 18 18 12-12 18 18"/>
+      </g>
+    </svg>`,
+  );
+
+try {
+  document.addEventListener(
+    "error",
+    (event) => {
+      const el = event.target as HTMLElement | null;
+      if (!el || el.tagName !== "IMG") return;
+      const img = el as HTMLImageElement;
+      if (img.dataset.equyvoFallback === "1") return;
+      // An explicit zero-length src is intentional (avatar placeholder) —
+      // leave it to the component, don't paint a placeholder over initials.
+      const src = img.getAttribute("src") || "";
+      if (!src.trim()) return;
+      img.dataset.equyvoFallback = "1";
+      img.removeAttribute("srcset");
+      img.src = MEDIA_PLACEHOLDER;
+      img.classList.add("equyvo-media-fallback");
+    },
+    true,
+  );
+} catch { /* non-browser environment */ }
+
+
+/*
  * LOCAL CONTENT-CACHE SCHEMA RESET.
  *
  * The production content store was purged (no seeded/dev/tester content may
@@ -108,6 +159,12 @@ try {
   window.addEventListener("unhandledrejection", (e) => {
     const reason = (e as PromiseRejectionEvent).reason as { message?: string } | undefined;
     if (CHUNK_FAIL.test(String(reason?.message || reason || ""))) recoverFromStaleChunk();
+  });
+  // Vite's explicit preload signal (fires when a hashed chunk was removed by
+  // a deploy while this tab was open).
+  window.addEventListener("vite:preloadError", (e) => {
+    try { (e as Event).preventDefault(); } catch { /* ignore */ }
+    recoverFromStaleChunk();
   });
   // Fresh build booted fine (no failure within 15s): re-arm for next deploy.
   setTimeout(() => {

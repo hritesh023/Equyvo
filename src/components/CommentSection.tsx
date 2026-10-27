@@ -16,6 +16,7 @@ import api from '@/lib/api';
 import { myCommentIdentity, refreshMyCommentIdentity, type CommentIdentity } from '@/lib/comment-identity';
 import { resolveAvatar, avatarInitials } from '@/utils/avatar';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 
 interface CommentReply {
   id: string;
@@ -253,23 +254,17 @@ const CommentSection: React.FC<CommentSectionProps> = ({
 
   const handleShare = async (c: CommentItem | CommentReply) => {
     const text = String(c.text || '').slice(0, 200);
+    const fallbackUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}&comment=${encodeURIComponent(c.id)}`;
+    openShareSheet({
+      title: `Comment by ${c.authorName || 'someone'} on Equyvo`,
+      text,
+      url: fallbackUrl,
+    });
     try {
       const res = await api.shareComment(c.id);
-      const url = (res as { data?: { shareUrl?: string } }).data?.shareUrl || `${window.location.origin}/app/home?comment=${encodeURIComponent(c.id)}`;
       if (!res.error) patchComment(c.id, { shares: (c.shares || 0) + 1 });
-      if (navigator.share) {
-        await navigator.share({ title: `Comment by ${c.authorName || 'someone'}`, text, url }).catch(() => {});
-      } else {
-        await navigator.clipboard.writeText(`${text} ${url}`);
-        showSuccess('Comment link copied.');
-      }
     } catch {
-      try {
-        await navigator.clipboard.writeText(text);
-        showSuccess('Comment copied.');
-      } catch {
-        showError('Could not share this comment.');
-      }
+      /* best-effort share counter */
     }
   };
 

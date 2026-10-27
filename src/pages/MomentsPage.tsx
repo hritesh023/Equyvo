@@ -12,9 +12,10 @@ import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
-import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, videoUrlOf, withoutHidden } from '@/lib/feed-store';
+import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, isVideoItem, videoUrlOf, withoutHidden } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
 import { getStoredUser } from '@/lib/auth';
 import { showError } from '@/utils/toast';
@@ -84,7 +85,7 @@ const MomentsPage = () => {
         setIsLoadingMoments(true);
         const items = await fetchMoments(30).catch(() => []);
         const mapped = (items as any[])
-          .filter((m: any) => allowedForSurface(String((m as any).type || 'moment'), 'moments'))
+          .filter((m: any) => allowedForSurface(String((m as any).type || 'moment'), 'moments') && isVideoItem(m))
           .map((m: any) => {
             const vid = videoUrlOf(m);
             const img = imageUrlOf(m) || m.thumbnail || '';
@@ -497,6 +498,17 @@ const MomentsPage = () => {
       }
       return newLiked;
     });
+    // Persist so the creator is notified and the count survives reloads.
+    const liking = !likedMoments.has(momentId);
+    api.like(momentId, liking ? 'like' : 'unlike').then(({ data }) => {
+      if (data && typeof data.likes === 'number') {
+        const n = data.likes;
+        setMomentLikes(current => ({
+          ...current,
+          [momentId]: n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n.toString(),
+        }));
+      }
+    }).catch(() => undefined);
   };
 
   const handleComment = (momentId: string, user: string) => {
@@ -508,17 +520,12 @@ const MomentsPage = () => {
   const handleShare = (momentId: string) => {
     const moment = moments.find(m => m.id === momentId);
     if (moment) {
-      const shareUrl = `${window.location.origin}/moments/${momentId}`;
-      if (navigator.share) {
-        navigator.share({
-          title: `Moment by ${moment.user}`,
-          text: moment.description,
-          url: shareUrl
-        });
-      } else {
-        navigator.clipboard.writeText(shareUrl);
-        showSuccess('🔗 Link copied to clipboard!');
-      }
+      const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(momentId)}`;
+      openShareSheet({
+        title: `Moment by ${moment.user} on Equyvo`,
+        text: moment.description || '',
+        url: shareUrl,
+      });
     }
   };
 
@@ -572,9 +579,10 @@ const MomentsPage = () => {
   };
 
   const handleCopyLink = (momentId: string) => {
-    const shareUrl = `${window.location.origin}/moments/${momentId}`;
-    navigator.clipboard.writeText(shareUrl);
-    showSuccess('🔗 Link copied to clipboard!');
+    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(momentId)}`;
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .catch(() => showError("Couldn't copy the link."));
   };
 
   if (isLoadingMoments) {

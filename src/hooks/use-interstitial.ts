@@ -31,6 +31,12 @@ export function useInterstitialTrigger({ pathname, plan }: InterstitialOpts): vo
   const watchingSince = useRef<number | null>(null);
   // Moments video rail visit start (route-based).
   const momentsSince = useRef<number | null>(null);
+  // Page-transition interstitials: only after real app engagement, never on
+  // auth/checkout/composer/video routes, and the service still applies the
+  // free-plan + warm-up + hard-interval gates.
+  const mountedAt = useRef(Date.now());
+  const navCount = useRef(0);
+  const prevPath = useRef(pathname);
 
   // Preload once per mount — the service is a singleton, safe to re-call.
   useEffect(() => {
@@ -77,5 +83,30 @@ export function useInterstitialTrigger({ pathname, plan }: InterstitialOpts): vo
     if (!isNativePlatform()) return;
     if (!shouldShowInterstitial(plan)) return;
     void maybeShowInterstitial(plan);
+  }, [pathname, plan]);
+
+  // Page-transition interstitial (all non-calm pages): free plan only, after
+  // real engagement (4 navigations + 90s warm-up), with the service's hard
+  // interval preventing back-to-back shows. This is what makes ads reach
+  // every page without ever interrupting playback or checkout.
+  useEffect(() => {
+    if (prevPath.current === pathname) return;
+    prevPath.current = pathname;
+    navCount.current += 1;
+    if (navCount.current < 4) return;
+    if (Date.now() - mountedAt.current < INTERSTITIAL_POLICY.WARMUP_SEC * 1000) return;
+    const calm =
+      pathname === '/auth' ||
+      pathname.startsWith('/auth/') ||
+      pathname === '/pricing' ||
+      pathname === '/app/pricing' ||
+      pathname === '/create' ||
+      pathname === '/app/create' ||
+      pathname === '/moments' ||
+      pathname === '/app/moments';
+    if (calm) return;
+    if (!isNativePlatform()) return;
+    if (!shouldShowInterstitial(plan)) return;
+    void prepareInterstitial().then(() => maybeShowInterstitial(plan));
   }, [pathname, plan]);
 }

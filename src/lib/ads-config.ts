@@ -226,30 +226,19 @@ export function shouldShowInterstitial(plan?: string | null): boolean {
   return !isAdFreePlan(plan) && !isAdLightPlan(plan);
 }
 
-const BANNER_ROUTES = new Set([
-  '/',
-  '/app/home',
-  '/discover',
-  '/app/discover',
-  '/thoughts',
-  '/app/thoughts',
-  '/search',
-  '/app/search',
-  '/settings',
-  '/app/settings',
-]);
-
 /**
- * Feed-only allowlist. Video surfaces (Moments, fullscreen viewer, stories),
- * the composer, pricing and auth NEVER get the banner — no pre-roll-style
- * or mid-scroll video interruption, ever.
+ * Route policy for the adaptive banner. The product rule is "every page
+ * except authentication": the banner is a passive, in-flow native view that
+ * never covers content, and fullscreen video/story takeovers still suppress
+ * it while open (see use-feed-banner). Auth is intentionally ad-free so the
+ * sign-in/sign-up flow is never interrupted.
  */
 export function isBannerRoute(pathname: string): boolean {
-  if (BANNER_ROUTES.has(pathname)) return true;
-  if (pathname === '/profile' || pathname.startsWith('/profile/')) return true;
-  if (pathname === '/app/profile' || pathname.startsWith('/app/profile/'))
-    return true;
-  return false;
+  if (!pathname) return true;
+  if (pathname === '/auth' || pathname.startsWith('/auth/')) return false;
+  // Preview/diagnostic routes should not monetise.
+  if (pathname.startsWith('/__')) return false;
+  return true;
 }
 
 /** Personalized-ads consent flag (GDPR/ePrivacy friendly, default on). */

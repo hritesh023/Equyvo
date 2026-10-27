@@ -21,6 +21,7 @@ import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
 import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -388,19 +389,15 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   };
 
   const handleShare = () => {
-    if (navigator.share) {
-      navigator.share({
-        title: `Story by ${currentStory.user}`,
-        text: 'Check out this amazing story!',
-        url: window.location.href
-      }).catch(() => {
-        navigator.clipboard.writeText(window.location.href);
-        showSuccess('Story link copied to clipboard!');
-      });
-    } else {
-      navigator.clipboard.writeText(window.location.href);
-      showSuccess('Story link copied to clipboard!');
-    }
+    const storyId = String(currentStory?.id || '').trim();
+    const shareUrl = storyId
+      ? `${window.location.origin}/app/home?post=${encodeURIComponent(storyId)}`
+      : window.location.href;
+    openShareSheet({
+      title: `Story by ${currentStory.user} on Equyvo`,
+      text: currentStory.content || 'Check out this story on Equyvo!',
+      url: shareUrl,
+    });
   };
 
   const handleShareAction = () => {

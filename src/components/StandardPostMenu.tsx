@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal, Copy, Share2, Flag, EyeOff, Edit } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
+import { openShareSheet } from '@/utils/share';
 import DeleteButton from '@/components/ui/DeleteButton';
 import ReportModal from '@/components/ReportModal';
 import { deleteContent } from '@/utils/delete';
@@ -96,24 +97,11 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
     setIsSharing(true);
     try {
       const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
-
-      if (navigator.share) {
-        try {
-          await navigator.share({
-            title: 'Check out this post!',
-            text: 'Amazing content on Equyvo',
-            url: shareUrl,
-          });
-        } catch (err: unknown) {
-          // User dismissed the sheet — not an error.
-          if (err instanceof Error && err.name === 'AbortError') return;
-          await navigator.clipboard.writeText(shareUrl);
-          showSuccess('Link copied to clipboard!');
-        }
-      } else {
-        await navigator.clipboard.writeText(shareUrl);
-        showSuccess('Link copied to clipboard!');
-      }
+      openShareSheet({
+        title: 'Check out this post on Equyvo',
+        text: 'Amazing content on Equyvo',
+        url: shareUrl,
+      });
       onShare?.(postId);
     } catch {
       showError("Couldn't share this right now. Please try again.");

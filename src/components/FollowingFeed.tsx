@@ -255,10 +255,11 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                         showSuccess('Post hidden from feed');
                       }}
                       onCopyLink={(postId) => {
-                        // Handle copy link functionality
-                        const shareUrl = `${window.location.origin}/posts/${postId}`;
-                        navigator.clipboard.writeText(shareUrl);
-                        showSuccess('🔗 Link copied to clipboard!');
+                        // Shared links open the exact post in the feed.
+                        const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
+                        navigator.clipboard.writeText(shareUrl)
+                          .then(() => showSuccess('🔗 Link copied to clipboard!'))
+                          .catch(() => showError("Couldn't copy the link."));
                       }}
                     />
                   </div>

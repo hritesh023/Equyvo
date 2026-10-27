@@ -16,10 +16,11 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import FollowButton from '@/components/FollowButton';
 import { cn } from '@/lib/utils';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { openShareSheet } from '@/utils/share';
 
 type SearchItem = ContentIndexItem;
 
@@ -56,8 +57,14 @@ const SearchPage: React.FC = () => {
   };
 
   const handleShare = (item: SearchItem) => {
-    showSuccess(`Sharing "${item.title}"...`);
-    // Share functionality will be handled by ShareButton component
+    const shareUrl = item?.id
+      ? `${window.location.origin}/app/home?post=${encodeURIComponent(item.id)}`
+      : window.location.href;
+    openShareSheet({
+      title: item?.title || 'Check this out on Equyvo',
+      text: item?.description || '',
+      url: shareUrl,
+    });
   };
 
   const getFullscreenType = (resultType: string): 'post' | 'live' | 'video' | 'moment' | 'image' => {
@@ -119,9 +126,10 @@ const SearchPage: React.FC = () => {
   };
 
   const handleCopyLink = (postId: string) => {
-    const shareUrl = `${window.location.origin}/search/${postId}`;
-    navigator.clipboard.writeText(shareUrl);
-    showSuccess('🔗 Link copied to clipboard!');
+    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
+    navigator.clipboard.writeText(shareUrl)
+      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .catch(() => showError("Couldn't copy the link."));
   };
 
   // Unified people + content search (real data only, honest empty, race-safe)

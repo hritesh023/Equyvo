@@ -11,6 +11,26 @@ function resolveApiBase(): string {
 }
 const API_BASE = resolveApiBase();
 
+// Auth calls must never hang the splash screen or a sign-in button. 15s is
+// long enough for a weak mobile network, short enough to show a real error.
+const AUTH_TIMEOUT_MS = 15_000;
+
+async function authFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_TIMEOUT_MS);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function authNetworkError(err: unknown, fallback: string): string {
+  return (err as { name?: string } | null)?.name === 'AbortError'
+    ? 'The server took too long to respond. Check your connection and try again.'
+    : fallback;
+}
+
 export interface User {
   id: string;
   email: string;
@@ -204,8 +224,11 @@ function decodeCentralJWT(token: string): User | null {
 export async function checkAuthStatus(): Promise<AuthState> {
   const t = getToken();
   if (t) {
+    // Central SSO token (?token= from the Acronous dashboard) is a JWT we can
+    // validate locally for UI purposes even when /auth/me doesn't know it.
+    const centralUser = decodeCentralJWT(t);
     try {
-      const r = await fetch(API_BASE + '/auth/me', { headers: { Authorization: 'Bearer ' + t } });
+      const r = await authFetch(API_BASE + '/auth/me', { headers: { Authorization: 'Bearer ' + t } });
       const j = await r.json().catch(() => null);
       if (r.ok && j && j.user) {
         const u = j.user;
@@ -218,19 +241,20 @@ export async function checkAuthStatus(): Promise<AuthState> {
         storeUser(user);
         return { user, isLoading: false, isAuthenticated: true };
       }
-    } catch { /* fall through */ }
-  }
-
-  // Central SSO token (?token= from acronous.com dashboard)
-  try {
-    if (t) {
-      const centralUser = decodeCentralJWT(t);
-      if (centralUser) {
-        storeUser(centralUser);
-        return { user: centralUser, isLoading: false, isAuthenticated: true };
+      // A definitive rejection means this device's session is dead. Drop the
+      // token and the cached identity so the app asks for a fresh sign-in
+      // instead of pretending to be signed in while every write 401s.
+      if (r.status === 401 && !centralUser) {
+        storeToken(null);
+        clearStoredUser();
+        return { user: null, isLoading: false, isAuthenticated: false };
       }
+    } catch { /* network/timeout — keep the cached session below */ }
+    if (centralUser) {
+      storeUser(centralUser);
+      return { user: centralUser, isLoading: false, isAuthenticated: true };
     }
-  } catch { /* fall through */ }
+  }
 
   const stored = getStoredUser();
   if (stored) {
@@ -310,7 +334,7 @@ async function applyAccountType(user: User, isPrivate: boolean): Promise<void> {
       const id = user?.id || user?.email || '';
       if (id) headers['X-User-Id'] = String(id);
     } catch { /* ignore */ }
-    await fetch('/api/profile', {
+    await authFetch('/api/profile', {
       method: 'PUT',
       headers,
       body: JSON.stringify({
@@ -327,7 +351,7 @@ async function applyAccountType(user: User, isPrivate: boolean): Promise<void> {
 
 export async function signInWithEmail(email: string, password: string) {
   try {
-    const r = await fetch(API_BASE + '/auth/login', {
+    const r = await authFetch(API_BASE + '/auth/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password }),
@@ -348,8 +372,8 @@ export async function signInWithEmail(email: string, password: string) {
     const pending = takePendingPrivacy();
     if (pending) await applyAccountType(user, pending === 'private');
     return { success: true, user };
-  } catch {
-    return { success: false, error: 'Network error. Check your connection and try again.' };
+  } catch (err) {
+    return { success: false, error: authNetworkError(err, 'Network error. Check your connection and try again.') };
   }
 }
 
@@ -361,7 +385,7 @@ export async function signUpWithEmail(
 ) {
   try {
     const isPrivate = opts?.isPrivate === true;
-    const r = await fetch(API_BASE + '/auth/signup', {
+    const r = await authFetch(API_BASE + '/auth/signup', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password, name: name || '', isPrivate }),
@@ -384,8 +408,8 @@ export async function signUpWithEmail(
     storePendingPrivacy(isPrivate);
     await applyAccountType(user, isPrivate);
     return { success: true, user };
-  } catch {
-    return { success: false, error: 'Network error. Check your connection and try again.' };
+  } catch (err) {
+    return { success: false, error: authNetworkError(err, 'Network error. Check your connection and try again.') };
   }
 }
 
@@ -401,7 +425,7 @@ export async function resendConfirmation(_email: string) {
 export async function signOutUser() {
   const t = getToken();
   if (t) {
-    try { await fetch(API_BASE + '/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } }); } catch { /* ignore */ }
+    try { await authFetch(API_BASE + '/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } }); } catch { /* ignore */ }
   }
   clearViewerCaches();
   clearStoredUser();
