@@ -1,5 +1,6 @@
 import { Post, Moment, Story } from '@/types';
 import api from './api';
+import { currentAuthor, pickDisplayName } from './identity';
 
 // The server filters out placeholder content once real users exist.
  
@@ -61,22 +62,15 @@ export const createPost = async (postData: {
   categories?: string[];
 }): Promise<{ success: boolean; post?: Post; error?: string }> => {
   try {
-    // Get user info from localStorage
-    let userId = 'anonymous';
-    let username = 'anonymous';
-    try {
-      const stored = localStorage.getItem('equyvo_cognito_user');
-      if (stored) {
-        const user = JSON.parse(stored);
-        userId = user.id || user.email || 'anonymous';
-        username = user.username || user.email?.split('@')[0] || 'anonymous';
-      }
-    } catch {}
+    // Never send a placeholder author: the server stamps the authenticated
+    // account, and empty fields let its profile lookup take over.
+    const author = currentAuthor();
+    const authorName = pickDisplayName(author.username, author.name);
 
     const { data, error } = await api.createPost({
-      userId,
-      user: username,
-      avatar: '',
+      userId: author.id || undefined,
+      user: authorName,
+      avatar: author.avatar,
       content: postData.content,
       image: postData.image_url || '',
       likes: 0,

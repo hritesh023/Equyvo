@@ -50,6 +50,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
+import { userNameOf, avatarOfUser } from '@/lib/identity';
 import { openShareSheet } from '@/utils/share';
 import { useMemo } from 'react';
 import { withInFeedAds } from '@/lib/feed-ads';
@@ -618,7 +619,7 @@ const ThoughtsPage = memo(() => {
       if (thought) {
         const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(thoughtId)}`;
         openShareSheet({
-          title: `Thought by ${thought.user?.username || 'creator'} on Equyvo`,
+          title: `Thought by ${userNameOf(thought)} on Equyvo`,
           text: String(thought.content || '').slice(0, 140),
           url: shareUrl,
         });
@@ -725,7 +726,7 @@ const ThoughtsPage = memo(() => {
           ...thought,
           id: `user-reacted-${thoughtId}`,
           originalThoughtId: thoughtId,
-          originalAuthor: thought.user?.username || 'Unknown',
+          originalAuthor: userNameOf(thought),
           user: {
             id: author.id,
             username: author.username,
@@ -1017,17 +1018,30 @@ const ThoughtsPage = memo(() => {
                           navigateToProfile(
                             navigate,
                             ownerIdOf(thought) || thought.user?.id,
-                            thought.user?.username,
+                            userNameOf(thought),
+                            thought
                           );
                         }}
-                        title={`${thought.user?.username}'s Profile`}
+                        title={`${userNameOf(thought)}'s Profile`}
                       >
-                        {thought.user?.avatar_url ? <AvatarImage src={thought.user.avatar_url} /> : null}
-                        <AvatarFallback>{typeof thought.user?.username === 'string' ? thought.user.username.substring(0, 2).toUpperCase() : 'U'}</AvatarFallback>
+                        {avatarOfUser(thought.user) ? <AvatarImage src={avatarOfUser(thought.user)} /> : null}
+                        <AvatarFallback>{(userNameOf(thought) || 'U').substring(0, 2).toUpperCase()}</AvatarFallback>
                       </Avatar>
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
-                          <h3 className="font-semibold">{thought.user?.username || 'Anonymous'}</h3>
+                          <button
+                            onClick={() => {
+                              navigateToProfile(
+                                navigate,
+                                ownerIdOf(thought) || thought.user?.id,
+                                userNameOf(thought),
+                                thought
+                              );
+                            }}
+                            className="font-semibold hover:underline text-left"
+                          >
+                            <h3 className="font-semibold">{userNameOf(thought)}</h3>
+                          </button>
                           <span className="text-muted-foreground text-sm">·</span>
                           <span className="text-muted-foreground text-sm">{formatTimeAgo(thought.created_at)}</span>
                         </div>

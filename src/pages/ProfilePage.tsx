@@ -47,6 +47,7 @@ import FollowListModal from '@/components/FollowListModal';
 import FollowButton from '@/components/FollowButton';
 import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { pickDisplayName, profilePreviewFrom, userNameOf } from '@/lib/identity';
 import api from '@/lib/api';
 import { isVideoItem } from '@/lib/feed-store';
 import { normalizeContentList, normalizeContentItem, resolveMediaFields } from '@/lib/media';
@@ -96,14 +97,21 @@ const normalizeIdentity = (value: unknown): string => {
   return raw.replace(/^@+/, '').replace(/\s+/g, ' ').trim().toLowerCase();
 };
 
-const createTargetPlaceholder = (target: string) => ({
+const createTargetPlaceholder = (target: string, preview?: { name?: string; username?: string; avatar?: string; bio?: string } | null) => ({
   ...createDefaultProfile({}),
   id: '',
-  name: target,
-  username: target.startsWith('@') ? target : `@${target}`,
-  bio: '',
+  // Never render the raw route id as a person. Until the server answers, show
+  // a preview handed over by the previous screen (real name/avatar), or a
+  // skeleton — not an opaque identifier.
+  name: preview?.name || '',
+  username: preview?.username
+    ? (preview.username.startsWith('@') ? preview.username : `@${preview.username}`)
+    : '',
+  avatar: preview?.avatar || '',
+  bio: preview?.bio || '',
   posts: [] as Post[],
   _placeholder: true,
+  _routeTarget: target,
 });
 
 const readCachedOwnProfile = () => {
@@ -151,6 +159,20 @@ const ProfilePage = () => {
   const location = useLocation();
   const navigate = useNavigate();
 
+  // Profile preview handed over by search / feed navigation. It lets the real
+  // name + avatar paint on the first frame instead of flashing the raw id.
+  const routePreview = React.useMemo(() => {
+    const raw = (location.state as { profilePreview?: unknown } | null)?.profilePreview;
+    const preview = profilePreviewFrom(raw);
+    if (!preview) return null;
+    const target = normalizeIdentity(routeTarget);
+    if (!target) return preview;
+    const matches = [preview.id, preview.username]
+      .map((value) => normalizeIdentity(value))
+      .some((value) => !!value && value === target);
+    return matches ? preview : null;
+  }, [routeTarget, location.key, location.state]);
+
   // Bot profiles removed — app only shows the authenticated user's profile
 
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
@@ -190,7 +212,7 @@ const ProfilePage = () => {
   // user appeared to be "you").
   const [userProfile, setUserProfile] = useState(() => {
     if (hasRouteTarget && !isOwnProfile) {
-      return createTargetPlaceholder(routeTarget);
+      return createTargetPlaceholder(routeTarget, routePreview);
     }
     const savedProfile = readCachedOwnProfile();
     if (savedProfile) return savedProfile;
@@ -212,6 +234,12 @@ const ProfilePage = () => {
     (resolvedTarget.isOwner ||
       (!!viewerId && !!resolvedTarget.id && normalizeIdentity(resolvedTarget.id) === normalizeIdentity(viewerId)))
   );
+  // A target profile with no real identity yet (no preview, server still
+  // answering) renders skeletons instead of the raw route id.
+  const profilePending =
+    !profileLookupFailed &&
+    (userProfile as Record<string, unknown>)._placeholder === true &&
+    !pickDisplayName(userProfile.name, userProfile.username);
   const [activeTab, setActiveTab] = useState<string>('posts');
   // History and Saved are strictly private to the owner's own profile page.
   // Another person's profile must never show or activate those tabs.
@@ -267,7 +295,7 @@ const ProfilePage = () => {
 
     if (hasRouteTarget && !isOwnProfile) {
       setResolvedTarget({ route: routeTarget, id: '', isOwner: false });
-      setUserProfile(createTargetPlaceholder(routeTarget));
+      setUserProfile(createTargetPlaceholder(routeTarget, routePreview));
 
       (async () => {
         const profileRes = await api.getProfile(routeTarget);
@@ -285,11 +313,11 @@ const ProfilePage = () => {
           (!!currentId && normalizeIdentity(canonicalId) === normalizeIdentity(currentId));
         setResolvedTarget({ route: routeTarget, id: canonicalId, isOwner });
         setUserProfile({
-          ...createTargetPlaceholder(routeTarget),
+          ...createTargetPlaceholder(routeTarget, routePreview),
           ...data,
           id: canonicalId,
-          name: data.name || routeTarget,
-          username: data.username || data.name || routeTarget,
+          name: pickDisplayName(data.name, data.username) || routePreview?.name || '',
+          username: data.username || routePreview?.username || routeTarget,
           posts: [] as Post[],
           // Server data is real, not a placeholder any more. The persistence
           // effect still writes only when this is the viewer's own account.
@@ -354,9 +382,13 @@ const ProfilePage = () => {
     if (currentUser?.id) {
       api.getProfile(currentUser.id).then(serverProfile => {
         if (cancelled || !serverProfile?.data) return;
+        const profile = serverProfile.data;
+        const displayName = pickDisplayName(profile.name, profile.username);
         setUserProfile(prev => ({
           ...prev,
-          ...serverProfile.data,
+          ...profile,
+          name: displayName || prev.name,
+          username: profile.username || prev.username,
           _userEmail: currentUser?.email || prev._userEmail,
           posts: prev.posts || [],
         }));
@@ -395,7 +427,7 @@ const ProfilePage = () => {
     }
 
     return () => { cancelled = true; };
-  }, [hasRouteTarget, isOwnProfile, routeTarget]);
+  }, [hasRouteTarget, isOwnProfile, routeTarget, routePreview]);
 
   // Persist ONLY the signed-in viewer's own profile. Previously every viewed
   // profile was written to `userProfile`, which corrupted local identity and
@@ -1371,22 +1403,32 @@ const ProfilePage = () => {
             </AvatarFallback>
           </Avatar>
           <h1 className="text-xl md:text-3xl font-bold flex items-center gap-2">
-            {userProfile.name}
+            {userProfile.name || (profilePending ? (
+              <span className="inline-block h-7 w-40 animate-pulse rounded bg-muted" aria-label="Loading profile" />
+            ) : '')}
             {(userProfile as { verified?: boolean }).verified === true && (
               <span title="Creator Pro verified name" aria-label="Verified" className="text-pink-500">
                 <BadgeCheck className="h-5 w-5 md:h-7 md:w-7" />
               </span>
             )}
           </h1>
-          <p className="text-muted-foreground mb-2 text-sm md:text-base">{userProfile.username}</p>
-          <p className="text-center max-w-md mb-3 md:mb-4 text-sm md:text-base px-2">{userProfile.bio}</p>
+          {userProfile.username ? (
+            <p className="text-muted-foreground mb-2 text-sm md:text-base">{userProfile.username}</p>
+          ) : profilePending ? (
+            <span className="mb-2 mt-1 inline-block h-4 w-28 animate-pulse rounded bg-muted" aria-label="Loading username" />
+          ) : null}
+          {userProfile.bio ? (
+            <p className="text-center max-w-md mb-3 md:mb-4 text-sm md:text-base px-2">{userProfile.bio}</p>
+          ) : profilePending ? (
+            <span className="mb-3 mt-1 inline-block h-4 w-56 animate-pulse rounded bg-muted" aria-label="Loading bio" />
+          ) : null}
           <div className="flex gap-3 md:gap-4 mb-3 md:mb-4">
             <button type="button" onClick={openFollowers} className="flex flex-col items-center rounded-lg px-3 py-1 hover:bg-secondary/40" title="See followers">
-              <span className="font-bold text-sm md:text-base">{userProfile.followers}</span>
+              <span className="font-bold text-sm md:text-base">{profilePending ? '—' : userProfile.followers}</span>
               <span className="text-xs md:text-sm text-muted-foreground underline-offset-2 hover:underline">Followers</span>
             </button>
             <button type="button" onClick={openFollowing} className="flex flex-col items-center rounded-lg px-3 py-1 hover:bg-secondary/40" title="See following">
-              <span className="font-bold text-sm md:text-base">{userProfile.following}</span>
+              <span className="font-bold text-sm md:text-base">{profilePending ? '—' : userProfile.following}</span>
               <span className="text-xs md:text-sm text-muted-foreground underline-offset-2 hover:underline">Following</span>
             </button>
           </div>
@@ -1866,24 +1908,24 @@ const ProfilePage = () => {
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
-                      onClick={() => navigateToProfile(navigate, ownerIdOf(post), typeof post.user === 'string' ? post.user : undefined)}
+                      onClick={() => navigateToProfile(navigate, ownerIdOf(post), typeof post.user === 'string' ? post.user : undefined, post)}
                       className="rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                       aria-label={`Open ${typeof post.user === 'string' ? post.user : 'author'}'s profile`}
                       title={`Open ${typeof post.user === 'string' ? post.user : 'author'}'s profile`}
                     >
                       <Avatar className="h-10 w-10 cursor-pointer">
-                        {post.avatar ? <AvatarImage src={post.avatar} /> : null}
-                        <AvatarFallback>{typeof post.user === 'string' ? post.user.substring(0, 2).toUpperCase() : (post.user && typeof post.user === 'object' && 'username' in post.user ? String((post.user as any).username).substring(0, 2).toUpperCase() : 'U')}</AvatarFallback>
+                        {post.avatar || userProfile.avatar ? <AvatarImage src={post.avatar || userProfile.avatar} /> : null}
+                        <AvatarFallback>{(userNameOf(post) || userProfile.name || 'U').substring(0, 2).toUpperCase()}</AvatarFallback>
                       </Avatar>
                     </button>
                     <div>
                       <button
                         type="button"
-                        onClick={() => navigateToProfile(navigate, ownerIdOf(post), typeof post.user === 'string' ? post.user : undefined)}
+                        onClick={() => navigateToProfile(navigate, ownerIdOf(post), typeof post.user === 'string' ? post.user : undefined, post)}
                         className="text-left hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
                         title={`Open ${typeof post.user === 'string' ? post.user : 'author'}'s profile`}
                       >
-                        <CardTitle className={`text-base ${post.isReacted ? 'text-green-600' : ''}`}>{post.user}</CardTitle>
+                        <CardTitle className={`text-base ${post.isReacted ? 'text-green-600' : ''}`}>{userNameOf(post)}</CardTitle>
                       </button>
                       <p className="text-sm text-muted-foreground">
                         {post.time}
@@ -1894,7 +1936,7 @@ const ProfilePage = () => {
                   {!(post as { isReacted?: boolean }).isReacted && (
                     <StandardPostMenu
                       postId={post.id}
-                      postUserId={ownerIdOf(post) || (typeof post.user === 'string' ? post.user : '')}
+                      postUserId={ownerIdOf(post) || (typeof post.user === 'string' ? post.user : (post.user && typeof post.user === 'object' ? ((post.user as any).id || (post.user as any).username || '') : ''))}
                       postOwnerId={ownerIdOf(post)}
                       currentUserId={myAccountId()}
                       contentType="thought"

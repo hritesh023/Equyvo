@@ -20,6 +20,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { profilePreviewFrom } from '@/lib/identity';
 import { openShareSheet } from '@/utils/share';
 
 type SearchItem = ContentIndexItem;
@@ -193,7 +194,10 @@ const SearchPage: React.FC = () => {
       [u.username, u.name].some((identity) => normalize(identity) === q),
     );
     if (exact?.id) {
-      navigate(`/profile/${encodeURIComponent(exact.id)}`, { replace: true });
+      navigate(`/profile/${encodeURIComponent(exact.id)}`, {
+        replace: true,
+        state: { profilePreview: profilePreviewFrom(exact) },
+      });
     }
   }, [query, isLoading, isInitialLoad, userResults, navigate]);
 
@@ -219,8 +223,9 @@ const SearchPage: React.FC = () => {
 
   const handleOpenProfile = (u: SearchedUser) => {
     // Route by the canonical id the server returned, falling back to the
-    // username route — never to the viewer's own profile.
-    navigateToProfile(navigate, u.id, u.username || u.name);
+    // username route — never to the viewer's own profile. The preview makes
+    // the real name/avatar appear immediately instead of flashing the id.
+    navigateToProfile(navigate, u.id, u.username || u.name, u);
   };
 
   const handleSortChange = (value: string) => {

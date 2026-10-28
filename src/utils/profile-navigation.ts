@@ -1,4 +1,5 @@
 import type { NavigateFunction } from 'react-router-dom';
+import { avatarOfUser, profilePreviewFrom, userNameOf } from '@/lib/identity';
 
 interface User {
   id?: string;
@@ -79,9 +80,11 @@ export const navigateToProfile = (
   navigate: NavigateFunction,
   userIdOrItem?: string | number | any,
   username?: string,
+  preview?: unknown,
 ) => {
   let userId: string | undefined;
   let nameArg = username;
+  let previewSource: unknown = preview;
 
   if (userIdOrItem && typeof userIdOrItem === 'object') {
     userId = ownerIdOf(userIdOrItem) || undefined;
@@ -91,21 +94,38 @@ export const navigateToProfile = (
       userIdOrItem.username ??
       userIdOrItem.creator ??
       userIdOrItem.handle;
+    if (!previewSource) {
+      previewSource = {
+        id: userId || userIdOrItem.id || '',
+        name: userNameOf(userIdOrItem),
+        username:
+          (userIdOrItem.user && typeof userIdOrItem.user === 'object'
+            ? userIdOrItem.user.username
+            : undefined) ||
+          userIdOrItem.username ||
+          userIdOrItem.creator ||
+          userIdOrItem.user,
+        avatar: avatarOfUser(userIdOrItem.user) || userIdOrItem.avatar || '',
+      };
+    }
   } else {
     userId =
       userIdOrItem === undefined || userIdOrItem === null
         ? undefined
         : String(userIdOrItem);
+    if (!previewSource) previewSource = { id: userId, username: nameArg, name: nameArg };
   }
 
   const userName = cleanName(nameArg);
+  const profilePreview = profilePreviewFrom(previewSource);
+  const options = profilePreview ? { state: { profilePreview } } : undefined;
 
   if (!isPlaceholderId(userId) && userId) {
-    navigate(`/profile/${encodeURIComponent(String(userId).trim())}`);
+    navigate(`/profile/${encodeURIComponent(String(userId).trim())}`, options);
     return;
   }
   if (userName && !isPlaceholderId(userName)) {
-    navigate(`/profile/@${encodeURIComponent(userName)}`);
+    navigate(`/profile/@${encodeURIComponent(userName)}`, options);
     return;
   }
   // No resolvable account — do nothing rather than open a wrong profile.

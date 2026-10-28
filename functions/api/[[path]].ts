@@ -375,15 +375,24 @@ function maskEmailDisplay(value: unknown): string {
   return local.slice(0, 80) || 'User';
 }
 
-/** First non-email display value (name → username → fallback), masked if needed. */
+const PLACEHOLDER_DISPLAY_NAMES = new Set([
+  'anonymous', 'unknown', 'user', 'someone', 'guest', 'null', 'undefined',
+]);
+
+function isPlaceholderDisplayName(value: unknown): boolean {
+  const s = String(value ?? '').trim().replace(/^@+/, '').toLowerCase();
+  return !s || PLACEHOLDER_DISPLAY_NAMES.has(s);
+}
+
+/** First non-email, non-placeholder display value (masked if email). */
 function publicDisplayName(...values: unknown[]): string {
   for (const value of values) {
     const s = String(value ?? '').trim();
-    if (s && !isEmailLike(s)) return s.slice(0, 80);
+    if (s && !isEmailLike(s) && !isPlaceholderDisplayName(s)) return s.slice(0, 80);
   }
   for (const value of values) {
     const s = String(value ?? '').trim();
-    if (s) return maskEmailDisplay(s);
+    if (s && !isPlaceholderDisplayName(s)) return maskEmailDisplay(s);
   }
   return 'User';
 }
@@ -3093,12 +3102,26 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   // item, regardless of what display-name fields the client sent. Only the
   // owning account can ever delete this item; other accounts may only hide
   // it from their own view (enforced in deleteItem + hide is per-viewer).
+  // Author identity: the authenticated account is authoritative. Client-sent
+  // display fields are only a hint, and placeholders like "anonymous" are
+  // ignored so genuine uploads never get a fake author.
+  let authorProfile = null;
+  try {
+    authorProfile = await ensureProfile(env, {
+      id: actor.id,
+      email: actor.email,
+      name: actor.username,
+      username: actor.username,
+    });
+  } catch { /* fall back to the session identity */ }
   const displayName = publicDisplayName(
     clean.user,
     clean.creator,
+    authorProfile && authorProfile.username,
+    authorProfile && authorProfile.name,
     actor.username,
     actor.email?.split('@')[0],
-    'Unknown',
+    'User',
   ).slice(0, 80);
   // Per-item visibility: explicit client choice wins; otherwise inherit the
   // author's account type (private accounts default to followers-only).
@@ -3128,9 +3151,13 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     ownerId: actor.id,
     userId: actor.id,
     user: displayName,
-    creator: publicDisplayName(clean.creator, displayName),
+    creator: displayName,
     visibility,
   };
+  // Prefer the profile avatar over a stale/missing client copy.
+  if ((!item.avatar || typeof item.avatar !== 'string') && authorProfile && authorProfile.avatar) {
+    item.avatar = String(authorProfile.avatar);
+  }
   // Never persist credentials or the account email on public content.
   delete item.email;
   delete item.userEmail;

@@ -20,50 +20,53 @@ import { setContentVisibility } from '@/utils/visibility';
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import { setAppBusy } from '@/lib/back-navigation';
 import api, { type UploadProgress, type UploadResult } from '@/lib/api';
+import { checkAuthStatus } from '@/lib/auth';
+import { currentAuthor, pickDisplayName } from '@/lib/identity';
 
-// Helper to get current user info from localStorage
-function getCurrentUserInfo(): { userId: string; username: string } {
-  try {
-    const stored = localStorage.getItem('equyvo_cognito_user');
-    if (stored) {
-      const user = JSON.parse(stored);
-      return {
-        userId: user.id || user.email || 'anonymous',
-        username: user.username || user.email?.split('@')[0] || 'anonymous',
-      };
-    }
-  } catch { /* no stored user — fall through to anonymous */ }
-  return { userId: 'anonymous', username: 'anonymous' };
+// Freshest real author identity: profile edits (name/avatar) win over the auth
+// record. Never returns a placeholder — the server stamps the authenticated
+// account when the local cache is incomplete.
+function getCurrentAuthor(): { userId: string; username: string; avatar: string } {
+  let identity = currentAuthor();
+  let username = pickDisplayName(identity.username, identity.name);
+  // Recover from a missing `equyvo_cognito_user` cache: fall back to the
+  // stored profile or email local-part instead of "anonymous".
+  if (!username && !identity.id) {
+    try {
+      const legacy = localStorage.getItem('equyvo_cognito_user');
+      if (legacy) {
+        const u = JSON.parse(legacy);
+        username = pickDisplayName(u?.username, u?.fullName, u?.name) || '';
+      }
+    } catch { /* ignore */ }
+  }
+  if (!username) {
+    try {
+      const profile = JSON.parse(localStorage.getItem('userProfile') || 'null');
+      username = pickDisplayName(profile?.username, profile?.name) || '';
+    } catch { /* ignore */ }
+  }
+  return { userId: identity.id, username, avatar: identity.avatar };
 }
 
-// Freshest author identity: profile page edits (name/avatar) win over the
-// auth record, so new uploads are always stamped with the real current user.
-function getCurrentAuthor(): { userId: string; username: string; avatar: string } {
-  let userId = 'anonymous';
-  let username = 'anonymous';
-  let email = '';
+// Last-resort recovery when the local identity cache is empty but a session
+// token still exists (e.g. app upgraded from a build that did not store the
+// user object). Never blocks publishing for long.
+async function resolveCurrentAuthor(): Promise<{ userId: string; username: string; avatar: string }> {
+  const local = getCurrentAuthor();
+  if (local.userId || local.username) return local;
   try {
-    const stored = localStorage.getItem('equyvo_cognito_user');
-    if (stored) {
-      const u = JSON.parse(stored);
-      userId = u.id || u.email || 'anonymous';
-      email = u.email || '';
-      username = u.username || u.fullName || (u.email ? String(u.email).split('@')[0] : 'anonymous');
+    const status = await checkAuthStatus();
+    if (status.user) {
+      const identity = currentAuthor();
+      return {
+        userId: identity.id || local.userId,
+        username: pickDisplayName(identity.username, identity.name),
+        avatar: identity.avatar,
+      };
     }
-  } catch { /* fall through to anonymous */ }
-  let avatar = '';
-  try {
-    const saved = localStorage.getItem('userProfile');
-    if (saved) {
-      const p = JSON.parse(saved);
-      const belongs = !email || !p._userEmail || p._userEmail === email || p.id === userId;
-      if (belongs) {
-        if (p.username || p.name) username = p.username || p.name;
-        if (typeof p.avatar === 'string' && p.avatar) avatar = p.avatar;
-      }
-    }
-  } catch { /* ignore */ }
-  return { userId, username, avatar };
+  } catch { /* publish anyway — the server knows the session */ }
+  return local;
 }
 
 // Local pre-upload preview: shows BOTH the file name and a live
@@ -954,12 +957,13 @@ const CreatePage = () => {
   async function persistContent(content: Record<string, unknown>) {
     // Real author identity: profile edits (name/avatar) are stamped onto
     // every upload so feeds show the authentic user, never a stale name.
-    const author = getCurrentAuthor();
+    const author = await resolveCurrentAuthor();
+    const authorName = pickDisplayName(author.username, author.userId, content.user, content.creator);
     const postData = {
       ...content,
-      userId: author.userId,
-      user: (content.user as string) || author.username,
-      creator: (content.creator as string) || author.username,
+      userId: author.userId || undefined,
+      user: authorName,
+      creator: pickDisplayName(content.creator, authorName),
       avatar: (content.avatar as string) || author.avatar,
       // Per-upload audience chosen in the UI; the server enforces it for
       // every account on every device (private accounts default sensibly).
@@ -1026,7 +1030,7 @@ const CreatePage = () => {
         const authorOwner = String(author.userId || '').trim().toLowerCase();
         const ownsCache = !cacheOwner || !authorOwner || cacheOwner === authorOwner;
         if (ownsCache && (profile.name || profile.username)) {
-          const pid = profile.id || author.userId || getCurrentUserInfo().userId;
+          const pid = profile.id || author.userId;
           await api.indexContent({
             id: 'profile-' + pid,
             title: profile.name || profile.username || postData.user,
@@ -2335,7 +2339,7 @@ const CreatePage = () => {
       existingNotifs.unshift({
         id: liveId,
         title: liveTitle,
-        user: getCurrentUserInfo().username,
+        user: author.username,
         thumbnail: liveThumbnailUrl || '',
         startedAt: new Date().toISOString(),
       });

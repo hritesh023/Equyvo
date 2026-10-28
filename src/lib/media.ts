@@ -311,10 +311,29 @@ export function normalizeContentItem<T = Record<string, unknown>>(item: T): T {
   if (!type || type === 'image') {
     next.type = fields.videoUrl ? 'video' : (fields.media ? 'photo' : next.type);
   }
-  // Keep nested author objects from breaking name rendering.
-  if (next.user && typeof next.user === 'object') {
-    const user = next.user as Record<string, unknown>;
-    next.user = String(user.username || user.name || user.handle || next.creator || 'Unknown');
+  // Keep the nested author object intact (thoughts render `user.username`)
+  // and expose flat helpers for feeds that render a single string.
+  const nestedUser = next.user && typeof next.user === 'object' && !Array.isArray(next.user)
+    ? next.user as Record<string, unknown>
+    : null;
+  const rawUserName = typeof next.user === 'string'
+    ? next.user
+    : nestedUser
+      ? String(nestedUser.username || nestedUser.name || nestedUser.handle || '')
+      : '';
+  const cleanUserName = rawUserName && !/^(anonymous|unknown|user|someone)$/i.test(rawUserName.trim())
+    && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawUserName.trim())
+    ? rawUserName.trim()
+    : '';
+  if (cleanUserName) {
+    next.userName = cleanUserName;
+    if (!next.creator || /^(anonymous|unknown)$/i.test(String(next.creator))) next.creator = cleanUserName;
+    if (!next.avatar) {
+      const avatar = nestedUser
+        ? (nestedUser.avatar_url || nestedUser.avatarUrl || nestedUser.avatar)
+        : '';
+      if (typeof avatar === 'string' && avatar) next.avatar = avatar;
+    }
   }
   return next as unknown as T;
 }
