@@ -1169,11 +1169,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 // One failed streaming attempt (dropped range, cold edge,
                 // flaky mobile link) must not end the fullscreen show —
                 // remount with a cache-busting URL up to 3 times.
-                setVideoRetryKey(k => {
-                  if (k < 3) return k + 1;
-                  setVideoFailed(true);
-                  return k;
-                });
+                if (videoRetryKey < 3) setVideoRetryKey(k => Math.min(3, k + 1));
+                else setVideoFailed(true);
               }}
               onTimeUpdate={(e) => {
                 setCurrentTime(e.currentTarget.currentTime);
