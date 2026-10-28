@@ -21,7 +21,7 @@ import { FullscreenContent } from '@/types';
 import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { profilePreviewFrom } from '@/lib/identity';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 
 type SearchItem = ContentIndexItem;
 
@@ -57,15 +57,22 @@ const SearchPage: React.FC = () => {
     setShowCommentSection(true);
   };
 
-  const handleShare = (item: SearchItem) => {
+  const handleShare = async (item: SearchItem) => {
     const shareUrl = item?.id
       ? `${window.location.origin}/app/home?post=${encodeURIComponent(item.id)}`
       : window.location.href;
-    openShareSheet({
+    const result = await shareItem(String(item?.id || ''), {
       title: item?.title || 'Check this out on Equyvo',
       text: item?.description || '',
       url: shareUrl,
     });
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this result');
+      return;
+    }
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+    }
   };
 
   const getFullscreenType = (resultType: string): 'post' | 'live' | 'video' | 'moment' | 'image' => {

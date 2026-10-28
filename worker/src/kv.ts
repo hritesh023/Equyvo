@@ -1677,10 +1677,27 @@ export async function castVote(
   };
 }
 
+// KV has no compare-and-swap. Keep same-account/item writes ordered inside a
+// warm Worker isolate; sharedBy remains the persisted/cross-isolate guard.
+const shareMutationLocks = new Map<string, Promise<void>>();
+async function acquireShareMutationLock(key: string): Promise<() => void> {
+  const previous = shareMutationLocks.get(key);
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  shareMutationLocks.set(key, current);
+  if (previous) await previous;
+  return () => {
+    release();
+    if (shareMutationLocks.get(key) === current) shareMutationLocks.delete(key);
+  };
+}
+
 /** Increment a content item's share counter (mirrors POST /api/shares).
  *  One share per account per item: a sharedBy ledger keeps repeat taps by
  *  the same person from inflating the counter to infinity. */
 export async function recordShare(env: Env, itemId: string, actorId?: string, actorEmail?: string): Promise<{ id: string; shares: number; shares_count: number; alreadyShared: boolean }> {
+  const release = await acquireShareMutationLock(`${String(actorId || '').toLowerCase()}:${itemId}`);
+  try {
   const found = await findContentById(env, itemId);
   if (!found) throw new Error('Content not found');
   const item: any = { ...found.item };
@@ -1699,6 +1716,9 @@ export async function recordShare(env: Env, itemId: string, actorId?: string, ac
   await env.EQUYVO_KV.put(found.getKey(itemId), JSON.stringify(item));
   void bumpPopularity(env, itemId, alreadyShared ? 0 : 2);
   return { id: itemId, shares: next, shares_count: next, alreadyShared };
+  } finally {
+    release();
+  }
 }
 
 // --- Delete Content ---
@@ -2271,8 +2291,9 @@ export async function resolveCommentAuthor(env: Env, actor: any): Promise<{ id: 
 export function toPublicComment(c: any, viewerId: string): any {
   if (!c || typeof c !== 'object') return null;
   const likedBy = Array.isArray(c.likedBy) ? c.likedBy.map(String) : [];
-  const { likedBy: _drop, ...rest } = c;
+  const { likedBy: _drop, sharedBy: _dropShares, ...rest } = c;
   void _drop;
+  void _dropShares;
   return { ...rest, likes: Number(c.likes || 0) || 0, hasLiked: viewerId ? likedBy.some((x) => x === String(viewerId)) : false };
 }
 

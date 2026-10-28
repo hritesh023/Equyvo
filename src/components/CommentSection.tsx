@@ -16,7 +16,7 @@ import api from '@/lib/api';
 import { myCommentIdentity, refreshMyCommentIdentity, type CommentIdentity } from '@/lib/comment-identity';
 import { resolveAvatar, avatarInitials } from '@/utils/avatar';
 import { navigateToProfile } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { shareCommentItem } from '@/utils/share';
 
 interface CommentReply {
   id: string;
@@ -255,16 +255,19 @@ const CommentSection: React.FC<CommentSectionProps> = ({
   const handleShare = async (c: CommentItem | CommentReply) => {
     const text = String(c.text || '').slice(0, 200);
     const fallbackUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}&comment=${encodeURIComponent(c.id)}`;
-    openShareSheet({
+    const result = await shareCommentItem(c.id, {
       title: `Comment by ${c.authorName || 'someone'} on Equyvo`,
       text,
       url: fallbackUrl,
     });
-    try {
-      const res = await api.shareComment(c.id);
-      if (!res.error) patchComment(c.id, { shares: (c.shares || 0) + 1 });
-    } catch {
-      /* best-effort share counter */
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this comment');
+      return;
+    }
+    if (result.recorded && typeof result.shares === 'number') {
+      patchComment(c.id, { shares: result.shares });
+    } else if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
     }
   };
 

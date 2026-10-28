@@ -1,12 +1,12 @@
 // ---------------------------------------------------------------------------
-// Equyvo display engine: app-wide text scale + deliberate pinch zoom.
+// Equyvo display engine: app-wide text scale + focused content pinch zoom.
 //
 // • Text scale (0.8–1.6): sets the document root font-size so every rem-based
 //   UI constant (bars, cards, inputs) scales together. Persisted instantly.
-// • Pinch zoom (0.5–3): applied as CSS `zoom` from the --equyvo-app-zoom var
-//   so the WHOLE app layout scales (not only text). The viewport meta has
-//   user-scalable=no, so browser-native pinch is disabled — this engine IS
-//   the pinch experience:
+// • Pinch zoom (0.75–2): applied as a transform to the content surface/card
+//   under the fingers. The document, navbar, header and fixed controls never
+//   scale. The viewport meta has user-scalable=no, so browser-native pinch is
+//   disabled — this engine IS the focused pinch experience:
 //     – requires TWO pointers (a single-finger scroll can never zoom);
 //     – anti-mistouch ON → zoom only starts after a sustained, moving
 //       two-finger contact (>=120ms dwell AND >=20px of clear pinch span),
@@ -26,8 +26,8 @@ export const ANTI_MISTOUCH_KEY = 'equyvo_pinch_antimistouch';
 
 export const FONT_MIN = 0.8;
 export const FONT_MAX = 1.6;
-export const ZOOM_MIN = 0.5;
-export const ZOOM_MAX = 3;
+export const ZOOM_MIN = 0.75;
+export const ZOOM_MAX = 2;
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const round2 = (n: number) => Math.round(n * 100) / 100;
@@ -62,10 +62,14 @@ function applyFontScale(scale: number) {
 function applyAppZoom(zoom: number) {
   try {
     const z = clamp(round2(zoom), ZOOM_MIN, ZOOM_MAX);
-    document.documentElement.style.setProperty('--equyvo-app-zoom', String(z));
-    // 1/z as a separate var so CSS can compensate native strips (the AdMob
-    // banner reserve) with universally-supported calc multiplication.
-    document.documentElement.style.setProperty('--equyvo-app-zoom-inverse', (1 / z).toFixed(4));
+    // Keep the legacy variables at neutral values. Older builds applied this
+    // value to <html>, which enlarged the navbar/header and caused the whole
+    // layout to drift. Focused zoom is now applied directly to a content DOM
+    // node by the provider below.
+    document.documentElement.style.removeProperty('zoom');
+    document.documentElement.style.setProperty('--equyvo-app-zoom', '1');
+    document.documentElement.style.setProperty('--equyvo-app-zoom-inverse', '1');
+    document.documentElement.style.setProperty('--equyvo-focused-zoom', String(z));
   } catch { /* ignore */ }
 }
 
@@ -103,6 +107,29 @@ const DisplayContext = createContext<DisplayContextValue>({
 
 export const useDisplay = () => useContext(DisplayContext);
 
+type FocusedZoomRecord = {
+  transform: string;
+  transformOrigin: string;
+  willChange: string;
+  transition: string;
+  scale: number;
+  originX: number;
+  originY: number;
+};
+
+type Point = { x: number; y: number };
+
+function midpointOf(touches: TouchList): Point {
+  return {
+    x: (touches[0].clientX + touches[1].clientX) / 2,
+    y: (touches[0].clientY + touches[1].clientY) / 2,
+  };
+}
+
+function distanceOf(t0: Touch, t1: Touch): number {
+  return Math.hypot(t1.clientX - t0.clientX, t1.clientY - t0.clientY);
+}
+
 export const DisplayProvider = ({ children }: { children: React.ReactNode }) => {
   const [fontScale, setFontScaleState] = useState(INITIAL_FONT);
   const [zoom, setZoomState] = useState(INITIAL_ZOOM);
@@ -119,6 +146,78 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
   const antiRef = useRef(antiMistouch);
   antiRef.current = antiMistouch;
 
+  // Each focused card/surface keeps its own transform. This means a pinch
+  // never changes the document geometry or the fixed app chrome.
+  const focusedTargetsRef = useRef(new Map<HTMLElement, FocusedZoomRecord>());
+  const activeTargetRef = useRef<HTMLElement | null>(null);
+
+  const restoreTarget = useCallback((target: HTMLElement, record: FocusedZoomRecord) => {
+    target.style.transform = record.transform;
+    target.style.transformOrigin = record.transformOrigin;
+    target.style.willChange = record.willChange;
+    target.style.transition = record.transition;
+  }, []);
+
+  const clearFocusedZoom = useCallback(() => {
+    focusedTargetsRef.current.forEach((record, target) => restoreTarget(target, record));
+    focusedTargetsRef.current.clear();
+    activeTargetRef.current = null;
+    zoomRef.current = 1;
+    applyAppZoom(1);
+  }, [restoreTarget]);
+
+  const targetScale = useCallback((target: HTMLElement) => {
+    return focusedTargetsRef.current.get(target)?.scale ?? 1;
+  }, []);
+
+  const applyFocusedZoom = useCallback((target: HTMLElement, scale: number, origin?: Point) => {
+    const bounded = clamp(round2(scale), ZOOM_MIN, ZOOM_MAX);
+    let record = focusedTargetsRef.current.get(target);
+    if (!record) {
+      const rect = target.getBoundingClientRect();
+      const x = clamp(origin?.x ?? rect.width / 2, 0, Math.max(rect.width, 1));
+      const y = clamp(origin?.y ?? rect.height / 2, 0, Math.max(rect.height, 1));
+      record = {
+        transform: target.style.transform,
+        transformOrigin: target.style.transformOrigin,
+        willChange: target.style.willChange,
+        transition: target.style.transition,
+        scale: 1,
+        originX: x,
+        originY: y,
+      };
+      focusedTargetsRef.current.set(target, record);
+    } else if (origin) {
+      record.originX = origin.x;
+      record.originY = origin.y;
+    }
+
+    record.scale = bounded;
+    target.style.transformOrigin = `${record.originX}px ${record.originY}px`;
+    target.style.transform = bounded === 1 ? record.transform : `scale(${bounded})`;
+    target.style.willChange = bounded === 1 ? record.willChange : 'transform';
+    target.style.transition = bounded === 1 ? record.transition : 'none';
+    activeTargetRef.current = target;
+
+    if (bounded === 1) {
+      restoreTarget(target, record);
+      focusedTargetsRef.current.delete(target);
+    }
+  }, [restoreTarget]);
+
+  const findZoomTarget = useCallback((x: number, y: number): HTMLElement | null => {
+    const hit = document.elementFromPoint(x, y) as HTMLElement | null;
+    if (!hit) return null;
+    if (hit.closest('[data-equyvo-no-zoom], nav, header, [role="navigation"]')) return null;
+    const main = hit.closest('main');
+    if (!main) return null;
+    const candidate = hit.closest(
+      '[data-equyvo-zoom-target], article, [role="article"], .equyvo-zoom-surface',
+    ) as HTMLElement | null;
+    if (candidate && main.contains(candidate)) return candidate;
+    return main.querySelector('[data-equyvo-zoom-surface]') as HTMLElement | null;
+  }, []);
+
   const setFontScale = useCallback((n: number) => {
     const next = clamp(round2(n), FONT_MIN, FONT_MAX);
     setFontScaleState(next);
@@ -133,6 +232,11 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
     const v = clamp(round2(next), ZOOM_MIN, ZOOM_MAX);
     zoomRef.current = v;
     applyAppZoom(v);
+    const active = activeTargetRef.current;
+    if (active && active.isConnected) {
+      applyFocusedZoom(active, v);
+      if (v === 1) activeTargetRef.current = null;
+    }
     if (immediate) {
       setZoomState(v);
       try { localStorage.setItem(ZOOM_SCALE_KEY, String(v)); } catch { /* ignore */ }
@@ -143,7 +247,7 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
       setZoomState(zoomRef.current);
       try { localStorage.setItem(ZOOM_SCALE_KEY, String(zoomRef.current)); } catch { /* ignore */ }
     }, 250);
-  }, []);
+  }, [applyFocusedZoom]);
 
   const setZoom = useCallback((n: number) => commitZoom(n, true), [commitZoom]);
 
@@ -159,8 +263,9 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
 
   const resetDisplay = useCallback(() => {
     setFontScale(1);
+    clearFocusedZoom();
     commitZoom(1, true);
-  }, [setFontScale, commitZoom]);
+  }, [setFontScale, clearFocusedZoom, commitZoom]);
 
   // ── The pinch engine ───────────────────────────────────────────────────────
   // Bound once; every decision reads the live refs above.
@@ -173,28 +278,36 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
     let anchorZoom = 1;
     let startAt = 0;
     let maxDelta = 0;
-
-    const spanOf = (t0: Touch, t1: Touch): number => {
-      const dx = t1.clientX - t0.clientX;
-      const dy = t1.clientY - t0.clientY;
-      return Math.hypot(dx, dy);
-    };
+    let gestureTarget: HTMLElement | null = null;
+    let gestureOrigin: Point | undefined;
 
     const onTouchStart = (e: TouchEvent) => {
       if (e.touches.length >= 2 && pinchOnRef.current) {
+        const midpoint = midpointOf(e.touches);
+        gestureTarget = findZoomTarget(midpoint.x, midpoint.y);
+        if (!gestureTarget) return;
         touching = true;
         magnify = false;
         startAt = Date.now();
         maxDelta = 0;
-        startDist = spanOf(e.touches[0], e.touches[1]);
+        startDist = distanceOf(e.touches[0], e.touches[1]);
         anchorDist = startDist;
-        anchorZoom = zoomRef.current;
+        anchorZoom = targetScale(gestureTarget) || zoomRef.current;
+        if (targetScale(gestureTarget) === 1) {
+          const rect = gestureTarget.getBoundingClientRect();
+          gestureOrigin = {
+            x: clamp(midpoint.x - rect.left, 0, Math.max(rect.width, 1)),
+            y: clamp(midpoint.y - rect.top, 0, Math.max(rect.height, 1)),
+          };
+        } else {
+          gestureOrigin = undefined;
+        }
       }
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if (!touching || e.touches.length < 2) return;
-      const d = spanOf(e.touches[0], e.touches[1]);
+      if (!touching || !gestureTarget || e.touches.length < 2) return;
+      const d = distanceOf(e.touches[0], e.touches[1]);
       maxDelta = Math.max(maxDelta, Math.abs(d - startDist));
       const dwellMs = Date.now() - startAt;
       if (!magnify) {
@@ -208,8 +321,8 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
         }
         if (dwellMs >= needDwell && maxDelta >= needSpan) {
           magnify = true;
-          anchorDist = d;
-          anchorZoom = zoomRef.current;
+          anchorDist = Math.max(startDist, 12);
+          applyFocusedZoom(gestureTarget, anchorZoom, gestureOrigin);
         }
         if (!magnify) return;
       }
@@ -226,6 +339,8 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
         if (magnify && e.cancelable) e.preventDefault();
         touching = false;
         magnify = false;
+        gestureTarget = null;
+        gestureOrigin = undefined;
         commitZoom(zoomRef.current, false); // flush debounced persist/state
       }
     };
@@ -234,6 +349,9 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
     const onWheel = (e: WheelEvent) => {
       if (!pinchOnRef.current) return;
       if (e.ctrlKey || e.metaKey) {
+        const target = findZoomTarget(e.clientX, e.clientY);
+        if (target) activeTargetRef.current = target;
+        if (!activeTargetRef.current) return;
         if (e.cancelable) e.preventDefault();
         const factor = Math.exp(-e.deltaY / 300);
         commitZoom(zoomRef.current * factor, false);
@@ -252,7 +370,7 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
       document.removeEventListener('touchcancel', onTouchEnd);
       document.removeEventListener('wheel', onWheel);
     };
-  }, [commitZoom]);
+  }, [applyFocusedZoom, commitZoom, findZoomTarget, targetScale]);
 
   // Cross-tab sync: another tab's Settings change applies here too.
   useEffect(() => {
@@ -262,6 +380,8 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
         const v = clamp(parseFloat(e.newValue) || 1, ZOOM_MIN, ZOOM_MAX);
         zoomRef.current = v;
         applyAppZoom(v);
+        const active = activeTargetRef.current;
+        if (active && active.isConnected) applyFocusedZoom(active, v);
         setZoomState(v);
       }
       if (e.key === PINCH_ENABLED_KEY) setPinchOnState(e.newValue === '1');
@@ -269,7 +389,7 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
     };
     try { window.addEventListener('storage', onStorage); } catch { /* ignore */ }
     return () => { try { window.removeEventListener('storage', onStorage); } catch { /* ignore */ } };
-  }, []);
+  }, [applyFocusedZoom]);
 
   const value = useMemo<DisplayContextValue>(() => ({
     fontScale, setFontScale, zoom, setZoom, pinchOn, setPinchOn, antiMistouch, setAntiMistouch, resetDisplay,

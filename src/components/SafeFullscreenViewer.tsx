@@ -50,7 +50,7 @@ class ViewerBoundary extends Component<BoundaryProps, BoundaryState> {
         <div className="fixed inset-0 bg-black z-[150] flex items-center justify-center">
           <button
             onClick={onClose}
-            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+            className="absolute right-4 eq-fullscreen-close-safe p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
             aria-label="Close"
           >
             <X className="w-5 h-5" />

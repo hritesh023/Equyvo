@@ -104,6 +104,23 @@ const KEYS = {
   CSETTINGS: (contentId) => 'csettings:' + contentId,
 };
 
+// KV has no compare-and-swap operation. Serialize share mutations for the
+// same account/item within a warm Pages isolate so two rapid taps cannot both
+// read the old counter and write +1. The persisted sharedBy ledger remains the
+// cross-isolate/source-of-truth guard.
+const shareMutationLocks = new Map<string, Promise<void>>();
+async function acquireShareMutationLock(key: string): Promise<() => void> {
+  const previous = shareMutationLocks.get(key);
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  shareMutationLocks.set(key, current);
+  if (previous) await previous;
+  return () => {
+    release();
+    if (shareMutationLocks.get(key) === current) shareMutationLocks.delete(key);
+  };
+}
+
 // ── Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
 // search/feed ranking. Kept dependency-free and bounded so Pages Functions
 // stay fast (no per-request full-list scans, no blocking brain calls).
@@ -1704,7 +1721,9 @@ async function resolveCommentAuthor(env, actor, stored) {
 function toPublicComment(c, viewerId, viewerRefs?: Set<string>) {
   if (!c || typeof c !== 'object') return null;
   const likedBy = Array.isArray(c.likedBy) ? c.likedBy : [];
-  const { likedBy: _drop, ...rest } = c;
+  // Engagement ledgers are server-only. Never expose account references in a
+  // comment response, even when the comment has been shared.
+  const { likedBy: _drop, sharedBy: _dropShares, ...rest } = c;
   const hasLiked = viewerRefs
     ? likedBy.some((x) => viewerRefs.has(String(x).trim().toLowerCase()))
     : viewerId
@@ -2073,11 +2092,15 @@ function applyViewerVoteState(item, viewer) {
   const upLedger = Array.isArray(item.upvotedBy) ? item.upvotedBy.map((x) => String(x).toLowerCase()) : [];
   const downLedger = Array.isArray(item.downvotedBy) ? item.downvotedBy.map((x) => String(x).toLowerCase()) : [];
   const likedLedger = Array.isArray(item.likedBy) ? item.likedBy.map((x) => String(x).toLowerCase()) : [];
+  const sharedLedger = Array.isArray(item.sharedBy) ? item.sharedBy.map((x) => String(x).toLowerCase()) : [];
   const hasRef = (ledger) => [...refs].some((r) => ledger.includes(r));
   item.upvotes_count = Math.max(Number(item.upvotes_count ?? item.upvotes ?? 0) || 0, upLedger.length);
   item.downvotes_count = Math.max(Number(item.downvotes_count ?? item.downvotes ?? 0) || 0, downLedger.length);
   item.user_vote = hasRef(upLedger) ? 'upvote' : hasRef(downLedger) ? 'downvote' : null;
   item.user_has_liked = refs.size > 0 && hasRef(likedLedger);
+  item.user_has_shared = refs.size > 0 && hasRef(sharedLedger);
+  // Account references are engagement ledgers, not public content fields.
+  delete item.sharedBy;
   return item;
 }
 
@@ -4678,6 +4701,8 @@ export const onRequest = async (context) => {
       if (!itemId) return json({ error: 'itemId required' }, 400, cors);
       const rl = await rateLimit(kv, 'shares', actor.id, 120);
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const releaseShareLock = await acquireShareMutationLock(`${String(actor.id).toLowerCase()}:${itemId}`);
+      try {
       const found = await findContentById(env, itemId);
       if (!found) return json({ data: { id: itemId, shares: 0, offline: true }, error: null }, 200, cors);
       const viewer = { id: actor.id, email: actor.email };
@@ -4716,6 +4741,9 @@ export const onRequest = async (context) => {
         });
       } catch { /* never block */ }
       return json({ data: { id: itemId, shares: next, shares_count: next, alreadyShared }, error: null }, 200, cors);
+      } finally {
+        releaseShareLock();
+      }
     }
 
     // GET /api/likes?itemId= — authoritative like state for the viewer.
@@ -7092,10 +7120,22 @@ export const onRequest = async (context) => {
         const actor = await getActor(request, env);
         const denied = actorResponse(actor, env, cors);
         if (denied) return denied;
-        comment.shares = Number(comment.shares || 0) + 1;
+        const sharedBy = Array.isArray(comment.sharedBy)
+          ? comment.sharedBy.map((x) => String(x).toLowerCase())
+          : [];
+        const actorRefs = new Set([String(actor.id).toLowerCase()]);
+        if (actor.email) actorRefs.add(String(actor.email).toLowerCase());
+        if (actor.username) actorRefs.add(String(actor.username).replace(/^@/, '').toLowerCase());
+        const alreadyShared = sharedBy.some((x) => actorRefs.has(x));
+        const current = Number(comment.shares || 0) || 0;
+        const next = alreadyShared ? current : Math.min(5000, current + 1);
+        if (!alreadyShared) {
+          comment.sharedBy = [...new Set([String(actor.id).toLowerCase(), ...sharedBy])].slice(0, 5000);
+          comment.shares = next;
+        }
         await kv.put(KEYS.COMMENT(cid), JSON.stringify(comment));
         const shareUrl = new URL(request.url).origin + '/app/home?comment=' + encodeURIComponent(cid);
-        return json({ data: { comment: toPublicComment(comment, actor.id), shareUrl, shareText: String(comment.text || '').slice(0, 200) }, error: null }, 200, cors);
+        return json({ data: { comment: toPublicComment(comment, actor.id), shareUrl, shareText: String(comment.text || '').slice(0, 200), alreadyShared }, error: null }, 200, cors);
       }
 
       if (method === 'POST' && action === 'pin') {

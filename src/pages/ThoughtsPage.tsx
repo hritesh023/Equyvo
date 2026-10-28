@@ -52,7 +52,7 @@ import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { userNameOf, avatarOfUser } from '@/lib/identity';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import { useMemo } from 'react';
 import { withInFeedAds } from '@/lib/feed-ads';
 import { shouldShowAds } from '@/lib/ads-config';
@@ -640,11 +640,18 @@ const ThoughtsPage = memo(() => {
       const thought = thoughts.find(t => t.id === thoughtId);
       if (thought) {
         const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(thoughtId)}`;
-        openShareSheet({
+        const result = await shareItem(thoughtId, {
           title: `Thought by ${userNameOf(thought)} on Equyvo`,
           text: String(thought.content || '').slice(0, 140),
           url: shareUrl,
         });
+        if (!result.success && !result.cancelled) {
+          showError(result.error || 'Could not share this thought');
+          return;
+        }
+        if (result.success && result.recorded === false) {
+          showError(result.error || 'The share count could not be saved');
+        }
       }
     } catch {
       showError('Could not share this thought.');

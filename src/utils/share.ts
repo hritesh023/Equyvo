@@ -10,6 +10,7 @@
 import { Capacitor } from '@capacitor/core';
 import { Share } from '@capacitor/share';
 import { showError, showSuccess } from '@/utils/toast';
+import api from '@/lib/api';
 
 export interface SharePayload {
   title: string;
@@ -17,7 +18,19 @@ export interface SharePayload {
   url?: string;
 }
 
-async function copyLinkFallback(url: string): Promise<{ success: boolean; error?: string }> {
+export interface ShareResult {
+  /** The device/browser accepted the share or copied the link. */
+  success: boolean;
+  /** True when the user dismissed the native share UI without sharing. */
+  cancelled?: boolean;
+  /** Server-side engagement was persisted and the returned count is safe to use. */
+  recorded?: boolean;
+  alreadyShared?: boolean;
+  shares?: number;
+  error?: string;
+}
+
+async function copyLinkFallback(url: string): Promise<ShareResult> {
   try {
     if (typeof navigator !== 'undefined' && navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
       await navigator.clipboard.writeText(url);
@@ -44,9 +57,10 @@ async function copyLinkFallback(url: string): Promise<{ success: boolean; error?
 /**
  * Open the device's default share UI for the given payload. Safe to call
  * fire-and-forget from click handlers: it never rejects and never renders an
- * in-app picker. A user-dismissed OS share sheet counts as success.
+ * in-app picker. A user-dismissed OS share sheet is deliberately NOT treated
+ * as a share: there is no completed user action to record in the ledger.
  */
-export async function openShareSheet(payload: SharePayload): Promise<{ success: boolean; error?: string }> {
+export async function openShareSheet(payload: SharePayload): Promise<ShareResult> {
   if (typeof window === 'undefined') {
     return { success: false, error: 'Sharing is not available right now' };
   }
@@ -63,7 +77,7 @@ export async function openShareSheet(payload: SharePayload): Promise<{ success: 
     } catch (err) {
       const msg = String((err as Error)?.message || '').toLowerCase();
       // User dismissed the system sheet — not an error.
-      if (msg.includes('cancel')) return { success: true };
+      if (msg.includes('cancel')) return { success: false, cancelled: true };
       // Otherwise fall through to the web share / clipboard path.
     }
   }
@@ -75,7 +89,7 @@ export async function openShareSheet(payload: SharePayload): Promise<{ success: 
       return { success: true };
     } catch (err) {
       // User dismissed the OS sheet — not an error.
-      if ((err as Error)?.name === 'AbortError') return { success: true };
+      if ((err as Error)?.name === 'AbortError') return { success: false, cancelled: true };
       // Any other failure (lost gesture, no share targets) → copy fallback.
     }
   }
@@ -108,7 +122,7 @@ export const sharePost = async (post: {
   const text = post.content || '';
   const url = `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`;
 
-  return shareContent(title, text, url);
+  return shareItem(post.id, { title, text, url });
 };
 
 export const shareProfile = async (user: {
@@ -171,4 +185,90 @@ export function markItemShared(itemId: string): void {
   } catch {
     // storage full/private mode: the server ledger still protects the count
   }
+}
+
+// ── Authoritative share recording ──────────────────────────────────────────
+// Opening a share sheet is not enough to update a counter. Every content share
+// waits for the device/browser to accept the share first, then asks the API to
+// apply its one-account-per-item ledger. The API response (never an optimistic
+// client increment) is the only value callers should render.
+const pendingShares = new Map<string, Promise<ShareResult>>();
+
+function shareRequestKey(scope: string, itemId: string): string {
+  return `${scope}:${actorKeyOf()}:${itemId}`;
+}
+
+function numericShareCount(data: unknown): number | undefined {
+  if (!data || typeof data !== 'object') return undefined;
+  const record = data as { shares?: unknown; shares_count?: unknown };
+  const count = Number(record.shares ?? record.shares_count);
+  return Number.isFinite(count) && count >= 0 ? count : undefined;
+}
+
+async function performRecordedShare(
+  scope: 'content' | 'comment',
+  itemId: string,
+  payload: SharePayload,
+): Promise<ShareResult> {
+  const opened = await openShareSheet(payload);
+  if (!opened.success) return opened;
+
+  const response = scope === 'comment'
+    ? await api.shareComment(itemId)
+    : await api.share(itemId);
+  const data = response.data as any;
+  const count = numericShareCount(scope === 'comment' ? data?.comment : data);
+  const alreadyShared = scope === 'comment'
+    ? Boolean(data?.comment?.alreadyShared ?? data?.alreadyShared)
+    : Boolean(data?.alreadyShared);
+
+  // An offline/unknown response must never look like a counted share. The
+  // share itself succeeded, but the counter is not authoritative until the
+  // server confirms it.
+  if (response.error || !data || count === undefined || data.offline) {
+    return {
+      ...opened,
+      recorded: false,
+      error: response.error || 'The share was sent, but its count could not be saved yet.',
+    };
+  }
+
+  markItemShared(itemId);
+  return { ...opened, recorded: true, shares: count, alreadyShared };
+}
+
+/** Share a content item and persist exactly one share for this account/item. */
+export function shareItem(itemId: string, payload: SharePayload): Promise<ShareResult> {
+  const id = String(itemId || '').trim();
+  if (!id) return openShareSheet(payload);
+  const key = shareRequestKey('content', id);
+  const inFlight = pendingShares.get(key);
+  if (inFlight) return inFlight;
+  const request = performRecordedShare('content', id, payload).catch((err) => ({
+    success: false,
+    recorded: false,
+    error: String((err as Error)?.message || 'Could not record this share.'),
+  } satisfies ShareResult)).finally(() => {
+    pendingShares.delete(key);
+  });
+  pendingShares.set(key, request);
+  return request;
+}
+
+/** Share a comment and use the comment's own one-account ledger. */
+export function shareCommentItem(commentId: string, payload: SharePayload): Promise<ShareResult> {
+  const id = String(commentId || '').trim();
+  if (!id) return openShareSheet(payload);
+  const key = shareRequestKey('comment', id);
+  const inFlight = pendingShares.get(key);
+  if (inFlight) return inFlight;
+  const request = performRecordedShare('comment', id, payload).catch((err) => ({
+    success: false,
+    recorded: false,
+    error: String((err as Error)?.message || 'Could not record this share.'),
+  } satisfies ShareResult)).finally(() => {
+    pendingShares.delete(key);
+  });
+  pendingShares.set(key, request);
+  return request;
 }

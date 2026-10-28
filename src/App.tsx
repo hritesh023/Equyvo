@@ -236,7 +236,8 @@ const AppContent = () => {
             recovery card (navbar/bottom nav stay usable) and resets on the
             next navigation instead of a full-app "reload" wall. */}
         <ErrorBoundary>
-        <Routes>
+         <div className="equyvo-zoom-surface" data-equyvo-zoom-surface="true">
+         <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />
           <Route path="/app/discover" element={<DiscoverPage />} />
@@ -262,7 +263,8 @@ const AppContent = () => {
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="*" element={<NotFound />} />
-        </Routes>
+         </Routes>
+         </div>
         </ErrorBoundary>
       </main>
       {/* Web banner ad: in-flow above the bottom nav, every non-auth page,

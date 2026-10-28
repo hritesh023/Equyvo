@@ -6,10 +6,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { navigateToProfile, ownerIdOf, isPlaceholderId } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import { avatarOf } from '@/utils/avatar';
 import { useBackOverlay } from '@/lib/back-navigation';
 import { useVideo2xPress } from '@/lib/video-2x';
@@ -25,7 +25,7 @@ interface FullscreenViewerProps {
   type: 'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story';
   onClose: () => void;
   onComment?: (videoId: string, creator: string) => void;
-  onShare?: (video: FullscreenContent) => void;
+  onShare?: (video: FullscreenContent) => void | Promise<void>;
   followedCreators?: Set<string>;
   onFollow?: (creatorId: string) => void;
   onExpand?: () => void;
@@ -729,15 +729,24 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     ? `${window.location.origin}/app/home?post=${encodeURIComponent(shareContentId)}`
     : window.location.href;
 
-  const handleShare = () => {
+  const handleShare = async () => {
     if (onShare) {
-      onShare(actualContent);
+      // The page that owns the feed updates the authoritative count. Do not
+      // open a second sheet or record a second event here.
+      await onShare(actualContent);
     } else {
-      openShareSheet({
+      const result = await shareItem(shareContentId, {
         title: actualContent?.title || actualContent?.content || 'Check out this content on Equyvo',
         text: actualContent?.content || actualContent?.description || `Check out this ${actualType} by ${actualContent?.creator || 'creator'}`,
         url: shareContentUrl,
       });
+      if (!result.success && !result.cancelled) {
+        showError(result.error || 'Could not share this content');
+        return;
+      }
+      if (result.success && result.recorded === false) {
+        showError(result.error || 'The share count could not be saved');
+      }
     }
   };
 
@@ -1005,9 +1014,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     >
       {/* Top bar with minimal controls */}
       <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
+        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
         style={{
-          paddingTop: 'calc(env(safe-area-inset-top, 0px) + 8px)',
           pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
         }}
         onMouseEnter={() => {

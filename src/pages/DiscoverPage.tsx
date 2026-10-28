@@ -20,7 +20,7 @@ import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet, hasSharedItem, markItemShared } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
@@ -251,30 +251,25 @@ const DiscoverPage = () => {
     setCommentSectionOpen(true);
   };
 
-  const handleShare = (content: any) => {
-    // One share per account: only mark/track the first share by this account.
-    const firstShare = content?.id ? !hasSharedItem(content.id) : false;
-    if (firstShare) {
-      markItemShared(content.id);
-      setSharedPosts(prev => {
-        const newSet = new Set(prev);
-        newSet.add(content.id);
-        return newSet;
-      });
-    }
-    // Best-effort persistence: keeps the server-side share graph accurate
-    // (the discover card shows only an icon, no visible counter).
-    if (content?.id) {
-      void api.share(content.id).catch(() => undefined);
-    }
+  const handleShare = async (content: any) => {
     const shareUrl = content?.id
       ? `${window.location.origin}/app/home?post=${encodeURIComponent(content.id)}`
       : window.location.href;
-    openShareSheet({
+    const result = await shareItem(String(content?.id || ''), {
       title: content?.title || 'Discover on Equyvo',
       text: content?.description || content?.content || 'Check out this content on Equyvo!',
       url: shareUrl,
     });
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this content');
+      return;
+    }
+    if (result.recorded && content?.id) {
+      setSharedPosts(prev => new Set(prev).add(String(content.id)));
+    }
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+    }
   };
 
   const handleCloseFullscreen = () => {

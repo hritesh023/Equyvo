@@ -1568,10 +1568,23 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if (method === 'POST' && wAction === 'share') {
         const { actor, error } = await requireActor();
         if (error) return error;
-        wComment.shares = Number(wComment.shares || 0) + 1;
+        const sharedBy: string[] = Array.isArray(wComment.sharedBy)
+          ? wComment.sharedBy.map((x: unknown) => String(x).toLowerCase())
+          : [];
+        const actorRefs = new Set([
+          String((actor as any).id || '').toLowerCase(),
+          String((actor as any).email || '').toLowerCase(),
+        ].filter(Boolean));
+        const alreadyShared = sharedBy.some((x) => actorRefs.has(x));
+        const current = Number(wComment.shares || 0) || 0;
+        const next = alreadyShared ? current : Math.min(5000, current + 1);
+        if (!alreadyShared) {
+          wComment.sharedBy = [...new Set([String((actor as any).id).toLowerCase(), ...sharedBy])].slice(0, 5000);
+          wComment.shares = next;
+        }
         await env.EQUYVO_KV.put(KEYS.COMMENT(cid), JSON.stringify(wComment));
         const shareUrl = new URL(request.url).origin + '/app/home?comment=' + encodeURIComponent(cid);
-        return respond({ data: { comment: toPublicComment(wComment, (actor as any).id), shareUrl, shareText: String(wComment.text || '').slice(0, 200) }, error: null });
+        return respond({ data: { comment: toPublicComment(wComment, (actor as any).id), shareUrl, shareText: String(wComment.text || '').slice(0, 200), alreadyShared }, error: null });
       }
       if (method === 'POST' && wAction === 'pin') {
         const { actor, error } = await requireActor();

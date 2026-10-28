@@ -11,7 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { sharePost, hasSharedItem, markItemShared } from '@/utils/share';
+import { sharePost } from '@/utils/share';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent, Post } from '@/types';
 
@@ -820,35 +820,26 @@ const ProfilePage = () => {
 
 
   const handleShare = async (post: Post) => {
-    // One share per account: optimistic +1 on the FIRST share only; repeat
-    // taps leave the counter alone (the server's ledger is authoritative).
-    const firstShare = !hasSharedItem(post.id);
-    if (firstShare) {
-      markItemShared(post.id);
-      setUserProfile(prev => ({
-        ...prev,
-        posts: (prev.posts || []).map(p =>
-          p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
-        ),
-      }));
-    }
     const result = await sharePost({
       id: post.id,
       user: post.user,
       content: post.content || '',
       image: post.media || post.image
     });
-    if (!result.success) {
+    if (!result.success && !result.cancelled) {
       showError(result.error || 'Share failed');
       return;
     }
-    api.share(post.id).then(({ data }) => {
-      if (!data || typeof data.shares !== 'number') return;
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+      return;
+    }
+    if (result.recorded && typeof result.shares === 'number') {
       setUserProfile(prev => ({
         ...prev,
-        posts: (prev.posts || []).map(p => (p.id === post.id ? { ...p, shares: data.shares } : p)),
+        posts: (prev.posts || []).map(p => (p.id === post.id ? { ...p, shares: result.shares } : p)),
       }));
-    }).catch(() => undefined);
+    }
   };
 
   const handleSave = (postId: string) => {

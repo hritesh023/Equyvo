@@ -45,11 +45,12 @@
   }
 }
 
-/* Deliberate pinch-zoom engine (src/lib/display.tsx) scales the APP layout
-   through this variable via CSS `zoom` — text size (root font-size) and
-   layout zoom are independent settings. Defaults to 1 (no scaling). */
-html {
-  zoom: var(--equyvo-app-zoom, 1);
+/* Focused pinch zoom (src/lib/display.tsx) applies a transform only to the
+   card/content surface under the user's fingers. The legacy document-wide
+   `html { zoom: ... }` rule is intentionally gone: app chrome must not move. */
+.equyvo-zoom-surface,
+[data-equyvo-zoom-target="true"] {
+  transform-origin: center center;
 }
 html.cap-native {
   /* App: floors still guarantee "never 0", whatever the OS/WebView/Capacitor
@@ -88,6 +89,16 @@ html.cap-native {
 }
 .eq-safe-bottom {
   padding-bottom: max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) !important;
+}
+
+/* Fullscreen action buttons need a deliberate gap below the OS status/
+   notification strip. The native inset is still honoured when it is larger. */
+.eq-fullscreen-top-safe {
+  padding-top: max(3.25rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
+}
+
+.eq-fullscreen-close-safe {
+  top: max(3.25rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
 }
 
 /* Radix portals (dropdown menus, popovers, selects, tooltips…) append to
@@ -281,7 +292,7 @@ html.cap-native {
     @apply absolute left-0 right-0 z-10;
     /* Clear the OS status bar on edge-to-edge builds (Android/iOS/tablets);
        drops to the designed 0.5rem when there is no system bar to dodge. */
-    top: max(0.5rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
+    top: max(3.25rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
     background: linear-gradient(to bottom, rgba(0,0,0,0.3), transparent);
   }
 
@@ -295,7 +306,7 @@ html.cap-native {
 
   .story-header {
     @apply absolute left-0 right-0 p-4 flex items-center justify-between z-10;
-    top: max(0.5rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
+    top: max(3.25rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px));
     background: linear-gradient(to bottom, rgba(0,0,0,0.7), transparent);
   }
 

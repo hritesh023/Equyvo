@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { showSuccess, showError } from '@/utils/toast';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import ReportButton from './ReportButton';
 
 interface ContentItem {
@@ -58,11 +58,18 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
   const handleShare = async () => {
     if (!selectedItem) return;
     const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(selectedItem.id)}`;
-    openShareSheet({
+    const result = await shareItem(selectedItem.id, {
       title: selectedItem.title || 'Check this out on Equyvo',
       text: selectedItem.description || selectedItem.title || '',
       url: shareUrl,
     });
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this content');
+      return;
+    }
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+    }
   };
 
   const handleToggleFullscreen = () => {

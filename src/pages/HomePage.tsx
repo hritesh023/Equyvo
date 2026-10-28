@@ -31,7 +31,7 @@ import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet, hasSharedItem, markItemShared } from '@/utils/share';
+import { sharePost } from '@/utils/share';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
 import { sendHumanEval, evalVote } from '@/lib/human-eval';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
@@ -615,43 +615,39 @@ const HomePage = () => {
     });
   };
 
-  const handleSharePost = (post: Post) => {
-    const firstShare = !hasSharedItem(post.id);
-    if (firstShare) markItemShared(post.id);
-    if (firstShare) setSharedPosts(prev => {
-      const newSet = new Set(prev);
-      newSet.add(post.id);
-      return newSet;
+  const handleSharePost = async (post: Post) => {
+    if (!post?.id) return;
+    const result = await sharePost({
+      id: post.id,
+      user: post.user || 'creator',
+      content: post.content || 'Amazing content on Equyvo',
+      image: post.media || post.image,
     });
-    // Optimistic +1 on the FIRST share by this account only — the server
-    // counts one share per account, so repeat taps must not move the number.
-    if (firstShare) {
-      setEnhancedPosts(prev => prev.map(p =>
-        p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
-      ));
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this post');
+      return;
     }
-    teachBrain(post?.content?.slice(0, 120) || post?.type || post.id);
-    // Human eval: share = strong positive preference.
-    sendHumanEval({
-      itemId: post.id,
-      action: 'share',
-      text: post?.content?.slice(0, 120) || post?.type || post.id,
-      tags: (post as any)?.tags,
-      creator: (post as any)?.user,
-    });
-    // Persist so reloads and other devices agree; adopt the server's count.
-    api.share(post.id).then(({ data }) => {
-      if (!data || typeof data.shares !== 'number') return;
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+      return;
+    }
+    // Never optimistically increment here. The server ledger decides whether
+    // this account is the first sharer and returns the authoritative count.
+    if (result.recorded && typeof result.shares === 'number') {
       setEnhancedPosts(prev => prev.map(p =>
-        p.id === post.id ? { ...p, shares: data.shares } : p,
+        p.id === post.id ? { ...p, shares: result.shares } : p,
       ));
-    }).catch(() => undefined);
-    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`;
-    openShareSheet({
-      title: `Post by ${(post as any)?.user || 'creator'} on Equyvo`,
-      text: post?.content || 'Amazing content on Equyvo',
-      url: shareUrl,
-    });
+      if (!result.alreadyShared) {
+        teachBrain(post.content?.slice(0, 120) || post.type || post.id);
+        sendHumanEval({
+          itemId: post.id,
+          action: 'share',
+          text: post.content?.slice(0, 120) || post.type || post.id,
+          tags: (post as any)?.tags,
+          creator: (post as any)?.user,
+        });
+      }
+    }
   };
 
   const handleSavePost = (postId: string) => {

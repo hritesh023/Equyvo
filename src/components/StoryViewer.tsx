@@ -21,7 +21,7 @@ import { isOwnContent } from '@/utils/ownership';
 import { deleteContent } from '@/utils/delete';
 import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -388,20 +388,27 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     else onClose();
   };
 
-  const handleShare = () => {
+  const handleShare = async () => {
     const storyId = String(currentStory?.id || '').trim();
     const shareUrl = storyId
       ? `${window.location.origin}/app/home?post=${encodeURIComponent(storyId)}`
       : window.location.href;
-    openShareSheet({
+    const result = await shareItem(storyId, {
       title: `Story by ${currentStory.user} on Equyvo`,
       text: currentStory.content || 'Check out this story on Equyvo!',
       url: shareUrl,
     });
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this story');
+      return;
+    }
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+    }
   };
 
   const handleShareAction = () => {
-    handleShare();
+    void handleShare();
   };
 
   const handleVolumeChange = (newVolume: number) => {

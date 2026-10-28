@@ -111,7 +111,7 @@ Bump `versionCode` (+1, integer) and `versionName` in
 `android/app/build.gradle` every release: Play never accepts a reused
 versionCode. The new code must be higher than the highest code already
 uploaded to **any** track (internal/closed/open/production), not just the
-track you are updating. Current: `versionCode 42` / `1.2.20`.
+track you are updating. Current: `versionCode 46` / `1.2.24`.
 
 Before uploading, verify the generated bundle actually contains the new
 code. A stale file from a previous build is the usual cause of Play's

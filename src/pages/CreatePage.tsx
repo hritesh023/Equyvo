@@ -28,7 +28,7 @@ import { toCount } from '@/lib/count';
 // record. Never returns a placeholder — the server stamps the authenticated
 // account when the local cache is incomplete.
 function getCurrentAuthor(): { userId: string; username: string; avatar: string } {
-  let identity = currentAuthor();
+  const identity = currentAuthor();
   let username = pickDisplayName(identity.username, identity.name);
   // Recover from a missing `equyvo_cognito_user` cache: fall back to the
   // stored profile or email local-part instead of "anonymous".

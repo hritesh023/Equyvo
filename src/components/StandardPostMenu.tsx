@@ -9,7 +9,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MoreHorizontal, Copy, Share2, Flag, EyeOff, Edit } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import DeleteButton from '@/components/ui/DeleteButton';
 import ReportModal from '@/components/ReportModal';
 import { deleteContent } from '@/utils/delete';
@@ -31,7 +31,7 @@ interface StandardPostMenuProps {
   /** Fired after any successful delete (including the built-in fallback). */
   onDeleted?: (postId: string) => void;
   onEdit?: (postId: string) => void;
-  onShare?: (postId: string) => void;
+  onShare?: (postId: string) => void | Promise<void>;
   onHide?: (postId: string) => void;
   /** Fired after a hide (either personal or from-public). */
   onHidden?: (postId: string) => void;
@@ -97,12 +97,22 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
     setIsSharing(true);
     try {
       const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
-      openShareSheet({
-        title: 'Check out this post on Equyvo',
-        text: 'Amazing content on Equyvo',
-        url: shareUrl,
-      });
-      onShare?.(postId);
+      if (onShare) {
+        // The parent owns the item metadata/count update. Opening another
+        // sheet here would record the same tap twice.
+        await onShare(postId);
+      } else {
+        const result = await shareItem(postId, {
+          title: 'Check out this post on Equyvo',
+          text: 'Amazing content on Equyvo',
+          url: shareUrl,
+        });
+        if (!result.success && !result.cancelled) {
+          showError(result.error || "Couldn't share this right now. Please try again.");
+        } else if (result.success && result.recorded === false) {
+          showError(result.error || "Couldn't save the share count.");
+        }
+      }
     } catch {
       showError("Couldn't share this right now. Please try again.");
     } finally {

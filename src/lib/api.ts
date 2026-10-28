@@ -606,7 +606,7 @@ export const api = {
 
   // Persist a share so the count is real across devices/reloads.
   share: (itemId: string) =>
-    request<{ data: { id: string; shares: number; shares_count: number }; error: null }>('/shares', {
+    request<{ id: string; shares: number; shares_count: number; alreadyShared?: boolean; offline?: boolean }>('/shares', {
       method: 'POST',
       body: JSON.stringify({ itemId }),
     }),
@@ -825,7 +825,7 @@ export const api = {
     }),
 
   shareComment: (id: string) =>
-    request<{ data: { comment: any; shareUrl: string; shareText: string }; error: null }>(
+    request<{ comment: any; shareUrl: string; shareText: string; alreadyShared?: boolean; offline?: boolean }>(
       `/comments/${encodeURIComponent(id)}/share`,
       { method: 'POST', body: JSON.stringify({}) },
     ),

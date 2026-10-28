@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-import { showSuccess } from '@/utils/toast';
+import { showSuccess, showError } from '@/utils/toast';
 import { avatarOf } from '@/utils/avatar';
 import { useI18n } from '@/lib/i18n';
 import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { navItems } from '@/components/Navbar';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import api from '@/lib/api';
 import { normalizeContentItem, resolveMediaFields } from '@/lib/media';
 import { toCount } from '@/lib/count';
@@ -65,16 +65,23 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
     }
   };
 
-  const handleShare = (content: any) => {
+  const handleShare = async (content: any) => {
     const contentId = String(content?.id || content?.videoId || '').trim();
     const shareUrl = contentId
       ? `${window.location.origin}/app/home?post=${encodeURIComponent(contentId)}`
       : window.location.href;
-    openShareSheet({
+    const result = await shareItem(contentId, {
       title: content?.title || 'Check this out on Equyvo',
       text: `Check out this ${content?.type || 'post'} by ${content?.creator || 'creator'}!`,
       url: shareUrl,
     });
+    if (!result.success && !result.cancelled) {
+      showError(result.error || 'Could not share this content');
+      return;
+    }
+    if (result.success && result.recorded === false) {
+      showError(result.error || 'The share count could not be saved');
+    }
   };
 
   const handleComment = (content: any) => {

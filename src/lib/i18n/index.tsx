@@ -92,7 +92,7 @@ const EN: I18nDict = {
   'action.seePlans': 'See plans',
   'common.signedOut': 'Signed out',
   'display.title': 'Text & Display',
-  'display.desc': 'Text size and deliberate pinch-zoom for the app layout',
+  'display.desc': 'Text size and focused pinch-zoom for content',
   'display.fontSection': 'Text size',
   'display.fontDesc': 'Make everything across Equyvo smaller or larger',
   'display.fontSmall': 'Small',
@@ -100,13 +100,13 @@ const EN: I18nDict = {
   'display.fontLarge': 'Large',
   'display.fontReset': 'Reset text size',
   'display.zoomSection': 'Pinch zoom',
-  'display.zoomOn': 'Pinch to zoom layout',
-  'display.zoomOnDesc': 'Pinch with two fingers anywhere to enlarge the app layout',
+  'display.zoomOn': 'Pinch to zoom focused content',
+  'display.zoomOnDesc': 'Pinch two fingers on a card or content area to enlarge only that area; the header and navigation stay fixed',
   'display.antimistouch': 'Anti-mistouch',
   'display.antimistouchDesc': 'Only a firm, deliberate two-finger pinch changes zoom — quick accidental touches are ignored',
   'display.zoomLevel': 'Zoom level',
   'display.resetZoom': 'Reset zoom',
-  'display.zoomNote': 'Zoom changes the in-app layout only — your system zoom stays untouched. Text, layout and pinch all update instantly.',
+  'display.zoomNote': 'Focused zoom follows the area under your fingers. Header, navbar and fixed controls stay in place; use Reset zoom to restore all content.',
 };
 
 // ---------------------------------------------------------------------------

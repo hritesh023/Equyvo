@@ -12,7 +12,7 @@ import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet, hasSharedItem, markItemShared } from '@/utils/share';
+import { shareItem } from '@/utils/share';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
 import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, isVideoItem, videoUrlOf, withoutHidden } from '@/lib/feed-store';
@@ -521,31 +521,26 @@ const MomentsPage = () => {
     setCommentSectionOpen(true);
   };
 
-  const handleShare = (momentId: string) => {
+  const handleShare = async (momentId: string) => {
     const moment = moments.find(m => m.id === momentId);
     if (moment) {
-      // One share per account: optimistic +1 on the FIRST share only; the
-      // server's ledger answer (which never double-counts) is authoritative.
-      const firstShare = !hasSharedItem(momentId);
-      if (firstShare) {
-        markItemShared(momentId);
-        setMoments((prev) => (prev || []).map(m =>
-          m.id === momentId ? { ...m, shares: bumpCount(m.shares, +1) } : m,
-        ));
-      }
-      api.share(momentId).then(({ data }) => {
-        if (data && typeof data.shares === 'number') {
-          setMoments((prev) => (prev || []).map(m =>
-            m.id === momentId ? { ...m, shares: toCount(data.shares) } : m,
-          ));
-        }
-      }).catch(() => undefined);
       const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(momentId)}`;
-      openShareSheet({
+      const result = await shareItem(momentId, {
         title: `Moment by ${moment.user} on Equyvo`,
         text: moment.description || '',
         url: shareUrl,
       });
+      if (!result.success && !result.cancelled) {
+        showError(result.error || 'Could not share this moment');
+        return;
+      }
+      if (result.recorded && typeof result.shares === 'number') {
+        setMoments((prev) => (prev || []).map(m =>
+          m.id === momentId ? { ...m, shares: toCount(result.shares) } : m,
+        ));
+      } else if (result.success && result.recorded === false) {
+        showError(result.error || 'The share count could not be saved');
+      }
     }
   };
 
