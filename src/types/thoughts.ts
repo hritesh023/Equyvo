@@ -59,7 +59,7 @@ export interface CreateThoughtData {
 
 export interface VoteData {
   thought_id: string;
-  vote_type: 'upvote' | 'downvote';
+  vote_type: 'upvote' | 'downvote' | 'none';
 }
 
 export interface LikeData {

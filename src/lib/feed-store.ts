@@ -9,6 +9,7 @@
 import api from './api';
 import { fetchMoments, fetchPosts, fetchStories } from './data';
 import { getThoughts } from './thoughts';
+import { resolveMediaFields } from './media';
 
 export type FeedContentType =
   | 'post'
@@ -83,26 +84,17 @@ export function allowedForSurface(type: string | undefined, surface: keyof typeo
 // ── Media helpers: resolve display URLs without ever mixing photo/video ────
 
 export function isVideoItem(item: UnifiedItem): boolean {
-  if (String(item.mediaType || '').toLowerCase() === 'video') return true;
-  const v = item.videoUrl || item.video || '';
-  const img = item.image || item.thumbnail || item.media || '';
-  // A video URL that differs from the image is a real video.
-  if (typeof v === 'string' && v && v !== img) return true;
-  if (String(item.type).toLowerCase() === 'video') return Boolean(v);
-  if (String(item.type).toLowerCase() === 'moment') {
-    // Moments can be photo OR video — trust mediaType/videoUrl, not the type.
-    return Boolean(v);
-  }
-  return false;
+  // Media may be a string, array, or object (legacy writers used all three).
+  // resolveMediaFields handles every shape and never mistakes a photo for a
+  // video just because its URL has no file extension.
+  if (!item) return false;
+  return Boolean(resolveMediaFields(item).videoUrl);
 }
 
 /** Best playable video URL (empty when the item is photo/text-only). */
 export function videoUrlOf(item: UnifiedItem): string {
-  const v = (item.videoUrl || item.video || '') as string;
-  if (v) return v;
-  // Some writers store the video in `media` with mediaType=video.
-  if (String(item.mediaType).toLowerCase() === 'video' && typeof item.media === 'string') return item.media;
-  return '';
+  if (!item) return '';
+  return resolveMediaFields(item).videoUrl;
 }
 
 /**
@@ -110,18 +102,11 @@ export function videoUrlOf(item: UnifiedItem): string {
  * Never returns a video URL — callers must use videoUrlOf() for video.
  */
 export function imageUrlOf(item: UnifiedItem): string {
-  const candidates = [item.image, item.thumbnail, typeof item.media === 'string' ? item.media : '', item.fallbackImage as string];
-  for (const c of candidates) {
-    if (typeof c === 'string' && c && !c.endsWith('.mp4') && !c.includes('/video/upload/')) return c;
-    // Hosted video delivery URLs are the exception — skip them here.
-    if (typeof c === 'string' && c && c.includes('res.cloudinary.com/') && c.includes('/video/')) continue;
-    if (typeof c === 'string' && c && (c.startsWith('http') || c.startsWith('/') || c.startsWith('blob:') || c.startsWith('data:'))) {
-      // Direct video file URLs end with .mp4/.webm/.mov — skip those too.
-      if (/\.(mp4|webm|mov)(\?|$)/i.test(c)) continue;
-      return c;
-    }
-  }
-  return '';
+  if (!item) return '';
+  const resolved = resolveMediaFields(item);
+  if (resolved.image) return resolved.image;
+  // Last resort: any non-video URL anywhere in the item.
+  return resolved.mediaItems.find((m) => m.type !== 'video' && m.type !== 'audio')?.url || '';
 }
 
 /** Creator display name regardless of which field the writer used. */
@@ -134,27 +119,15 @@ export function creatorOf(item: UnifiedItem): string {
  * non-video media URL. Never returns a video URL. */
 export function storyImageOf(item: unknown): string {
   const s = (item || {}) as Record<string, unknown>;
-  const media = typeof s.media === 'string' ? s.media : '';
-  const candidates = [s.thumbnail, s.image, media, s.fallbackImage];
-  for (const c of candidates) {
-    if (typeof c !== 'string' || !c) continue;
-    // Skip playable video URLs — callers use storyVideoOf() for those.
-    if (/\.(mp4|webm|mov)(\?|$)/i.test(c)) continue;
-    if (c.includes('/video/upload/')) continue;
-    return c;
-  }
-  return '';
+  const resolved = resolveMediaFields(s);
+  if (resolved.image) return resolved.image;
+  return resolved.mediaItems.find((m) => m.type !== 'video' && m.type !== 'audio')?.url || '';
 }
 
 /** Best playable video URL for a story (empty for photo/text stories). */
 export function storyVideoOf(item: unknown): string {
   const s = (item || {}) as Record<string, unknown>;
-  const direct = (s.video || s.videoUrl || '') as string;
-  if (typeof direct === 'string' && direct) return direct;
-  const media = typeof s.media === 'string' ? s.media : '';
-  if (String(s.mediaType || '').toLowerCase() === 'video' && media) return media;
-  if (String(s.type || '').toLowerCase() === 'video' && media && /\.(mp4|webm|mov)(\?|$)/i.test(media)) return media;
-  return '';
+  return resolveMediaFields(s).videoUrl;
 }
 
 /** Stable timestamp for sorting (newest first). */

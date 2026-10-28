@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, VolumeX, Maximize2, Columns, Eye, Image, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
@@ -18,6 +18,7 @@ import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import api from '@/lib/api';
+import { normalizeContentItem } from '@/lib/media';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
@@ -43,7 +44,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   onContentChange
 }) => {
   // Check for temp content from split view
-  const actualContent = (window as any).tempFullscreenContent || content;
+  const rawContent = (window as any).tempFullscreenContent || content;
+  // Normalise once: callers can hand us raw media arrays/objects/legacy
+  // fields, and every renderer below expects clean strings.
+  const actualContent = useMemo(
+    () => normalizeContentItem<FullscreenContent>(rawContent),
+    [rawContent],
+  );
   // Real author avatar only: the uploader's uploaded/updated profile icon
   // (overlaid fresh from the server profile on every read). When the author
   // has no photo, render initials — never a fake/bot placeholder image.
@@ -122,7 +129,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const videoTypeValues = new Set(['video', 'moment', 'live', 'story']);
   const isVideoType = videoTypeValues.has(resolvedType) ||
                        videoTypeValues.has(actualContent?.type || '') ||
-                       videoTypeValues.has(actualContent?.contentType || '');
+                       videoTypeValues.has(actualContent?.contentType || '') ||
+                       actualContent?.mediaType === 'video' ||
+                       Boolean(actualContent?.videoUrl);
   const isPortraitMoment = resolvedType === 'moment' ||
                             actualContent?.type === 'moment' ||
                             actualContent?.contentType === 'moment' ||

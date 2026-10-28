@@ -21,6 +21,7 @@ import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
 import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, isVideoItem, storyImageOf, storyVideoOf } from '@/lib/feed-store';
+import { resolveMediaFields } from '@/lib/media';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import api from '@/lib/api';
 import { isOwnContent } from '@/utils/ownership';
@@ -44,6 +45,7 @@ const HomePage = () => {
   const [savedStories, setSavedStories] = useState<Set<string>>(new Set());
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [commentedPosts, setCommentedPosts] = useState<Set<string>>(new Set());
+  const [reactedPosts, setReactedPosts] = useState<Set<string>>(new Set());
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
@@ -147,10 +149,9 @@ const HomePage = () => {
         ]);
         const thoughtsRes = await getThoughts(30, 0).catch(() => ({ data: [] as never[] }));
         const thoughts = ((thoughtsRes as { data: any[] }).data || []).map((t: any) => {
-          const mediaArr = Array.isArray(t.media) ? t.media : [];
-          const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
-          const videoUrl = firstMedia?.type === 'video' ? firstMedia.url || '' : (t.videoUrl || '');
-          const image = firstMedia && firstMedia.type !== 'video' ? firstMedia.url || firstMedia.thumbnail || '' : (t.image || t.image_url || t.thumbnail || '');
+          const fields = resolveMediaFields(t);
+          const videoUrl = fields.videoUrl;
+          const image = fields.image;
           return {
             id: t.id,
             user: t.user?.username || t.creator || t.user_id || 'Unknown',
@@ -158,10 +159,10 @@ const HomePage = () => {
             time: t.created_at ? new Date(t.created_at).toLocaleString() : (t.time || 'just now'),
             content: t.content || '',
             image,
-            thumbnail: firstMedia?.thumbnail || image,
-            media: firstMedia?.url || image,
+            thumbnail: fields.thumbnail,
+            media: fields.media,
             videoUrl,
-            mediaType: videoUrl ? 'video' : (image ? 'image' : 'text'),
+            mediaType: fields.mediaType,
             likes: t.likes_count ?? t.likes ?? 0,
             reacts: t.reacts_count ?? t.reacts ?? 0,
             comments: t.comments_count ?? t.comments ?? 0,
@@ -554,7 +555,7 @@ const HomePage = () => {
   const handleReactPost = (postId: string) => {
     const p = enhancedPosts.find(x => x.id === postId);
     const snapshot = p?.content?.slice(0, 120) || (p as any)?.type || postId;
-    const reacting = !commentedPosts.has(postId);
+    const reacting = !reactedPosts.has(postId);
     // Human eval: reactions are positive engagement labels.
     sendHumanEval({
       itemId: postId,
@@ -563,23 +564,23 @@ const HomePage = () => {
       text: snapshot,
       creator: (p as any)?.user,
     });
-    setCommentedPosts(prev => {
+    setReactedPosts(prev => {
       const newSet = new Set(prev);
       if (newSet.has(postId)) {
         newSet.delete(postId);
-        showSuccess('💔 Post unreacted');
+        showSuccess('Post unreacted');
       } else {
         newSet.add(postId);
-        showSuccess('🔄 Post reacted!');
+        showSuccess('Post reacted!');
         teachBrain(snapshot);
       }
       return newSet;
     });
     
-    // Update the post reacts count
+    // Update the post reacts count optimistically (+1 / -1).
     setEnhancedPosts(prev => prev.map(post => 
       post.id === postId 
-        ? { ...post, reacts: commentedPosts.has(postId) ? post.reacts - 1 : post.reacts + 1 }
+        ? { ...post, reacts: Math.max(0, Number(post.reacts || 0) + (reacting ? 1 : -1)) }
         : post
     ));
     // Persist the reaction (owner notification + cross-device count).
@@ -591,12 +592,29 @@ const HomePage = () => {
     }).catch(() => undefined);
   };
 
+  const handleCommentCountChange = (postId: string, count: number) => {
+    if (!postId || !Number.isFinite(count)) return;
+    setEnhancedPosts(prev => prev.map(post =>
+      post.id === postId ? { ...post, comments: Math.max(0, count) } : post,
+    ));
+    setCommentedPosts(prev => {
+      if (prev.has(postId)) return prev;
+      const next = new Set(prev);
+      next.add(postId);
+      return next;
+    });
+  };
+
   const handleSharePost = (post: Post) => {
     setSharedPosts(prev => {
       const newSet = new Set(prev);
       newSet.add(post.id);
       return newSet;
     });
+    // Optimistic +1 — sharing used to update nothing, so the count never moved.
+    setEnhancedPosts(prev => prev.map(p =>
+      p.id === post.id ? { ...p, shares: Math.max(0, Number(p.shares || 0) + 1) } : p,
+    ));
     teachBrain(post?.content?.slice(0, 120) || post?.type || post.id);
     // Human eval: share = strong positive preference.
     sendHumanEval({
@@ -606,6 +624,13 @@ const HomePage = () => {
       tags: (post as any)?.tags,
       creator: (post as any)?.user,
     });
+    // Persist so reloads and other devices agree; adopt the server's count.
+    api.share(post.id).then(({ data }) => {
+      if (!data || typeof data.shares !== 'number') return;
+      setEnhancedPosts(prev => prev.map(p =>
+        p.id === post.id ? { ...p, shares: data.shares } : p,
+      ));
+    }).catch(() => undefined);
     const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`;
     openShareSheet({
       title: `Post by ${(post as any)?.user || 'creator'} on Equyvo`,
@@ -702,22 +727,19 @@ const HomePage = () => {
       if (raw) {
         // Normalize the stored row to the same display shape the feed uses,
         // so an older/shared item opens with real media and author identity.
-        const mediaArr = Array.isArray(raw.media) ? raw.media : [];
-        const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
-        const videoUrl = firstMedia?.type === 'video' ? firstMedia.url || '' : (raw.videoUrl || raw.video || '');
-        const image = firstMedia && firstMedia.type !== 'video'
-          ? firstMedia.url || firstMedia.thumbnail || ''
-          : (raw.image || raw.image_url || raw.thumbnail || '');
+        const fields = resolveMediaFields(raw);
+        const videoUrl = fields.videoUrl;
+        const image = fields.image;
         const item = {
           ...raw,
           user: raw.user?.username || raw.creator || (typeof raw.user === 'string' ? raw.user : '') || raw.user_id || 'Unknown',
           avatar: raw.user?.avatar_url || raw.avatar || '',
           content: raw.content || raw.title || raw.description || '',
           image,
-          thumbnail: firstMedia?.thumbnail || image,
-          media: firstMedia?.url || (typeof raw.media === 'string' ? raw.media : '') || image,
+          thumbnail: fields.thumbnail,
+          media: fields.media,
           videoUrl,
-          mediaType: videoUrl ? 'video' : (image ? 'image' : 'text'),
+          mediaType: fields.mediaType,
           likes: raw.likes_count ?? raw.likes ?? 0,
           comments: raw.comments_count ?? raw.comments ?? 0,
           shares: raw.shares_count ?? raw.shares ?? 0,
@@ -751,12 +773,9 @@ const HomePage = () => {
         const res = await api.getContentItem(contentId);
         const raw = (res as { data?: any } | null)?.data;
         if (raw) {
-          const mediaArr = Array.isArray(raw.media) ? raw.media : [];
-          const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
-          const videoUrl = firstMedia?.type === 'video' ? firstMedia.url || '' : (raw.videoUrl || raw.video || '');
-          const image = firstMedia && firstMedia.type !== 'video'
-            ? firstMedia.url || firstMedia.thumbnail || ''
-            : (raw.image || raw.image_url || raw.thumbnail || '');
+          const fields = resolveMediaFields(raw);
+          const videoUrl = fields.videoUrl;
+          const image = fields.image;
           if (videoUrl || image) {
             setFullscreenContent({
               ...raw,
@@ -764,10 +783,10 @@ const HomePage = () => {
               avatar: raw.user?.avatar_url || raw.avatar || '',
               content: raw.content || raw.title || live.title || 'Live now',
               image,
-              thumbnail: firstMedia?.thumbnail || image,
-              media: firstMedia?.url || (typeof raw.media === 'string' ? raw.media : '') || image,
+              thumbnail: fields.thumbnail,
+              media: fields.media,
               videoUrl,
-              mediaType: videoUrl ? 'video' : 'image',
+              mediaType: fields.videoUrl ? 'video' : 'image',
               type: 'live',
               isLive: true,
             } as FullscreenContent);
@@ -1032,11 +1051,12 @@ const HomePage = () => {
                 onAddToHistory={handleAddToHistory}
                 onVote={handleVote}
                 likedPosts={likedPosts}
-                reactedPosts={commentedPosts}
+                reactedPosts={reactedPosts}
                 currentUserId={currentUserId}
                 postLikes={Object.fromEntries(enhancedPosts.map(p => [p.id, p.likes]))}
                 postReacts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.reacts]))}
                 postCommentCounts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.comments]))}
+                onCommentCountChange={handleCommentCountChange}
               />
             )}
           </TabsContent>
@@ -1065,11 +1085,12 @@ const HomePage = () => {
                 onAddToHistory={handleAddToHistory}
                 onVote={handleVote}
                 likedPosts={likedPosts}
-                reactedPosts={commentedPosts}
+                reactedPosts={reactedPosts}
                 currentUserId={currentUserId}
                 postLikes={Object.fromEntries(enhancedPosts.map(p => [p.id, p.likes]))}
                 postReacts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.reacts]))}
                 postCommentCounts={Object.fromEntries(enhancedPosts.map(p => [p.id, p.comments]))}
+                onCommentCountChange={handleCommentCountChange}
               />
             )}
           </TabsContent>

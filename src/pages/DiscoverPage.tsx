@@ -24,6 +24,7 @@ import { openShareSheet } from '@/utils/share';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
+import { resolveMediaFields } from '@/lib/media';
 import { fetchMoments, fetchPosts } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
 import { evalLike } from '@/lib/human-eval';
@@ -160,12 +161,9 @@ const DiscoverPage = () => {
       void api.getContentItem(contentId).then(({ data }) => {
         const raw = data as any;
         if (!raw) return;
-        const mediaArr = Array.isArray(raw.media) ? raw.media : [];
-        const first = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
-        const videoUrl = first?.type === 'video' ? first.url || '' : (raw.videoUrl || raw.video || '');
-        const image = first && first.type !== 'video'
-          ? first.url || first.thumbnail || ''
-          : (raw.image || raw.thumbnail || '');
+        const fields = resolveMediaFields(raw);
+        const videoUrl = fields.videoUrl;
+        const image = fields.image || fields.thumbnail;
         if (!videoUrl && !image) return;
         setFullscreenContent(prev => (prev && String((prev as any).id) === contentId
           ? {
@@ -363,8 +361,7 @@ const DiscoverPage = () => {
         const liveRows: any[] = Array.isArray((liveRes as any)?.data?.live) ? (liveRes as any).data.live : [];
         const thoughtsRes = await getThoughts(30, 0).catch(() => ({ data: [] as never[] }));
         const thoughts = ((thoughtsRes as { data: any[] }).data || []).map((t: any) => {
-          const mediaArr = Array.isArray(t.media) ? t.media : [];
-          const first = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
+          const fields = resolveMediaFields(t);
           return {
             id: t.id,
             type: 'thought',
@@ -372,10 +369,10 @@ const DiscoverPage = () => {
             content: t.content || '',
             creator: t.user?.username || t.creator || 'Unknown',
             creatorId: discoverCreatorId(t) || t.user?.username || '',
-            image: first && first.type !== 'video' ? first.url || first.thumbnail || '' : (t.image_url || ''),
-            thumbnail: first?.thumbnail || first?.url || t.image_url || '',
-            videoUrl: first?.type === 'video' ? first.url || '' : '',
-            mediaType: first?.type === 'video' ? 'video' : (first ? 'image' : 'text'),
+            image: fields.image,
+            thumbnail: fields.thumbnail,
+            videoUrl: fields.videoUrl,
+            mediaType: fields.mediaType,
             likes: t.likes_count ?? 0,
             comments: t.comments_count ?? 0,
             views: t.views ?? 0,

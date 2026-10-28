@@ -485,14 +485,23 @@ const ThoughtsPage = memo(() => {
       
       setThoughts(updatedThoughts);
       
-      // Sync with database (only if user is authenticated)
+      // Sync with database (only if user is authenticated). Send the target
+      // state (including "none" when toggling off) so reloads match the UI.
       try {
-        const { error } = await voteOnThought({ thought_id: thoughtId, vote_type: voteType });
-        if (error) {
-          // Don't revert local state in development if database fails
+        const result = await voteOnThought({ thought_id: thoughtId, vote_type: newUserVote ?? 'none' });
+        if (result.error || !result.success) {
           if (!import.meta.env.DEV) {
             setThoughts(thoughts);
           }
+        } else {
+          setThoughts(prev => prev.map(t => t.id === thoughtId
+            ? {
+                ...t,
+                upvotes_count: result.upvotes_count,
+                downvotes_count: result.downvotes_count,
+                user_vote: result.user_vote,
+              }
+            : t));
         }
       } catch {
         // Don't revert local state in development if database fails
@@ -1074,29 +1083,45 @@ const ThoughtsPage = memo(() => {
                       </div>
                     )}
 
-                    {/* Media - New support for photos, GIFs, and videos */}
-                    {thought.media && thought.media.length > 0 && (
-                      <div className="space-y-3">
-                        {thought.media.map((mediaItem, index) => {
-                          // Create a unique key for each media item
-                          const mediaKey = `${thought.id}-${index}`;
-                          
-                          // Create video ref if it doesn't exist
-                          if (!videoRefs.current[mediaKey]) {
-                            videoRefs.current[mediaKey] = React.createRef<HTMLVideoElement>();
-                          }
-                          
-                          return (
-                            <MediaRenderer 
-                              key={index} 
-                              media={mediaItem} 
-                              videoRef={videoRefs.current[mediaKey]}
-                              onFullscreen={(content) => handleFullscreen(content, videoRefs.current[mediaKey])}
-                            />
-                          );
-                        })}
-                      </div>
-                    )}
+                    {/* Media - photos, GIFs, and videos. `mediaItems` is the
+                        normalised list; legacy rows may still carry an array
+                        in `media`, and newer rows carry a primary URL string. */}
+                    {(() => {
+                      const raw = thought as unknown as Record<string, unknown>;
+                      const list = Array.isArray(raw.mediaItems)
+                        ? (raw.mediaItems as Array<{ type?: string; url?: string; thumbnail?: string }>)
+                        : Array.isArray(raw.media)
+                          ? (raw.media as Array<{ type?: string; url?: string; thumbnail?: string }>)
+                          : typeof raw.media === 'string' && raw.media
+                            ? [{ type: raw.mediaType === 'video' ? 'video' : 'photo', url: raw.media, thumbnail: raw.thumbnail as string }]
+                            : [];
+                      if (!list.length) return null;
+                      return (
+                        <div className="space-y-3">
+                          {list.map((mediaItem, index) => {
+                            const mediaKey = `${thought.id}-${index}`;
+                            if (!videoRefs.current[mediaKey]) {
+                              videoRefs.current[mediaKey] = React.createRef<HTMLVideoElement>();
+                            }
+                            const normalized = {
+                              ...mediaItem,
+                              type: mediaItem.type === 'video' ? 'video' : mediaItem.type === 'gif' ? 'gif' : 'photo',
+                              url: String(mediaItem.url || ''),
+                              thumbnail: mediaItem.thumbnail || (mediaItem.type === 'video' ? undefined : mediaItem.url),
+                            };
+                            if (!normalized.url) return null;
+                            return (
+                              <MediaRenderer
+                                key={mediaKey}
+                                media={normalized as never}
+                                videoRef={videoRefs.current[mediaKey]}
+                                onFullscreen={(content) => handleFullscreen(content, videoRefs.current[mediaKey])}
+                              />
+                            );
+                          })}
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Voting and Actions */}

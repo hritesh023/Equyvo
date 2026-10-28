@@ -678,7 +678,13 @@ const CreatePage = () => {
           });
         const thoughts: UploadedThought[] = (d.thoughts || [])
           .map((t: any, i: number) => {
-            const mediaArr = Array.isArray(t.media) ? t.media : [];
+            const mediaArr = Array.isArray(t.mediaItems)
+              ? t.mediaItems
+              : Array.isArray(t.media)
+                ? t.media
+                : typeof t.media === 'string' && t.media
+                  ? [{ type: t.mediaType === 'video' ? 'video' : 'photo', url: t.media, thumbnail: t.thumbnail }]
+                  : [];
             const firstMedia = mediaArr[0] as { type?: string; url?: string; thumbnail?: string } | undefined;
             const videoUrl = firstMedia?.type === 'video' ? String(firstMedia.url || '') : String(t.videoUrl || '');
             const image = firstMedia && firstMedia.type !== 'video'
@@ -1086,7 +1092,9 @@ const CreatePage = () => {
         time: 'just now',
         content: (content.content as string) || '',
         image: fullImage || fullMedia,
-        media: content.media ?? fullMedia,
+        // Always a string in the local cache: a raw `media` array/object here
+        // used to poison ProfilePage's <img src> after publishing a thought.
+        media: fullMedia,
         thumbnail: fullThumb || (fullMedia as string),
         videoUrl: videoUrlStr,
         mediaType: (content.mediaType as string) || (isVideo ? 'video' : 'image'),
@@ -3046,16 +3054,25 @@ const CreatePage = () => {
                     className="capitalize whitespace-nowrap shrink-0 text-xs md:text-sm"
                   >
                     {(() => {
-                      switch (tab) {
-                        case 'all': return 'All';
-                        case 'videos': return '🎬 Videos';
-                        case 'stories': return '📱 Stories';
-                        case 'thoughts': return '💭 Thoughts';
-                        case 'photos': return '🖼️ Photos';
-                        case 'moments': return '⚡ Moments';
-                        case 'text-stories': return '📝 Text Stories';
-                        default: return tab;
-                      }
+                      // Same icon language as the upload tab bar — no emoji
+                      // labels in the management section.
+                      const meta: Record<string, { label: string; Icon: typeof Film }> = {
+                        all: { label: 'All', Icon: BarChart3 },
+                        videos: { label: 'Videos', Icon: Film },
+                        stories: { label: 'Stories', Icon: Camera },
+                        thoughts: { label: 'Thoughts', Icon: Brain },
+                        photos: { label: 'Photos', Icon: Image },
+                        moments: { label: 'Moments', Icon: Video },
+                        'text-stories': { label: 'Text Stories', Icon: Text },
+                      };
+                      const entry = meta[tab] || { label: tab, Icon: BarChart3 };
+                      const Icon = entry.Icon;
+                      return (
+                        <span className="inline-flex items-center gap-1.5">
+                          <Icon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                          {entry.label}
+                        </span>
+                      );
                     })()}
                   </Button>
                 ))}

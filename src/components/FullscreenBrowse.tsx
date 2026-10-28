@@ -14,6 +14,7 @@ import { navItems } from '@/components/Navbar';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { openShareSheet } from '@/utils/share';
 import api from '@/lib/api';
+import { normalizeContentItem, resolveMediaFields } from '@/lib/media';
 
 interface FullscreenBrowseProps {
   isOpen: boolean;
@@ -38,7 +39,8 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
   if (!isOpen) return null;
 
   // Real feed content: featured first, the rest ranked by reach in Trending.
-  const feed = Array.isArray(items) ? items : [];
+  // Normalise every card so raw media arrays/objects resolve to real posters.
+  const feed = (Array.isArray(items) ? items : []).map((item) => normalizeContentItem(item));
   const featuredContent = feed.slice(0, 6);
   const trendingContent = [...feed.slice(6)]
     .sort((a, b) => (Number(b?.views) || 0) - (Number(a?.views) || 0));
@@ -83,13 +85,15 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
   const handleContentClick = (content: any) => {
     // Open content in fullscreen viewer (mirrors the page grid's toFullscreen:
     // live stays live, anything playable opens as a portrait moment).
+    const fields = resolveMediaFields(content);
     const isLive = content.isLive || content.live || String(content.contentType || '').toLowerCase() === 'live';
-    const hasVideo = Boolean(content.videoUrl);
+    const hasVideo = Boolean(fields.videoUrl);
     const fullscreenData = {
       ...content,
-      videoUrl: content.videoUrl || undefined,
-      image: content.image || content.thumbnail,
-      thumbnail: content.thumbnail,
+      videoUrl: fields.videoUrl || undefined,
+      image: fields.image,
+      thumbnail: fields.thumbnail,
+      media: fields.media,
       likes: content.likes || 0,
       comments: content.comments || 0,
       views: content.views || 0,
@@ -210,12 +214,12 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                       }}>
                         <div className="relative aspect-video">
                           <img
-                            src={content.thumbnail || content.image}
+                            src={content.thumbnail || content.image || ''}
                             alt={content.title}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
                           />
-                          {content.type === 'video' && (
+                          {content.mediaType === 'video' && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <div className="bg-black/60 rounded-full p-3 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <Play className="h-6 w-6 text-white" />
@@ -358,12 +362,12 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                       }}>
                         <div className="aspect-square rounded-lg overflow-hidden">
                           <img
-                            src={content.thumbnail || content.image}
+                            src={content.thumbnail || content.image || ''}
                             alt={content.title}
                             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                             loading="lazy"
                           />
-                          {content.type === 'video' && (
+                          {content.mediaType === 'video' && (
                             <div className="absolute inset-0 flex items-center justify-center">
                               <div className="bg-black/60 rounded-full p-2 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <Play className="h-4 w-4 text-white" />

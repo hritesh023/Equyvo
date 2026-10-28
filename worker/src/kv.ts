@@ -367,6 +367,114 @@ function computeRelativeTime(createdAt: string | undefined): string {
   return `${Math.floor(day / 365)}y ago`;
 }
 
+const WORKER_VIDEO_EXT = /\.(mp4|webm|mov|m4v|ogv|ogg|avi|mkv)(\?|#|$)/i;
+const WORKER_IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp|svg|heic|heif)(\?|#|$)/i;
+
+function workerRenderableUrl(value: any): string {
+  if (typeof value !== 'string') return '';
+  const url = value.trim();
+  if (!url || url === '[object Object]' || url === 'undefined' || url === 'null') return '';
+  if (!/^(https?:)?\/\//i.test(url) && !/^(blob:|data:|file:)/i.test(url) && !url.startsWith('/')) return '';
+  return url;
+}
+
+function workerFirstMediaUrl(value: any): string {
+  if (value == null) return '';
+  if (typeof value === 'string') return workerRenderableUrl(value);
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const url = workerFirstMediaUrl(entry);
+      if (url) return url;
+    }
+    return '';
+  }
+  if (typeof value === 'object') {
+    for (const key of ['url', 'secureUrl', 'secure_url', 'src', 'mediaUrl', 'media_url', 'videoUrl', 'video_url', 'playbackUrl', 'imageUrl', 'image_url', 'path', 'link', 'image', 'video', 'media', 'thumbnail', 'poster']) {
+      const url = workerFirstMediaUrl(value[key]);
+      if (url) return url;
+    }
+  }
+  return '';
+}
+
+function workerMediaKind(url: string, hinted?: any): string {
+  const u = String(url || '');
+  const hint = String(hinted || '').toLowerCase();
+  if (hint === 'gif') return 'gif';
+  if (/res\.cloudinary\.com\//i.test(u)) {
+    if (/\/video\/upload\//i.test(u) && !WORKER_IMAGE_EXT.test(u)) return 'video';
+    if (/\.gif(\?|#|$)/i.test(u)) return 'gif';
+    return 'image';
+  }
+  if (WORKER_VIDEO_EXT.test(u)) return 'video';
+  if (WORKER_IMAGE_EXT.test(u)) return /\.gif(\?|#|$)/i.test(u) ? 'gif' : 'image';
+  if (hint === 'image' || hint === 'photo') return 'image';
+  return hint === 'video' || hint === 'moment' ? 'video' : 'image';
+}
+
+/** Mirror of the Pages Functions media normaliser (functions/api/[[path]].ts). */
+function normalizeWorkerMedia(item: any): any {
+  if (!item || typeof item !== 'object') return item;
+  const items: any[] = [];
+  const seen = new Set<string>();
+  const push = (url: string, hint: any, extra?: any) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const entry: any = { url, type: workerMediaKind(url, hint) };
+    if (extra && typeof extra === 'object') {
+      const thumb = workerFirstMediaUrl(extra.thumbnail) || workerFirstMediaUrl(extra.poster);
+      if (thumb && thumb !== url) entry.thumbnail = thumb;
+      const duration = Number(extra.duration ?? extra.durationSec);
+      if (Number.isFinite(duration) && duration > 0) entry.duration = duration;
+    }
+    items.push(entry);
+  };
+  const visit = (value: any, hint?: any) => {
+    if (value == null) return;
+    if (Array.isArray(value)) { for (const entry of value) visit(entry, hint); return; }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if ((trimmed.startsWith('[') || trimmed.startsWith('{')) && trimmed.length < 20000) {
+        try { visit(JSON.parse(trimmed), hint); return; } catch { /* URL below */ }
+      }
+      push(trimmed, hint);
+      return;
+    }
+    if (typeof value === 'object') {
+      const url = workerFirstMediaUrl(value);
+      if (!url) return;
+      push(url, value.type || value.mediaType || value.kind || hint, value);
+    }
+  };
+  visit(item.mediaItems, item.mediaType);
+  visit(item.media, item.mediaType);
+  visit(item.videoUrl, 'video');
+  visit(item.video_url, 'video');
+  visit(item.video, 'video');
+  visit(item.imageUrl, 'image');
+  visit(item.image_url, 'image');
+  visit(item.image, 'image');
+  // Posters/thumbnails are previews, not gallery slides.
+  if (!items.length) visit(item.thumbnail || item.poster, 'image');
+
+  const videoItem = items.find((m) => m.type === 'video');
+  const imageItem = items.find((m) => m.type === 'image' || m.type === 'gif');
+  const explicitVideo = workerFirstMediaUrl(item.videoUrl) || workerFirstMediaUrl(item.video_url) || workerFirstMediaUrl(item.video);
+  const videoUrl = videoItem?.url || (explicitVideo && workerMediaKind(explicitVideo, 'video') === 'video' ? explicitVideo : '');
+  const image = workerFirstMediaUrl(item.thumbnail) || workerFirstMediaUrl(item.poster) ||
+    workerFirstMediaUrl(item.image) || workerFirstMediaUrl(item.imageUrl) || workerFirstMediaUrl(item.image_url) ||
+    imageItem?.url || '';
+  const safeImage = image && image !== videoUrl && workerMediaKind(image, 'image') !== 'video' ? image : '';
+  const thumbnail = workerFirstMediaUrl(item.thumbnail) || workerFirstMediaUrl(item.poster) || safeImage || imageItem?.thumbnail || '';
+  item.mediaItems = items;
+  item.media = videoUrl || safeImage || items[0]?.url || '';
+  item.image = safeImage;
+  item.thumbnail = thumbnail && thumbnail !== videoUrl ? thumbnail : '';
+  item.videoUrl = videoUrl;
+  item.mediaType = videoUrl ? 'video' : safeImage ? 'image' : 'text';
+  return item;
+}
+
 function transformItem<T extends Record<string, any>>(item: T): T {
   if (!item) return item;
   if (item.createdAt) {
@@ -375,6 +483,7 @@ function transformItem<T extends Record<string, any>>(item: T): T {
   if (item.created_at) {
     (item as any).time = computeRelativeTime(item.created_at);
   }
+  normalizeWorkerMedia(item);
   return item;
 }
 
@@ -1514,6 +1623,72 @@ export async function voteThought(env: Env, thoughtId: string, voteType: 'upvote
   await env.EQUYVO_KV.put(KEYS.THOUGHT(thoughtId), JSON.stringify(thought));
   void bumpPopularity(env, thoughtId, voteType === 'upvote' ? 2 : -1);
   return { success: true };
+}
+
+/**
+ * Real upvote/downvote persistence (mirrors POST /api/votes on Pages).
+ * One ledger per direction per account, so switching sides never
+ * double-counts and the viewer can always see their own state.
+ */
+export async function castVote(
+  env: Env,
+  itemId: string,
+  voteType: 'upvote' | 'downvote' | 'none' | 'toggle',
+  actorId: string,
+  actorEmail?: string,
+): Promise<{ id: string; upvotes: number; downvotes: number; upvotes_count: number; downvotes_count: number; user_vote: 'upvote' | 'downvote' | null }> {
+  const found = await findContentById(env, itemId);
+  if (!found) throw new Error('Content not found');
+  const item: any = { ...found.item };
+  const refs = new Set<string>([String(actorId).toLowerCase()]);
+  if (actorEmail) refs.add(String(actorEmail).toLowerCase());
+  const up: string[] = Array.isArray(item.upvotedBy) ? item.upvotedBy.map((x: any) => String(x).toLowerCase()) : [];
+  const down: string[] = Array.isArray(item.downvotedBy) ? item.downvotedBy.map((x: any) => String(x).toLowerCase()) : [];
+  const hadUp = up.some((x) => refs.has(x));
+  const hadDown = down.some((x) => refs.has(x));
+  const desired = voteType === 'toggle'
+    ? (hadUp ? 'none' : 'upvote')
+    : voteType;
+  let nextUp = up.filter((x) => !refs.has(x));
+  let nextDown = down.filter((x) => !refs.has(x));
+  if (desired === 'upvote') nextUp = [String(actorId).toLowerCase(), ...nextUp];
+  if (desired === 'downvote') nextDown = [String(actorId).toLowerCase(), ...nextDown];
+  nextUp = [...new Set(nextUp)].slice(0, 5000);
+  nextDown = [...new Set(nextDown)].slice(0, 5000);
+  const storedUp = Number(item.upvotes_count ?? item.upvotes ?? 0) || 0;
+  const storedDown = Number(item.downvotes_count ?? item.downvotes ?? 0) || 0;
+  const upCount = Math.max(0, storedUp + (desired === 'upvote' && !hadUp ? 1 : desired !== 'upvote' && hadUp ? -1 : 0));
+  const downCount = Math.max(0, storedDown + (desired === 'downvote' && !hadDown ? 1 : desired !== 'downvote' && hadDown ? -1 : 0));
+  item.upvotedBy = nextUp;
+  item.downvotedBy = nextDown;
+  item.upvotes_count = upCount;
+  item.downvotes_count = downCount;
+  if ('upvotes' in item) item.upvotes = upCount;
+  if ('downvotes' in item) item.downvotes = downCount;
+  await env.EQUYVO_KV.put(found.getKey(itemId), JSON.stringify(item));
+  void bumpPopularity(env, itemId, desired === 'upvote' ? 2 : desired === 'downvote' ? -1 : 0);
+  return {
+    id: itemId,
+    upvotes: upCount,
+    downvotes: downCount,
+    upvotes_count: upCount,
+    downvotes_count: downCount,
+    user_vote: desired === 'upvote' ? 'upvote' : desired === 'downvote' ? 'downvote' : null,
+  };
+}
+
+/** Increment a content item's share counter (mirrors POST /api/shares). */
+export async function recordShare(env: Env, itemId: string): Promise<{ id: string; shares: number; shares_count: number }> {
+  const found = await findContentById(env, itemId);
+  if (!found) throw new Error('Content not found');
+  const item: any = { ...found.item };
+  const current = Number(item.shares ?? item.shares_count ?? 0) || 0;
+  const next = Math.max(0, current + 1);
+  item.shares = next;
+  if ('shares_count' in item) item.shares_count = next;
+  await env.EQUYVO_KV.put(found.getKey(itemId), JSON.stringify(item));
+  void bumpPopularity(env, itemId, 2);
+  return { id: itemId, shares: next, shares_count: next };
 }
 
 // --- Delete Content ---

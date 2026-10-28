@@ -49,6 +49,7 @@ import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfil
 import { navigateToProfile } from '@/utils/profile-navigation';
 import api from '@/lib/api';
 import { isVideoItem } from '@/lib/feed-store';
+import { normalizeContentList, normalizeContentItem, resolveMediaFields } from '@/lib/media';
 
 const ownerIdOf = (post: unknown): string => {
   const p = (post || {}) as Record<string, unknown>;
@@ -111,7 +112,16 @@ const readCachedOwnProfile = () => {
     const raw = localStorage.getItem('userProfile');
     if (!raw) return null;
     const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === 'object' ? parsed : null;
+    if (!parsed || typeof parsed !== 'object') return null;
+    // Older versions cached a raw media array/object on posts, which then
+    // rendered as <img src="[object Object]">. Repair the cache on read.
+    if (Array.isArray(parsed.posts)) {
+      parsed.posts = normalizeContentList(parsed.posts);
+    }
+    if (Array.isArray(parsed.savedContent)) {
+      parsed.savedContent = normalizeContentList(parsed.savedContent);
+    }
+    return parsed;
   } catch {
     return null;
   }
@@ -503,16 +513,16 @@ const ProfilePage = () => {
       // profile with the viewer's own posts while visiting their page.
       if (!isSelfView) return;
       try {
-        const saved = localStorage.getItem('userProfile');
-        if (saved) setUserProfile(JSON.parse(saved));
+        const saved = readCachedOwnProfile();
+        if (saved) setUserProfile(saved);
       } catch {}
     };
 
     const handleUserPostDeleted = (_event: CustomEvent) => {
       if (!isSelfView) return;
       try {
-        const saved = localStorage.getItem('userProfile');
-        if (saved) setUserProfile(JSON.parse(saved));
+        const saved = readCachedOwnProfile();
+        if (saved) setUserProfile(saved);
       } catch {}
     };
 
@@ -757,6 +767,13 @@ const ProfilePage = () => {
 
 
   const handleShare = async (post: Post) => {
+    // Optimistic +1: sharing previously left the counter unchanged.
+    setUserProfile(prev => ({
+      ...prev,
+      posts: (prev.posts || []).map(p =>
+        p.id === post.id ? { ...p, shares: Math.max(0, Number(p.shares || 0) + 1) } : p,
+      ),
+    }));
     const result = await sharePost({
       id: post.id,
       user: post.user,
@@ -765,7 +782,15 @@ const ProfilePage = () => {
     });
     if (!result.success) {
       showError(result.error || 'Share failed');
+      return;
     }
+    api.share(post.id).then(({ data }) => {
+      if (!data || typeof data.shares !== 'number') return;
+      setUserProfile(prev => ({
+        ...prev,
+        posts: (prev.posts || []).map(p => (p.id === post.id ? { ...p, shares: data.shares } : p)),
+      }));
+    }).catch(() => undefined);
   };
 
   const handleSave = (postId: string) => {
@@ -1167,15 +1192,16 @@ const ProfilePage = () => {
     // Track content view in history
     addToWatchHistory(post);
     const isMoment = post.type === 'moment' || post.mediaType === 'moment';
+    const media = resolveMediaFields(post as unknown as Record<string, unknown>);
     
     // Enhanced content structure for fullscreen viewer with complete metadata
     const mediaContent = {
       ...post,
-      type: isMoment ? 'moment' : (post.type || post.mediaType || (post.videoUrl ? 'video' : 'image')),
-      videoUrl: post.videoUrl || post.media,
-      media: post.media || post.image,
-      thumbnail: post.thumbnail || post.image || post.media,
-      mediaType: post.mediaType || (post.videoUrl ? 'video' : 'image'),
+      type: isMoment ? 'moment' : (post.type || post.mediaType || (media.videoUrl ? 'video' : 'image')),
+      videoUrl: media.videoUrl,
+      media: media.media || post.image,
+      thumbnail: media.thumbnail || post.image,
+      mediaType: media.videoUrl ? 'video' : 'image',
       creator: post.user || 'Unknown',
       content: post.content || '',
       likes: post.likes || 0,
@@ -1188,14 +1214,40 @@ const ProfilePage = () => {
       creatorId: post.user || 'unknown',
       // Only real values: never invent verified/subscriber counts.
       verified: (post as any).verified === true,
-      fallbackImage: post.thumbnail || post.image || post.media,
+      fallbackImage: media.thumbnail || post.image,
       // Ensure proper aspect ratio and orientation for moments
-      aspectRatio: isMoment ? '9/16' : post.image ? '16/9' : undefined,
+      aspectRatio: isMoment ? '9/16' : media.image ? '16/9' : undefined,
       forcePortrait: isMoment,
       viewMode: isMoment ? 'fullscreen' : undefined
     };
     
     setFullscreenContent(mediaContent);
+  };
+
+  // A Moments card needs clean media strings no matter what the source row
+  // looked like (legacy arrays/objects included).
+  const toMomentView = (post: Post) => {
+    const media = resolveMediaFields(post as unknown as Record<string, unknown>);
+    return {
+      id: post.id,
+      user: post.user,
+      userId: ownerIdOf(post) || undefined,
+      ownerId: ownerIdOf(post) || undefined,
+      content: post.content || '',
+      image: media.image,
+      video: media.videoUrl || undefined,
+      videoUrl: media.videoUrl || undefined,
+      thumbnail: media.thumbnail,
+      likes: post.likes,
+      comments: post.comments,
+      shares: post.shares,
+      time: post.time,
+      avatar: post.avatar,
+      fallbackImage: media.thumbnail,
+      media: media.media,
+      mediaType: (media.videoUrl ? 'video' : 'image') as 'video' | 'image',
+      views: post.views || 0,
+    };
   };
 
   const closeFullscreen = () => {
@@ -1406,26 +1458,7 @@ const ProfilePage = () => {
                   <h4 className="text-sm font-medium text-muted-foreground">Moments</h4>
                   <Moments
                     moments={[...viewerReactedPosts, ...userProfile.posts]
-                      .filter(post => post.type === 'moment' && isVideoItem(post as any)).map(post => ({
-                        id: post.id,
-                        user: post.user,
-                        userId: ownerIdOf(post) || undefined,
-                        ownerId: ownerIdOf(post) || undefined,
-                        content: post.content || '',
-                        image: post.thumbnail || post.media || '',
-                        video: post.videoUrl,
-                        videoUrl: post.videoUrl,
-                        thumbnail: post.thumbnail || post.media,
-                        likes: post.likes,
-                        comments: post.comments,
-                        shares: post.shares,
-                        time: post.time,
-                        avatar: post.avatar,
-                        fallbackImage: post.thumbnail || post.media,
-                        media: post.videoUrl || post.media || post.thumbnail || '',
-                        mediaType: (post.mediaType === 'video' || post.mediaType === 'image') ? post.mediaType : 'video',
-                        views: post.views || 0
-                      }))}
+                      .filter(post => post.type === 'moment' && isVideoItem(post as any)).map(toMomentView)}
                     onFullscreen={(moment) => {
                       const fullPost = [...viewerReactedPosts, ...userProfile.posts]
                         .find(p => p.id === moment.id) || moment as unknown as Post;
@@ -1449,7 +1482,7 @@ const ProfilePage = () => {
 
               {/* Render non-moment posts as regular cards */}
               {[...viewerReactedPosts, ...userProfile.posts]
-                .filter(post => post.type !== 'moment').map((post) => (
+                .filter(post => post.type !== 'moment').map((post) => normalizeContentItem<Post>(post)).map((post) => (
                 <Card key={post.id} className={`p-3 md:p-4 slide-up ${post.isReacted ? 'border-green-200 bg-green-50/50' : ''}`}>
                   <CardHeader className="flex flex-row items-center justify-between p-0 mb-3 md:mb-4">
                     <div className="flex items-center gap-2 md:gap-3">
@@ -1744,26 +1777,7 @@ const ProfilePage = () => {
 
         <TabsContent value="moments" className="mt-6">
           <Moments
-            moments={userProfile.posts.filter(post => post.type === 'moment' && isVideoItem(post as any)).map(post => ({
-              id: post.id,
-              user: post.user,
-              userId: ownerIdOf(post) || undefined,
-              ownerId: ownerIdOf(post) || undefined,
-              content: post.content || '',
-              image: post.thumbnail || post.media || '',
-              video: post.videoUrl,
-              videoUrl: post.videoUrl,
-              thumbnail: post.thumbnail || post.media,
-              likes: post.likes,
-              comments: post.comments,
-              shares: post.shares,
-              time: post.time,
-              avatar: post.avatar,
-              fallbackImage: post.thumbnail || post.media,
-              media: post.videoUrl || post.media || post.thumbnail || '',
-              mediaType: (post.mediaType === 'video' || post.mediaType === 'image') ? post.mediaType : 'video',
-              views: post.views || 0
-            }))}
+            moments={userProfile.posts.filter(post => post.type === 'moment' && isVideoItem(post as any)).map(toMomentView)}
             onFullscreen={(moment) => {
               const fullPost = userProfile.posts.find(p => p.id === moment.id) || moment as unknown as Post;
               addToWatchHistory(fullPost);
@@ -1779,7 +1793,7 @@ const ProfilePage = () => {
 
         <TabsContent value="videos" className="mt-6 space-y-4">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            {userProfile.posts.filter(post => (post.type === 'video' || (post.mediaType === 'video' && post.type !== 'moment'))).map((video) => (
+            {userProfile.posts.filter(post => (post.type === 'video' || (post.mediaType === 'video' && post.type !== 'moment'))).map((post) => normalizeContentItem<Post>(post)).map((video) => (
               <Card key={video.id} className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={() => {
               addToWatchHistory(video);
               handleFullscreen(video);

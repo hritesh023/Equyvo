@@ -2,6 +2,8 @@
 // In development, proxies through Vite to local Pages Functions
 // In production, same origin (Pages serves both frontend and functions)
 
+import { normalizeContentItem, normalizeContentList } from './media';
+
 function resolveApiBase(): string {
   try {
     const cap = (window as any)?.Capacitor;
@@ -357,13 +359,20 @@ async function uploadChunked(
 
 export const api = {
   // Posts
-  getPosts: (limit = 50) =>
-    request<{ data: any[]; error: null }>(`/posts?limit=${limit}`),
+  // Content rows arrive in several legacy shapes (media as a string, array or
+  // object). Normalising at this boundary guarantees every screen receives
+  // render-safe image/video fields, even from an older server deployment.
+  getPosts: async (limit = 50) => {
+    const res = await request<{ data: any[]; error: null; meta?: unknown }>(`/posts?limit=${limit}`);
+    return { ...res, data: normalizeContentList<any>(res.data) };
+  },
 
   // One content item (post / thought / story / moment) by id — used by
   // shared links so /posts/:id never dead-ends on a 404 or the feed top.
-  getContentItem: (id: string) =>
-    request<{ data: any; error: null }>(`/content/${encodeURIComponent(id)}`),
+  getContentItem: async (id: string) => {
+    const res = await request<{ data: any; error: null }>(`/content/${encodeURIComponent(id)}`);
+    return { ...res, data: normalizeContentItem<any>(res.data) };
+  },
 
   createPost: (data: any) =>
     request<{ data: any; error: null }>('/posts', {
@@ -372,8 +381,10 @@ export const api = {
     }),
 
   // Thoughts
-  getThoughts: (limit = 20, offset = 0) =>
-    request<{ data: any[]; error: null }>(`/thoughts?limit=${limit}&offset=${offset}`),
+  getThoughts: async (limit = 20, offset = 0) => {
+    const res = await request<{ data: any[]; error: null }>(`/thoughts?limit=${limit}&offset=${offset}`);
+    return { ...res, data: normalizeContentList<any>(res.data) };
+  },
 
   // Thoughts — trending topics. Server-side engagement-weighted algorithm
   // (tags + #hashtags of real thoughts; recency decay; 24h velocity trend).
@@ -389,8 +400,10 @@ export const api = {
     }),
 
   // Stories
-  getStories: (limit = 20) =>
-    request<{ data: any[]; error: null }>(`/stories?limit=${limit}`),
+  getStories: async (limit = 20) => {
+    const res = await request<{ data: any[]; error: null }>(`/stories?limit=${limit}`);
+    return { ...res, data: normalizeContentList<any>(res.data) };
+  },
 
   createStory: (data: any) =>
     request<{ data: any; error: null }>('/stories', {
@@ -399,8 +412,10 @@ export const api = {
     }),
 
   // Moments
-  getMoments: (limit = 20) =>
-    request<{ data: any[]; error: null }>(`/moments?limit=${limit}`),
+  getMoments: async (limit = 20) => {
+    const res = await request<{ data: any[]; error: null }>(`/moments?limit=${limit}`);
+    return { ...res, data: normalizeContentList<any>(res.data) };
+  },
 
   createMoment: (data: any) =>
     request<{ data: any; error: null }>('/moments', {
@@ -581,6 +596,21 @@ export const api = {
       body: JSON.stringify({ itemId, action }),
     }),
 
+  // Real upvote/downvote persistence (thoughts). The server keeps separate
+  // ledgers, so switching sides never double-counts.
+  vote: (itemId: string, voteType: 'upvote' | 'downvote' | 'none' | 'toggle') =>
+    request<{ data: { id: string; upvotes: number; downvotes: number; upvotes_count: number; downvotes_count: number; user_vote: 'upvote' | 'downvote' | null }; error: null }>('/votes', {
+      method: 'POST',
+      body: JSON.stringify({ itemId, voteType }),
+    }),
+
+  // Persist a share so the count is real across devices/reloads.
+  share: (itemId: string) =>
+    request<{ data: { id: string; shares: number; shares_count: number }; error: null }>('/shares', {
+      method: 'POST',
+      body: JSON.stringify({ itemId }),
+    }),
+
   // Follow graph (server-side source of truth; works across devices).
   follow: (target: string) =>
     request<{ data: { isFollowing: boolean; pending: boolean; isPrivate?: boolean }; error: null }>('/follow', {
@@ -687,16 +717,30 @@ export const api = {
   },
 
   // Get user's own posts
-  getUserPosts: (userId: string, limit = 50) =>
-    request<{ data: any[]; error: null }>(`/users/${userId}/posts?limit=${limit}`),
+  getUserPosts: async (userId: string, limit = 50) => {
+    const res = await request<{ data: any[]; error: null }>(`/users/${userId}/posts?limit=${limit}`);
+    return { ...res, data: normalizeContentList<any>(res.data) };
+  },
 
   // Every collection for one account (posts + thoughts + stories + moments),
   // visibility-enforced server-side — the cross-device / cross-account feed.
-  getUserContent: (userId: string) =>
-    request<{
+  getUserContent: async (userId: string) => {
+    const res = await request<{
       data: { posts: any[]; thoughts: any[]; stories: any[]; moments: any[] };
       error: null;
-    }>(`/users/${encodeURIComponent(userId)}/content`),
+    }>(`/users/${encodeURIComponent(userId)}/content`);
+    if (!res.data || typeof res.data !== 'object') return res;
+    return {
+      ...res,
+      data: {
+        ...res.data,
+        posts: normalizeContentList<any>(res.data.posts),
+        thoughts: normalizeContentList<any>(res.data.thoughts),
+        stories: normalizeContentList<any>(res.data.stories),
+        moments: normalizeContentList<any>(res.data.moments),
+      },
+    };
+  },
 
   // Plans (public catalog — quotas only, no secrets) + usage (authenticated)
   getPlans: () =>

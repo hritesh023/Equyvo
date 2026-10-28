@@ -1886,12 +1886,132 @@ function computeRelativeTime(createdAt) {
   return `${Math.floor(day / 365)}y ago`;
 }
 
+// ── Media truth (server-enforced) ─────────────────────────────────────────
+// Writers have used every representation over time: `media` as a string, an
+// array of {type,url}, or an object; sometimes only `image`/`videoUrl`. Feed
+// clients must never receive a raw array in a field they render as `<img src>`.
+const SERVER_VIDEO_EXT = /\.(mp4|webm|mov|m4v|ogv|ogg|avi|mkv)(\?|#|$)/i;
+const SERVER_IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp|svg|heic|heif)(\?|#|$)/i;
+
+function serverRenderableUrl(value) {
+  if (typeof value !== 'string') return '';
+  const url = value.trim();
+  if (!url || url === '[object Object]' || url === 'undefined' || url === 'null') return '';
+  if (!/^(https?:)?\/\//i.test(url) && !/^(blob:|data:|file:)/i.test(url) && !url.startsWith('/')) return '';
+  return url;
+}
+
+function serverFirstMediaUrl(value) {
+  if (value == null) return '';
+  if (typeof value === 'string') return serverRenderableUrl(value);
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      const url = serverFirstMediaUrl(entry);
+      if (url) return url;
+    }
+    return '';
+  }
+  if (typeof value === 'object') {
+    for (const key of ['url', 'secureUrl', 'secure_url', 'src', 'mediaUrl', 'media_url', 'videoUrl', 'video_url', 'playbackUrl', 'imageUrl', 'image_url', 'path', 'link', 'image', 'video', 'media', 'thumbnail', 'poster']) {
+      const url = serverFirstMediaUrl(value[key]);
+      if (url) return url;
+    }
+  }
+  return '';
+}
+
+function serverMediaKind(url, hint) {
+  const u = String(url || '');
+  const h = String(hint || '').toLowerCase();
+  if (h === 'gif') return 'gif';
+  if (/res\.cloudinary\.com\//i.test(u)) {
+    if (/\/video\/upload\//i.test(u) && !SERVER_IMAGE_EXT.test(u)) return 'video';
+    if (/\.gif(\?|#|$)/i.test(u)) return 'gif';
+    return 'image';
+  }
+  if (SERVER_VIDEO_EXT.test(u)) return 'video';
+  if (SERVER_IMAGE_EXT.test(u)) return /\.gif(\?|#|$)/i.test(u) ? 'gif' : 'image';
+  if (/\.(mp3|wav|m4a|aac|oga|flac)(\?|#|$)/i.test(u)) return 'audio';
+  if (h === 'image' || h === 'photo') return 'image';
+  if (h === 'gif') return 'gif';
+  return h === 'video' || h === 'moment' ? 'video' : 'image';
+}
+
+function normalizeMediaFields(item) {
+  if (!item || typeof item !== 'object') return item;
+  const items = [];
+  const seen = new Set();
+  const push = (url, hint, extra) => {
+    if (!url || seen.has(url)) return;
+    seen.add(url);
+    const kind = serverMediaKind(url, hint);
+    const entry = { url, type: kind };
+    if (extra && typeof extra === 'object') {
+      const thumb = serverFirstMediaUrl(extra.thumbnail) || serverFirstMediaUrl(extra.poster);
+      if (thumb && thumb !== url) entry.thumbnail = thumb;
+      const duration = Number(extra.duration ?? extra.durationSec);
+      if (Number.isFinite(duration) && duration > 0) entry.duration = duration;
+      if (typeof extra.publicId === 'string') entry.publicId = extra.publicId;
+    }
+    items.push(entry);
+  };
+  const visit = (value, hint) => {
+    if (value == null) return;
+    if (Array.isArray(value)) { for (const entry of value) visit(entry, hint); return; }
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if ((trimmed.startsWith('[') || trimmed.startsWith('{')) && trimmed.length < 20000) {
+        try { visit(JSON.parse(trimmed), hint); return; } catch { /* URL below */ }
+      }
+      push(trimmed, hint);
+      return;
+    }
+    if (typeof value === 'object') {
+      const url = serverFirstMediaUrl(value);
+      if (!url) return;
+      push(url, value.type || value.mediaType || value.kind || value.resourceType || hint, value);
+    }
+  };
+  // Preserve the original list for gallery renderers.
+  visit(item.mediaItems, item.mediaType);
+  visit(item.media, item.mediaType);
+  visit(item.videoUrl, 'video');
+  visit(item.video_url, 'video');
+  visit(item.video, 'video');
+  visit(item.imageUrl, 'image');
+  visit(item.image_url, 'image');
+  visit(item.image, 'image');
+  // Posters/thumbnails are previews, not gallery slides.
+  if (!items.length) visit(item.thumbnail || item.poster, 'image');
+
+  const videoItem = items.find((m) => m.type === 'video');
+  const imageItem = items.find((m) => m.type === 'image' || m.type === 'gif');
+  const explicitVideo = serverFirstMediaUrl(item.videoUrl) || serverFirstMediaUrl(item.video_url) || serverFirstMediaUrl(item.video);
+  const videoUrl = videoItem?.url || (explicitVideo && serverMediaKind(explicitVideo, 'video') === 'video' ? explicitVideo : '');
+  const image = serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) ||
+    serverFirstMediaUrl(item.image) || serverFirstMediaUrl(item.imageUrl) || serverFirstMediaUrl(item.image_url) ||
+    imageItem?.url || '';
+  const safeImage = image && image !== videoUrl && serverMediaKind(image, 'image') !== 'video' ? image : '';
+  const thumbnail = serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) || safeImage || imageItem?.thumbnail || '';
+
+  item.mediaItems = items;
+  item.media = videoUrl || safeImage || items[0]?.url || '';
+  item.image = safeImage;
+  item.thumbnail = thumbnail && thumbnail !== videoUrl ? thumbnail : '';
+  item.videoUrl = videoUrl;
+  if (!videoUrl && !safeImage && !item.mediaType) item.mediaType = 'text';
+  else item.mediaType = videoUrl ? 'video' : 'image';
+  return item;
+}
+
 // Apply computed time and other transformations to items before returning
 function transformItem(item) {
   if (!item) return item;
   if (item.createdAt) {
     item.time = computeRelativeTime(item.createdAt);
   }
+  // Make every media representation render-safe BEFORE type routing reads it.
+  normalizeMediaFields(item);
   // ── Content-type truth (server-enforced) ────────────────────────────────
   // Every surface relies on `type` to choose its renderer. Legacy clients wrote
   // photos into the moments collection and videos into photo posts; without
@@ -1917,6 +2037,30 @@ function transformItem(item) {
     item.type = 'video';
     item.contentType = 'video';
   }
+  return item;
+}
+
+// Per-viewer engagement truth for items returned by list endpoints. The
+// stored counter is shared, but `user_vote` / `user_has_liked` are personal.
+function viewerRefSet(viewer) {
+  const refs = new Set();
+  if (viewer && viewer.id) refs.add(String(viewer.id).toLowerCase());
+  if (viewer && viewer.email) refs.add(String(viewer.email).toLowerCase());
+  if (viewer && viewer.username) refs.add(String(viewer.username).replace(/^@/, '').toLowerCase());
+  return refs;
+}
+
+function applyViewerVoteState(item, viewer) {
+  if (!item || typeof item !== 'object') return item;
+  const refs = viewerRefSet(viewer);
+  const upLedger = Array.isArray(item.upvotedBy) ? item.upvotedBy.map((x) => String(x).toLowerCase()) : [];
+  const downLedger = Array.isArray(item.downvotedBy) ? item.downvotedBy.map((x) => String(x).toLowerCase()) : [];
+  const likedLedger = Array.isArray(item.likedBy) ? item.likedBy.map((x) => String(x).toLowerCase()) : [];
+  const hasRef = (ledger) => [...refs].some((r) => ledger.includes(r));
+  item.upvotes_count = Math.max(Number(item.upvotes_count ?? item.upvotes ?? 0) || 0, upLedger.length);
+  item.downvotes_count = Math.max(Number(item.downvotes_count ?? item.downvotes ?? 0) || 0, downLedger.length);
+  item.user_vote = hasRef(upLedger) ? 'upvote' : hasRef(downLedger) ? 'downvote' : null;
+  item.user_has_liked = refs.size > 0 && hasRef(likedLedger);
   return item;
 }
 
@@ -3551,15 +3695,16 @@ export const onRequest = async (context) => {
       }))).filter(Boolean);
       const seedFiltered = await filterSeed(env, posts);
       const filtered = await filterVisibleItems(env, viewer, seedFiltered);
+      const withViewer = filtered.map((it) => applyViewerVoteState(it, viewer));
       const wantRank = sort === 'relevant' || sort === 'foryou' || !!userId || !!url.searchParams.get('interests');
       if (wantRank) {
         try {
           const interests = aiMerge(await aiGetInterests(env, userId), aiParseInterests(url.searchParams.get('interests')));
           const pops = {};
-          await Promise.all(filtered.slice(0, 100).map(async (it) => {
+          await Promise.all(withViewer.slice(0, 100).map(async (it) => {
             try { const r = await kv.get(KEYS.POP(it.id)); if (r) pops[it.id] = parseInt(r, 10) || 0; } catch {}
           }));
-          const scored = filtered.map((it) => ({
+          const scored = withViewer.map((it) => ({
             it,
             s: aiPopOf(it, pops) / 5 + aiRecency(it.createdAt || it.time) + aiInterestBoost({ category: (it.categories && it.categories[0]) || '', tags: it.tags || [], creator: it.user || '', title: it.content || '' }, interests),
           })).sort((a, b) => b.s - a.s);
@@ -3568,7 +3713,7 @@ export const onRequest = async (context) => {
           return json({ data: page, error: null }, 200, cors);
         } catch {}
       }
-      return json({ data: filtered.slice(offset, offset + limit), error: null }, 200, cors);
+      return json({ data: withViewer.slice(offset, offset + limit), error: null }, 200, cors);
     }
 
     if (path === '/api/posts' && method === 'POST') {
@@ -3589,7 +3734,7 @@ export const onRequest = async (context) => {
       const item = transformItem({ ...found.item, id: found.item.id || found.id });
       const [visible] = await filterVisibleItems(env, viewer, await filterSeed(env, [item]));
       if (!visible) return json({ error: 'This content is unavailable or was deleted.' }, 404, cors);
-      return json({ data: visible, error: null }, 200, cors);
+      return json({ data: applyViewerVoteState(visible, viewer), error: null }, 200, cors);
     }
 
     // THOUGHTS (visibility-enforced; see POSTS).
@@ -3604,7 +3749,7 @@ export const onRequest = async (context) => {
         return t ? transformItem(JSON.parse(t)) : null;
       }))).filter(Boolean);
       const visible = await filterVisibleItems(env, viewer, await filterSeed(env, thoughts));
-      return json({ data: visible.slice(offset, offset + limit), error: null }, 200, cors);
+      return json({ data: visible.slice(offset, offset + limit).map((it) => applyViewerVoteState(it, viewer)), error: null }, 200, cors);
     }
 
     if (path === '/api/thoughts' && method === 'POST') {
@@ -4410,6 +4555,120 @@ export const onRequest = async (context) => {
         } catch { /* notifications never block the like */ }
       }
       return json({ data: { id: itemId, likes: nextCount, reacts: Number(item.reacts || 0) || 0, hasLiked: wantLiked }, error: null }, 200, cors);
+    }
+
+    // VOTES — real upvote/downvote persistence for thoughts. Previously the
+    // client faked this with random numbers, so counts reset on every reload
+    // and the owner never saw votes. One ledger per direction per item; a
+    // vote switch adjusts both counters without double-counting.
+    if (path === '/api/votes' && method === 'POST') {
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body || {});
+      const itemId = String(clean.itemId || clean.item_id || clean.thoughtId || clean.thought_id || clean.contentId || clean.id || '').slice(0, 64);
+      if (!itemId) return json({ error: 'itemId required' }, 400, cors);
+      const rl = await rateLimit(kv, 'votes', actor.id, 120);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const found = await findContentById(env, itemId);
+      if (!found) return json({ error: 'Content not found' }, 404, cors);
+      const viewer = { id: actor.id, email: actor.email };
+      if (!(await canViewerSeeItem(env, viewer, transformItem(found.item)))) {
+        return json({ error: 'Content not found' }, 404, cors);
+      }
+      const rawVote = String(clean.voteType || clean.vote_type || clean.vote || clean.action || 'toggle').toLowerCase();
+      const actorRefs = new Set([String(actor.id).toLowerCase()]);
+      if (actor.email) actorRefs.add(String(actor.email).toLowerCase());
+      if (actor.username) actorRefs.add(String(actor.username).replace(/^@/, '').toLowerCase());
+      const item = { ...found.item };
+      const up = Array.isArray(item.upvotedBy) ? item.upvotedBy.map((x) => String(x).toLowerCase()) : [];
+      const down = Array.isArray(item.downvotedBy) ? item.downvotedBy.map((x) => String(x).toLowerCase()) : [];
+      const hadUp = up.some((x) => actorRefs.has(x));
+      const hadDown = down.some((x) => actorRefs.has(x));
+      // "toggle" removes an existing vote; a new vote replaces the opposite.
+      const desired = rawVote === 'toggle'
+        ? (hadUp ? 'none' : 'upvote')
+        : ['upvote', 'up', 'downvote', 'down', 'none', 'remove'].includes(rawVote)
+          ? (rawVote.startsWith('up') ? 'upvote' : rawVote.startsWith('down') ? 'downvote' : 'none')
+          : 'none';
+      let nextUp = up.filter((x) => !actorRefs.has(x));
+      let nextDown = down.filter((x) => !actorRefs.has(x));
+      if (desired === 'upvote') nextUp = [String(actor.id).toLowerCase(), ...nextUp];
+      if (desired === 'downvote') nextDown = [String(actor.id).toLowerCase(), ...nextDown];
+      nextUp = [...new Set(nextUp)].slice(0, 5000);
+      nextDown = [...new Set(nextDown)].slice(0, 5000);
+      const storedUp = Number(item.upvotes_count ?? item.upvotes ?? 0) || 0;
+      const storedDown = Number(item.downvotes_count ?? item.downvotes ?? 0) || 0;
+      const upCount = Math.max(0, storedUp + (desired === 'upvote' && !hadUp ? 1 : desired !== 'upvote' && hadUp ? -1 : 0));
+      const downCount = Math.max(0, storedDown + (desired === 'downvote' && !hadDown ? 1 : desired !== 'downvote' && hadDown ? -1 : 0));
+      item.upvotedBy = nextUp;
+      item.downvotedBy = nextDown;
+      item.upvotes_count = upCount;
+      item.downvotes_count = downCount;
+      if ('upvotes' in item) item.upvotes = upCount;
+      if ('downvotes' in item) item.downvotes = downCount;
+      try {
+        await kv.put(found.getKey(itemId), JSON.stringify(item));
+      } catch {
+        return json({ error: 'Could not save your vote. Please try again.' }, 500, cors);
+      }
+      try {
+        void aiRecordEngagement(env, actor.id, {
+          category: String(item.category || ''),
+          tags: Array.isArray(item.tags) ? item.tags.slice(0, 10) : [],
+          creator: String(item.user || item.creator || ''),
+          action: 'vote',
+        });
+      } catch { /* never block */ }
+      return json({ data: {
+        id: itemId,
+        upvotes: upCount,
+        downvotes: downCount,
+        upvotes_count: upCount,
+        downvotes_count: downCount,
+        user_vote: desired === 'upvote' ? 'upvote' : desired === 'downvote' ? 'downvote' : null,
+      }, error: null }, 200, cors);
+    }
+
+    // SHARES — increment the post's share counter. Sharing used to update only
+    // local state, so the count reset on reload and never moved for anyone
+    // else. The share sheet itself is still device-native (client-side).
+    if (path === '/api/shares' && method === 'POST') {
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
+      if (!actor || !actor.id) return json({ error: 'Sign in to share content' }, 401, cors);
+      const clean = sanitizeBody(body || {});
+      const itemId = String(clean.itemId || clean.item_id || clean.contentId || clean.postId || clean.id || '').slice(0, 64);
+      if (!itemId) return json({ error: 'itemId required' }, 400, cors);
+      const rl = await rateLimit(kv, 'shares', actor.id, 120);
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const found = await findContentById(env, itemId);
+      if (!found) return json({ data: { id: itemId, shares: 0, offline: true }, error: null }, 200, cors);
+      const viewer = { id: actor.id, email: actor.email };
+      if (!(await canViewerSeeItem(env, viewer, transformItem(found.item)))) {
+        return json({ error: 'Content not found' }, 404, cors);
+      }
+      const item = { ...found.item };
+      const current = Number(item.shares ?? item.shares_count ?? 0) || 0;
+      const next = Math.max(0, current + 1);
+      item.shares = next;
+      if ('shares_count' in item) item.shares_count = next;
+      try {
+        await kv.put(found.getKey(itemId), JSON.stringify(item));
+      } catch {
+        return json({ error: 'Could not save your share. Please try again.' }, 500, cors);
+      }
+      try {
+        void aiBumpPop(env, itemId, 2);
+        void aiRecordEngagement(env, actor.id, {
+          category: String(item.category || ''),
+          tags: Array.isArray(item.tags) ? item.tags.slice(0, 10) : [],
+          creator: String(item.user || item.creator || ''),
+          action: 'share',
+        });
+      } catch { /* never block */ }
+      return json({ data: { id: itemId, shares: next, shares_count: next }, error: null }, 200, cors);
     }
 
     // GET /api/likes?itemId= — authoritative like state for the viewer.
@@ -5590,11 +5849,12 @@ export const onRequest = async (context) => {
       // Photos mis-filed as moments by legacy clients are returned in the
       // photo feed bucket (never the short-video surface).
       const photoMoments = visible.filter((x) => isMoment(x) && !itemHasPlayableVideo(x)).map(asPhotoItem);
+      const withViewer = visible.map((x) => applyViewerVoteState(x, viewer));
       return json({ data: {
-        posts: [...visible.filter((x) => !['thought', 'story', 'text-story', 'moment'].includes(String(x.type || '').toLowerCase())), ...photoMoments],
-        thoughts: visible.filter((x) => String(x.type || '').toLowerCase() === 'thought'),
-        stories: visible.filter((x) => ['story', 'text-story'].includes(String(x.type || '').toLowerCase())),
-        moments: visible.filter((x) => isMoment(x) && itemHasPlayableVideo(x)),
+        posts: [...withViewer.filter((x) => !['thought', 'story', 'text-story', 'moment'].includes(String(x.type || '').toLowerCase())), ...photoMoments],
+        thoughts: withViewer.filter((x) => String(x.type || '').toLowerCase() === 'thought'),
+        stories: withViewer.filter((x) => ['story', 'text-story'].includes(String(x.type || '').toLowerCase())),
+        moments: withViewer.filter((x) => isMoment(x) && itemHasPlayableVideo(x)),
       }, error: null }, 200, cors);
     }
 
@@ -5624,7 +5884,7 @@ export const onRequest = async (context) => {
       const userPosts = posts.filter((p) => itemBelongsToAccount(p, refs));
       const visible = await filterVisibleItems(env, viewer, await filterSeed(env, userPosts));
       const limit = clamp(parseInt(url.searchParams.get('limit') || '50', 10), 1, 100);
-      return json({ data: visible.slice(0, limit), error: null }, 200, cors);
+      return json({ data: visible.slice(0, limit).map((it) => applyViewerVoteState(it, viewer)), error: null }, 200, cors);
     }
 
     // CONTENT INDEX

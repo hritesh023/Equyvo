@@ -23,6 +23,7 @@ import { withInFeedAds } from '@/lib/feed-ads';
 import { shouldShowAds } from '@/lib/ads-config';
 import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from './ads/InFeedAdGate';
+import { resolveMediaFields } from '@/lib/media';
 
 interface ExtendedPost extends Post {
   type: 'post' | 'thought' | 'reacted';
@@ -56,6 +57,7 @@ interface ForYouFeedProps {
   onDelete: (postId: string) => void;
   onAddToHistory?: (post: Post) => void;
   onVote?: (postId: string, voteType: 'upvote' | 'downvote') => void;
+  onCommentCountChange?: (postId: string, count: number) => void;
   likedPosts: Set<string>;
   reactedPosts: Set<string>;
   postLikes: { [key: string]: number };
@@ -78,6 +80,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
   onDelete,
   onAddToHistory,
   onVote,
+  onCommentCountChange,
   likedPosts,
   reactedPosts,
   postLikes,
@@ -222,15 +225,16 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     
     // Enhanced content structure for fullscreen viewer
     const isMomentPost = post.type === 'moment';
-    const vid = post.videoUrl || post.video || '';
-    const img = post.image || post.thumbnail || post.media || post.fallbackImage || '';
-    const hasVideo = Boolean(vid) && vid !== img;
+    const resolved = resolveMediaFields(post);
+    const vid = resolved.videoUrl;
+    const img = resolved.image || resolved.thumbnail;
+    const hasVideo = Boolean(vid);
     const fullscreenContent = {
       ...post,
       type: isMomentPost ? 'moment' : (hasVideo ? ('video' as any) : (img ? ('image' as any) : post.type)), // Keep original type when no media
       videoUrl: vid,
       media: vid || img,
-      thumbnail: img || post.thumbnail || post.media,
+      thumbnail: img,
       mediaType: hasVideo ? 'video' : (img ? 'image' : 'text'),
       creator: post.user,
       content: post.content,
@@ -340,9 +344,10 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                   </p>
                   
                   {(() => {
-                    const vid = post.videoUrl || post.video || '';
-                    const img = post.image || post.thumbnail || post.media || post.fallbackImage || '';
-                    const isVideo = Boolean(vid) && vid !== img;
+                    const resolved = resolveMediaFields(post);
+                    const vid = resolved.videoUrl;
+                    const img = resolved.image || resolved.thumbnail;
+                    const isVideo = Boolean(vid);
                     if (isVideo) {
                       return (
                         <video
@@ -456,6 +461,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
         onClose={() => setShowCommentSection(false)}
         postId={currentPostId}
         postUser={currentPostUser}
+        onCommentCountChange={onCommentCountChange}
       />
       
       <ReportModal

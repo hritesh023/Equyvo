@@ -88,45 +88,68 @@ export const deleteThought = async (_thoughtId: string) => {
   return true;
 };
 
-// Votes API
+// Votes API — real server persistence (no random/fabricated counts).
 export const voteOnThought = async (voteData: VoteData) => {
-  await new Promise(resolve => setTimeout(resolve, 200));
-  // TODO: Implement vote endpoint in worker
-  return {
-    success: true,
-    upvotes_count: Math.floor(Math.random() * 20),
-    downvotes_count: Math.floor(Math.random() * 5),
-    user_vote: voteData.vote_type
-  };
+  try {
+    const { data, error } = await api.vote(voteData.thought_id, voteData.vote_type);
+    if (error || !data) {
+      return { success: false, error: error || 'Vote failed', upvotes_count: 0, downvotes_count: 0, user_vote: null };
+    }
+    return {
+      success: true,
+      upvotes_count: data.upvotes_count,
+      downvotes_count: data.downvotes_count,
+      user_vote: data.user_vote,
+    };
+  } catch (e) {
+    return {
+      success: false,
+      error: e instanceof Error ? e.message : 'Vote failed',
+      upvotes_count: 0,
+      downvotes_count: 0,
+      user_vote: null,
+    };
+  }
 };
 
-export const getThoughtVotes = async (_thoughtId: string) => {
+export const getThoughtVotes = async (thoughtId: string) => {
   try {
-    await new Promise(resolve => setTimeout(resolve, 200));
+    const { data } = await api.getContentItem(thoughtId);
+    const item = (data || {}) as Record<string, unknown>;
     return {
-      upvotes_count: Math.floor(Math.random() * 20),
-      downvotes_count: Math.floor(Math.random() * 5),
-      user_vote: null
+      upvotes_count: Number(item.upvotes_count ?? item.upvotes ?? 0) || 0,
+      downvotes_count: Number(item.downvotes_count ?? item.downvotes ?? 0) || 0,
+      user_vote: (item.user_vote as 'upvote' | 'downvote' | null) ?? null,
     };
   } catch {
     return { upvotes_count: 0, downvotes_count: 0, user_vote: null };
   }
 };
 
-// Likes API
-export const likeThought = async (_likeData: LikeData) => {
-  await new Promise(resolve => setTimeout(resolve, 200));
-  const liked = Math.random() > 0.5;
-  return {
-    liked,
-    likes_count: liked ? 1 : 0
-  };
+// Likes API — real server persistence.
+export const likeThought = async (likeData: LikeData) => {
+  try {
+    const { data, error } = await api.like(likeData.thought_id, 'toggle');
+    if (error || !data) return { liked: false, likes_count: 0 };
+    const item = data as unknown as Record<string, unknown>;
+    return {
+      liked: Boolean(item.hasLiked),
+      likes_count: Number(item.likes ?? 0) || 0,
+    };
+  } catch {
+    return { liked: false, likes_count: 0 };
+  }
 };
 
 export const getThoughtLikes = async (thoughtId: string) => {
   try {
-    return { likes_count: 0, user_has_liked: false };
-  } catch (error) {
+    const { data } = await api.getContentItem(thoughtId);
+    const item = (data || {}) as Record<string, unknown>;
+    return {
+      likes_count: Number(item.likes ?? item.likes_count ?? 0) || 0,
+      user_has_liked: item.user_has_liked === true,
+    };
+  } catch {
     return { likes_count: 0, user_has_liked: false };
   }
 };

@@ -16,6 +16,7 @@ import {
   generateId, fileReport, listReports, fanOutUpload,
   findContentById, getCommentSettings, resolveCommentAuthor, toPublicComment,
   readCommentList, syncContentCommentCount, cleanCommentAvatar, cleanCommentName,
+  castVote, recordShare,
   putLocalGrant, getLocalGrant, claimLocalEmailGrant, verifyCentralJWT,
 } from './kv';
 export { Env };
@@ -349,6 +350,59 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         }
       } catch {}
       return respond({ data: result, error: null });
+    }
+
+    // VOTES — real upvote/downvote persistence (mirrors Pages Functions).
+    if (path === '/api/votes' && method === 'POST') {
+      const raw = await request.json().catch(() => ({})) as any;
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const body = sanitizeBody(raw || {});
+      const itemId = String(body.itemId || body.item_id || body.thoughtId || body.thought_id || body.contentId || body.id || '').slice(0, 64);
+      if (!itemId) return respondError('itemId required', 400);
+      const rl = await rateLimit(env, 'votes', (actor as any).id, 120);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      const rawVote = String(body.voteType || body.vote_type || body.vote || body.action || 'toggle').toLowerCase();
+      const desired = rawVote === 'toggle'
+        ? 'toggle'
+        : ['upvote', 'up', 'downvote', 'down', 'none', 'remove'].includes(rawVote)
+          ? (rawVote.startsWith('up') ? 'upvote' : rawVote.startsWith('down') ? 'downvote' : 'none')
+          : 'none';
+      try {
+        const result = await castVote(env, itemId, desired as any, (actor as any).id, (actor as any).email);
+        try {
+          const found = await findContentById(env, itemId);
+          if (found) {
+            void recordEngagement(env, (actor as any).id, {
+              tags: Array.isArray(found.item.tags) ? found.item.tags : [],
+              action: 'vote',
+            });
+          }
+        } catch {}
+        return respond({ data: result, error: null });
+      } catch {
+        return respondError('Content not found', 404);
+      }
+    }
+
+    // SHARES — increment the persisted share counter (device share sheet
+    // stays client-side; this only records that a share happened).
+    if (path === '/api/shares' && method === 'POST') {
+      const raw = await request.json().catch(() => ({})) as any;
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const body = sanitizeBody(raw || {});
+      const itemId = String(body.itemId || body.item_id || body.contentId || body.postId || body.id || '').slice(0, 64);
+      if (!itemId) return respondError('itemId required', 400);
+      const rl = await rateLimit(env, 'shares', (actor as any).id, 120);
+      if (!rl.ok) return respondError('Too many requests', 429);
+      try {
+        const result = await recordShare(env, itemId);
+        return respond({ data: result, error: null });
+      } catch {
+        // Offline/unknown item: sharing must still succeed in the sheet.
+        return respond({ data: { id: itemId, shares: 0, shares_count: 0, offline: true }, error: null });
+      }
     }
 
     if (path === '/api/stories' && method === 'GET') {

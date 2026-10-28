@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Play, Pause, Video, Camera, Eye, EyeOff, ThumbsUp, MessageCircle, Volume2, VolumeX, ChevronLeft, ChevronRight, AlertTriangle, Maximize, Bookmark, RotateCcw } from 'lucide-react';
@@ -13,6 +13,7 @@ import { deleteContent } from '@/utils/delete';
 import { isOwnContent } from '@/utils/ownership';
 import { hideFromMyView } from '@/lib/feed-store';
 import VideoSeekBar from '@/components/VideoSeekBar';
+import { resolveMediaFields } from '@/lib/media';
 
 interface Moment {
   id: string;
@@ -21,6 +22,7 @@ interface Moment {
   ownerId?: string;
   content: string;
   media: string;
+  image?: string;
   thumbnail?: string;
   mediaType: 'video' | 'image';
   videoUrl?: string;
@@ -43,6 +45,24 @@ interface MomentsProps {
 }
 
 const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onLike, likedMoments = new Set(), onDelete, isHomePage = false, isMomentsPage = false }) => {
+  // Normalise every moment once so raw arrays/objects/legacy media fields can
+  // never reach <video>/<img> and render blank.
+  const resolvedMoments = useMemo<Moment[]>(
+    () =>
+      (Array.isArray(moments) ? moments : []).map((moment) => {
+        const fields = resolveMediaFields(moment as unknown as Record<string, unknown>);
+        return {
+          ...moment,
+          media: fields.media || moment.media || '',
+          image: fields.image,
+          thumbnail: fields.thumbnail || moment.thumbnail || '',
+          videoUrl: fields.videoUrl || '',
+          mediaType: fields.videoUrl || moment.mediaType === 'video' ? 'video' : 'image',
+        } as Moment;
+      }),
+    [moments],
+  );
+
   // Only the account that posted a moment can delete it. Everyone else can
   // only hide it from their own view. Never errors for non-owners.
   const isOwnMoment = (moment: Moment) => {
@@ -148,7 +168,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   }, []);
 
   const handleVideoPlayPause = debounce(async (momentId: string, videoUrl?: string) => {
-    const moment = moments.find(m => m.id === momentId);
+    const moment = resolvedMoments.find(m => m.id === momentId);
     const actualVideoUrl = videoUrl || moment?.videoUrl || moment?.media;
     const finalVideoUrl = actualVideoUrl;
 
@@ -302,7 +322,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     
     // Force video reload
     const video = videoRefs.current[momentId];
-    const moment = moments.find(m => m.id === momentId);
+    const moment = resolvedMoments.find(m => m.id === momentId);
     
     if (video && moment) {
       // Reset the element and retry the real source.
@@ -406,7 +426,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       return;
     }
     
-    const actualVideoUrl = videoUrl || moments.find(m => m.id === momentId)?.videoUrl || moments.find(m => m.id === momentId)?.media;
+    const actualVideoUrl = videoUrl || resolvedMoments.find(m => m.id === momentId)?.videoUrl || resolvedMoments.find(m => m.id === momentId)?.media;
     if (!actualVideoUrl || videoErrors.has(momentId)) return;
     
     const video = videoRefs.current[momentId];
@@ -528,7 +548,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
   // The old "duplicate to fill the rail" logic rendered the same moment 2-4
   // times in the home strip and made one upload look like a flood of copies.
   // Sparseness is honest: if there are fewer moments they simply sit left-aligned.
-  const getDisplayMoments = () => moments;
+  const getDisplayMoments = () => resolvedMoments;
 
   const displayMoments = getDisplayMoments();
   const showActionOverlay = deviceCapabilities.isTouchDevice;
@@ -570,7 +590,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
             className="flex gap-3 overflow-x-auto scroll-px-2 scrollbar-hide scroll-smooth pb-2 pr-4"
             style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}
           >
-            {displayMoments.map((moment) => (
+            {resolvedMoments.map((moment) => (
               <Card 
                 key={moment.id} 
                 className="flex-shrink-0 overflow-hidden group cursor-pointer bg-black relative"
@@ -591,7 +611,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         </div>
                       ) : (
                         <img
-                          src={moment.thumbnail || moment.fallbackImage || ''}
+                          src={moment.thumbnail || moment.image || moment.fallbackImage || ''}
                           alt="Moment thumbnail"
                           loading="lazy"
                           className="w-full h-full object-cover bg-black"
@@ -865,7 +885,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
           </div>
         </div>
         
-        {moments.length === 0 && (
+        {resolvedMoments.length === 0 && (
           <div className="text-center py-8">
             <Video className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <p className="text-gray-500">No moments yet. Share your first short video!</p>
@@ -887,7 +907,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
       
       {/* Use horizontal scroll layout for non-MomentsPage pages */}
       <div className={`${isMomentsPage ? 'grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-2' : 'flex gap-4 overflow-x-auto scroll-px-2 scrollbar-hide pb-4 pr-4'} max-w-6xl mx-auto`}>
-        {moments.map((moment) => (
+        {resolvedMoments.map((moment) => (
           <Card 
             key={moment.id} 
             className={`${isMomentsPage ? '' : 'flex-shrink-0'} overflow-hidden group cursor-pointer bg-black relative`} 
@@ -912,7 +932,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     </div>
                   ) : (
                     <img
-                      src={moment.thumbnail || moment.fallbackImage || ''}
+                      src={moment.thumbnail || moment.image || moment.fallbackImage || ''}
                       alt="Moment thumbnail"
                       loading="lazy"
                       className="w-full h-full object-cover bg-black"
@@ -1113,7 +1133,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     </div>
                   ) : (
                     <img
-                      src={moment.thumbnail || moment.media || ''}
+                      src={moment.thumbnail || moment.image || moment.media || ''}
                       alt="Moment"
                       loading="lazy"
                       className="w-full h-full object-cover bg-black"
@@ -1217,7 +1237,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
         ))}
       </div>
       
-      {moments.length === 0 && (
+      {resolvedMoments.length === 0 && (
         <div className="text-center py-8">
           <Video className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <p className="text-gray-500">No moments yet. Share your first short video!</p>

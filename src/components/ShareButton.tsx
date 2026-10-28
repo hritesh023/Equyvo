@@ -54,8 +54,8 @@ const ShareButton: React.FC<ShareButtonProps> = ({
       onClick={handleShare}
     >
       <Share2 className={iconSizes[size]} />
-      {showCount && sharesCount > 0 && (
-        <span className="ml-1">{sharesCount}</span>
+      {showCount && (
+        <span className="ml-1">{Number(sharesCount) || 0}</span>
       )}
     </Button>
   );

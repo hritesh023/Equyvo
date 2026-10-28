@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Clock, Video, MessageSquare, Maximize, Bookmark, X, Eye, Play, Trash } from 'lucide-react';
 import { Post } from '@/types';
 import { showSuccess } from '@/utils/toast';
+import { normalizeContentItem } from '@/lib/media';
 
 interface WatchHistorySectionProps {
   watchHistory: (Post & { watchedAt?: string; watchDuration?: number })[];
@@ -24,7 +25,11 @@ const WatchHistorySection: React.FC<WatchHistorySectionProps> = ({
 }) => {
   const [filterType, setFilterType] = useState<'all' | 'videos' | 'posts' | 'moments'>('all');
 
-  const filteredHistory = watchHistory.filter(item => {
+  // History is cached in localStorage, so it can contain legacy raw media
+  // arrays/objects. Normalise before rendering previews.
+  const normalizedHistory = watchHistory.map((item) => normalizeContentItem(item));
+
+  const filteredHistory = normalizedHistory.filter(item => {
     switch (filterType) {
       case 'videos':
         return item.mediaType === 'video' || item.type === 'video';
