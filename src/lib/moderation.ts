@@ -77,6 +77,34 @@ async function withTimeout<T>(p: (signal: AbortSignal) => Promise<T>, ms: number
 
 /** Downscale an image to a small JPEG data URL for the server-side eye. */
 async function sampleImage(blob: Blob): Promise<string | null> {
+  // Decode at the sample size when the browser supports it. The previous
+  // implementation decoded the full original first, which could exhaust
+  // memory on very large phone photos before the safety request even ran.
+  try {
+    if (typeof createImageBitmap === 'function') {
+      const bitmap = await withTimeout((signal) => {
+        const resize = { resizeWidth: SAMPLE_LONG_EDGE, resizeHeight: SAMPLE_LONG_EDGE, resizeQuality: 'high' } as ImageBitmapOptions;
+        return createImageBitmap(blob, resize).then((value) => {
+          if (signal.aborted) {
+            value.close();
+            throw new Error('timeout');
+          }
+          return value;
+        });
+      }, SAMPLE_TIMEOUT_MS);
+      const canvas = document.createElement('canvas');
+      const scale = Math.min(1, SAMPLE_LONG_EDGE / Math.max(bitmap.width, bitmap.height));
+      canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+      canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+      const ctx = canvas.getContext('2d');
+      if (!ctx) { bitmap.close(); return null; }
+      ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+      bitmap.close();
+      return canvas.toDataURL('image/jpeg', SAMPLE_QUALITY);
+    }
+  } catch {
+    // Fall through to the Safari-safe <img> decoder below.
+  }
   try {
     const url = URL.createObjectURL(blob);
     trackUrl(url);
@@ -116,8 +144,11 @@ async function sampleVideo(blob: Blob): Promise<string[]> {
     const video = document.createElement('video');
     video.muted = true;
     (video as unknown as { playsInline?: boolean }).playsInline = true;
-    video.preload = 'auto';
+    // Metadata + seeks are enough for moderation and avoid asking the browser
+    // to buffer a multi-gigabyte local recording.
+    video.preload = 'metadata';
     video.src = url;
+    video.load();
     const dur = await withTimeout((signal) => new Promise<number>((resolve, reject) => {
       video.onloadedmetadata = () => resolve(video.duration || 0);
       video.onerror = () => reject(new Error('meta'));
@@ -195,10 +226,10 @@ export async function screenMedia(
   const isImage = file.type.startsWith('image/') && !file.type.includes('gif');
   const isVideo = file.type.startsWith('video/');
   const samples: string[] = [];
-  if (isImage && file.size <= 60 * 1024 * 1024) {
+  if (isImage) {
     const s = await sampleImage(file);
     if (s) samples.push(s);
-  } else if (isVideo && file.size <= 800 * 1024 * 1024) {
+  } else if (isVideo) {
     for (const s of await sampleVideo(file)) samples.push(s);
   }
 

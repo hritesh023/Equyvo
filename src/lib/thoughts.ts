@@ -2,8 +2,10 @@ import { Thought, Vote, Like, CreateThoughtData, VoteData, LikeData, ThoughtMedi
 import { getAuthenticatedUser } from './auth';
 import api from './api';
 
-// Mock video duration validation (no change - this is client-side)
-export const validateVideoDuration = (file: File): Promise<{ valid: boolean; error?: string }> => {
+// Client-side metadata validation. The server plan is the source of truth;
+// `maxDurationSeconds=0` means no client cap is known yet, so large/long
+// uploads are not rejected with the old hard-coded five-minute limit.
+export const validateVideoDuration = (file: File, maxDurationSeconds = 0): Promise<{ valid: boolean; error?: string }> => {
   return new Promise((resolve) => {
     const video = document.createElement('video');
     video.preload = 'metadata';
@@ -11,13 +13,12 @@ export const validateVideoDuration = (file: File): Promise<{ valid: boolean; err
     video.onloadedmetadata = () => {
       window.URL.revokeObjectURL(video.src);
       const duration = video.duration;
-      const maxDuration = 300;
       const minDuration = 1;
       
       if (duration < minDuration) {
         resolve({ valid: false, error: 'Video must be at least 1 second long' });
-      } else if (duration > maxDuration) {
-        resolve({ valid: false, error: 'Video must be less than 5 minutes long' });
+      } else if (maxDurationSeconds > 0 && duration > maxDurationSeconds) {
+        resolve({ valid: false, error: `Video must be less than ${Math.ceil(maxDurationSeconds / 60)} minutes long` });
       } else {
         resolve({ valid: true });
       }
@@ -95,11 +96,12 @@ export const voteOnThought = async (voteData: VoteData) => {
     if (error || !data) {
       return { success: false, error: error || 'Vote failed', upvotes_count: 0, downvotes_count: 0, user_vote: null };
     }
+    const vote = data as any;
     return {
       success: true,
-      upvotes_count: data.upvotes_count,
-      downvotes_count: data.downvotes_count,
-      user_vote: data.user_vote,
+      upvotes_count: vote.upvotes_count,
+      downvotes_count: vote.downvotes_count,
+      user_vote: vote.user_vote,
     };
   } catch (e) {
     return {

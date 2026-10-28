@@ -32,7 +32,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
   const [fullscreenContent, setFullscreenContent] = useState<any>(null);
-  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image'>('image');
+  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image' | 'audio'>('image');
   const navigate = useNavigate();
   const location = useLocation();
   const { t } = useI18n();
@@ -96,9 +96,11 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
     const fields = resolveMediaFields(content);
     const isLive = content.isLive || content.live || String(content.contentType || '').toLowerCase() === 'live';
     const hasVideo = Boolean(fields.videoUrl);
+    const hasAudio = Boolean(fields.audioUrl);
     const fullscreenData = {
       ...content,
       videoUrl: fields.videoUrl || undefined,
+      audioUrl: fields.audioUrl || undefined,
       image: fields.image,
       thumbnail: fields.thumbnail,
       media: fields.media,
@@ -112,7 +114,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
     };
 
     setFullscreenContent(fullscreenData);
-    setFullscreenType(isLive ? 'live' : hasVideo ? 'moment' : 'image');
+    setFullscreenType(isLive ? 'live' : hasVideo ? 'moment' : hasAudio ? 'audio' : 'image');
   };
 
   const handleCloseFullscreen = () => {
@@ -441,7 +443,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <FullscreenViewer
+        <SafeFullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

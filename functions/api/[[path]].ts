@@ -1920,6 +1920,7 @@ function computeRelativeTime(createdAt) {
 // clients must never receive a raw array in a field they render as `<img src>`.
 const SERVER_VIDEO_EXT = /\.(mp4|webm|mov|m4v|ogv|ogg|avi|mkv)(\?|#|$)/i;
 const SERVER_IMAGE_EXT = /\.(jpe?g|png|gif|webp|avif|bmp|svg|heic|heif)(\?|#|$)/i;
+const SERVER_AUDIO_EXT = /\.(mp3|wav|m4a|aac|oga|ogg|flac|opus)(\?|#|$)/i;
 
 function serverRenderableUrl(value) {
   if (typeof value !== 'string') return '';
@@ -1940,7 +1941,7 @@ function serverFirstMediaUrl(value) {
     return '';
   }
   if (typeof value === 'object') {
-    for (const key of ['url', 'secureUrl', 'secure_url', 'src', 'mediaUrl', 'media_url', 'videoUrl', 'video_url', 'playbackUrl', 'imageUrl', 'image_url', 'path', 'link', 'image', 'video', 'media', 'thumbnail', 'poster']) {
+    for (const key of ['url', 'secureUrl', 'secure_url', 'src', 'mediaUrl', 'media_url', 'videoUrl', 'video_url', 'audioUrl', 'audio_url', 'playbackUrl', 'imageUrl', 'image_url', 'path', 'link', 'image', 'video', 'audio', 'media', 'thumbnail', 'poster']) {
       const url = serverFirstMediaUrl(value[key]);
       if (url) return url;
     }
@@ -1952,6 +1953,7 @@ function serverMediaKind(url, hint) {
   const u = String(url || '');
   const h = String(hint || '').toLowerCase();
   if (h === 'gif') return 'gif';
+  if (h === 'audio') return 'audio';
   if (/res\.cloudinary\.com\//i.test(u)) {
     if (/\/video\/upload\//i.test(u) && !SERVER_IMAGE_EXT.test(u)) return 'video';
     if (/\.gif(\?|#|$)/i.test(u)) return 'gif';
@@ -1959,7 +1961,7 @@ function serverMediaKind(url, hint) {
   }
   if (SERVER_VIDEO_EXT.test(u)) return 'video';
   if (SERVER_IMAGE_EXT.test(u)) return /\.gif(\?|#|$)/i.test(u) ? 'gif' : 'image';
-  if (/\.(mp3|wav|m4a|aac|oga|flac)(\?|#|$)/i.test(u)) return 'audio';
+  if (SERVER_AUDIO_EXT.test(u)) return 'audio';
   if (h === 'image' || h === 'photo') return 'image';
   if (h === 'gif') return 'gif';
   return h === 'video' || h === 'moment' ? 'video' : 'image';
@@ -2009,19 +2011,25 @@ function normalizeMediaFields(item) {
   visit(item.imageUrl, 'image');
   visit(item.image_url, 'image');
   visit(item.image, 'image');
+  visit(item.audioUrl, 'audio');
+  visit(item.audio_url, 'audio');
+  visit(item.audio, 'audio');
   // Posters/thumbnails are previews, not gallery slides.
   if (!items.length) visit(item.thumbnail || item.poster, 'image');
 
   const videoItem = items.find((m) => m.type === 'video');
+  const audioItem = items.find((m) => m.type === 'audio');
   const imageItem = items.find((m) => m.type === 'image' || m.type === 'gif');
   const explicitVideo = serverFirstMediaUrl(item.videoUrl) || serverFirstMediaUrl(item.video_url) || serverFirstMediaUrl(item.video);
   const videoUrl = videoItem?.url || (explicitVideo && serverMediaKind(explicitVideo, 'video') === 'video' ? explicitVideo : '');
+  const explicitAudio = serverFirstMediaUrl(item.audioUrl) || serverFirstMediaUrl(item.audio_url) || serverFirstMediaUrl(item.audio);
+  const audioUrl = audioItem?.url || (explicitAudio && serverMediaKind(explicitAudio, 'audio') === 'audio' ? explicitAudio : '');
   const explicitImage = serverFirstMediaUrl(item.image) || serverFirstMediaUrl(item.imageUrl) || serverFirstMediaUrl(item.image_url);
   // Photos are their own preview: a separate thumbnail/poster file must never
   // replace the original image on write. Letting a cover win `image` is how
   // photo originals went missing while the cover survived. Posters remain a
   // video-only concept.
-  const isImageMedia = !videoUrl && !!(explicitImage || imageItem?.url);
+  const isImageMedia = !videoUrl && !audioUrl && !!(explicitImage || imageItem?.url);
   const image = (isImageMedia ? '' : (serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster))) ||
     explicitImage || imageItem?.url || '';
   const safeImage = image && image !== videoUrl && serverMediaKind(image, 'image') !== 'video' ? image : '';
@@ -2031,12 +2039,13 @@ function normalizeMediaFields(item) {
     (serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) || safeImage || imageItem?.thumbnail || '');
 
   item.mediaItems = items;
-  item.media = videoUrl || safeImage || items[0]?.url || '';
+  item.media = videoUrl || safeImage || audioUrl || items[0]?.url || '';
   item.image = safeImage;
   item.thumbnail = thumbnail && thumbnail !== videoUrl ? thumbnail : '';
   item.videoUrl = videoUrl;
-  if (!videoUrl && !safeImage && !item.mediaType) item.mediaType = 'text';
-  else item.mediaType = videoUrl ? 'video' : 'image';
+  item.audioUrl = audioUrl;
+  if (!videoUrl && !safeImage && !audioUrl && !item.mediaType) item.mediaType = 'text';
+  else item.mediaType = videoUrl ? 'video' : audioUrl ? 'audio' : 'image';
   return item;
 }
 
@@ -2830,6 +2839,9 @@ function cloudinaryVariants(secureUrl, resourceType, quality) {
 }
 
 const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
+const UPLOAD_PART_SIZE = 8 * 1024 * 1024;
+const SINGLE_UPLOAD_MAX_BYTES = UPLOAD_PART_SIZE;
+const MAX_MULTIPART_PARTS = 10000;
 function mimeAllowed(mime) {
   return typeof mime === 'string' && ALLOWED_MIME_PREFIXES.some((p) => mime.startsWith(p));
 }
@@ -2913,6 +2925,7 @@ async function serveR2(request, env, key, cors, method) {
   const baseHeaders = {
     'Content-Type': contentType,
     'Accept-Ranges': isLegacyGzip ? 'none' : 'bytes',
+    'Access-Control-Expose-Headers': 'Accept-Ranges, Content-Length, Content-Range, Content-Type, ETag',
     'Cache-Control': 'public, max-age=31536000, immutable',
     ...cors,
     ...SECURITY_HEADERS,
@@ -3129,6 +3142,15 @@ async function createItem(context, kind, listKey, itemKey, cors) {
 
   const clean = sanitizeBody(body);
   delete clean.id;
+  // Duration is checked again at publish time so callers cannot bypass the
+  // plan's video-length allowance by skipping the composer UI.
+  const declaredDuration = Number(clean.duration ?? clean.durationSec);
+  const hasVideo = String(clean.mediaType || '').toLowerCase() === 'video' ||
+    String(clean.type || '').toLowerCase() === 'video' ||
+    itemHasPlayableVideo(clean);
+  if (hasVideo && Number.isFinite(declaredDuration) && declaredDuration > quota.maxVideoSec) {
+    return json({ error: `Video is longer than the ${quota.label} plan allows. Upgrade for longer uploads.`, code: 'QUOTA_VIDEO_LENGTH', planId }, 413, cors);
+  }
   // Ownership is authoritative server-side: the verified caller owns the
   // item, regardless of what display-name fields the client sent. Only the
   // owning account can ever delete this item; other accounts may only hide
@@ -5519,7 +5541,7 @@ export const onRequest = async (context) => {
       const folder = String(payload.folder || 'equyvo/uploads').replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
       if (!mimeAllowed(contentType)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
       if (declaredBytes <= 0) return json({ error: 'Empty file' }, 400, cors);
-      if (declaredBytes <= 8 * 1024 * 1024) {
+      if (declaredBytes <= SINGLE_UPLOAD_MAX_BYTES) {
         // Small enough for the single-shot path — tell the client to use it.
         return json({ data: { chunked: false }, error: null }, 200, cors);
       }
@@ -5549,7 +5571,7 @@ export const onRequest = async (context) => {
       const uploadId = generateId() + generateId();
       const session = {
         actorId: actor.id, r2Key, r2UploadId: mpu.uploadId, folder,
-        size: declaredBytes, type: contentType, partSize: 8 * 1024 * 1024,
+        size: declaredBytes, type: contentType, partSize: UPLOAD_PART_SIZE,
         parts: {}, createdAt: Date.now(), planId,
       };
       try {
@@ -5567,7 +5589,8 @@ export const onRequest = async (context) => {
       if (denied) return denied;
       const url = new URL(request.url);
       const uploadId = String(url.searchParams.get('uploadId') || '').slice(0, 64);
-      const partIndex = clamp(parseInt(url.searchParams.get('partIndex') || '', 10) || 0, 1, 10000);
+      const rawPartIndex = parseInt(url.searchParams.get('partIndex') || '', 10) || 0;
+      const partIndex = clamp(rawPartIndex, 1, MAX_MULTIPART_PARTS);
       let session = null;
       try {
         const raw = await kv.get('upl:' + uploadId);
@@ -5576,20 +5599,32 @@ export const onRequest = async (context) => {
       if (!session || session.actorId !== actor.id) {
         return json({ error: 'Upload session not found. Restart the upload.' , code: 'UPLOAD_SESSION_GONE' }, 404, cors);
       }
+      const expectedParts = Math.ceil(Number(session.size || 0) / Number(session.partSize || UPLOAD_PART_SIZE));
+      if (!Number.isFinite(expectedParts) || expectedParts < 1 || rawPartIndex !== partIndex || partIndex > expectedParts) {
+        return json({ error: 'Invalid upload part. Restart the upload.', code: 'UPLOAD_PART_INVALID' }, 400, cors);
+      }
       let formData;
       try { formData = await request.formData(); } catch { return json({ error: 'Invalid chunk' }, 400, cors); }
       const file = formData.get('file');
       if (!file || typeof file === 'string' || file.size <= 0) return json({ error: 'Empty chunk' }, 400, cors);
+      const expectedSize = partIndex === expectedParts
+        ? Number(session.size || 0) - (expectedParts - 1) * Number(session.partSize || UPLOAD_PART_SIZE)
+        : Number(session.partSize || UPLOAD_PART_SIZE);
+      if (file.size > Number(session.partSize || UPLOAD_PART_SIZE) || (partIndex === expectedParts && file.size !== expectedSize)) {
+        return json({ error: 'Invalid chunk size. Retry this part.', code: 'UPLOAD_PART_SIZE_INVALID' }, 400, cors);
+      }
       // Running hash: digest every part so the final object can be identified
       // even without a whole-file buffer (CPU-safe: per-part native crypto).
       let partHash = '';
+      let partBytes;
       try {
-        partHash = await sha256Hex(await file.arrayBuffer());
+        partBytes = await file.arrayBuffer();
+        partHash = await sha256Hex(partBytes);
       } catch { /* hashing is metadata only — continue */ }
       let etag = '';
       try {
         const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
-        const part = await mpu.uploadPart(partIndex, await file.arrayBuffer());
+        const part = await mpu.uploadPart(partIndex, partBytes || await file.arrayBuffer());
         etag = part.etag || '';
       } catch (e) {
         return json({ error: 'Chunk upload failed. Retry this part.', code: 'UPLOAD_PART_FAILED' }, 502, cors);
@@ -5617,23 +5652,36 @@ export const onRequest = async (context) => {
       if (!session || session.actorId !== actor.id) {
         return json({ error: 'Upload session not found. Restart the upload.', code: 'UPLOAD_SESSION_GONE' }, 404, cors);
       }
+      const expectedParts = Math.ceil(Number(session.size || 0) / Number(session.partSize || UPLOAD_PART_SIZE));
       const partEntries = Object.entries(session.parts || {})
         .map(([k, v]) => ({ i: parseInt(k, 10), etag: (v && v.etag) || '', hash: (v && v.hash) || '', size: (v && v.size) || 0 }))
         .filter((p) => p.i > 0 && p.etag)
         .sort((a, b) => a.i - b.i);
+      if (!Number.isFinite(expectedParts) || expectedParts < 1 || partEntries.length !== expectedParts || partEntries.some((p, index) => p.i !== index + 1)) {
+        return json({ error: 'Some upload chunks are missing. Retry the missing parts.', code: 'UPLOAD_PARTS_INCOMPLETE' }, 400, cors);
+      }
       if (!partEntries.length) {
         return json({ error: 'No chunks received. Please restart the upload.', code: 'UPLOAD_NO_PARTS' }, 400, cors);
       }
       const totalBytes = partEntries.reduce((n, p) => n + (Number(p.size) || 0), 0);
-      if (totalBytes <= 0) return json({ error: 'Empty upload' }, 400, cors);
+      if (totalBytes <= 0 || totalBytes !== Number(session.size || 0)) {
+        return json({ error: 'Upload size verification failed. Retry the upload.', code: 'UPLOAD_SIZE_MISMATCH' }, 400, cors);
+      }
       const { planId: livePlan } = await resolvePlan(env, actor, bearerFrom(request));
       const quota = planQuota(livePlan);
       const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
       const maxBytes = Math.min(quota.maxUploadMB, envCapMB) * 1024 * 1024;
-      if (totalBytes > maxBytes + session.partSize) {
+      if (totalBytes > maxBytes) {
         try { await env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId).abortMultipartUpload(); } catch {}
         try { await kv.delete('upl:' + uploadId); } catch {}
         return json({ error: `File too large for ${quota.label}. Upgrade for higher limits.`, code: 'QUOTA_FILE_SIZE', planId: livePlan }, 413, cors);
+      }
+      const completeUsage = await getUsage(env, actor.id);
+      if (completeUsage.bytes + totalBytes > quota.storageBytes) {
+        return json({ error: `Storage quota exceeded for ${quota.label}. Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId: livePlan, usage: completeUsage }, 402, cors);
+      }
+      if (completeUsage.monthUploads >= quota.monthlyUploads) {
+        return json({ error: `Monthly upload limit reached for ${quota.label}. Upgrades reset limits.`, code: 'QUOTA_MONTHLY', planId: livePlan }, 402, cors);
       }
       let obj = null;
       try {
@@ -5718,6 +5766,15 @@ export const onRequest = async (context) => {
       const quota = planQuota(planId);
       const rl = await rateLimit(kv, 'upload', actor.id, rateLimitFor(planId, 'upload'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+
+      // The direct endpoint is intentionally small and memory-bounded. The
+      // client automatically uses the resumable R2 multipart flow above for
+      // anything larger, while hand-written clients get a useful instruction
+      // instead of making Pages parse a multi-gigabyte multipart body.
+      const requestBytes = Number(request.headers.get('content-length') || 0);
+      if (requestBytes > SINGLE_UPLOAD_MAX_BYTES + 512 * 1024) {
+        return json({ error: 'Large files must use the resumable upload flow.', code: 'UPLOAD_CHUNK_REQUIRED' }, 413, cors);
+      }
 
       let formData;
       try {

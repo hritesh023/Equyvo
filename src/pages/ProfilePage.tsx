@@ -2402,7 +2402,7 @@ const ProfilePage = () => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <FullscreenViewer
+        <SafeFullscreenViewer
           content={fullscreenContent}
           type={fullscreenContent.type || (fullscreenContent.mediaType === 'video' ? 'video' : fullscreenContent.mediaType === 'image' ? 'image' : 'live')}
           onClose={closeFullscreen}

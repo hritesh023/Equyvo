@@ -20,6 +20,8 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 
+type MediaReferrerPolicy = 'no-referrer' | 'no-referrer-when-downgrade' | 'origin' | 'origin-when-cross-origin' | 'same-origin' | 'strict-origin' | 'strict-origin-when-cross-origin' | 'unsafe-url';
+
 export interface ResilientImageProps {
   src?: string;
   /** Lower-res fallback used when `src` fails all retries (e.g. video poster). */
@@ -30,7 +32,7 @@ export interface ResilientImageProps {
   onClick?: React.MouseEventHandler<HTMLImageElement>;
   loading?: 'lazy' | 'eager';
   decoding?: 'async' | 'sync' | 'auto';
-  referrerPolicy?: React.ReferrerPolicy;
+  referrerPolicy?: MediaReferrerPolicy;
   retryLimit?: number;
   /** Shown after every attempt failed (default: neutral dashed frame). */
   fallbackRenderer?: React.ReactNode;

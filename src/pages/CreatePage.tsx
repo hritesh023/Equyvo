@@ -1177,13 +1177,13 @@ const CreatePage = () => {
         if (safeFiles.length > 0) {
           const validFiles = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
-            const isValidSize = file.size <= 200 * 1024 * 1024; // generous pre-cap — the plan cap gates at post time
             if (!isValidType) {
               showError('Please select only images or videos');
               return false;
             }
-            if (!isValidSize) {
-              showError('File size must be less than 200MB');
+            const capError = checkPlanCap(file, 'Story');
+            if (capError) {
+              showError(capError);
               return false;
             }
             return true;
@@ -1196,7 +1196,7 @@ const CreatePage = () => {
         if (file.type.startsWith('video/') || file.type.startsWith('image/')) {
           if (file.type.startsWith('video/')) {
             // Check video duration (helper returns { valid, error }).
-            const durationCheck = await validateVideoDuration(file);
+            const durationCheck = await validateVideoDuration(file, planCaps?.maxVideoSec || 0);
             const validDuration = typeof durationCheck === 'boolean' ? durationCheck : durationCheck.valid;
             const durationError = typeof durationCheck === 'object' ? durationCheck.error : undefined;
             if (!validDuration) {
@@ -1204,22 +1204,17 @@ const CreatePage = () => {
               return;
             }
             
-            // Also check file size (reasonable limit for 5-minute video)
-            const isValidSize = file.size <= 300 * 1024 * 1024; // 300MB limit
-            if (!isValidSize) {
-              showError('Video size must be less than 300MB');
+            const capError = checkPlanCap(file, 'Thought video');
+            if (capError) {
+              showError(capError);
               return;
             }
             
             setThoughtVideo(file);
           } else {
-            // Image validation
-            const isValidSize = file.size <= 50 * 1024 * 1024; // 50MB for images/GIFs
-            if (isValidSize) {
-              setThoughtVideo(file);
-            } else {
-              showError('Image/GIF must be less than 50MB');
-            }
+            const capError = checkPlanCap(file, 'Thought image');
+            if (capError) { showError(capError); return; }
+            setThoughtVideo(file);
           }
         } else {
           showError('Please select a video, photo, or GIF');
@@ -1231,13 +1226,13 @@ const CreatePage = () => {
         if (file.type.startsWith('image/')) {
           const validPhotos = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('image/');
-            const isValidSize = file.size <= 200 * 1024 * 1024;
             if (!isValidType) {
               showError('Please select only images');
               return false;
             }
-            if (!isValidSize) {
-              showError('Image size must be less than 200MB');
+            const capError = checkPlanCap(file, 'Photo');
+            if (capError) {
+              showError(capError);
               return false;
             }
             return true;
@@ -1252,13 +1247,13 @@ const CreatePage = () => {
         if (file.type.startsWith('video/')) {
           const validVideos = safeFiles.filter(file => {
             const isValidType = file.type.startsWith('video/');
-            const isValidSize = file.size <= 800 * 1024 * 1024; // generous pre-cap — plan caps gate at post time
             if (!isValidType) {
               showError('Please select only videos');
               return false;
             }
-            if (!isValidSize) {
-              showError('Video size must be less than 800MB');
+            const capError = checkPlanCap(file, 'Video');
+            if (capError) {
+              showError(capError);
               return false;
             }
             return true;
@@ -1275,13 +1270,13 @@ const CreatePage = () => {
             // Moments are the short-VIDEO surface. Photos belong in Photos —
             // accepting images here was how photos ended up in the video feed.
             const isValidType = file.type.startsWith('video/');
-            const isValidSize = file.size <= 200 * 1024 * 1024;
             if (!isValidType) {
               showError('Moments are video-only. To share a photo, use the Photos tab.');
               return false;
             }
-            if (!isValidSize) {
-              showError('File size must be less than 200MB');
+            const capError = checkPlanCap(file, 'Moment');
+            if (capError) {
+              showError(capError);
               return false;
             }
             return true;
@@ -5248,17 +5243,17 @@ const CreatePage = () => {
         </div>
       )}
 
-      {/* Content-safety warning: files the safety check flag never enter the
-          editor. The dialog explains what happened and the rules it protects. */}
+      {/* Content-safety warning: only files the safety check flags are held
+          back. Clean files in the same selection continue normally. */}
       <Dialog open={!!safetyWarn} onOpenChange={(open) => { if (!open) setSafetyWarn(null); }}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <AlertTriangle className="h-5 w-5 text-amber-500" />
-              Content not allowed on Equyvo
+              Some content needs attention
             </DialogTitle>
             <DialogDescription>
-              Our safety check flagged {(safetyWarn?.length || 0) > 1 ? `${safetyWarn?.length} files` : 'this file'} before it could be uploaded, so nothing was added.
+              Our safety check held back {(safetyWarn?.length || 0) > 1 ? `${safetyWarn?.length} files` : 'this file'} before upload. Any clean files you selected can still be posted.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

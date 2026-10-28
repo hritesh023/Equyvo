@@ -96,22 +96,25 @@ const toFullscreen = (
   likes: number | undefined,
 ): { content: FullscreenContent; type: ContentType } => {
   const card = String(item.contentType || '').toLowerCase();
+  const fields = resolveMediaFields(item);
   const isLive = card === 'live' || !!item.isLive || !!item.live;
-  const isVideo = card === 'video' || !!item.videoUrl || String(item.mediaType || '').toLowerCase() === 'video';
-  const type: ContentType = isLive ? 'live' : isVideo ? 'moment' : 'image';
+  const isVideo = card === 'video' || !!fields.videoUrl || String(item.mediaType || '').toLowerCase() === 'video';
+  const isAudio = !isVideo && Boolean(fields.audioUrl || String(item.mediaType || '').toLowerCase() === 'audio');
+  const type: ContentType = isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image';
   return {
     content: {
       id: item.id,
       type,
-      contentType: isLive ? 'live' : isVideo ? 'video' : 'image',
+       contentType: isLive ? 'live' : isVideo ? 'video' : isAudio ? 'audio' : 'image',
       forcePortrait: isVideo && !isLive,
       title: item.title,
       creator: item.creator,
       creatorId: discoverCreatorId(item),
       image: item.image,
       thumbnail: item.thumbnail || item.image,
-      videoUrl: item.videoUrl,
-      mediaUrl: item.videoUrl || item.image,
+       videoUrl: fields.videoUrl || item.videoUrl,
+       audioUrl: fields.audioUrl || undefined,
+       mediaUrl: fields.videoUrl || fields.audioUrl || fields.image,
       likes: likes ?? item.likes,
       comments: item.comments,
       category: item.category,
@@ -1449,7 +1452,7 @@ const DiscoverPage = () => {
       
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <FullscreenViewer
+        <SafeFullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

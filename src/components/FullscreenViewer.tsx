@@ -19,10 +19,11 @@ import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import api from '@/lib/api';
 import { normalizeContentItem } from '@/lib/media';
+import { toCount } from '@/lib/count';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
-  type: 'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story';
+  type: 'post' | 'live' | 'video' | 'moment' | 'image' | 'audio' | 'thought' | 'reacted' | 'story';
   onClose: () => void;
   onComment?: (videoId: string, creator: string) => void;
   onShare?: (video: FullscreenContent) => void | Promise<void>;
@@ -153,8 +154,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const isVideoType = videoTypeValues.has(resolvedType) ||
                        videoTypeValues.has(actualContent?.type || '') ||
                        videoTypeValues.has(actualContent?.contentType || '') ||
-                       actualContent?.mediaType === 'video' ||
-                       Boolean(actualContent?.videoUrl);
+                        actualContent?.mediaType === 'video' ||
+                        Boolean(actualContent?.videoUrl);
+  const isAudioType = resolvedType === 'audio' ||
+                      actualContent?.type === 'audio' ||
+                      actualContent?.mediaType === 'audio' ||
+                      Boolean((actualContent as any)?.audioUrl);
   const isPortraitMoment = resolvedType === 'moment' ||
                             actualContent?.type === 'moment' ||
                             actualContent?.contentType === 'moment' ||
@@ -182,6 +187,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   
   // For live streams, use the same detection as other video content with live indicators
   const fallbackVideoSrc = isVideoType ? videoSrc : null;
+  const audioSrc = isAudioType
+    ? String((actualContent as any)?.audioUrl || (actualContent as any)?.mediaUrl || (actualContent as any)?.media || (actualContent as any)?.src || (actualContent as any)?.url || '')
+    : '';
 
   // A live stream that ENDS must immediately fall back to NORMAL video
   // seek-bar behaviour (real duration + time cursor) — never a permanent red
@@ -191,13 +199,30 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [liveEnded, setLiveEnded] = useState(false);
   // Cache-bust retry key for the fullscreen stream (cover flaky range reads).
   const [videoRetryKey, setVideoRetryKey] = useState(0);
-  useEffect(() => { setVideoRetryKey(0); }, [fallbackVideoSrc]);
+  const [videoFailed, setVideoFailed] = useState(false);
+  useEffect(() => {
+    setVideoRetryKey(0);
+    setVideoFailed(false);
+  }, [fallbackVideoSrc]);
   // NOTE: this effect must stay BELOW the `fallbackVideoSrc` declaration —
   // reading it in the deps array while it was still in its temporal dead
   // zone threw a ReferenceError on every render, so the ErrorBoundary
   // replaced the whole fullscreen viewer with "This section couldn't load".
   useEffect(() => { setLiveEnded(false); }, [fallbackVideoSrc]);
   const effectiveLive = isLiveStream && !liveEnded;
+  const contentTags = Array.isArray((actualContent as any)?.tags)
+    ? ((actualContent as any).tags as unknown[]).map((tag) => String(tag)).filter(Boolean)
+    : String((actualContent as any)?.tags || '').split(',').map((tag) => tag.trim()).filter(Boolean);
+  const imageSrc = String(
+    (actualContent as any)?.image ||
+    (actualContent as any)?.mediaUrl ||
+    (actualContent as any)?.media ||
+    (actualContent as any)?.src ||
+    (actualContent as any)?.thumbnail ||
+    '',
+  );
+  const commentCount = toCount((actualContent as any)?.comments ?? (actualContent as any)?.engagement?.comments);
+  const viewerContentId = String((actualContent as any)?.id || (actualContent as any)?.videoId || (actualContent as any)?.imageId || 'unknown');
     
   // Determine container style based on content type and device
   const getContainerStyle = () => {
@@ -535,11 +560,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     };
   }, [actualContent?.id, isVideoType]);
 
-  const toggleFullscreen = useCallback(() => {
-    if (document.fullscreenElement) {
-      document.exitFullscreen();
-    } else {
-      document.documentElement.requestFullscreen();
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        showError('Fullscreen is not supported on this device.');
+      }
+    } catch {
+      showError('Fullscreen could not be opened. Try again from the media controls.');
     }
   }, []);
 
@@ -682,6 +713,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     if (videoRef.current) {
       videoRef.current.pause();
     }
+    try {
+      if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined);
+    } catch { /* fullscreen may already be closing */ }
     
     // Dispatch event to notify Moments component to stop all videos
     window.dispatchEvent(new CustomEvent('fullscreenViewerClosed'));
@@ -708,8 +742,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     // Persist the like so the creator is notified and counts agree everywhere.
     const itemId = String(actualContent?.id || actualContent?.videoId || actualContent?.imageId || '').trim();
     if (!itemId || itemId.startsWith('live-')) return;
-    api.like(itemId, next ? 'like' : 'unlike').then(({ data }) => {
-      if (data && typeof data.likes === 'number') setLikeCount(data.likes);
+     api.like(itemId, next ? 'like' : 'unlike').then(({ data }) => {
+       const likes = (data as any)?.likes;
+       if (typeof likes === 'number') setLikeCount(likes);
     }).catch(() => undefined);
   };
 
@@ -1115,7 +1150,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             handleVideoTap(e);
           }}
         >
-          {fallbackVideoSrc ? (
+          {fallbackVideoSrc && !videoFailed ? (
             <video
               ref={videoRef}
               key={videoRetryKey}
@@ -1128,11 +1163,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               muted={false}
               loop={isPortraitMoment || isStory}
               preload="metadata"
+              onPlay={() => setIsPlaying(true)}
+              onPause={() => setIsPlaying(false)}
               onError={() => {
                 // One failed streaming attempt (dropped range, cold edge,
                 // flaky mobile link) must not end the fullscreen show —
                 // remount with a cache-busting URL up to 3 times.
-                setVideoRetryKey(k => (k < 3 ? k + 1 : k));
+                setVideoRetryKey(k => {
+                  if (k < 3) return k + 1;
+                  setVideoFailed(true);
+                  return k;
+                });
               }}
               onTimeUpdate={(e) => {
                 setCurrentTime(e.currentTarget.currentTime);
@@ -1154,8 +1195,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           ) : (
             <div className="absolute inset-0 w-full h-full flex items-center justify-center" style={{ zIndex: 1, pointerEvents: 'none' }}>
               <div className="text-white text-center">
-                <p className="text-xl mb-2">Video not available</p>
-                <p className="text-sm text-gray-400">No video URL provided</p>
+                <p className="text-xl mb-2">{videoFailed ? 'Video could not be loaded' : 'Video not available'}</p>
+                <p className="text-sm text-gray-400">{videoFailed ? 'Check your connection and try again.' : 'No video URL provided'}</p>
+                {videoFailed && (
+                  <button
+                    type="button"
+                    className="pointer-events-auto mt-3 rounded-full bg-white px-4 py-2 text-sm text-black"
+                    onClick={() => {
+                      setVideoFailed(false);
+                      setVideoRetryKey(0);
+                    }}
+                  >
+                    Try again
+                  </button>
+                )}
               </div>
             </div>
           )}
@@ -1240,16 +1293,16 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 </div>
 
                 {/* Tags */}
-                {actualContent.tags && actualContent.tags.length > 0 && (
-                  <div className="flex flex-wrap gap-1 mb-3">
-                    {(actualContent.tags || []).slice(0, 6).map((tag: string, index: number) => (
+                 {contentTags.length > 0 && (
+                   <div className="flex flex-wrap gap-1 mb-3">
+                     {contentTags.slice(0, 6).map((tag: string, index: number) => (
                       <Badge key={index} variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20">
                         #{tag}
                       </Badge>
                     ))}
-                    {actualContent.tags.length > 6 && (
-                      <Badge variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20">
-                        +{actualContent.tags.length - 6}
+                     {contentTags.length > 6 && (
+                       <Badge variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20">
+                         +{contentTags.length - 6}
                       </Badge>
                     )}
                   </div>
@@ -1276,8 +1329,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                     title="Comment"
                   >
                     <MessageCircle className="h-4 w-4" />
-                    {(actualContent?.comments ?? actualContent?.engagement?.comments) && (
-                      <span className="ml-1 text-xs">{formatNumber(actualContent?.comments ?? actualContent?.engagement?.comments)}</span>
+                    {commentCount > 0 && (
+                      <span className="ml-1 text-xs">{formatNumber(commentCount)}</span>
                     )}
                   </Button>
                   
@@ -1292,7 +1345,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                   </Button>
                   
                   <div className="flex items-center">
-                    <SaveButton postId={actualContent.id || actualContent.videoId || 'unknown'} content={actualContent} />
+                     <SaveButton postId={viewerContentId} content={actualContent} />
                   </div>
                   
                   {actualContent.creatorId && (
@@ -1417,11 +1470,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => {
-                      if (isFullscreen) {
-                        document.exitFullscreen?.();
-                      } else {
-                        document.documentElement.requestFullscreen();
-                      }
+                       void toggleFullscreen();
                     }}
                     className="text-white hover:text-blue-400 transition-colors p-2 hover:bg-white/10 rounded-full"
                     title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
@@ -1530,8 +1579,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               title="Comment"
             >
               <MessageCircle className="h-4 w-4" />
-              {(actualContent?.comments ?? actualContent?.engagement?.comments) && (
-                <span className="ml-1 text-xs">{formatNumber(actualContent?.comments ?? actualContent?.engagement?.comments)}</span>
+               {commentCount > 0 && (
+                 <span className="ml-1 text-xs">{formatNumber(commentCount)}</span>
               )}
             </Button>
             
@@ -1548,7 +1597,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             </Button>
             
             <div className="flex items-center">
-              <SaveButton postId={actualContent.id || actualContent.videoId || 'unknown'} content={actualContent} />
+               <SaveButton postId={viewerContentId} content={actualContent} />
             </div>
             
             {actualContent.creatorId && onFollow && (
@@ -1651,8 +1700,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               title="Comment"
             >
               <MessageCircle className="h-4 w-4" />
-              {(actualContent?.comments ?? actualContent?.engagement?.comments) && (
-                <span className="ml-1 text-xs">{formatNumber(actualContent?.comments ?? actualContent?.engagement?.comments)}</span>
+               {commentCount > 0 && (
+                 <span className="ml-1 text-xs">{formatNumber(commentCount)}</span>
               )}
             </Button>
             
@@ -1669,7 +1718,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             </Button>
             
             <div className="flex items-center">
-              <SaveButton postId={actualContent.id || actualContent.imageId || 'unknown'} content={actualContent} />
+               <SaveButton postId={viewerContentId} content={actualContent} />
             </div>
             
             {actualContent.creatorId && onFollow && (
@@ -1702,9 +1751,45 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           </div>
         </div>
       )}
-      
+
+      {/* Audio uploads use a native, range-friendly player instead of being
+          sent through the image renderer. This covers voice/audio posts and
+          prevents an audio URL from producing a blank fullscreen image. */}
+      {isAudioType && (
+        <div className="fixed inset-0 z-[2] flex items-center justify-center bg-gradient-to-br from-slate-950 via-black to-purple-950 px-6">
+          <div className="w-full max-w-xl rounded-2xl border border-white/10 bg-black/50 p-6 text-white shadow-2xl backdrop-blur-md">
+            <div className="mb-5 flex items-center gap-3">
+              <div className="rounded-full bg-white/10 p-3">
+                <Volume2 className="h-7 w-7" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <h2 className="truncate text-lg font-semibold">{String(actualContent.title || actualContent.content || 'Audio')}</h2>
+                <p className="truncate text-sm text-white/60">{String(actualContent.creator || actualContent.user || 'Equyvo')}</p>
+              </div>
+            </div>
+            {audioSrc ? (
+              <audio
+                className="w-full"
+                src={audioSrc}
+                controls
+                preload="metadata"
+                onPlay={() => setIsPlaying(true)}
+                onPause={() => setIsPlaying(false)}
+                onError={() => showError('This audio could not be played right now.')}
+                aria-label={String(actualContent.title || 'Audio content')}
+              />
+            ) : (
+              <p className="text-center text-sm text-white/60">No playable audio was attached.</p>
+            )}
+            {actualContent.description && (
+              <p className="mt-4 line-clamp-3 text-sm text-white/70">{String(actualContent.description)}</p>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Content for images */}
-      {!isVideoType && (actualType === 'image' || actualType === 'post') && (
+      {!isVideoType && !isAudioType && (actualType === 'image' || actualType === 'post') && (
         <div 
           className={`${isSplitView ? 'w-1/2 h-full relative' : 'fixed inset-0'} h-full flex items-center justify-center cursor-zoom-in`}
           style={{ 
@@ -1716,18 +1801,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             setShowImageOverlay(prev => !prev);
           }}
         >
-          {(actualContent?.thumbnail ||
-            actualContent?.image ||
-            actualContent?.mediaUrl ||
-            actualContent?.media ||
-            actualContent?.src) && !imageFailed ? (
+          {imageSrc && !imageFailed ? (
           <img
             key={`fs-image-${imageRenderKey}`}
-            src={actualContent?.thumbnail ||
-                 actualContent?.image ||
-                 actualContent?.mediaUrl ||
-                 actualContent?.media ||
-                 actualContent?.src}
+            src={imageRenderKey ? `${imageSrc}${imageSrc.includes('?') ? '&' : '?'}fsretry=${imageRenderKey}` : imageSrc}
             alt={actualContent?.title || 'Fullscreen Image'}
             className="max-w-full max-h-full object-contain transition-all duration-300"
             style={{
@@ -1835,8 +1912,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               title="Comment"
             >
               <MessageCircle className="h-4 w-4" />
-              {(actualContent?.comments ?? actualContent?.engagement?.comments) && (
-                <span className="ml-1 text-xs">{formatNumber(actualContent?.comments ?? actualContent?.engagement?.comments)}</span>
+               {commentCount > 0 && (
+                 <span className="ml-1 text-xs">{formatNumber(commentCount)}</span>
               )}
             </Button>
             
@@ -1854,14 +1931,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             </Button>
             
             <div className="flex items-center">
-              <SaveButton postId={actualContent.id || actualContent.imageId || 'unknown'} content={actualContent} />
+               <SaveButton postId={viewerContentId} content={actualContent} />
             </div>
           </div>
         </div>
       )}
 
       {/* Content for other non-video types - try to show as image if possible */}
-      {!isVideoType && actualType !== 'image' && actualType !== 'post' && (
+      {!isVideoType && !isAudioType && actualType !== 'image' && actualType !== 'post' && (
         <div 
           className={`${isSplitView ? 'w-1/2 h-full relative' : 'fixed inset-0'} h-full flex items-center justify-center cursor-zoom-in`}
           style={{ 
@@ -1870,27 +1947,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             height: isSplitView ? '100%' : '100vh'
           }}
           onClick={() => {
-            if (document.fullscreenElement) {
-              document.exitFullscreen?.();
-            } else {
-              document.documentElement.requestFullscreen();
-            }
+            void toggleFullscreen();
           }}
         >
-          {(actualContent?.thumbnail ||
-            actualContent?.image ||
-            actualContent?.mediaUrl ||
-            actualContent?.media ||
-            actualContent?.videoUrl ||
-            actualContent?.src) && !imageFailed ? (
+          {imageSrc && !imageFailed ? (
           <img
             key={`fs-content-image-${imageRenderKey}`}
-            src={actualContent?.thumbnail ||
-                 actualContent?.image ||
-                 actualContent?.mediaUrl ||
-                 actualContent?.media ||
-                 actualContent?.videoUrl ||
-                 actualContent?.src}
+            src={imageRenderKey ? `${imageSrc}${imageSrc.includes('?') ? '&' : '?'}fsretry=${imageRenderKey}` : imageSrc}
             alt={actualContent?.title || 'Fullscreen Content'}
             className="max-w-full max-h-full object-contain transition-all duration-300"
             style={{

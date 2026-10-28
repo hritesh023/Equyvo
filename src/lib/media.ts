@@ -13,7 +13,7 @@
  *   - `image`:      a still-image URL (never a video)
  *   - `thumbnail`:  a poster/small image URL (never a video)
  *   - `videoUrl`:   a playable video URL (empty for photos/text)
- *   - `mediaType`:  'video' | 'image' | 'text'
+ *   - `mediaType`:  'video' | 'audio' | 'image' | 'text'
  *
  * The helpers are defensive: unknown/array/object inputs never throw, and a
  * malformed item is left renderable instead of crashing a feed.
@@ -55,6 +55,7 @@ export function mediaKindOfUrl(url: string, hinted?: unknown): MediaKind {
   if (!u) return 'unknown';
   const hint = String(hinted || '').toLowerCase();
   if (hint === 'gif') return 'gif';
+  if (hint === 'audio') return 'audio';
   if (hint === 'video' || hint === 'moment') {
     // A GIF mislabeled as video is still an image.
     return IMAGE_EXT.test(u) && !VIDEO_EXT.test(u) ? 'gif' : 'video';
@@ -190,7 +191,8 @@ export interface NormalizedMediaFields {
   image: string;
   thumbnail: string;
   videoUrl: string;
-  mediaType: 'video' | 'image' | 'text';
+  audioUrl: string;
+  mediaType: 'video' | 'audio' | 'image' | 'text';
 }
 
 export interface MediaSource {
@@ -203,6 +205,9 @@ export interface MediaSource {
   image?: unknown;
   imageUrl?: unknown;
   image_url?: unknown;
+  audio?: unknown;
+  audioUrl?: unknown;
+  audio_url?: unknown;
   thumbnail?: unknown;
   poster?: unknown;
   video?: unknown;
@@ -244,6 +249,9 @@ export function resolveMediaFields(item: MediaSource): NormalizedMediaFields {
     [safe.imageUrl, 'image'],
     [safe.image_url, 'image'],
     [safe.image, 'image'],
+    [safe.audioUrl, 'audio'],
+    [safe.audio_url, 'audio'],
+    [safe.audio, 'audio'],
   ];
   const seen = new Set(items.map((m) => m.url));
   for (const [value, hint] of extraUrls) {
@@ -258,25 +266,36 @@ export function resolveMediaFields(item: MediaSource): NormalizedMediaFields {
   }
 
   const videoItem = items.find((m) => m.type === 'video');
+  const audioItem = items.find((m) => m.type === 'audio');
   const imageItem = items.find((m) => m.type !== 'video' && m.type !== 'audio');
-  const thumbItem = items.find((m) => m.type === 'image' || m.type === 'gif');
 
   const explicitVideo = firstMediaUrl(safe.videoUrl) || firstMediaUrl(safe.video_url) || firstMediaUrl(safe.video);
   const videoUrl = videoItem?.url || (explicitVideo && isVideoUrl(explicitVideo) ? explicitVideo : '');
+  const explicitAudio = firstMediaUrl(safe.audioUrl) || firstMediaUrl(safe.audio_url) || firstMediaUrl(safe.audio);
+  const audioUrl = audioItem?.url || (explicitAudio && mediaKindOfUrl(explicitAudio, 'audio') === 'audio' ? explicitAudio : '');
 
-  const image =
-    firstMediaUrl(safe.thumbnail) ||
-    firstMediaUrl(safe.poster) ||
+  // Prefer the original image over a poster/thumbnail. Selecting the
+  // thumbnail first made fullscreen photos open at preview resolution.
+  const explicitImage =
     firstMediaUrl(safe.image) ||
     firstMediaUrl(safe.imageUrl) ||
-    firstMediaUrl(safe.image_url) ||
-    imageItem?.url ||
+    firstMediaUrl(safe.image_url);
+
+  const image =
+    explicitImage ||
+    (!videoUrl && !audioUrl ? imageItem?.url || '' : '') ||
     '';
 
-  const thumbnail = firstMediaUrl(safe.thumbnail) || firstMediaUrl(safe.poster) || image || imageItem?.thumbnail || '';
+  const thumbnail = firstMediaUrl(safe.thumbnail) || firstMediaUrl(safe.poster) || imageItem?.thumbnail || image || '';
 
-  const primary = videoUrl || image || items[0]?.url || '';
-  const mediaType: NormalizedMediaFields['mediaType'] = videoUrl ? 'video' : (image || items.length) ? 'image' : 'text';
+  const primary = videoUrl || image || audioUrl || items[0]?.url || '';
+  const mediaType: NormalizedMediaFields['mediaType'] = videoUrl
+    ? 'video'
+    : audioUrl
+      ? 'audio'
+      : (image || items.length)
+        ? 'image'
+        : 'text';
 
   return {
     mediaItems: items,
@@ -284,6 +303,7 @@ export function resolveMediaFields(item: MediaSource): NormalizedMediaFields {
     image: videoUrl && image === videoUrl ? '' : image,
     thumbnail: thumbnail === videoUrl ? '' : thumbnail,
     videoUrl,
+    audioUrl,
     mediaType,
   };
 }
@@ -304,12 +324,17 @@ export function normalizeContentItem<T = Record<string, unknown>>(item: T): T {
   next.image = fields.image;
   next.thumbnail = fields.thumbnail;
   next.videoUrl = fields.videoUrl;
+  next.audioUrl = fields.audioUrl;
   next.mediaType = fields.mediaType;
 
   // A video-only item mislabeled as a still image should route as video.
   const type = String(next.type || next.contentType || '').toLowerCase();
-  if (!type || type === 'image') {
-    next.type = fields.videoUrl ? 'video' : (fields.media ? 'photo' : next.type);
+  if (!type || type === 'image' || type === 'photo') {
+    next.type = fields.videoUrl
+      ? 'video'
+      : fields.audioUrl
+        ? 'audio'
+        : (fields.media ? 'photo' : next.type);
   }
   // Keep the nested author object intact (thoughts render `user.username`)
   // and expose flat helpers for feeds that render a single string.

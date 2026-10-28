@@ -1,4 +1,4 @@
-export type ContentType = 'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story';
+export type ContentType = 'post' | 'live' | 'video' | 'moment' | 'image' | 'audio' | 'thought' | 'reacted' | 'story';
 
 export interface FullscreenContent {
   id: string;
@@ -15,6 +15,7 @@ export interface FullscreenContent {
   likes?: number;
   comments?: number;
   videoUrl?: string;
+  audioUrl?: string;
   mediaUrl?: string;
   media?: string;
   url?: string;
@@ -63,7 +64,7 @@ export interface Post {
   upvotes_count?: number;
   downvotes_count?: number;
   user_vote?: 'upvote' | 'downvote' | null;
-  mediaType?: 'video' | 'image' | 'moment';
+  mediaType?: 'video' | 'audio' | 'image' | 'moment';
   isLive?: boolean;
   savedAt?: string;
   video?: string;
@@ -93,7 +94,7 @@ export interface Moment {
   avatar?: string;
   fallbackImage?: string;
   media?: string;
-  mediaType?: 'video' | 'image' | 'moment';
+  mediaType?: 'video' | 'audio' | 'image' | 'moment';
   videoUrl?: string;
   views?: number;
   userId?: string;

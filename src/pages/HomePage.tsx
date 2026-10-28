@@ -1158,7 +1158,7 @@ const HomePage = () => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <FullscreenViewer
+        <SafeFullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

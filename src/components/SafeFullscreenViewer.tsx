@@ -13,6 +13,7 @@ interface BoundaryProps {
 
 interface BoundaryState {
   hasError: boolean;
+  retryCount: number;
 }
 
 /**
@@ -23,10 +24,10 @@ interface BoundaryState {
  * available, so the page underneath is never lost.
  */
 class ViewerBoundary extends Component<BoundaryProps, BoundaryState> {
-  public state: BoundaryState = { hasError: false };
+  public state: BoundaryState = { hasError: false, retryCount: 0 };
 
   public static getDerivedStateFromError(): BoundaryState {
-    return { hasError: true };
+    return { hasError: true, retryCount: 0 };
   }
 
   public componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -39,7 +40,7 @@ class ViewerBoundary extends Component<BoundaryProps, BoundaryState> {
   public componentDidUpdate(prevProps: BoundaryProps) {
     // A different item was opened: clear the failure so it renders cleanly.
     if (this.state.hasError && prevProps.contentId !== this.props.contentId) {
-      this.setState({ hasError: false });
+      this.setState({ hasError: false, retryCount: 0 });
     }
   }
 
@@ -60,7 +61,10 @@ class ViewerBoundary extends Component<BoundaryProps, BoundaryState> {
             <p className="text-sm text-white/80">This media couldn't be opened</p>
             <div className="flex gap-2">
               <button
-                onClick={() => this.setState({ hasError: false })}
+                onClick={() => this.setState((state) => ({
+                  hasError: false,
+                  retryCount: state.retryCount + 1,
+                }))}
                 className="px-4 py-2 text-sm rounded-full bg-white text-black hover:bg-white/90"
               >
                 Try again
@@ -76,7 +80,14 @@ class ViewerBoundary extends Component<BoundaryProps, BoundaryState> {
         </div>
       );
     }
-    return this.props.children;
+    // A retry must create a fresh viewer instance. Some render errors leave
+    // stateful media elements in a broken state even after the boundary is
+    // cleared, especially after a failed fullscreen/video remount.
+    return (
+      <React.Fragment key={`${this.props.contentId || 'media'}:${this.state.retryCount}`}>
+        {this.props.children}
+      </React.Fragment>
+    );
   }
 }
 

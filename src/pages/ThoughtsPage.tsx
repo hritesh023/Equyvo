@@ -346,7 +346,7 @@ const ThoughtsPage = memo(() => {
   const [userReactedThoughts, setUserReactedThoughts] = useState<Thought[]>([]);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
-  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted'>('image');
+  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image' | 'audio' | 'thought' | 'reacted'>('image');
   const [originalVideoRef, setOriginalVideoRef] = useState<React.RefObject<HTMLVideoElement> | null>(null);
   const [originalVideoState, setOriginalVideoState] = useState<{ currentTime: number; isPlaying: boolean } | null>(null);
   const videoRefs = useRef<{ [key: string]: React.RefObject<HTMLVideoElement> }>({});
@@ -1281,7 +1281,7 @@ const ThoughtsPage = memo(() => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <FullscreenViewer
+        <SafeFullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

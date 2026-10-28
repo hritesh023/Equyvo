@@ -231,14 +231,16 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     const resolved = resolveMediaFields(post);
     const vid = resolved.videoUrl;
     const img = resolved.image || resolved.thumbnail;
+    const aud = resolved.audioUrl;
     const hasVideo = Boolean(vid);
     const fullscreenContent = {
       ...post,
-      type: isMomentPost ? 'moment' : (hasVideo ? ('video' as any) : (img ? ('image' as any) : post.type)), // Keep original type when no media
+      type: isMomentPost ? 'moment' : (hasVideo ? ('video' as any) : (aud ? ('audio' as any) : (img ? ('image' as any) : post.type))), // Keep original type when no media
       videoUrl: vid,
-      media: vid || img,
+      audioUrl: aud,
+      media: vid || aud || img,
       thumbnail: img,
-      mediaType: hasVideo ? 'video' : (img ? 'image' : 'text'),
+      mediaType: hasVideo ? 'video' : (aud ? 'audio' : (img ? 'image' : 'text')),
       creator: post.user,
       content: post.content,
       likes: post.likes,
@@ -350,6 +352,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     const resolved = resolveMediaFields(post);
                     const vid = resolved.videoUrl;
                     const img = resolved.image || resolved.thumbnail;
+                    const aud = resolved.audioUrl;
                     const isVideo = Boolean(vid);
                     if (isVideo) {
                       return (
@@ -377,6 +380,18 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                               </button>
                             </div>
                           )}
+                        />
+                      );
+                    }
+                    if (aud) {
+                      return (
+                        <audio
+                          src={aud}
+                          controls
+                          preload="metadata"
+                          className="mb-4 w-full rounded-lg"
+                          onClick={(e) => e.stopPropagation()}
+                          aria-label="Audio content"
                         />
                       );
                     }

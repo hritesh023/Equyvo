@@ -805,7 +805,7 @@ const SearchPage: React.FC = () => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <FullscreenViewer
+        <SafeFullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}
