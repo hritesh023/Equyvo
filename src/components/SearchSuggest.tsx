@@ -7,6 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
 import { useAISearch, SearchSuggestion } from '@/lib/ai-search';
+import { profilePreviewFrom } from '@/lib/identity';
 import api from '@/lib/api';
 
 interface SearchSuggestProps {
@@ -268,7 +269,11 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
       setIsOpen(false);
       setSelectedIndex(-1);
       onClose?.();
-      navigate(`/profile/${encodeURIComponent(personMatch.id)}`);
+      // Hand the real name/avatar over so the profile header paints on the
+      // first frame (skeleton-based pages otherwise flash their own route).
+      navigate(`/profile/${encodeURIComponent(personMatch.id)}`, {
+        state: { profilePreview: profilePreviewFrom(personMatch) },
+      });
       return;
     }
 
@@ -432,8 +437,16 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                           onClose?.();
                           // Defer navigation slightly so the dialog closes cleanly
                           // on mobile before the route change (prevents a blank
-                          // flash / redirect to home).
-                          setTimeout(() => navigate(`/profile/${encodeURIComponent(p.id)}`), 50);
+                          // flash / redirect to home). The profile preview hands
+                          // the real name/avatar to the profile header so the
+                          // very first frame is real information, never an id.
+                          setTimeout(
+                            () => navigate(
+                              `/profile/${encodeURIComponent(p.id)}`,
+                              { state: { profilePreview: profilePreviewFrom(p) } },
+                            ),
+                            50,
+                          );
                         }}
                         className="w-full flex items-center gap-3 p-2.5 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group"
                         role="option"

@@ -15,6 +15,7 @@ import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { openShareSheet } from '@/utils/share';
 import api from '@/lib/api';
 import { normalizeContentItem, resolveMediaFields } from '@/lib/media';
+import { toCount } from '@/lib/count';
 
 interface FullscreenBrowseProps {
   isOpen: boolean;
@@ -218,6 +219,21 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                             alt={content.title}
                             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             loading="lazy"
+                            onError={(e) => {
+                              // One lost thumbnail request must not leave a
+                              // broken image forever — cache-bust once, then
+                              // hide the broken icon.
+                              const img = e.currentTarget;
+                              const attempts = Number(img.dataset.thumbRetry || '0');
+                              const base = content.thumbnail || content.image || '';
+                              if (!base) { img.style.display = 'none'; return; }
+                              if (attempts < 1) {
+                                img.dataset.thumbRetry = '1';
+                                img.src = `${base}${base.includes('?') ? '&' : '?'}retry=1`;
+                              } else {
+                                img.style.display = 'none';
+                              }
+                            }}
                           />
                           {content.mediaType === 'video' && (
                             <div className="absolute inset-0 flex items-center justify-center">
@@ -304,7 +320,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                               className={`text-gray-400 hover:text-white ${likedItems.has(content.id) ? 'text-red-500' : ''}`}
                             >
                               <ThumbsUp className={`h-4 w-4 ${likedItems.has(content.id) ? 'fill-current' : ''}`} />
-                              {content.likes ? <span className="ml-1 text-xs">{formatNumber(content.likes)}</span> : null}
+                              {toCount(content.likes) > 0 ? <span className="ml-1 text-xs">{formatNumber(toCount(content.likes))}</span> : null}
                             </Button>
 
                             <Button
@@ -366,6 +382,18 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                             alt={content.title}
                             className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-300"
                             loading="lazy"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              const attempts = Number(img.dataset.thumbRetry || '0');
+                              const base = content.thumbnail || content.image || '';
+                              if (!base) { img.style.display = 'none'; return; }
+                              if (attempts < 1) {
+                                img.dataset.thumbRetry = '1';
+                                img.src = `${base}${base.includes('?') ? '&' : '?'}retry=1`;
+                              } else {
+                                img.style.display = 'none';
+                              }
+                            }}
                           />
                           {content.mediaType === 'video' && (
                             <div className="absolute inset-0 flex items-center justify-center">
@@ -387,10 +415,10 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                           </div>
                           <div className="flex items-center gap-2 text-gray-400 text-[10px] mt-1">
                             <span className="flex items-center gap-0.5">
-                              <Eye className="h-2 w-2" /> {formatNumber(content.views || 0)}
+                              <Eye className="h-2 w-2" /> {formatNumber(toCount(content.views))}
                             </span>
                             <span className="flex items-center gap-0.5">
-                              <ThumbsUp className="h-2 w-2" /> {formatNumber(content.likes || 0)}
+                              <ThumbsUp className="h-2 w-2" /> {formatNumber(toCount(content.likes))}
                             </span>
                           </div>
                         </div>

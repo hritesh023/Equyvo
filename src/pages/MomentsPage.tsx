@@ -23,6 +23,7 @@ import ReportModal from '@/components/ReportModal';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import api from '@/lib/api';
 import { useVideo2xPress } from '@/lib/video-2x';
+import { toCount, bumpCount } from '@/lib/count';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -32,7 +33,8 @@ const MomentsPage = () => {
   const [hasEngaged, setHasEngaged] = useState(false); // Track user engagement
   const [autoUnmuted, setAutoUnmuted] = useState(false); // Track if auto-unmute has been applied
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
-  const [momentLikes, setMomentLikes] = useState<{[key: string]: string}>({});
+  // Numeric likes per moment (was string/`K`-suffixed which NaN'ed on +1).
+  const [momentLikes, setMomentLikes] = useState<{[key: string]: number}>({});
   const [isScrolling, setIsScrolling] = useState(false);
   const [commentSectionOpen, setCommentSectionOpen] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
@@ -154,12 +156,12 @@ const MomentsPage = () => {
 
   // Initialize likes state only (remove auto like/save initialization)
   useEffect(() => {
-    const initialLikes: {[key: string]: string} = {};
-    
+    const initialLikes: {[key: string]: number} = {};
+
     moments.forEach(moment => {
-      initialLikes[moment.id] = moment.likes;
+      initialLikes[moment.id] = toCount(moment.likes);
     });
-    
+
     setMomentLikes(initialLikes);
   }, []);
 
@@ -478,22 +480,24 @@ const MomentsPage = () => {
   const toggleLike = (momentId: string) => {
     setLikedMoments(prev => {
       const newLiked = new Set(prev);
-      const currentLikes = momentLikes[momentId] || '0';
-      const numericLikes = parseFloat(currentLikes.replace('K', '')) * (currentLikes.includes('K') ? 1000 : 1);
-      
+      // Counters were held as strings ("12", "1.2K"); parseFloat chains on an
+      // odd value produced `NaN`. Use the numeric safe-count helpers instead
+      // and keep the stored value a plain number.
+      const currentLikes = toCount(momentLikes[momentId]);
+
       if (newLiked.has(momentId)) {
         newLiked.delete(momentId);
-        const newLikes = Math.max(0, numericLikes - 1);
+        const newLikes = Math.max(0, currentLikes - 1);
         setMomentLikes(current => ({
-          ...current, 
-          [momentId]: newLikes >= 1000 ? `${(newLikes / 1000).toFixed(1)}K` : newLikes.toString()
+          ...current,
+          [momentId]: newLikes,
         }));
       } else {
         newLiked.add(momentId);
-        const newLikes = numericLikes + 1;
+        const newLikes = bumpCount(currentLikes, +1);
         setMomentLikes(current => ({
-          ...current, 
-          [momentId]: newLikes >= 1000 ? `${(newLikes / 1000).toFixed(1)}K` : newLikes.toString()
+          ...current,
+          [momentId]: newLikes,
         }));
       }
       return newLiked;
@@ -505,7 +509,7 @@ const MomentsPage = () => {
         const n = data.likes;
         setMomentLikes(current => ({
           ...current,
-          [momentId]: n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n.toString(),
+          [momentId]: toCount(n),
         }));
       }
     }).catch(() => undefined);
@@ -520,6 +524,18 @@ const MomentsPage = () => {
   const handleShare = (momentId: string) => {
     const moment = moments.find(m => m.id === momentId);
     if (moment) {
+      // Optimistic +1 so the visible share counter moves with the action,
+      // then adopt the server's authoritative count (best effort).
+      setMoments((prev) => (prev || []).map(m =>
+        m.id === momentId ? { ...m, shares: bumpCount(m.shares, +1) } : m,
+      ));
+      api.share(momentId).then(({ data }) => {
+        if (data && typeof data.shares === 'number') {
+          setMoments((prev) => (prev || []).map(m =>
+            m.id === momentId ? { ...m, shares: toCount(data.shares) } : m,
+          ));
+        }
+      }).catch(() => undefined);
       const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(momentId)}`;
       openShareSheet({
         title: `Moment by ${moment.user} on Equyvo`,
@@ -731,7 +747,7 @@ const MomentsPage = () => {
                 >
                   <ThumbsUp className={cn("h-8 w-8 drop-shadow-md", likedMoments.has(moment.id) ? "fill-current text-blue-500" : "")} />
                 </Button>
-                <span className="text-white text-xs font-medium drop-shadow-md">{momentLikes[moment.id] || moment.likes}</span>
+                <span className="text-white text-xs font-medium drop-shadow-md">{toCount(momentLikes[moment.id] ?? moment.likes)}</span>
               </div>
 
               <div className="flex flex-col items-center gap-1">
@@ -743,7 +759,7 @@ const MomentsPage = () => {
                 >
                   <MessageCircle className="h-8 w-8 drop-shadow-md" />
                 </Button>
-                <span className="text-white text-xs font-medium drop-shadow-md">{moment.comments}</span>
+                <span className="text-white text-xs font-medium drop-shadow-md">{toCount(moment.comments)}</span>
               </div>
 
               <div className="flex flex-col items-center gap-1">
@@ -773,7 +789,7 @@ const MomentsPage = () => {
                 >
                   <Share2 className="h-8 w-8 drop-shadow-md" />
                 </Button>
-                <span className="text-white text-xs font-medium drop-shadow-md">{moment.shares}</span>
+                <span className="text-white text-xs font-medium drop-shadow-md">{toCount(moment.shares)}</span>
               </div>
 
               <div className="flex flex-col items-center gap-1">
@@ -862,6 +878,12 @@ const MomentsPage = () => {
           }}
           postId={selectedPostId}
           postUser={selectedPostUser}
+          // The visible rail counter must move as soon as a comment lands.
+          onCommentCountChange={(postId, count) => {
+            setMoments((prev) => (prev || []).map(m =>
+              m.id === postId ? { ...m, comments: toCount(count) } : m,
+            ));
+          }}
         />
       )}
 

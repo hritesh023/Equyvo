@@ -22,6 +22,7 @@ import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
 import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, isVideoItem, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { resolveMediaFields } from '@/lib/media';
+import { bumpCount } from '@/lib/count';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import api from '@/lib/api';
 import { isOwnContent } from '@/utils/ownership';
@@ -478,6 +479,13 @@ const HomePage = () => {
     });
     // Human eval: every like/unlike labels the feed ranking algorithm.
     evalLike(momentId, liking, `moment:${momentId}`);
+    // The home rail must show the +1 immediately, exactly like the Moments
+    // page — the underlying list count is bumped with the same safe helper.
+    setMoments(prev => (prev || []).map(m =>
+      m.id === momentId
+        ? { ...m, likes: bumpCount(m.likes, liking ? +1 : -1) }
+        : m
+    ));
     // Persist the like so the owner is notified and other devices agree.
     // Best-effort: a local/demo item that the server does not know simply
     // keeps its optimistic UI state instead of surfacing an error.
@@ -515,10 +523,12 @@ const HomePage = () => {
       creator: (p as any)?.user,
     });
     
-    // Update the post likes count
-    setEnhancedPosts(prev => prev.map(post => 
-      post.id === postId 
-        ? { ...post, likes: likedPosts.has(postId) ? post.likes - 1 : post.likes + 1 }
+    // Update the post likes count (never NaN: base comes from the row, and a
+    // missing row count starts at 0). Then the server's authoritative count
+    // overwrites, so retries/dedupe can never drift the UI.
+    setEnhancedPosts(prev => prev.map(post =>
+      post.id === postId
+        ? { ...post, likes: bumpCount(post.likes, likedPosts.has(postId) ? -1 : +1) }
         : post
     ));
     // Persist the like (owner notification + cross-device count). The server
@@ -613,7 +623,7 @@ const HomePage = () => {
     });
     // Optimistic +1 — sharing used to update nothing, so the count never moved.
     setEnhancedPosts(prev => prev.map(p =>
-      p.id === post.id ? { ...p, shares: Math.max(0, Number(p.shares || 0) + 1) } : p,
+      p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
     ));
     teachBrain(post?.content?.slice(0, 120) || post?.type || post.id);
     // Human eval: share = strong positive preference.
@@ -1139,6 +1149,18 @@ const HomePage = () => {
         onClose={() => setCommentSectionOpen(false)}
         postId={selectedPostId || ''}
         postUser={selectedPostUser}
+        // Moments open this shared section; bump the rail's visible count too
+        // (post counts flow through the feed components' own handlers).
+        onCommentCountChange={(postId, count) => {
+          if (!postId || !Number.isFinite(count)) return;
+          const n = Math.max(0, count);
+          setMoments(prev => (prev || []).map(m =>
+            m.id === postId ? { ...m, comments: n } : m,
+          ));
+          setEnhancedPosts(prev => prev.map(post =>
+            post.id === postId ? { ...post, comments: n } : post,
+          ));
+        }}
       />
 
       {/* Report Modal */}

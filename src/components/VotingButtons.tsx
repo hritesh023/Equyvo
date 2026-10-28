@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from "@/components/ui/button";
 import { ArrowUp, ArrowDown, ThumbsUp } from 'lucide-react';
+import { toCount } from '@/lib/count';
 
 interface VotingButtonsProps {
   thoughtId: string;
@@ -42,7 +43,7 @@ const VotingButtons: React.FC<VotingButtonsProps> = ({
   };
 
   const formatCount = (count: number | undefined | null) => {
-    const c = Number(count) || 0;
+    const c = toCount(count);
     if (c >= 1000000) {
       return `${(c / 1000000).toFixed(1)}M`;
     } else if (c >= 1000) {

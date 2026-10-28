@@ -48,6 +48,7 @@ import FollowButton from '@/components/FollowButton';
 import { getFollowers, getFollowing, canViewFollowLists, myId, type SocialProfile } from '@/lib/social';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { pickDisplayName, profilePreviewFrom, userNameOf } from '@/lib/identity';
+import { toCount, bumpCount } from '@/lib/count';
 import api from '@/lib/api';
 import { isVideoItem } from '@/lib/feed-store';
 import { normalizeContentList, normalizeContentItem, resolveMediaFields } from '@/lib/media';
@@ -647,15 +648,18 @@ const ProfilePage = () => {
     const liking = !likedPosts.has(postId);
     // Human eval first (fire-and-forget).
     try { evalLike(postId, liking); } catch { /* never block */ }
+    const base = toCount(postLikes[postId] ?? userProfile.posts.find(p => p.id === postId)?.likes);
     const newLikedPosts = new Set(likedPosts);
     const newPostLikes = { ...postLikes };
 
     if (likedPosts.has(postId)) {
       newLikedPosts.delete(postId);
-      newPostLikes[postId] -= 1;
+      newPostLikes[postId] = Math.max(0, base - 1);
     } else {
       newLikedPosts.add(postId);
-      newPostLikes[postId] += 1;
+      // Counters can be missing for posts loaded outside the initial map
+      // (saved/history items) — starting from 0 here rendered "NaN likes".
+      newPostLikes[postId] = bumpCount(base, +1);
     }
 
     setLikedPosts(newLikedPosts);
@@ -678,8 +682,13 @@ const ProfilePage = () => {
       if (postIndex === -1) return;
       
       const post = userProfile.posts[postIndex];
-      const currentUpvotes = (post as any).upvotes_count || Math.floor(post.likes * 0.7);
-      const currentDownvotes = (post as any).downvotes_count || Math.floor(post.likes * 0.1);
+      // Vote counters are optional on many legacy rows; deriving them from an
+      // undefined likes value rendered "NaN upvotes". Base everything on real
+      // numbers, and +1/−1 the exact button the user pressed.
+      const currentUpvotes = toCount((post as any).upvotes_count) ||
+        Math.floor(toCount(post.likes) * 0.7);
+      const currentDownvotes = toCount((post as any).downvotes_count) ||
+        Math.floor(toCount(post.likes) * 0.1);
       
       let newUpvotes = currentUpvotes;
       let newDownvotes = currentDownvotes;
@@ -752,13 +761,13 @@ const ProfilePage = () => {
     if (reactedPosts.has(postId)) {
       // Remove reaction and remove from user's reacted posts
       newReactedPosts.delete(postId);
-      newPostReacts[postId] -= 1;
+      newPostReacts[postId] = bumpCount(newPostReacts[postId], -1);
       setUserReactedPosts(prev => prev.filter(p => p.originalPostId !== postId));
       showSuccess('Reaction removed - post no longer yours');
     } else {
       // Add reaction and make it user's own post
       newReactedPosts.add(postId);
-      newPostReacts[postId] += 1;
+      newPostReacts[postId] = bumpCount(newPostReacts[postId], +1);
 
       if (post) {
         // Real identity of the signed-in account — never a placeholder name.
@@ -803,7 +812,7 @@ const ProfilePage = () => {
     setUserProfile(prev => ({
       ...prev,
       posts: (prev.posts || []).map(p =>
-        p.id === post.id ? { ...p, shares: Math.max(0, Number(p.shares || 0) + 1) } : p,
+        p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
       ),
     }));
     const result = await sharePost({
@@ -1585,7 +1594,7 @@ const ProfilePage = () => {
                             muted
                             loop
                             playsInline
-                            preload="none"
+                            preload="metadata"
                             onClick={() => handleFullscreen(post)}
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                             onMouseLeave={(e) => e.currentTarget.pause()}
@@ -1599,7 +1608,15 @@ const ProfilePage = () => {
                             onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              target.style.display = 'none';
+                              // Retry once with a cache-bust before hiding broken art.
+                              const attempts = Number(target.dataset.mediaRetry || '0');
+                              const base = target.getAttribute('src') || '';
+                              if (base && attempts < 1) {
+                                target.dataset.mediaRetry = String(attempts + 1);
+                                target.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                              } else {
+                                target.style.display = 'none';
+                              }
                             }}
                           />
                         )
@@ -1646,7 +1663,7 @@ const ProfilePage = () => {
                             className="flex items-center gap-1 text-xs md:text-sm"
                             onClick={() => handleComment(post.id, post.user)}
                           >
-                            <MessageCircle className="h-3 w-3 md:h-4 md:w-4" /> <span className="font-medium">{post.comments}</span>
+                            <MessageCircle className="h-3 w-3 md:h-4 md:w-4" /> <span className="font-medium">{toCount(post.comments)}</span>
                           </Button>
                           <Button
                             variant="ghost"
@@ -1654,15 +1671,15 @@ const ProfilePage = () => {
                             className="flex items-center gap-1 text-xs md:text-sm"
                             onClick={() => handleShare(post)}
                           >
-                            <Share2 className="h-3 w-3 md:h-4 md:w-4" /> <span className="font-medium hidden sm:inline">{post.shares}</span><span className="font-medium sm:hidden">{post.shares > 0 ? post.shares : ''}</span>
+                            <Share2 className="h-3 w-3 md:h-4 md:w-4" /> <span className="font-medium hidden sm:inline">{toCount(post.shares)}</span><span className="font-medium sm:hidden">{toCount(post.shares) > 0 ? toCount(post.shares) : ''}</span>
                           </Button>
                         </>
                       ) : post.type === 'thought' ? (
                         <VotingButtons
                           thoughtId={post.id}
-                          upvotesCount={post.upvotes_count || Math.floor(post.likes * 0.7)}
-                          downvotesCount={post.downvotes_count || Math.floor(post.likes * 0.1)}
-                          likesCount={post.likes}
+                          upvotesCount={toCount((post as any).upvotes_count) || Math.floor(toCount(post.likes) * 0.7)}
+                          downvotesCount={toCount((post as any).downvotes_count) || Math.floor(toCount(post.likes) * 0.1)}
+                          likesCount={toCount(post.likes)}
                           userVote={post.user_vote || null}
                           userHasLiked={likedPosts.has(post.id)}
                           onVote={handleVote}
@@ -1680,7 +1697,7 @@ const ProfilePage = () => {
                           onClick={() => handleLike(post.id)}
                         >
                           <ThumbsUp className={`h-3 w-3 md:h-4 md:w-4 ${likedPosts.has(post.id) ? 'fill-current' : ''}`} />
-                          <span className="font-medium">{postLikes[post.id] || post.likes}</span>
+                          <span className="font-medium">{toCount(postLikes[post.id] ?? post.likes)}</span>
                         </Button>
                       )}
                       {!post.isReacted && (
@@ -1974,8 +1991,15 @@ const ProfilePage = () => {
                             className="absolute inset-0 w-full h-full object-cover"
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              // Real media only: hide broken art, never swap in a fake image.
-                              target.style.display = 'none';
+                              // Real media only: rewrite broken art, never swap in a fake image.
+                              const attempts = Number(target.dataset.mediaRetry || '0');
+                              const base = target.getAttribute('src') || '';
+                              if (base && attempts < 1) {
+                                target.dataset.mediaRetry = String(attempts + 1);
+                                target.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                              } else {
+                                target.style.display = 'none';
+                              }
                             }}
                           />
                           {post.videoUrl ? (
@@ -2088,25 +2112,25 @@ const ProfilePage = () => {
                           aria-label={`Comment on this thought (${post.comments} comments)`}
                           title="View comments"
                         >
-                          <MessageCircle className="h-4 w-4" /> <span className="font-medium">{post.comments}</span>
+                          <MessageCircle className="h-4 w-4" /> <span className="font-medium">{toCount(post.comments)}</span>
                         </Button>
                         <Button
                           variant="ghost"
                           size="sm"
                           className="flex items-center gap-1"
                           onClick={() => handleShare(post as unknown as Post)}
-                          aria-label={`Share this thought (${post.shares} shares)`}
+                          aria-label={`Share this thought (${toCount(post.shares)} shares)`}
                           title="Share this thought"
                         >
-                          <Share2 className="h-4 w-4" /> <span className="font-medium">{post.shares}</span>
+                          <Share2 className="h-4 w-4" /> <span className="font-medium">{toCount(post.shares)}</span>
                         </Button>
                       </>
                     ) : (
                       <VotingButtons
                         thoughtId={post.id}
-                        upvotesCount={post.upvotes_count || Math.floor(post.likes * 0.7)}
-                        downvotesCount={post.downvotes_count || Math.floor(post.likes * 0.1)}
-                        likesCount={post.likes}
+                        upvotesCount={toCount((post as any).upvotes_count) || Math.floor(toCount(post.likes) * 0.7)}
+                        downvotesCount={toCount((post as any).downvotes_count) || Math.floor(toCount(post.likes) * 0.1)}
+                        likesCount={toCount(post.likes)}
                         userVote={post.user_vote || null}
                         userHasLiked={likedPosts.has(post.id)}
                         onVote={handleVote}
@@ -2195,9 +2219,22 @@ const ProfilePage = () => {
                             muted
                             loop
                             playsInline
+                            preload="metadata"
                             onClick={() => handleFullscreen(post)}
                             onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
                             onMouseLeave={(e) => e.currentTarget.pause()}
+                            onError={(e) => {
+                              // One dropped range request must not blank the
+                              // saved item — retry with a cache-bust.
+                              const v = e.currentTarget;
+                              const attempts = Number(v.dataset.savedRetry || '0');
+                              const base = post.videoUrl || post.video || '';
+                              if (base && attempts < 2) {
+                                v.dataset.savedRetry = String(attempts + 1);
+                                v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                                v.load();
+                              }
+                            }}
                           />
                         ) : (
                           <img
@@ -2208,8 +2245,15 @@ const ProfilePage = () => {
                             onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              // Real media only: hide broken art, never swap in a fake image.
-                              target.style.display = 'none';
+                              // Real media only: rewrite broken art, never swap in a fake image.
+                              const attempts = Number(target.dataset.mediaRetry || '0');
+                              const base = target.getAttribute('src') || '';
+                              if (base && attempts < 1) {
+                                target.dataset.mediaRetry = String(attempts + 1);
+                                target.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                              } else {
+                                target.style.display = 'none';
+                              }
                             }}
                           />
                         )}
@@ -2233,7 +2277,7 @@ const ProfilePage = () => {
                           aria-label={`View post with ${post.likes} likes`}
                           title="Open post details"
                         >
-                          <ThumbsUp className="h-4 w-4" /> {post.likes}
+                          <ThumbsUp className="h-4 w-4" /> {toCount(post.likes)}
                         </Button>
                       )}
                       {post.comments && (

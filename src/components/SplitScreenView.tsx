@@ -155,6 +155,16 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                         className="w-full h-full object-contain"
                         controls={true}
                         poster={selectedItem.thumbnail}
+                        preload="metadata"
+                        onError={(e) => {
+                          const v = e.currentTarget;
+                          const attempts = Number(v.dataset.splitRetry || '0');
+                          if (selectedItem.videoUrl && attempts < 2) {
+                            v.dataset.splitRetry = String(attempts + 1);
+                            v.src = `${selectedItem.videoUrl}${selectedItem.videoUrl.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                            v.load();
+                          }
+                        }}
                       />
                       ) : null}
                       {/* Play button overlay */}
@@ -174,6 +184,18 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                         src={selectedItem.thumbnail}
                         alt={selectedItem.title}
                         className="w-full rounded-lg"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          const attempts = Number(img.dataset.splitRetry || '0');
+                          const base = selectedItem.thumbnail || '';
+                          if (!base) { img.style.display = 'none'; return; }
+                          if (attempts < 1) {
+                            img.dataset.splitRetry = '1';
+                            img.src = `${base}${base.includes('?') ? '&' : '?'}retry=1`;
+                          } else {
+                            img.style.display = 'none';
+                          }
+                        }}
                       />
                     </div>
                   )}
@@ -268,6 +290,18 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                         src={item.thumbnail}
                         alt={item.title}
                         className="w-20 h-14 object-cover rounded"
+                        onError={(e) => {
+                          const img = e.currentTarget;
+                          const base = item.thumbnail || '';
+                          if (!base) { img.style.display = 'none'; return; }
+                          const attempts = Number(img.dataset.listRetry || '0');
+                          if (attempts < 1) {
+                            img.dataset.listRetry = '1';
+                            img.src = `${base}${base.includes('?') ? '&' : '?'}retry=1`;
+                          } else {
+                            img.style.display = 'none';
+                          }
+                        }}
                       />
                       {item.type === 'video' && (
                         <div className="absolute inset-0 bg-black/40 rounded flex items-center justify-center">

@@ -24,6 +24,9 @@ import { shouldShowAds } from '@/lib/ads-config';
 import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from './ads/InFeedAdGate';
 import { resolveMediaFields } from '@/lib/media';
+import { toCount } from '@/lib/count';
+import ResilientImage from '@/components/ResilientImage';
+import ResilientVideo from '@/components/ResilientVideo';
 
 interface ExtendedPost extends Post {
   type: 'post' | 'thought' | 'reacted';
@@ -122,8 +125,8 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
   const calculateRelevanceScore = (post: Post): number => {
     let score = 0;
     
-    // Base engagement score
-    const engagementScore = (post.likes * 1 + post.reacts * 2 + post.comments * 3) / 10;
+    // Base engagement score (counters may be missing on legacy rows — safe)
+    const engagementScore = (toCount(post.likes) + toCount(post.reacts) * 2 + toCount(post.comments) * 3) / 10;
     score += engagementScore;
     
     // Time decay (newer content gets higher score)
@@ -350,21 +353,38 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     const isVideo = Boolean(vid);
                     if (isVideo) {
                       return (
-                        <video
+                        <ResilientVideo
                           src={vid}
                           poster={img || undefined}
                           controls
-                          preload="metadata"
                           playsInline
+                          preload="metadata"
                           className="w-full rounded-lg mb-4 aspect-video bg-black cursor-pointer object-contain"
+                          style={{ width: '100%' }}
                           onClick={() => handleContentClick(post)}
+                          fallbackRenderer={(
+                            <div className="text-muted-foreground text-sm p-6 text-center" role="status">
+                              Video could not load right now.
+                              <button
+                                type="button"
+                                className="block mx-auto mt-1 text-primary underline underline-offset-2"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  window.location.reload();
+                                }}
+                              >
+                                Retry
+                              </button>
+                            </div>
+                          )}
                         />
                       );
                     }
                     if (img) {
                       return (
-                        <img
+                        <ResilientImage
                           src={img}
+                          fallbackSrc={resolved.thumbnail || undefined}
                           alt="Post content"
                           loading="lazy"
                           className="w-full rounded-lg mb-4 object-contain bg-black max-h-96 cursor-pointer"
@@ -379,9 +399,9 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     {post.type === 'thought' ? (
                       <VotingButtons
                         thoughtId={post.id}
-                        upvotesCount={post.upvotes_count || post.likes}
-                        downvotesCount={post.downvotes_count || 0}
-                        likesCount={post.likes}
+                        upvotesCount={toCount(post.upvotes_count ?? post.likes)}
+                        downvotesCount={toCount(post.downvotes_count)}
+                        likesCount={toCount(post.likes)}
                         userVote={post.user_vote || null}
                         userHasLiked={likedPosts.has(post.id)}
                         onVote={(thoughtId, voteType) => onVote?.(thoughtId, voteType)}
@@ -392,7 +412,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                       <>
                         <LikeButton
                           isLiked={likedPosts.has(post.id)}
-                          likesCount={postLikes[post.id] || post.likes}
+                          likesCount={toCount(postLikes[post.id] ?? post.likes)}
                           onLike={() => onLike(post.id)}
                           size="sm"
                         />
@@ -405,7 +425,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                           title="React to make this post yours"
                         >
                           <Repeat className={`h-4 w-4 ${reactedPosts.has(post.id) ? 'fill-current' : ''}`} /> 
-                          {postReacts[post.id] || post.reacts}
+                          {toCount(postReacts[post.id] ?? post.reacts)}
                         </Button>
                       </>
                     )}
@@ -416,7 +436,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                       className="flex items-center gap-1"
                       onClick={() => handleComment(post.id, post.user)}
                     >
-                      <MessageCircle className="h-4 w-4" /> {postCommentCounts?.[post.id] || post.comments}
+                      <MessageCircle className="h-4 w-4" /> {toCount(postCommentCounts?.[post.id] ?? post.comments)}
                     </Button>
                     
                     <ShareButton

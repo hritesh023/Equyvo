@@ -1,6 +1,7 @@
 import React from 'react';
 import { Button } from "@/components/ui/button";
 import { ThumbsUp } from 'lucide-react';
+import { toCount } from '@/lib/count';
 
 interface LikeButtonProps {
   isLiked: boolean;
@@ -40,7 +41,7 @@ const LikeButton: React.FC<LikeButtonProps> = ({
       <ThumbsUp 
         className={`${iconSizes[size]} mr-1 ${isLiked ? 'fill-current' : ''}`} 
       />
-      {showCount && likesCount}
+      {showCount && toCount(likesCount)}
     </Button>
   );
 };

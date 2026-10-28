@@ -23,6 +23,9 @@ import { shouldShowAds } from '@/lib/ads-config';
 import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from './ads/InFeedAdGate';
 import { resolveMediaFields } from '@/lib/media';
+import { toCount } from '@/lib/count';
+import ResilientImage from '@/components/ResilientImage';
+import ResilientVideo from '@/components/ResilientVideo';
 
 interface FollowingFeedProps {
   posts: Post[];
@@ -281,12 +284,12 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     const isVideo = Boolean(vid);
                     if (isVideo) {
                       return (
-                        <video
+                        <ResilientVideo
                           src={vid}
                           poster={img || undefined}
                           controls
-                          preload="metadata"
                           playsInline
+                          preload="metadata"
                           className="w-full rounded-lg mb-4 aspect-video bg-black cursor-pointer object-contain"
                           onClick={() => handleContentClick(post)}
                         />
@@ -294,8 +297,9 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     }
                     if (img) {
                       return (
-                        <img
+                        <ResilientImage
                           src={img}
+                          fallbackSrc={resolved.thumbnail || undefined}
                           alt="Post content"
                           loading="lazy"
                           className="w-full rounded-lg mb-4 object-contain bg-black max-h-96 cursor-pointer"
@@ -310,9 +314,9 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     {post.type === 'thought' ? (
                       <VotingButtons
                         thoughtId={post.id}
-                        upvotesCount={post.upvotes_count || post.likes}
-                        downvotesCount={post.downvotes_count || 0}
-                        likesCount={post.likes}
+                        upvotesCount={toCount(post.upvotes_count ?? post.likes)}
+                        downvotesCount={toCount(post.downvotes_count)}
+                        likesCount={toCount(post.likes)}
                         userVote={post.user_vote || null}
                         userHasLiked={likedPosts.has(post.id)}
                         onVote={(thoughtId, voteType) => onVote?.(thoughtId, voteType)}
@@ -323,7 +327,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                       <>
                         <LikeButton
                           isLiked={likedPosts.has(post.id)}
-                          likesCount={postLikes[post.id] || post.likes}
+                          likesCount={toCount(postLikes[post.id] ?? post.likes)}
                           onLike={() => onLike(post.id)}
                           size="sm"
                         />
@@ -336,7 +340,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                           title="React to make this post yours"
                         >
                           <Repeat className={`h-4 w-4 ${reactedPosts.has(post.id) ? 'fill-current' : ''}`} /> 
-                          {postReacts[post.id] || post.reacts}
+                          {toCount(postReacts[post.id] ?? post.reacts)}
                         </Button>
                       </>
                     )}
@@ -347,7 +351,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                       className="flex items-center gap-1"
                       onClick={() => handleComment(post.id, post.user)}
                     >
-                      <MessageCircle className="h-4 w-4" /> {postCommentCounts?.[post.id] || post.comments}
+                      <MessageCircle className="h-4 w-4" /> {toCount(postCommentCounts?.[post.id] ?? post.comments)}
                     </Button>
                     
                     <ShareButton

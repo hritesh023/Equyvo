@@ -43,8 +43,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   onExpand,
   onContentChange
 }) => {
-  // Check for temp content from split view
-  const rawContent = (window as any).tempFullscreenContent || content;
+  // Check for temp content from split view. The window slot is consumed ONCE
+  // on the first render into a ref: clearing it mid-render on every pass
+  // could lose the payload on a double render (StrictMode / parent state
+  // update) and swap the viewer onto stale content.
+  const rawContentRef = useRef<any>(null);
+  if (rawContentRef.current === null) {
+    const temp = (window as any).tempFullscreenContent;
+    rawContentRef.current = temp || content;
+    if (temp) (window as any).tempFullscreenContent = null;
+  }
+  const rawContent = rawContentRef.current;
   // Normalise once: callers can hand us raw media arrays/objects/legacy
   // fields, and every renderer below expects clean strings.
   const actualContent = useMemo(
@@ -59,12 +68,26 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     const target = e.target as HTMLImageElement;
     target.style.display = 'none';
   };
-  const actualType = (window as any).tempFullscreenContent ? (window as any).tempFullscreenContent.type || 'video' : type;
-  
-  // Clear temp content after using it
-  if ((window as any).tempFullscreenContent) {
-    (window as any).tempFullscreenContent = null;
-  }
+  // Fullscreen image resilience: a flaky first fetch (mobile switch, cold
+  // edge) must not black out the viewer. Remount the element with a fresh
+  // fetch up to two times, then show the honest "not viewable" state.
+  const [imageRenderKey, setImageRenderKey] = useState(0);
+  const [imageFailed, setImageFailed] = useState(false);
+  useEffect(() => {
+    setImageRenderKey(0);
+    setImageFailed(false);
+  }, [actualContent?.id]);
+  const handleFullscreenImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
+    if (imageRenderKey < 2 && !imageFailed) {
+      setImageRenderKey(k => k + 1);
+      return;
+    }
+    setImageFailed(true);
+    hideBrokenImage(e);
+  };
+  const actualType = rawContentRef.current !== content
+    ? (rawContentRef.current?.type as string) || 'video'
+    : type;
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Hold-to-2× scrub: long-press right = fast-forward at 2× the speed,
@@ -145,15 +168,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                         actualContent?.isLive === true ||
                         actualContent?.live === true;
 
-  // A live stream that ENDS must immediately fall back to NORMAL video
-  // seek-bar behaviour (real duration + time cursor) — never a permanent red
-  // "LIVE" rail frozen at the end of the recording. Playback events below
-  // flip this: element 'ended', or a finite duration on board with the
-  // playhead at the very end.
-  const [liveEnded, setLiveEnded] = useState(false);
-  useEffect(() => { setLiveEnded(false); }, [fallbackVideoSrc]);
-  const effectiveLive = isLiveStream && !liveEnded;
-  
   // Force landscape mode for mobile videos (except moments and stories)
   const shouldForceLandscape = isMobileDevice && isVideoType && !isPortraitMoment && !isStory;
   
@@ -168,6 +182,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   
   // For live streams, use the same detection as other video content with live indicators
   const fallbackVideoSrc = isVideoType ? videoSrc : null;
+
+  // A live stream that ENDS must immediately fall back to NORMAL video
+  // seek-bar behaviour (real duration + time cursor) — never a permanent red
+  // "LIVE" rail frozen at the end of the recording. Playback events below
+  // flip this: element 'ended', or a finite duration on board with the
+  // playhead at the very end.
+  const [liveEnded, setLiveEnded] = useState(false);
+  // Cache-bust retry key for the fullscreen stream (cover flaky range reads).
+  const [videoRetryKey, setVideoRetryKey] = useState(0);
+  useEffect(() => { setVideoRetryKey(0); }, [fallbackVideoSrc]);
+  // NOTE: this effect must stay BELOW the `fallbackVideoSrc` declaration —
+  // reading it in the deps array while it was still in its temporal dead
+  // zone threw a ReferenceError on every render, so the ErrorBoundary
+  // replaced the whole fullscreen viewer with "This section couldn't load".
+  useEffect(() => { setLiveEnded(false); }, [fallbackVideoSrc]);
+  const effectiveLive = isLiveStream && !liveEnded;
     
   // Determine container style based on content type and device
   const getContainerStyle = () => {
@@ -1080,7 +1110,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           {fallbackVideoSrc ? (
             <video
               ref={videoRef}
-              src={fallbackVideoSrc}
+              key={videoRetryKey}
+              src={videoRetryKey === 0 ? String(fallbackVideoSrc) : `${String(fallbackVideoSrc)}${String(fallbackVideoSrc).includes('?') ? '&' : '?'}streamretry=${videoRetryKey}`}
               className={`${isPortraitMoment || isStory ? 'max-w-full max-h-screen object-cover mx-auto' : 'absolute inset-0 w-full h-full'}`}
               style={getVideoContainerStyle()}
               autoPlay
@@ -1088,6 +1119,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               controls={false}
               muted={false}
               loop={isPortraitMoment || isStory}
+              preload="metadata"
+              onError={() => {
+                // One failed streaming attempt (dropped range, cold edge,
+                // flaky mobile link) must not end the fullscreen show —
+                // remount with a cache-busting URL up to 3 times.
+                setVideoRetryKey(k => (k < 3 ? k + 1 : k));
+              }}
               onTimeUpdate={(e) => {
                 setCurrentTime(e.currentTarget.currentTime);
                 // Live → normal transition: the recording acquired a real
@@ -1567,7 +1605,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               )}
               {actualContent.likes && (
                 <span className="flex items-center gap-1">
-                  <ThumbsUp className="h-4 w-4" /> {formatNumber(actualContent.likes)} likes
+                  <ThumbsUp className="h-4 w-4" /> {formatNumber(Number(actualContent.likes) || likeCount || 0)} likes
                 </span>
               )}
             </div>
@@ -1674,8 +1712,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             actualContent?.image ||
             actualContent?.mediaUrl ||
             actualContent?.media ||
-            actualContent?.src) ? (
+            actualContent?.src) && !imageFailed ? (
           <img
+            key={`fs-image-${imageRenderKey}`}
             src={actualContent?.thumbnail ||
                  actualContent?.image ||
                  actualContent?.mediaUrl ||
@@ -1694,7 +1733,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               imageRendering: 'crisp-edges',
               imageResolution: 'from-image 1dppx'
             }}
-            onError={hideBrokenImage}
+            onError={handleFullscreenImageError}
             onLoad={(e) => {
               const target = e.target as HTMLImageElement;
               target.style.imageRendering = 'auto';
@@ -1835,8 +1874,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             actualContent?.mediaUrl ||
             actualContent?.media ||
             actualContent?.videoUrl ||
-            actualContent?.src) ? (
+            actualContent?.src) && !imageFailed ? (
           <img
+            key={`fs-content-image-${imageRenderKey}`}
             src={actualContent?.thumbnail ||
                  actualContent?.image ||
                  actualContent?.mediaUrl ||
@@ -1856,7 +1896,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               imageRendering: 'crisp-edges',
               imageResolution: 'from-image 1dppx'
             }}
-            onError={hideBrokenImage}
+            onError={handleFullscreenImageError}
             onLoad={(e) => {
               const target = e.target as HTMLImageElement;
               // Enhance image quality for HD displays

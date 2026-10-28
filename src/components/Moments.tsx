@@ -14,6 +14,7 @@ import { isOwnContent } from '@/utils/ownership';
 import { hideFromMyView } from '@/lib/feed-store';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import { resolveMediaFields } from '@/lib/media';
+import { toCount } from '@/lib/count';
 
 interface Moment {
   id: string;
@@ -811,7 +812,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                                 <Eye className="h-3 w-3" /> {moment.views || 0}
                               </span>
                               <span className="flex items-center gap-1">
-                                <ThumbsUp className="h-3 w-3" /> {moment.likes}
+                                <ThumbsUp className="h-3 w-3" /> {toCount(moment.likes)}
                               </span>
                               <span className="flex items-center gap-1">
                                 <MessageCircle className="h-3 w-3" /> {moment.comments}
@@ -848,7 +849,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                             <Eye className="h-3 w-3" /> {moment.views || 0}
                           </span>
                           <span className="flex items-center gap-1">
-                            <ThumbsUp className="h-3 w-3" /> {moment.likes}
+                            <ThumbsUp className="h-3 w-3" /> {toCount(moment.likes)}
                           </span>
                           <span className="flex items-center gap-1">
                             <MessageCircle className="h-3 w-3" /> {moment.comments}
@@ -1162,7 +1163,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <Eye className="h-3 w-3" /> {moment.views || 0}
                       </span>
                       <span className="flex items-center gap-1">
-                        <ThumbsUp className="h-3 w-3" /> {moment.likes}
+                        <ThumbsUp className="h-3 w-3" /> {toCount(moment.likes)}
                       </span>
                       <span className="flex items-center gap-1">
                         <MessageCircle className="h-3 w-3" /> {moment.comments}

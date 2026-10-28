@@ -44,6 +44,7 @@ import { Textarea } from "@/components/ui/textarea";
 import VotingButtons from '@/components/VotingButtons';
 import { getThoughts, voteOnThought, getThoughtVotes } from '@/lib/thoughts';
 import { evalVote, evalLike } from '@/lib/human-eval';
+import { toCount, bumpCount } from '@/lib/count';
 import { Thought, ThoughtMedia } from '@/types/thoughts';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import { showSuccess, showError } from '@/utils/toast';
@@ -172,7 +173,16 @@ const MediaRenderer: React.FC<{
             creator: 'Thought User',
             id: `photo-${media.url}`
           })}
-          onError={() => setImageError(true)}
+          onError={(e) => {
+            const img = e.target as HTMLImageElement;
+            const attempts = Number(img.dataset.photoRetry || '0');
+            if (attempts < 2) {
+              img.dataset.photoRetry = String(attempts + 1);
+              img.src = `${media.url}${media.url.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+            } else {
+              setImageError(true);
+            }
+          }}
           loading="lazy"
         />
       </div>
@@ -210,7 +220,18 @@ const MediaRenderer: React.FC<{
             creator: 'Thought User',
             id: `gif-${media.url}`
           })}
-          onError={() => setImageError(true)}
+          onError={(e) => {
+            // One lost GIF request must not end the thought — bust the cache
+            // once, then surface the friendly failure state.
+            const img = e.target as HTMLImageElement;
+            const attempts = Number(img.dataset.gifRetry || '0');
+            if (attempts < 2) {
+              img.dataset.gifRetry = String(attempts + 1);
+              img.src = `${media.url}${media.url.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+            } else {
+              setImageError(true);
+            }
+          }}
           loading="lazy"
         />
         <div className="absolute top-2 right-2 bg-black/50 text-white text-xs px-2 py-1 rounded">
@@ -232,6 +253,7 @@ const MediaRenderer: React.FC<{
           onLoadedMetadata={handleLoadedMetadata}
           onClick={togglePlay}
           playsInline
+          preload="metadata"
         />
         
         {/* Video overlay controls */}
@@ -535,7 +557,7 @@ const ThoughtsPage = memo(() => {
       if (thoughtIndex === -1) return;
       
       const thought = thoughts[thoughtIndex];
-      let newLikesCount = thought.likes_count;
+      let newLikesCount = toCount(thought.likes_count);
       const newUserHasLiked = !thought.user_has_liked;
       
       if (thought.user_has_liked) {
@@ -637,13 +659,13 @@ const ThoughtsPage = memo(() => {
         // Here you would typically save the comment to your database
         // For now, we'll just update the local state
         
-        // Update local state to show new comment count
+        // Update local state to show new comment count (undefined-safe)
         const thoughtIndex = thoughts.findIndex(t => t.id === thoughtId);
         if (thoughtIndex !== -1) {
           const updatedThoughts = [...thoughts];
           updatedThoughts[thoughtIndex] = {
             ...updatedThoughts[thoughtIndex],
-            comments_count: updatedThoughts[thoughtIndex].comments_count + 1
+            comments_count: bumpCount(updatedThoughts[thoughtIndex].comments_count, +1)
           };
           setThoughts(updatedThoughts);
         }
@@ -1164,7 +1186,7 @@ const ThoughtsPage = memo(() => {
                             onClick={() => setCommentDialogOpen(thought.id)}
                           >
                             <MessageCircle className="h-4 w-4" />
-                            <span className="text-xs">{thought.comments_count > 1000 ? `${(thought.comments_count / 1000).toFixed(1)}K` : thought.comments_count}</span>
+                            <span className="text-xs">{toCount(thought.comments_count) > 1000 ? `${(toCount(thought.comments_count) / 1000).toFixed(1)}K` : toCount(thought.comments_count)}</span>
                           </Button>
                         </DialogTrigger>
                         <DialogContent>

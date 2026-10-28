@@ -150,6 +150,19 @@ const WatchHistorySection: React.FC<WatchHistorySectionProps> = ({
                               src={item.thumbnail || item.media || item.image}
                               alt="Video thumbnail"
                               className="w-full h-full object-cover"
+                              onError={(e) => {
+                                // Retry once with a cache-bust, then hide the broken art.
+                                const img = e.currentTarget;
+                                const base = item.thumbnail || item.media || item.image || '';
+                                if (!base) { img.style.display = 'none'; return; }
+                                const attempts = Number(img.dataset.histRetry || '0');
+                                if (attempts < 1) {
+                                  img.dataset.histRetry = '1';
+                                  img.src = `${base}${base.includes('?') ? '&' : '?'}retry=1`;
+                                } else {
+                                  img.style.display = 'none';
+                                }
+                              }}
                             />
                             <div className="absolute inset-0 flex items-center justify-center">
                               <div className="bg-black/50 backdrop-blur-sm rounded-full p-2">
@@ -162,6 +175,18 @@ const WatchHistorySection: React.FC<WatchHistorySectionProps> = ({
                             src={item.media || item.thumbnail || item.image}
                             alt="Content preview"
                             className="w-full rounded-lg object-cover max-h-32 cursor-pointer hover:opacity-90 transition-opacity"
+                            onError={(e) => {
+                              const img = e.currentTarget;
+                              const base = item.media || item.thumbnail || item.image || '';
+                              if (!base) { img.style.display = 'none'; return; }
+                              const attempts = Number(img.dataset.histRetry || '0');
+                              if (attempts < 1) {
+                                img.dataset.histRetry = '1';
+                                img.src = `${base}${base.includes('?') ? '&' : '?'}retry=1`;
+                              } else {
+                                img.style.display = 'none';
+                              }
+                            }}
                           />
                         )}
                       </div>

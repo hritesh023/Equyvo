@@ -22,6 +22,7 @@ import { setAppBusy } from '@/lib/back-navigation';
 import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { currentAuthor, pickDisplayName } from '@/lib/identity';
+import { toCount } from '@/lib/count';
 
 // Freshest real author identity: profile edits (name/avatar) win over the auth
 // record. Never returns a placeholder — the server stamps the authenticated
@@ -3160,21 +3161,21 @@ const CreatePage = () => {
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-blue-600">
                           <Eye className="h-4 w-4" />
-                          <span className="text-lg font-bold">{video.views.toLocaleString()}</span>
+                          <span className="text-lg font-bold">{toCount(video.views).toLocaleString()}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Views</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-red-600">
                           <TrendingUp className="h-4 w-4" />
-                          <span className="text-lg font-bold">{video.likes}</span>
+                          <span className="text-lg font-bold">{toCount(video.likes)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Likes</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-green-600">
                           <Users className="h-4 w-4" />
-                          <span className="text-lg font-bold">{video.comments}</span>
+                          <span className="text-lg font-bold">{toCount(video.comments)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Comments</p>
                       </div>
@@ -3189,7 +3190,7 @@ const CreatePage = () => {
 
                     <div className="flex items-center justify-between text-xs text-muted-foreground pt-2 border-t">
                       <span>Watch Time: {video.watchTime} minutes</span>
-                      <span>Shares: {video.shares}</span>
+                      <span>Shares: {toCount(video.shares)}</span>
                       <span>Duration: {video.duration}</span>
                     </div>
                   </div>
@@ -3276,21 +3277,21 @@ const CreatePage = () => {
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-blue-600">
                           <Eye className="h-4 w-4" />
-                          <span className="text-lg font-bold">{moment.views.toLocaleString()}</span>
+                          <span className="text-lg font-bold">{toCount(moment.views).toLocaleString()}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Views</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-red-600">
                           <TrendingUp className="h-4 w-4" />
-                          <span className="text-lg font-bold">{moment.likes}</span>
+                          <span className="text-lg font-bold">{toCount(moment.likes)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Likes</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-green-600">
                           <Users className="h-4 w-4" />
-                          <span className="text-lg font-bold">{moment.comments}</span>
+                          <span className="text-lg font-bold">{toCount(moment.comments)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Comments</p>
                       </div>
@@ -3385,28 +3386,28 @@ const CreatePage = () => {
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-blue-600">
                           <Eye className="h-4 w-4" />
-                          <span className="text-lg font-bold">{story.views.toLocaleString()}</span>
+                          <span className="text-lg font-bold">{toCount(story.views).toLocaleString()}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Views</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-red-600">
                           <TrendingUp className="h-4 w-4" />
-                          <span className="text-lg font-bold">{story.likes}</span>
+                          <span className="text-lg font-bold">{toCount(story.likes)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Likes</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-green-600">
                           <Users className="h-4 w-4" />
-                          <span className="text-lg font-bold">{story.comments}</span>
+                          <span className="text-lg font-bold">{toCount(story.comments)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Comments</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-purple-600">
                           <BarChart3 className="h-4 w-4" />
-                          <span className="text-lg font-bold">{story.shares}</span>
+                          <span className="text-lg font-bold">{toCount(story.shares)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Shares</p>
                       </div>
@@ -3494,21 +3495,21 @@ const CreatePage = () => {
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-blue-600">
                           <Eye className="h-4 w-4" />
-                          <span className="text-lg font-bold">{thought.views.toLocaleString()}</span>
+                          <span className="text-lg font-bold">{toCount(thought.views).toLocaleString()}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Views</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-red-600">
                           <TrendingUp className="h-4 w-4" />
-                          <span className="text-lg font-bold">{thought.likes}</span>
+                          <span className="text-lg font-bold">{toCount(thought.likes)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Likes</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-green-600">
                           <Users className="h-4 w-4" />
-                          <span className="text-lg font-bold">{thought.comments}</span>
+                          <span className="text-lg font-bold">{toCount(thought.comments)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Comments</p>
                       </div>
@@ -3598,28 +3599,28 @@ const CreatePage = () => {
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-blue-600">
                           <Eye className="h-4 w-4" />
-                          <span className="text-lg font-bold">{photo.views.toLocaleString()}</span>
+                          <span className="text-lg font-bold">{toCount(photo.views).toLocaleString()}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Views</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-red-600">
                           <TrendingUp className="h-4 w-4" />
-                          <span className="text-lg font-bold">{photo.likes}</span>
+                          <span className="text-lg font-bold">{toCount(photo.likes)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Likes</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-green-600">
                           <Users className="h-4 w-4" />
-                          <span className="text-lg font-bold">{photo.comments}</span>
+                          <span className="text-lg font-bold">{toCount(photo.comments)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Comments</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-purple-600">
                           <BarChart3 className="h-4 w-4" />
-                          <span className="text-lg font-bold">{photo.shares}</span>
+                          <span className="text-lg font-bold">{toCount(photo.shares)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Shares</p>
                       </div>
@@ -3683,28 +3684,28 @@ const CreatePage = () => {
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-blue-600">
                           <Eye className="h-4 w-4" />
-                          <span className="text-lg font-bold">{textStory.views.toLocaleString()}</span>
+                          <span className="text-lg font-bold">{toCount(textStory.views).toLocaleString()}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Views</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-red-600">
                           <TrendingUp className="h-4 w-4" />
-                          <span className="text-lg font-bold">{textStory.likes}</span>
+                          <span className="text-lg font-bold">{toCount(textStory.likes)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Likes</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-green-600">
                           <Users className="h-4 w-4" />
-                          <span className="text-lg font-bold">{textStory.comments}</span>
+                          <span className="text-lg font-bold">{toCount(textStory.comments)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Comments</p>
                       </div>
                       <div className="text-center">
                         <div className="flex items-center justify-center gap-1 text-purple-600">
                           <BarChart3 className="h-4 w-4" />
-                          <span className="text-lg font-bold">{textStory.shares}</span>
+                          <span className="text-lg font-bold">{toCount(textStory.shares)}</span>
                         </div>
                         <p className="text-xs text-muted-foreground">Shares</p>
                       </div>

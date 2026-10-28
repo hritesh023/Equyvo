@@ -25,20 +25,22 @@ import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
 import { resolveMediaFields } from '@/lib/media';
+import { toCount } from '@/lib/count';
 import { fetchMoments, fetchPosts } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
 import { evalLike } from '@/lib/human-eval';
 import api from '@/lib/api';
 
-/** Image that never shows a broken-image icon: renders a neutral placeholder
- *  when the URL is empty or fails to load (production hardening). */
-const DiscoverImg: React.FC<{ src?: string; alt?: string; className?: string }> = ({
+/** Image that never shows a broken-image icon: retries transient failures
+ *  (cache-busted) before falling back to a neutral placeholder. */
+const DiscoverImg: React.FC<{ src?: string; alt?: string; className?: string; referrerPolicy?: string }> = ({
   src,
   alt = 'Post',
   className = '',
 }) => {
   const [failed, setFailed] = React.useState(false);
-  React.useEffect(() => setFailed(false), [src]);
+  const [retry, setRetry] = React.useState(0);
+  React.useEffect(() => { setFailed(false); setRetry(0); }, [src]);
   if (!src || failed) {
     return (
       <div className={`flex items-center justify-center bg-muted ${className}`}>
@@ -48,10 +50,18 @@ const DiscoverImg: React.FC<{ src?: string; alt?: string; className?: string }> 
   }
   return (
     <img
-      src={src}
+      key={`${src}#${retry}`}
+      src={`${src}${src.includes('?') ? '&' : '?'}retry=${retry}`}
       alt={alt}
       loading="lazy"
-      onError={() => setFailed(true)}
+      onError={(e) => {
+        const img = e.currentTarget;
+        if (retry < 2) setRetry(retry + 1);
+        else {
+          setFailed(true);
+          img.style.display = 'none';
+        }
+      }}
       className={className}
     />
   );
@@ -247,6 +257,11 @@ const DiscoverPage = () => {
       newSet.add(content.id);
       return newSet;
     });
+    // Best-effort persistence: keeps the server-side share graph accurate
+    // (the discover card shows only an icon, no visible counter).
+    if (content?.id) {
+      void api.share(content.id).catch(() => undefined);
+    }
     const shareUrl = content?.id
       ? `${window.location.origin}/app/home?post=${encodeURIComponent(content.id)}`
       : window.location.href;
@@ -818,10 +833,10 @@ const DiscoverPage = () => {
                       </p>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
-                          <ThumbsUp className="w-4 h-4" /> {postLikes.get(item.id) ?? item.likes}
+                          <ThumbsUp className="w-4 h-4" /> {toCount(postLikes.get(item.id) ?? item.likes)}
                         </span>
                         <span className="flex items-center gap-1">
-                          <MessageCircle className="w-4 h-4" /> {item.comments}
+                          <MessageCircle className="w-4 h-4" /> {toCount(item.comments)}
                         </span>
                         <span>{Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
                       </div>
@@ -958,7 +973,7 @@ const DiscoverPage = () => {
                   }`}
                 >
                   <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                  <span className="text-xs font-medium">{postLikes.get(item.id) ?? item.likes}</span>
+                  <span className="text-xs font-medium">{toCount(postLikes.get(item.id) ?? item.likes)}</span>
                 </button>
                 <button
                   onClick={(e) => {
@@ -971,7 +986,7 @@ const DiscoverPage = () => {
                   }`}
                 >
                   <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                  <span className="text-xs font-medium">{item.comments}</span>
+                  <span className="text-xs font-medium">{toCount(item.comments)}</span>
                 </button>
                 <button
                   onClick={(e) => {
@@ -1106,7 +1121,7 @@ const DiscoverPage = () => {
                     className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${likedPosts?.has(item.id) ? 'text-red-500' : 'text-muted-foreground'}`}
                   >
                     <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                    <span className="text-xs">{postLikes.get(item.id) ?? item.likes}</span>
+                    <span className="text-xs">{toCount(postLikes.get(item.id) ?? item.likes)}</span>
                   </button>
                   <button
                     onClick={() => handleComment(item.id, item.creator)}
@@ -1114,7 +1129,7 @@ const DiscoverPage = () => {
                     className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${commentedPosts?.has(item.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
                   >
                     <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                    <span className="text-xs">{item.comments}</span>
+                    <span className="text-xs">{toCount(item.comments)}</span>
                   </button>
                   <button
                     onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
@@ -1220,7 +1235,7 @@ const DiscoverPage = () => {
                     className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${likedPosts?.has(item.id) ? 'text-red-500' : 'text-muted-foreground'}`}
                   >
                     <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                    <span className="text-xs">{postLikes.get(item.id) ?? item.likes}</span>
+                    <span className="text-xs">{toCount(postLikes.get(item.id) ?? item.likes)}</span>
                   </button>
                   <button
                     onClick={() => handleComment(item.id, item.creator)}
@@ -1228,7 +1243,7 @@ const DiscoverPage = () => {
                     className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${commentedPosts?.has(item.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
                   >
                     <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                    <span className="text-xs">{item.comments}</span>
+                    <span className="text-xs">{toCount(item.comments)}</span>
                   </button>
                   <button
                     onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
@@ -1346,7 +1361,7 @@ const DiscoverPage = () => {
                     className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${likedPosts?.has(item.id) ? 'text-red-500' : 'text-muted-foreground'}`}
                   >
                     <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                    <span className="text-xs">{postLikes.get(item.id) ?? item.likes}</span>
+                    <span className="text-xs">{toCount(postLikes.get(item.id) ?? item.likes)}</span>
                   </button>
                   <button
                     onClick={() => handleComment(item.id, item.creator)}
@@ -1354,7 +1369,7 @@ const DiscoverPage = () => {
                     className={`flex items-center gap-1 rounded-full p-2 text-sm transition-all hover:bg-muted ${commentedPosts?.has(item.id) ? 'text-blue-500' : 'text-muted-foreground'}`}
                   >
                     <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                    <span className="text-xs">{item.comments}</span>
+                    <span className="text-xs">{toCount(item.comments)}</span>
                   </button>
                   <button
                     onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
@@ -1456,6 +1471,14 @@ const DiscoverPage = () => {
         onClose={() => setCommentSectionOpen(false)}
         postId={selectedPostId || ''}
         postUser={selectedPostUser}
+        // Keep the card's visible comment counter in sync with the sheet.
+        onCommentCountChange={(postId, count) => {
+          if (!postId || !Number.isFinite(count)) return;
+          const n = Math.max(0, count);
+          setDiscoverItems(prev => (prev || []).map(item =>
+            item.id === postId ? { ...item, comments: n } : item,
+          ));
+        }}
       />
 
       {/* Report Modal */}

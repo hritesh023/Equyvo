@@ -633,7 +633,21 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                     }}
                     onLoadedData={() => setVideoLoaded(true)}
                     onPlay={() => setShowControls(true)}
-                    onError={() => setVideoError(true)}
+                    onError={(e) => {
+                      // Transient stream failure (dropped range / flaky link)
+                      // retried with a cache-bust before admitting defeat.
+                      if (!storyVideoSrc) { setVideoError(true); return; }
+                      const v = e.currentTarget;
+                      const attempts = Number((v.dataset as Record<string, string>).storyRetry || '0');
+                      if (attempts < 2) {
+                        (v.dataset as Record<string, string>).storyRetry = String(attempts + 1);
+                        v.src = `${storyVideoSrc}${storyVideoSrc.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                        v.load();
+                        v.play().catch(() => undefined);
+                      } else {
+                        setVideoError(true);
+                      }
+                    }}
                     onTimeUpdate={(e) => {
                       const v = e.currentTarget;
                       if (v.duration) {
