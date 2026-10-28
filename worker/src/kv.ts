@@ -1677,18 +1677,28 @@ export async function castVote(
   };
 }
 
-/** Increment a content item's share counter (mirrors POST /api/shares). */
-export async function recordShare(env: Env, itemId: string): Promise<{ id: string; shares: number; shares_count: number }> {
+/** Increment a content item's share counter (mirrors POST /api/shares).
+ *  One share per account per item: a sharedBy ledger keeps repeat taps by
+ *  the same person from inflating the counter to infinity. */
+export async function recordShare(env: Env, itemId: string, actorId?: string, actorEmail?: string): Promise<{ id: string; shares: number; shares_count: number; alreadyShared: boolean }> {
   const found = await findContentById(env, itemId);
   if (!found) throw new Error('Content not found');
   const item: any = { ...found.item };
+  const sharedBy: string[] = Array.isArray(item.sharedBy) ? item.sharedBy.map((x: any) => String(x).toLowerCase()) : [];
+  const refs = new Set<string>();
+  if (actorId) refs.add(String(actorId).toLowerCase());
+  if (actorEmail) refs.add(String(actorEmail).toLowerCase());
+  const alreadyShared = refs.size > 0 && sharedBy.some((x) => refs.has(x));
   const current = Number(item.shares ?? item.shares_count ?? 0) || 0;
-  const next = Math.max(0, current + 1);
-  item.shares = next;
-  if ('shares_count' in item) item.shares_count = next;
+  const next = alreadyShared ? current : Math.min(5000, current + 1);
+  if (!alreadyShared) {
+    if (actorId) item.sharedBy = [...new Set([String(actorId).toLowerCase(), ...sharedBy])].slice(0, 5000);
+    item.shares = next;
+    if ('shares_count' in item) item.shares_count = next;
+  }
   await env.EQUYVO_KV.put(found.getKey(itemId), JSON.stringify(item));
-  void bumpPopularity(env, itemId, 2);
-  return { id: itemId, shares: next, shares_count: next };
+  void bumpPopularity(env, itemId, alreadyShared ? 0 : 2);
+  return { id: itemId, shares: next, shares_count: next, alreadyShared };
 }
 
 // --- Delete Content ---

@@ -6,7 +6,7 @@ import { Repeat, Maximize, Sparkles, Eye, MessageCircle } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import FollowButton from './FollowButton';
 import CommentSection from './CommentSection';
-import FullscreenViewer from './FullscreenViewer';
+import SafeFullscreenViewer from './SafeFullscreenViewer';
 import SaveButton from './SaveButton';
 import LikeButton from './LikeButton';
 import VotingButtons from './VotingButtons';
@@ -399,7 +399,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     {post.type === 'thought' ? (
                       <VotingButtons
                         thoughtId={post.id}
-                        upvotesCount={toCount(post.upvotes_count ?? post.likes)}
+                        upvotesCount={toCount((post as any).upvotes_count)}
                         downvotesCount={toCount(post.downvotes_count)}
                         likesCount={toCount(post.likes)}
                         userVote={post.user_vote || null}

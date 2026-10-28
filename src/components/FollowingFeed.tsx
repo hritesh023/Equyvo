@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Repeat, Maximize, Users, Eye, MessageCircle } from 'lucide-react';
 import FollowButton from './FollowButton';
 import CommentSection from './CommentSection';
-import FullscreenViewer from './FullscreenViewer';
+import SafeFullscreenViewer from './SafeFullscreenViewer';
 import SaveButton from './SaveButton';
 import LikeButton from './LikeButton';
 import VotingButtons from './VotingButtons';
@@ -314,7 +314,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     {post.type === 'thought' ? (
                       <VotingButtons
                         thoughtId={post.id}
-                        upvotesCount={toCount(post.upvotes_count ?? post.likes)}
+                        upvotesCount={toCount((post as any).upvotes_count)}
                         downvotesCount={toCount(post.downvotes_count)}
                         likesCount={toCount(post.likes)}
                         userVote={post.user_vote || null}

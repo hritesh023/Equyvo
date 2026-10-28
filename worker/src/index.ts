@@ -397,7 +397,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       const rl = await rateLimit(env, 'shares', (actor as any).id, 120);
       if (!rl.ok) return respondError('Too many requests', 429);
       try {
-        const result = await recordShare(env, itemId);
+        const result = await recordShare(env, itemId, (actor as any).id, (actor as any).email);
         return respond({ data: result, error: null });
       } catch {
         // Offline/unknown item: sharing must still succeed in the sheet.

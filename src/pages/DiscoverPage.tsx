@@ -11,7 +11,7 @@ import {
   Filter, SortDesc, Clock, TrendingUp, ChevronDown, List, Monitor, Maximize2
 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
-import FullscreenViewer from '@/components/FullscreenViewer';
+import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import FullscreenBrowse from '@/components/FullscreenBrowse';
 import CommentSection from '@/components/CommentSection';
 import SearchSuggest from '@/components/SearchSuggest';
@@ -20,7 +20,7 @@ import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { openShareSheet, hasSharedItem, markItemShared } from '@/utils/share';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
@@ -252,11 +252,16 @@ const DiscoverPage = () => {
   };
 
   const handleShare = (content: any) => {
-    setSharedPosts(prev => {
-      const newSet = new Set(prev);
-      newSet.add(content.id);
-      return newSet;
-    });
+    // One share per account: only mark/track the first share by this account.
+    const firstShare = content?.id ? !hasSharedItem(content.id) : false;
+    if (firstShare) {
+      markItemShared(content.id);
+      setSharedPosts(prev => {
+        const newSet = new Set(prev);
+        newSet.add(content.id);
+        return newSet;
+      });
+    }
     // Best-effort persistence: keeps the server-side share graph accurate
     // (the discover card shows only an icon, no visible counter).
     if (content?.id) {

@@ -183,3 +183,39 @@ try {
     </div>
   `;
 }
+
+/*
+ * BUNDLE-FRESHNESS SELF-HEAL (boot time).
+ *
+ * A device whose WebView cached the previous release's index.html boots the
+ * OLD bundle even after the page is reopened — features then behave like a
+ * ghost release and fixed bugs "come back". This runs once per session after
+ * boot: fetch a cache-busted copy of the deployed index.html, compare the
+ * entry bundle name (index-<hash>.js) it ships against the one actually
+ * running, and reload once into the fresh build when they differ. The
+ * sessionStorage guard makes it a single attempt (no reload loops) and a
+ * healthy boot clears it, re-arming for the next deploy.
+ */
+try {
+  if (import.meta.env.PROD) {
+    const SELF_HEAL_KEY = "equyvo_bundle_selfheal";
+    const alreadyHealed = (() => {
+      try { return sessionStorage.getItem(SELF_HEAL_KEY) === "1"; } catch { return false; }
+    })();
+    const localBase = (() => {
+      const src = Array.from(document.scripts).find((s) => s.type === "module" && s.src)?.src || "";
+      return (src.match(/index-[\w-]+\.js/) || [""])[0];
+    })();
+    if (!alreadyHealed && localBase) {
+      fetch(`/index.html?v=${Date.now()}`, { cache: "no-store" })
+        .then((r) => (r.ok ? r.text() : ""))
+        .then((html) => {
+          const remoteBase = (String(html).match(/index-[\w-]+\.js/) || [""])[0];
+          if (!remoteBase || remoteBase === localBase) return;
+          try { sessionStorage.setItem(SELF_HEAL_KEY, "1"); } catch { /* ignore */ }
+          window.location.reload();
+        })
+        .catch(() => { /* offline or fetch blocked — keep running */ });
+    }
+  }
+} catch { /* non-browser environment */ }

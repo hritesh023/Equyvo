@@ -12,7 +12,7 @@ import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { openShareSheet, hasSharedItem, markItemShared } from '@/utils/share';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
 import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, isVideoItem, videoUrlOf, withoutHidden } from '@/lib/feed-store';
@@ -524,11 +524,15 @@ const MomentsPage = () => {
   const handleShare = (momentId: string) => {
     const moment = moments.find(m => m.id === momentId);
     if (moment) {
-      // Optimistic +1 so the visible share counter moves with the action,
-      // then adopt the server's authoritative count (best effort).
-      setMoments((prev) => (prev || []).map(m =>
-        m.id === momentId ? { ...m, shares: bumpCount(m.shares, +1) } : m,
-      ));
+      // One share per account: optimistic +1 on the FIRST share only; the
+      // server's ledger answer (which never double-counts) is authoritative.
+      const firstShare = !hasSharedItem(momentId);
+      if (firstShare) {
+        markItemShared(momentId);
+        setMoments((prev) => (prev || []).map(m =>
+          m.id === momentId ? { ...m, shares: bumpCount(m.shares, +1) } : m,
+        ));
+      }
       api.share(momentId).then(({ data }) => {
         if (data && typeof data.shares === 'number') {
           setMoments((prev) => (prev || []).map(m =>

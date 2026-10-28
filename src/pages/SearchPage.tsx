@@ -13,7 +13,7 @@ import SEOHead from '@/components/SEOHead';
 import SplitScreenView from '@/components/SplitScreenView';
 import CommentSection from '@/components/CommentSection';
 import StandardPostMenu from '@/components/StandardPostMenu';
-import FullscreenViewer from '@/components/FullscreenViewer';
+import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import FollowButton from '@/components/FollowButton';
 import { cn } from '@/lib/utils';
 import { showSuccess, showError } from '@/utils/toast';

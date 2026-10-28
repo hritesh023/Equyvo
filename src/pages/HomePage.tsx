@@ -9,7 +9,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import ChatSidebar from '@/components/ChatSidebar';
 import StoryViewer from '@/components/StoryViewer';
 import Moments from '@/components/Moments';
-import FullscreenViewer from '@/components/FullscreenViewer';
+import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { showSuccess, showError } from '@/utils/toast';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -22,7 +22,7 @@ import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
 import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, isVideoItem, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { resolveMediaFields } from '@/lib/media';
-import { bumpCount } from '@/lib/count';
+import { bumpCount, toCount } from '@/lib/count';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import api from '@/lib/api';
 import { isOwnContent } from '@/utils/ownership';
@@ -31,7 +31,7 @@ import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
-import { openShareSheet } from '@/utils/share';
+import { openShareSheet, hasSharedItem, markItemShared } from '@/utils/share';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
 import { sendHumanEval, evalVote } from '@/lib/human-eval';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
@@ -616,15 +616,20 @@ const HomePage = () => {
   };
 
   const handleSharePost = (post: Post) => {
-    setSharedPosts(prev => {
+    const firstShare = !hasSharedItem(post.id);
+    if (firstShare) markItemShared(post.id);
+    if (firstShare) setSharedPosts(prev => {
       const newSet = new Set(prev);
       newSet.add(post.id);
       return newSet;
     });
-    // Optimistic +1 — sharing used to update nothing, so the count never moved.
-    setEnhancedPosts(prev => prev.map(p =>
-      p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
-    ));
+    // Optimistic +1 on the FIRST share by this account only — the server
+    // counts one share per account, so repeat taps must not move the number.
+    if (firstShare) {
+      setEnhancedPosts(prev => prev.map(p =>
+        p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
+      ));
+    }
     teachBrain(post?.content?.slice(0, 120) || post?.type || post.id);
     // Human eval: share = strong positive preference.
     sendHumanEval({
@@ -824,6 +829,30 @@ const HomePage = () => {
     teachBrain(snapshot, { feedback: voteType === 'upvote' ? 1 : -1 });
     // Human eval: votes are explicit preference labels for the shared brain.
     evalVote(postId, voteType, snapshot);
+    // REAL vote — likes and votes are separate actions (a like must never move
+    // an upvote). Optimistic flip with the same ledger rules as the server:
+    // re-pressing the active side removes the vote, switching sides moves it.
+    const prevVote = (p as any)?.user_vote || null;
+    const nextVote = prevVote === voteType ? null : voteType;
+    const prevUp = toCount((p as any)?.upvotes_count);
+    const prevDown = toCount((p as any)?.downvotes_count);
+    const nextUp = Math.max(0, prevUp + (nextVote === 'upvote' ? 1 : prevVote === 'upvote' ? -1 : 0));
+    const nextDown = Math.max(0, prevDown + (nextVote === 'downvote' ? 1 : prevVote === 'downvote' ? -1 : 0));
+    setEnhancedPosts(prev => prev.map(post =>
+      post.id === postId
+        ? { ...post, upvotes_count: nextUp, downvotes_count: nextDown, user_vote: nextVote }
+        : post
+    ));
+    // Persist so votes survive reloads and reach other devices. "none" removes
+    // a vote; the server's ledger answer is authoritative on arrival.
+    api.vote(postId, nextVote ?? 'none').then(({ data }) => {
+      if (!data || typeof data.upvotes_count !== 'number') return;
+      setEnhancedPosts(prev => prev.map(post =>
+        post.id === postId
+          ? { ...post, upvotes_count: data.upvotes_count, downvotes_count: data.downvotes_count, user_vote: data.user_vote }
+          : post
+      ));
+    }).catch(() => undefined);
   };
 
   const handleFollow = (creatorId: string) => {

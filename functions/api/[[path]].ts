@@ -1997,11 +1997,19 @@ function normalizeMediaFields(item) {
   const imageItem = items.find((m) => m.type === 'image' || m.type === 'gif');
   const explicitVideo = serverFirstMediaUrl(item.videoUrl) || serverFirstMediaUrl(item.video_url) || serverFirstMediaUrl(item.video);
   const videoUrl = videoItem?.url || (explicitVideo && serverMediaKind(explicitVideo, 'video') === 'video' ? explicitVideo : '');
-  const image = serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) ||
-    serverFirstMediaUrl(item.image) || serverFirstMediaUrl(item.imageUrl) || serverFirstMediaUrl(item.image_url) ||
-    imageItem?.url || '';
+  const explicitImage = serverFirstMediaUrl(item.image) || serverFirstMediaUrl(item.imageUrl) || serverFirstMediaUrl(item.image_url);
+  // Photos are their own preview: a separate thumbnail/poster file must never
+  // replace the original image on write. Letting a cover win `image` is how
+  // photo originals went missing while the cover survived. Posters remain a
+  // video-only concept.
+  const isImageMedia = !videoUrl && !!(explicitImage || imageItem?.url);
+  const image = (isImageMedia ? '' : (serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster))) ||
+    explicitImage || imageItem?.url || '';
   const safeImage = image && image !== videoUrl && serverMediaKind(image, 'image') !== 'video' ? image : '';
-  const thumbnail = serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) || safeImage || imageItem?.thumbnail || '';
+  // For image media the thumbnail IS the image (same file, self-referential);
+  // video items keep the cover/poster precedence.
+  const thumbnail = isImageMedia ? safeImage :
+    (serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) || safeImage || imageItem?.thumbnail || '');
 
   item.mediaItems = items;
   item.media = videoUrl || safeImage || items[0]?.url || '';
@@ -4677,17 +4685,29 @@ export const onRequest = async (context) => {
         return json({ error: 'Content not found' }, 404, cors);
       }
       const item = { ...found.item };
+      // One share per account per item: repeat shares by the same account must
+      // never inflate the counter (one person could otherwise push a post's
+      // share number to infinity by tapping the button). A ledger mirrors the
+      // like/vote ledgers; the FIRST share increments, repeats are no-ops.
+      const sharedBy = Array.isArray(item.sharedBy) ? item.sharedBy.map((x: unknown) => String(x).toLowerCase()) : [];
+      const actorRefs = new Set([String(actor.id).toLowerCase()]);
+      if (actor.email) actorRefs.add(String(actor.email).toLowerCase());
+      if (actor.username) actorRefs.add(String(actor.username).replace(/^@/, '').toLowerCase());
+      const alreadyShared = sharedBy.some((x: string) => actorRefs.has(x));
       const current = Number(item.shares ?? item.shares_count ?? 0) || 0;
-      const next = Math.max(0, current + 1);
-      item.shares = next;
-      if ('shares_count' in item) item.shares_count = next;
+      const next = alreadyShared ? current : Math.min(5000, current + 1);
+      if (!alreadyShared) {
+        item.sharedBy = [...new Set([String(actor.id).toLowerCase(), ...sharedBy])].slice(0, 5000);
+        item.shares = next;
+        if ('shares_count' in item) item.shares_count = next;
+      }
       try {
         await kv.put(found.getKey(itemId), JSON.stringify(item));
       } catch {
         return json({ error: 'Could not save your share. Please try again.' }, 500, cors);
       }
       try {
-        void aiBumpPop(env, itemId, 2);
+        void aiBumpPop(env, itemId, alreadyShared ? 0 : 2);
         void aiRecordEngagement(env, actor.id, {
           category: String(item.category || ''),
           tags: Array.isArray(item.tags) ? item.tags.slice(0, 10) : [],
@@ -4695,7 +4715,7 @@ export const onRequest = async (context) => {
           action: 'share',
         });
       } catch { /* never block */ }
-      return json({ data: { id: itemId, shares: next, shares_count: next }, error: null }, 200, cors);
+      return json({ data: { id: itemId, shares: next, shares_count: next, alreadyShared }, error: null }, 200, cors);
     }
 
     // GET /api/likes?itemId= — authoritative like state for the viewer.

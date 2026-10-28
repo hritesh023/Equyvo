@@ -11,7 +11,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { sharePost } from '@/utils/share';
+import { sharePost, hasSharedItem, markItemShared } from '@/utils/share';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent, Post } from '@/types';
 
@@ -30,7 +30,7 @@ interface UserProfile {
 import EditProfileModal from '@/components/EditProfileModal';
 import EditPostModal from '@/components/EditPostModal';
 import CommentSection from '@/components/CommentSection';
-import FullscreenViewer from '@/components/FullscreenViewer';
+import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import VotingButtons from '@/components/VotingButtons';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import WatchHistorySection from '@/components/WatchHistorySection';
@@ -682,13 +682,11 @@ const ProfilePage = () => {
       if (postIndex === -1) return;
       
       const post = userProfile.posts[postIndex];
-      // Vote counters are optional on many legacy rows; deriving them from an
-      // undefined likes value rendered "NaN upvotes". Base everything on real
-      // numbers, and +1/−1 the exact button the user pressed.
-      const currentUpvotes = toCount((post as any).upvotes_count) ||
-        Math.floor(toCount(post.likes) * 0.7);
-      const currentDownvotes = toCount((post as any).downvotes_count) ||
-        Math.floor(toCount(post.likes) * 0.1);
+      // Votes are REAL counters only: never fabricate them from likes (that
+      // made every like look like it also upvoted the post). Missing/zero
+      // ledger counts simply start at 0.
+      const currentUpvotes = toCount((post as any).upvotes_count);
+      const currentDownvotes = toCount((post as any).downvotes_count);
       
       let newUpvotes = currentUpvotes;
       let newDownvotes = currentDownvotes;
@@ -733,13 +731,27 @@ const ProfilePage = () => {
         posts: updatedPosts
       }));
       
-      // Sync with database
-      const { error } = await voteOnThought({ thought_id: thoughtId, vote_type: voteType });
-      if (error) {
+      // Sync with database — send the TARGET state ("none" when toggling off)
+      // so a double-press removal survives reloads, then adopt the server's
+      // authoritative ledger counts.
+      const result = await voteOnThought({ thought_id: thoughtId, vote_type: newUserVote ?? 'none' });
+      if (!result.success) {
         // Revert local state on error
         setUserProfile(prev => ({
           ...prev,
           posts: userProfile.posts
+        }));
+      } else {
+        setUserProfile(prev => ({
+          ...prev,
+          posts: prev.posts.map(p => p.id === thoughtId
+            ? {
+                ...p,
+                upvotes_count: result.upvotes_count,
+                downvotes_count: result.downvotes_count,
+                user_vote: result.user_vote,
+              }
+            : p),
         }));
       }
     } catch (error) {
@@ -808,13 +820,18 @@ const ProfilePage = () => {
 
 
   const handleShare = async (post: Post) => {
-    // Optimistic +1: sharing previously left the counter unchanged.
-    setUserProfile(prev => ({
-      ...prev,
-      posts: (prev.posts || []).map(p =>
-        p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
-      ),
-    }));
+    // One share per account: optimistic +1 on the FIRST share only; repeat
+    // taps leave the counter alone (the server's ledger is authoritative).
+    const firstShare = !hasSharedItem(post.id);
+    if (firstShare) {
+      markItemShared(post.id);
+      setUserProfile(prev => ({
+        ...prev,
+        posts: (prev.posts || []).map(p =>
+          p.id === post.id ? { ...p, shares: bumpCount(p.shares, +1) } : p,
+        ),
+      }));
+    }
     const result = await sharePost({
       id: post.id,
       user: post.user,
@@ -1677,8 +1694,8 @@ const ProfilePage = () => {
                       ) : post.type === 'thought' ? (
                         <VotingButtons
                           thoughtId={post.id}
-                          upvotesCount={toCount((post as any).upvotes_count) || Math.floor(toCount(post.likes) * 0.7)}
-                          downvotesCount={toCount((post as any).downvotes_count) || Math.floor(toCount(post.likes) * 0.1)}
+                          upvotesCount={toCount((post as any).upvotes_count)}
+                          downvotesCount={toCount((post as any).downvotes_count)}
                           likesCount={toCount(post.likes)}
                           userVote={post.user_vote || null}
                           userHasLiked={likedPosts.has(post.id)}
@@ -2128,8 +2145,8 @@ const ProfilePage = () => {
                     ) : (
                       <VotingButtons
                         thoughtId={post.id}
-                        upvotesCount={toCount((post as any).upvotes_count) || Math.floor(toCount(post.likes) * 0.7)}
-                        downvotesCount={toCount((post as any).downvotes_count) || Math.floor(toCount(post.likes) * 0.1)}
+                        upvotesCount={toCount((post as any).upvotes_count)}
+                        downvotesCount={toCount((post as any).downvotes_count)}
                         likesCount={toCount(post.likes)}
                         userVote={post.user_vote || null}
                         userHasLiked={likedPosts.has(post.id)}

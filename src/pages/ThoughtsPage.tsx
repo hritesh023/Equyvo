@@ -46,7 +46,7 @@ import { getThoughts, voteOnThought, getThoughtVotes } from '@/lib/thoughts';
 import { evalVote, evalLike } from '@/lib/human-eval';
 import { toCount, bumpCount } from '@/lib/count';
 import { Thought, ThoughtMedia } from '@/types/thoughts';
-import FullscreenViewer from '@/components/FullscreenViewer';
+import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';

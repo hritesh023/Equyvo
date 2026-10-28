@@ -126,3 +126,49 @@ export const shareProfile = async (user: {
 
   return shareContent(title, text, url);
 };
+
+// ── One share per account per item ─────────────────────────────────────────
+// The server keeps the authoritative `sharedBy` ledger and refuses to
+// increment twice for the same account. The client mirrors that ledger in
+// localStorage so repeat taps don't even optimistically bump the number
+// (otherwise the UI would jump +1 and snap back when the server answers).
+const SHARED_ITEMS_KEY = 'equyvo_shared_items';
+
+function sharedItemsRef(): Set<string> {
+  try {
+    const raw = localStorage.getItem(SHARED_ITEMS_KEY);
+    return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function actorKeyOf(): string {
+  try {
+    const stored = localStorage.getItem('equyvo_cognito_user');
+    const user = stored ? JSON.parse(stored) : null;
+    return String(user?.id || user?.email || 'anon').toLowerCase();
+  } catch {
+    return 'anon';
+  }
+}
+
+/** True when the signed-in account already shared this item before. */
+export function hasSharedItem(itemId: string): boolean {
+  if (!itemId) return false;
+  return sharedItemsRef().has(`${actorKeyOf()}:${itemId}`);
+}
+
+/** Record that the signed-in account shared this item (first time only). */
+export function markItemShared(itemId: string): void {
+  if (!itemId) return;
+  try {
+    const key = `${actorKeyOf()}:${itemId}`;
+    const set = sharedItemsRef();
+    if (set.has(key)) return;
+    set.add(key);
+    localStorage.setItem(SHARED_ITEMS_KEY, JSON.stringify([...set].slice(-2000)));
+  } catch {
+    // storage full/private mode: the server ledger still protects the count
+  }
+}

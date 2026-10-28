@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { showSuccess } from '@/utils/toast';
 import { avatarOf } from '@/utils/avatar';
 import { useI18n } from '@/lib/i18n';
-import FullscreenViewer from '@/components/FullscreenViewer';
+import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { navItems } from '@/components/Navbar';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';

@@ -50,8 +50,8 @@ android {
         // The last bundle committed to the repo was 36. This build uses 42
         // so it is strictly higher than any earlier upload (including the
         // 37–41 builds).
-        versionCode 44
-        versionName "1.2.22"
+        versionCode 45
+        versionName "1.2.23"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

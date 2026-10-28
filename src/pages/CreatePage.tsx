@@ -371,10 +371,26 @@ const CreatePage = () => {
     }
   };
 
+  /** Photos are their own preview: custom covers are a video-only feature.
+   *  A separate thumb file for a photo demotes the original image on write
+   *  (the original used to vanish from R2 while the cover survived). */
+  const thumbBlockedForPhoto = (kind: ThumbKind, id: string): boolean => {
+    if (kind === 'video' || kind === 'live' || kind.startsWith('pending-')) return false;
+    if (kind === 'photo') return uploadedPhotos.find(p => p.id === id)?.mediaType !== 'video';
+    if (kind === 'story') return uploadedStories.find(s => s.id === id)?.type !== 'video';
+    if (kind === 'thought') return uploadedThoughts.find(x => x.id === id)?.mediaType !== 'video';
+    if (kind === 'moment') return uploadedMoments.find(m => m.id === id)?.mediaType !== 'video';
+    return false;
+  };
+
   const openThumbUpload = (kind: ThumbKind, id: string) => {
     // Live streams have no file: the title is the media commitment.
     if (kind === 'live' && !liveTitle.trim()) {
       showError('Enter a stream title first — a thumbnail needs its stream.');
+      return;
+    }
+    if (thumbBlockedForPhoto(kind, id)) {
+      showError('Photos are their own preview — thumbnails apply to videos only.');
       return;
     }
     thumbTargetRef.current = { kind, id };
@@ -388,6 +404,10 @@ const CreatePage = () => {
   const openThumbAdjust = (kind: ThumbKind, id: string, src: string) => {
     if (!src) {
       showError('No thumbnail to adjust yet — upload a separate one first.');
+      return;
+    }
+    if (thumbBlockedForPhoto(kind, id)) {
+      showError('Photos are their own preview — thumbnails apply to videos only.');
       return;
     }
     const spec = THUMB_SPEC[kind] || THUMB_SPEC.video;
@@ -1352,15 +1372,18 @@ const CreatePage = () => {
             showError('Story upload failed — no cover was posted without its media.');
             break;
           }
-          // The custom cover is uploaded only now that its media exists.
-          const storyCustomThumb = await uploadPendingThumb(storyThumbFile);
+          // The custom cover is uploaded only now that its media exists — and
+          // it is a video-only concept: photo stories are their own preview
+          // (a separate cover file demotes the original image on write).
+          const hasVideoStory = storySuccesses.some(s => s.file.type.startsWith('video/'));
+          const storyCustomThumb = hasVideoStory ? await uploadPendingThumb(storyThumbFile) : '';
           const newUploadedStories: UploadedStory[] = storySuccesses.map(({ file, result }, index) => ({
             id: Date.now().toString() + index,
             type: file.type.startsWith('image/') ? 'image' : 'video',
             fileName: file.name,
             fileSize: file.size,
             duration: file.type.startsWith('video/') ? '0:15' : undefined,
-            thumbnail: storyCustomThumb || getThumbnailFromUpload(result),
+            thumbnail: (file.type.startsWith('video/') ? storyCustomThumb : '') || getThumbnailFromUpload(result),
             publicId: result?.publicId || '',
             resourceType: result?.resourceType || '',
             r2Key: result?.r2Key || '',
@@ -1586,7 +1609,10 @@ const CreatePage = () => {
           showError('Thought media upload failed — nothing was posted without its media.');
           break;
         }
-        const thoughtCustomThumb = await uploadPendingThumb(thoughtVideo ? thoughtThumbFile : null);
+        // A custom cover is a video-only concept: a photo IS its own preview,
+        // and uploading a separate thumb file demotes the original image on
+        // write (the original used to vanish while the cover survived).
+        const thoughtCustomThumb = await uploadPendingThumb(thoughtVideo?.type.startsWith('video/') ? thoughtThumbFile : null);
         if (thoughtCustomThumb) thoughtThumbnail = thoughtCustomThumb;
         // Videos without a server poster get one captured client-side so the
         // Thoughts feed still shows a preview (never a blank card).
@@ -2087,9 +2113,12 @@ const CreatePage = () => {
             showError('Moment upload failed — no cover was posted without its media.');
             break;
           }
-          // Custom cover from the separate thumbnail section wins (uploaded only
-          // now that its moment media exists).
-          const momentCustomThumb = await uploadPendingThumb(momentThumbFile);
+          // Custom cover from the separate thumbnail section wins for VIDEO
+          // moments only (uploaded only now that its media exists). Photos are
+          // their own preview — a separate cover file demotes the original
+          // image on write.
+          const hasVideoMoment = momentSuccesses.some(s => s.file.type.startsWith('video/'));
+          const momentCustomThumb = hasVideoMoment ? await uploadPendingThumb(momentThumbFile) : '';
 
           // Posters for video moments + full URLs for photo moments.
           const momentPosters = await Promise.all(
@@ -2109,7 +2138,7 @@ const CreatePage = () => {
             id: Date.now().toString() + index,
             fileName: file.name,
             fileSize: file.size,
-            thumbnail: momentCustomThumb || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
+            thumbnail: (file.type.startsWith('video/') ? momentCustomThumb : '') || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
             mediaType: file.type.startsWith('image/') ? 'image' : 'video',
             videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
             publicId: result?.publicId || '',
@@ -4309,8 +4338,12 @@ const CreatePage = () => {
                         type="button"
                         variant="outline"
                         size="sm"
-                        disabled={!thoughtVideo}
-                        title={!thoughtVideo ? 'Attach the thought photo/video first — a thumbnail needs its media' : 'Upload a separate thumbnail'}
+                        disabled={!thoughtVideo || thoughtVideo.type.startsWith('image/')}
+                        title={!thoughtVideo
+                          ? 'Attach the thought photo/video first — a thumbnail needs its media'
+                          : thoughtVideo.type.startsWith('image/')
+                            ? 'Photos are their own preview — thumbnails apply to videos only'
+                            : 'Upload a separate thumbnail'}
                         onClick={() => openPendingThumbPicker('pending-thought')}
                       >
                         <Upload className="h-4 w-4 mr-2" />
