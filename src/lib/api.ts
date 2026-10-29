@@ -423,6 +423,22 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // Passive view beacon: fires once when content actually opens. Never throws,
+  // never blocks the UI. Server enforces one view per account (like likes) and
+  // never counts anonymous opens. Safe to call on every open — the server
+  // dedupes via the viewedBy ledger, so re-opens are no-ops.
+  recordView: async (itemId: string) => {
+    try {
+      if (!itemId) return { error: 'itemId required' } as any;
+      return await request<{ data?: { id?: string; views?: number | string; counted?: boolean }; error?: string }>('/views', {
+        method: 'POST',
+        body: JSON.stringify({ itemId }),
+      });
+    } catch (e) {
+      return { error: 'network' } as any;
+    }
+  },
+
   // Profile
   getProfile: (userId: string) =>
     request<{ data: any; error: null }>(`/profile/${encodeURIComponent(userId)}`),

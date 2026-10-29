@@ -1038,6 +1038,20 @@ async function filterVisibleItems(env, viewer, items) {
             if (it.user_id) it.user_id = owner;
             if (it.authorId) it.authorId = owner;
           }
+          // Views badge policy: the Eye number stays only on content that is
+          // effectively public. Private-account / followers-only rows keep
+          // their real counter for the OWNER but get stripped for everyone
+          // else (so the badge never shows on private content). `viewedBy`
+          // is account-auth material and is never shipped to clients.
+          try {
+            delete it.viewedBy;
+            const isOwnerRow = !!(viewer && owner && String(viewer.id).toLowerCase() === String(owner).toLowerCase());
+            const effVis = itemVisibility(it, profile);
+            if (!isOwnerRow && ((profile && profile.isPrivate === true) || effVis !== 'public')) {
+              delete it.views;
+              if ('views_count' in it) delete it.views_count;
+            }
+          } catch { /* badge policy is best-effort */ }
         } catch { /* display overlay is best-effort */ }
         // Never expose account email/auth material on public content rows.
         try {
@@ -2148,6 +2162,7 @@ function applyViewerVoteState(item, viewer) {
   item.user_has_shared = refs.size > 0 && hasRef(sharedLedger);
   // Account references are engagement ledgers, not public content fields.
   delete item.sharedBy;
+  delete item.viewedBy;
   return item;
 }
 
@@ -4673,6 +4688,68 @@ export const onRequest = async (context) => {
         } catch { /* notifications never block the like */ }
       }
       return json({ data: { id: itemId, likes: nextCount, reacts: Number(item.reacts || 0) || 0, hasLiked: wantLiked }, error: null }, 200, cors);
+    }
+
+    // VIEWS — persistence for the Eye badge shown on every public content row.
+    // Exactly like likes/shares/follow: one view PER ACCOUNT, kept on a
+    // `viewedBy` ledger on the item. Re-opening never double-counts (the
+    // ledger gate itself makes this idempotent — no rate counter needed, the
+    // only possible write is the first open by an account, ever).
+    // Privacy: invisible content 404s, and filterVisibleItems strips `views`
+    // from rows that are not effectively public (private accounts /
+    // followers-only) for non-owner viewers, so the badge never leaks.
+    if (path === '/api/views' && method === 'POST') {
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
+      const clean = sanitizeBody(body || {});
+      const itemId = String(clean.itemId || clean.item_id || clean.contentId || clean.content_id || clean.postId || clean.id || '').slice(0, 64);
+      if (!itemId) return json({ error: 'itemId required' }, 400, cors);
+      const found = await findContentById(env, itemId);
+      if (!found) return json({ error: 'Content not found' }, 404, cors);
+      const viewer = actor ? { id: actor.id, email: actor.email, username: actor.username } : null;
+      if (!(await canViewerSeeItem(env, viewer, transformItem(found.item)))) {
+        return json({ error: 'Content not found' }, 404, cors);
+      }
+      const item = { ...found.item };
+      // Anonymous opens are not counted (views count accounts, like likes do).
+      if (!actor) {
+        return json({ data: { id: itemId, views: Number(item.views ?? item.views_count ?? 0) || 0, counted: false }, error: null }, 200, cors);
+      }
+      const refs = new Set([String(actor.id).toLowerCase()]);
+      if (actor.email) refs.add(String(actor.email).toLowerCase());
+      if (actor.username) refs.add(String(actor.username).replace(/^@/, '').toLowerCase());
+      const ledger = Array.isArray(item.viewedBy) ? item.viewedBy.map((x: unknown) => String(x).toLowerCase()) : [];
+      const had = ledger.some((x: string) => refs.has(x));
+      if (had) {
+        // Already counted for this account — fetch path stays read-only.
+        return json({ data: { id: itemId, views: Number(item.views ?? item.views_count ?? 0) || 0, counted: false }, error: null }, 200, cors);
+      }
+      const stored = Number(item.views ?? item.views_count ?? 0) || 0;
+      const nextViews = Math.min(99_999_999, Math.max(0, stored) + 1);
+      item.viewedBy = [...new Set([String(actor.id).toLowerCase(), ...ledger])].slice(0, 5000);
+      item.views = String(nextViews);
+      if ('views_count' in item) item.views_count = nextViews;
+      try {
+        await kv.put(found.getKey(itemId), JSON.stringify(item));
+      } catch {
+        return json({ error: 'Could not record the view. Please try again.' }, 500, cors);
+      }
+      // Keep the search index row in sync with the real counter (best-effort,
+      // same pattern the comment counter uses).
+      try {
+        const idxJson = await kv.get(KEYS.CONTENT_INDEX);
+        if (idxJson) {
+          const idx = JSON.parse(idxJson);
+          const ix = idx.findIndex((i: any) => i && i.id === itemId);
+          if (ix >= 0) {
+            idx[ix] = { ...idx[ix], views: String(nextViews) };
+            await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(idx.slice(0, 1000)));
+          }
+        }
+      } catch { /* ignore */ }
+      // A real open is the strongest popularity signal there is (best-effort).
+      try { void aiBumpPop(env, itemId, 1); } catch { /* never block */ }
+      return json({ data: { id: itemId, views: nextViews, counted: true }, error: null }, 200, cors);
     }
 
     // VOTES — real upvote/downvote persistence for thoughts. Previously the

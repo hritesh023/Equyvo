@@ -1672,6 +1672,7 @@ const ProfilePage = () => {
                             onClick={() => handleComment(post.id, post.user)}
                           >
                             <MessageCircle className="h-3 w-3 md:h-4 md:w-4" /> <span className="font-medium">{toCount(post.comments)}</span>
+                           <Button variant="ghost" size="sm" className="flex items-center gap-1 text-xs md:text-sm" title="Views"><Eye className="h-3 w-3 md:h-4 md:w-4" /> <span className="font-medium">{toCount(post.views)}</span></Button>
                           </Button>
                           <Button
                             variant="ghost"
@@ -2121,6 +2122,7 @@ const ProfilePage = () => {
                           title="View comments"
                         >
                           <MessageCircle className="h-4 w-4" /> <span className="font-medium">{toCount(post.comments)}</span>
+                         <Button variant="ghost" size="sm" className="flex items-center gap-1" title="Views"><Eye className="h-4 w-4" /> <span className="font-medium">{toCount(post.views)}</span></Button>
                         </Button>
                         <Button
                           variant="ghost"

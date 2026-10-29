@@ -18,6 +18,7 @@ import {
   Copy,
   Flag,
   EyeOff,
+  Eye,
   Play,
   Pause,
   Volume2,
@@ -1292,6 +1293,12 @@ const ThoughtsPage = memo(() => {
                       >
                         <Share2 className="h-4 w-4" />
                       </Button>
+                        {thought.views !== undefined && thought.views !== null && thought.views !== '' && (
+                          <span className="flex items-center gap-1 text-xs text-muted-foreground flex-shrink-0 ml-1" title="Views">
+                            <Eye className="h-3.5 w-3.5" />
+                            {toCount(thought.views)}
+                          </span>
+                        )}
                     </div>
                   </div>
                 </div>

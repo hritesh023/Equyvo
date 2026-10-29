@@ -8,7 +8,7 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigge
 import {
   Flame, Video, Image, Music, Radio, Users,
   LayoutGrid as Grid, ThumbsUp, MessageCircle, Share2, MoreVertical, Hash,
-  Filter, SortDesc, Clock, TrendingUp, ChevronDown, List, Monitor, Maximize2
+  Filter, SortDesc, Clock, TrendingUp, ChevronDown, List, Monitor, Maximize2, Eye
 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
@@ -841,6 +841,9 @@ const DiscoverPage = () => {
                         <span className="flex items-center gap-1">
                           <MessageCircle className="w-4 h-4" /> {toCount(item.comments)}
                         </span>
+                        <span className="flex items-center gap-1">
+                          <Eye className="w-4 h-4" /> {toCount(item.views)}
+                        </span>
                         <span>{Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
                       </div>
                     </div>
@@ -991,6 +994,10 @@ const DiscoverPage = () => {
                   <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                   <span className="text-xs font-medium">{toCount(item.comments)}</span>
                 </button>
+                   <span className="flex items-center gap-1 rounded-full p-2 text-sm text-muted-foreground" title="Views">
+                     <Eye className="w-4 h-4" />
+                     <span className="text-xs">{toCount(item.views)}</span>
+                   </span>
                 <button
                   onClick={(e) => {
                     e.stopPropagation();
@@ -1097,7 +1104,7 @@ const DiscoverPage = () => {
                     </Avatar>
                     <div>
                       <h3 className="font-bold leading-tight group-hover:text-primary transition-colors">{item.title}</h3>
-                      <p className="text-xs text-muted-foreground mt-1">{item.creator} • {item.views} views • {Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</p>
+                      <p className="text-xs text-muted-foreground mt-1 flex items-center gap-1 flex-wrap">{item.creator} • <Eye className="w-3 h-3 inline" /> {item.views} views • {Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</p>
                     </div>
                   </div>
                   <div onClick={(e) => e.stopPropagation()}>
@@ -1134,6 +1141,10 @@ const DiscoverPage = () => {
                     <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                     <span className="text-xs">{toCount(item.comments)}</span>
                   </button>
+                   <span className="flex items-center gap-1 rounded-full p-2 text-sm text-muted-foreground" title="Views">
+                     <Eye className="w-4 h-4" />
+                     <span className="text-xs">{toCount(item.views)}</span>
+                   </span>
                   <button
                     onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
                     aria-label="Share"
@@ -1248,6 +1259,10 @@ const DiscoverPage = () => {
                     <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                     <span className="text-xs">{toCount(item.comments)}</span>
                   </button>
+                   <span className="flex items-center gap-1 rounded-full p-2 text-sm text-muted-foreground" title="Views">
+                     <Eye className="w-4 h-4" />
+                     <span className="text-xs">{toCount(item.views)}</span>
+                   </span>
                   <button
                     onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
                     aria-label="Share"
@@ -1348,7 +1363,7 @@ const DiscoverPage = () => {
                     <Badge variant="secondary" className="h-4 px-1 text-[10px]">✓</Badge>
                   </div>
                   <div className="flex items-center gap-1">
-                    <span>{item.views} views</span>
+                    <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> {item.views} views</span>
                     <span>•</span>
                     <span>{Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
                   </div>
@@ -1374,6 +1389,10 @@ const DiscoverPage = () => {
                     <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
                     <span className="text-xs">{toCount(item.comments)}</span>
                   </button>
+                   <span className="flex items-center gap-1 rounded-full p-2 text-sm text-muted-foreground" title="Views">
+                     <Eye className="w-4 h-4" />
+                     <span className="text-xs">{toCount(item.views)}</span>
+                   </span>
                   <button
                     onClick={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
                     aria-label="Share"

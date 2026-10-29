@@ -78,6 +78,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setImageRenderKey(0);
     setImageFailed(false);
   }, [actualContent?.id]);
+  // Record a view exactly once per account per item the first time it opens.
+  // Server dedupes via the viewedBy ledger, so calling on every open is safe.
+  useEffect(() => {
+    const id = actualContent?.id;
+    if (id) {
+      try { api.recordView(String(id)); } catch { /* fire-and-forget */ }
+    }
+  }, [actualContent?.id]);
   const handleFullscreenImageError = (e: React.SyntheticEvent<HTMLImageElement>) => {
     if (imageRenderKey < 2 && !imageFailed) {
       setImageRenderKey(k => k + 1);

@@ -21,6 +21,7 @@ export interface Thought {
   likes_count: number;
   comments_count: number;
   shares_count: number;
+  views?: number | string;
   retweets_count: number;
   upvotes_count?: number;
   downvotes_count?: number;
