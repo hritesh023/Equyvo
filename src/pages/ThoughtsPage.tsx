@@ -103,6 +103,7 @@ const MediaRenderer: React.FC<{
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [imageError, setImageError] = useState(false);
+  const [videoError, setVideoError] = useState(false);
 
   const formatDuration = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -115,7 +116,10 @@ const MediaRenderer: React.FC<{
       if (isPlaying) {
         videoRef.current.pause();
       } else {
-        videoRef.current.play();
+        // play() returns a promise and rejects when the browser blocks
+        // playback; swallow it so fast taps never crash the feed.
+        const p = videoRef.current.play();
+        if (p && typeof p.catch === 'function') p.catch(() => {});
       }
       setIsPlaying(!isPlaying);
     }
@@ -242,6 +246,25 @@ const MediaRenderer: React.FC<{
   }
 
   if (media.type === 'video' && media.url) {
+    if (videoError) {
+      return (
+        <div className="mt-3 rounded-lg overflow-hidden bg-muted border border-border flex items-center justify-center h-64">
+          <div className="text-center p-4">
+            <div className="text-muted-foreground text-sm mb-2">🎥 Video failed to load</div>
+            <button
+              onClick={() => setVideoError(false)}
+              className="text-xs text-primary hover:underline"
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      );
+    }
+    // Thumbnail-first behaviour: the poster (custom cover when the author
+    // uploaded one, else the frame captured at upload) is the preview. The
+    // actual video content only plays/heeds controls, or opens fullscreen via
+    // the expand button — the cover never renders as a second media block.
     return (
       <div className="mt-3 rounded-lg overflow-hidden bg-black relative">
         <video
@@ -252,14 +275,22 @@ const MediaRenderer: React.FC<{
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleLoadedMetadata}
           onClick={togglePlay}
+          onPlay={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
+          onError={() => setVideoError(true)}
           playsInline
           preload="metadata"
         />
-        
+
         {/* Video overlay controls */}
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           {!isPlaying && (
-            <div className="bg-black/50 rounded-full p-4 pointer-events-auto cursor-pointer" onClick={togglePlay}>
+            <div
+              className="bg-black/50 rounded-full p-4 pointer-events-auto cursor-pointer"
+              onClick={togglePlay}
+              role="button"
+              aria-label="Play thought video"
+            >
               <Play className="h-8 w-8 text-white" />
             </div>
           )}

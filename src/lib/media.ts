@@ -239,6 +239,29 @@ export function resolveMediaFields(item: MediaSource): NormalizedMediaFields {
     }
   }
 
+  // Self-heal legacy rows that appended a cover as its own media entry: an
+  // entry that only duplicates another entry's thumbnail/poster is a preview
+  // of real media, not a second slide. Never drop the first/real asset.
+  if (items.length > 1) {
+    const previewUrls = new Set(
+      items
+        .map((m) => firstMediaUrl(m.thumbnail) || firstMediaUrl((m as MediaItem & { poster?: unknown }).poster))
+        .filter(Boolean) as string[],
+    );
+    const nonDup = items.filter((m, index) => {
+      if (index === 0) return true;
+      if (!previewUrls.has(m.url)) return true;
+      // An entry matching another slide's preview is droppable — but a real
+      // multi-photo post never carries urls equal to another photo's preview
+      // unless it IS that preview, so removal is safe.
+      return false;
+    });
+    if (nonDup.length && nonDup.length !== items.length) {
+      items.length = 0;
+      items.push(...nonDup);
+    }
+  }
+
   // Also consider URLs that live outside `media`. Posters/thumbnails are
   // previews, not gallery slides, so they are only used when nothing else
   // plays or displays.
@@ -254,9 +277,25 @@ export function resolveMediaFields(item: MediaSource): NormalizedMediaFields {
     [safe.audio, 'audio'],
   ];
   const seen = new Set(items.map((m) => m.url));
+  // Posters of already-resolved slides (videos with a cover, images with a
+  // preview variant) are never their own slide. Pushing them listed the same
+  // content twice: the actual media AND its thumbnail rendered as two
+  // separate blocks inside one post.
+  const coveredThumbs = new Set(
+    items
+      .map((m) => firstMediaUrl(m.thumbnail) || firstMediaUrl((m as MediaItem & { poster?: unknown }).poster))
+      .filter(Boolean) as string[],
+  );
+  const hasPlayable = items.some((m) => m.type === 'video' || m.type === 'audio');
   for (const [value, hint] of extraUrls) {
     const url = firstMediaUrl(value);
     if (!url || seen.has(url)) continue;
+    if (coveredThumbs.has(url)) continue;
+    // Singular image/poster fields on playable items are legacy cover slots
+    // (they hold the poster, not an extra asset). Only count them as slides
+    // when the item also carries REAL separate image slides (a genuine
+    // video+photo gallery written via `mediaItems`).
+    if (hasPlayable && String(hint).toLowerCase().startsWith('image')) continue;
     seen.add(url);
     items.push({ url, type: mediaKindOfUrl(url, hint) });
   }

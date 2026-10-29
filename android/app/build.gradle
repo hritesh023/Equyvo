@@ -47,11 +47,11 @@ android {
         // track (internal/closed/open/production). Reusing one makes Play
         // report "This release does not add or remove any app bundles" and
         // blocks the rollout because existing users have no upgrade path.
-        // The last bundle committed to the repo was 36. This build uses 42
-        // so it is strictly higher than any earlier upload (including the
-        // 37–41 builds).
-        versionCode 47
-        versionName "1.2.25"
+        // The last bundle committed to the repo was 47 (versionName
+        // 1.2.25). This build uses 48 so it is strictly higher than any
+        // earlier upload, letting Play accept the new AAB/APK.
+        versionCode 48
+        versionName "1.2.26"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.

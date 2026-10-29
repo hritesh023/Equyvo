@@ -1734,14 +1734,19 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       
       {/* Split View Panel - Browse other videos */}
       {isSplitView && (
-        <div 
+        <div
           className="split-view-panel w-1/2 h-full bg-gray-900 overflow-hidden flex flex-col"
           style={{ pointerEvents: 'auto' }}
         >
-          <div className="p-4 border-b border-gray-800">
+          {/* eq-fullscreen-top-safe keeps the panel clear of the persistent
+              Android/tablet notification bar (edge-to-edge): the status bar
+              overlays this fixed overlay, and without the inset the first
+              lines of the panel were unreadable. eq-safe-bottom does the same
+              for the gesture-nav strip above the scroll list. */}
+          <div className="p-4 border-b border-gray-800 eq-safe-top eq-fullscreen-top-safe">
             <p className="text-gray-400 text-sm">Browse more {resolvedType === 'moment' ? 'moments' : resolvedType === 'live' ? 'live streams' : resolvedType === 'video' ? 'videos' : resolvedType === 'post' ? 'posts' : resolvedType === 'thought' ? 'thoughts' : resolvedType === 'story' ? 'stories' : 'content'} while watching</p>
           </div>
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto p-4 eq-safe-bottom">
           <div className="space-y-4">
             <p className="text-gray-400 text-sm">No related content available yet</p>
           </div>

@@ -1987,6 +1987,12 @@ function normalizeMediaFields(item) {
   };
   const visit = (value, hint) => {
     if (value == null) return;
+    // Cover-slot rule: if the item already has playable media, singular image
+    // fields (`image` / `image_url` / `imageUrl`) could only have carried the
+    // cover/poster — real second gallery slides always live in the media
+    // array. Visiting them as slides is what made a video thought with a
+    // custom thumbnail render the thumbnail as a separate second media block.
+    if (hasPlayableHint && String(hint).toLowerCase().startsWith('image')) return;
     if (Array.isArray(value)) { for (const entry of value) visit(entry, hint); return; }
     if (typeof value === 'string') {
       const trimmed = value.trim();
@@ -2003,6 +2009,10 @@ function normalizeMediaFields(item) {
     }
   };
   // Preserve the original list for gallery renderers.
+  // Playable media can come from `media`/`videoUrl`/`audioUrl` — detect it
+  // BEFORE the visits so image-family fields are treated as cover slots.
+  const hasPlayableHint = !!(serverFirstMediaUrl(item.videoUrl) || serverFirstMediaUrl(item.video_url) || serverFirstMediaUrl(item.video) ||
+    serverFirstMediaUrl(item.audioUrl) || serverFirstMediaUrl(item.audio_url) || serverFirstMediaUrl(item.audio));
   visit(item.mediaItems, item.mediaType);
   visit(item.media, item.mediaType);
   visit(item.videoUrl, 'video');
@@ -2030,20 +2040,48 @@ function normalizeMediaFields(item) {
   // photo originals went missing while the cover survived. Posters remain a
   // video-only concept.
   const isImageMedia = !videoUrl && !audioUrl && !!(explicitImage || imageItem?.url);
-  const image = (isImageMedia ? '' : (serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster))) ||
-    explicitImage || imageItem?.url || '';
-  const safeImage = image && image !== videoUrl && serverMediaKind(image, 'image') !== 'video' ? image : '';
+  // `image` is a still-image field, never the video's cover. Filling it with
+  // the poster made every video thought with a custom thumbnail expose the
+  // cover as a SECOND gallery slide on read (content + thumbnail rendered as
+  // two separate media in one post). Posters stay in `thumbnail` only.
+  const stillImage = explicitImage || imageItem?.url || '';
+  const image = stillImage;
+  const safeImage = image && image !== videoUrl && image !== audioUrl && serverMediaKind(image, 'image') !== 'video' ? image : '';
   // For image media the thumbnail IS the image (same file, self-referential);
   // video items keep the cover/poster precedence.
+  const rawCover = serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) || '';
   const thumbnail = isImageMedia ? safeImage :
-    (serverFirstMediaUrl(item.thumbnail) || serverFirstMediaUrl(item.poster) || safeImage || imageItem?.thumbnail || '');
+    (rawCover || safeImage || imageItem?.thumbnail || '');
+  // Self-heal legacy video rows that stored their cover in `image`: the cover
+  // already renders as the video poster, and leaving it in `image` re-created
+  // the duplicate (poster rendered as both the video preview and a slide).
+  const videoImageIsCover = !isImageMedia && !!videoUrl && !!safeImage && (safeImage === thumbnail || safeImage === rawCover);
+  const dedupedVideoImage = videoImageIsCover ? '' : safeImage;
+  // Self-heal legacy rows that appended the cover as its own gallery entry:
+  // later slides whose url is the item's cover are thumbnail copies, not
+  // separate media. The cover itself stays in `thumbnail` either way.
+  const coverCopyCount = items.reduce((n, m, index) => n + (index > 0 && rawCover && m.url === rawCover ? 1 : 0), 0);
+  if (coverCopyCount > 0 && items.length - coverCopyCount > 0) {
+    const kept = items.filter((m, index) => index === 0 || m.url !== rawCover);
+    items.length = 0;
+    for (const keptItem of kept) items.push(keptItem);
+  }
 
   item.mediaItems = items;
   item.media = videoUrl || safeImage || audioUrl || items[0]?.url || '';
-  item.image = safeImage;
-  item.thumbnail = thumbnail && thumbnail !== videoUrl ? thumbnail : '';
+  item.image = dedupedVideoImage;
+  // Sync the legacy alias fields with the derived truth so later
+  // normalisations (any client or mirror worker) can never resurrect the old
+  // cover or re-duplicate slides from stale aliases.
+  item.imageUrl = dedupedVideoImage;
+  item.image_url = dedupedVideoImage;
   item.videoUrl = videoUrl;
+  item.video = videoUrl;
+  item.mediaUrl = item.media;
+  item.media_url = item.media;
   item.audioUrl = audioUrl;
+  item.audio = audioUrl;
+  item.thumbnail = thumbnail && thumbnail !== videoUrl ? thumbnail : '';
   if (!videoUrl && !safeImage && !audioUrl && !item.mediaType) item.mediaType = 'text';
   else item.mediaType = videoUrl ? 'video' : audioUrl ? 'audio' : 'image';
   return item;
