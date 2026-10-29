@@ -3147,8 +3147,7 @@ const CreatePage = () => {
       }
     };
 
-    const id = window.setInterval(tick, 15000);
-    // initial check after load
+    const id = window.setInterval(tick, 10000);    // initial check after load
     const initial = window.setTimeout(tick, 2000);
     const onVis = () => { if (document.visibilityState === 'visible') void tick(); };
     document.addEventListener('visibilitychange', onVis);
