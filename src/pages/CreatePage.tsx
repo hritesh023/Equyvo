@@ -21,7 +21,7 @@ import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import { setAppBusy } from '@/lib/back-navigation';
 import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
-import { currentAuthor, pickDisplayName } from '@/lib/identity';
+import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
 import { toCount } from '@/lib/count';
 
 // Freshest real author identity: profile edits (name/avatar) win over the auth
@@ -481,10 +481,10 @@ const CreatePage = () => {
   // New states for scheduling and content management
   const [scheduledPosts, setScheduledPosts] = useState<ScheduledPost[]>([]);
   const [draftPosts, setDraftPosts] = useState<DraftPost[]>([]);
+  const [storeReady, setStoreReady] = useState(false);
   const [showScheduleModal, setShowScheduleModal] = useState(false);
   const [scheduleDateTime, setScheduleDateTime] = useState('');
   const [currentContentType, setCurrentContentType] = useState('');
-
   // State for uploaded content management
   const [uploadedVideos, setUploadedVideos] = useState<UploadedVideo[]>([]);
   const [uploadedStories, setUploadedStories] = useState<UploadedStory[]>([]);
@@ -774,6 +774,38 @@ const CreatePage = () => {
     } catch { /* ignore */ }
     return () => { alive = false; };
   }, []);
+
+  // Persist scheduled/drafts across sessions (IndexedDB, survives app kills).
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const [s, d] = await Promise.all([loadScheduled(), loadDrafts()]);
+        if (!alive) return;
+        setScheduledPosts((s || []).map((p: any) => ({
+          ...p,
+          scheduledTime: p?.scheduledTime instanceof Date ? p.scheduledTime : new Date(p?.scheduledTime || Date.now()),
+          status: p?.status || 'scheduled',
+        })));
+        setDraftPosts((d || []).map((p: any) => ({
+          ...p,
+          createdAt: p?.createdAt instanceof Date ? p.createdAt : new Date(p?.createdAt || Date.now()),
+        })));
+      } catch { /* ignore */ }
+      if (alive) setStoreReady(true);
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  useEffect(() => {
+    if (!storeReady) return;
+    void saveScheduled(scheduledPosts);
+  }, [scheduledPosts, storeReady]);
+
+  useEffect(() => {
+    if (!storeReady) return;
+    void saveDrafts(draftPosts);
+  }, [draftPosts, storeReady]);
 
   // Type definitions for scheduled and draft posts
   interface ScheduledPost {
@@ -2964,39 +2996,169 @@ const CreatePage = () => {
 
   const handleEditDraftPost = (draft: DraftPost) => {
     // Load draft content back into form
-    switch (draft.type) {
-      case 'story':
-        setStoryFiles(draft.content.files);
-        if (draft.content.caption) {
-          (document.getElementById('story-caption') as HTMLTextAreaElement).value = draft.content.caption;
-        }
-        setActiveTab('story');
-        break;
-      case 'text-story':
-        setTextStoryContent(draft.content.content);
-        setTextStoryBackground(draft.content.background);
-        setTextStoryColor(draft.content.color);
-        setActiveTab('text-story');
-        break;
-      case 'thought':
-        setThoughtContent(draft.content.content);
-        setThoughtVideo(draft.content.video);
-        setActiveTab('thought');
-        break;
-      case 'photos':
-        setPhotoFiles(draft.content.files);
-        setPhotoCaption(draft.content.caption);
-        setActiveTab('photo');
-        break;
-      case 'videos':
-        setVideoFiles(draft.content.files);
-        setVideoCaption(draft.content.caption);
-        setActiveTab('video');
-        break;
+    try {
+      switch (draft.type) {
+        case 'story':
+          setStoryFiles(draft.content?.files || []);
+          if (draft.content?.caption) {
+            setTimeout(() => {
+              const el = document.getElementById('story-caption') as HTMLTextAreaElement | null;
+              if (el) el.value = draft.content.caption;
+            }, 0);
+          }
+          setActiveTab('story');
+          break;
+        case 'text-story':
+          setTextStoryContent(draft.content?.content || '');
+          setTextStoryBackground(draft.content?.background || '#000000');
+          setTextStoryColor(draft.content?.color || '#FFFFFF');
+          setActiveTab('text-story');
+          break;
+        case 'thought':
+          setThoughtContent(draft.content?.content || '');
+          setThoughtVideo(draft.content?.video || null);
+          setActiveTab('thought');
+          break;
+        case 'photos':
+          setPhotoFiles(draft.content?.files || []);
+          setPhotoCaption(draft.content?.caption || '');
+          setActiveTab('photo');
+          break;
+        case 'videos':
+          setVideoFiles(draft.content?.files || []);
+          setVideoCaption(draft.content?.caption || '');
+          setActiveTab('video');
+          break;
+        case 'moments':
+          setMomentFiles(draft.content?.files || []);
+          setMomentContent(draft.content?.content || '');
+          setActiveTab('moment');
+          break;
+        case 'live':
+          setLiveTitle(draft.content?.title || '');
+          setLiveDescription(draft.content?.description || '');
+          setActiveTab('live');
+          break;
+        default:
+          showError('This draft type cannot be edited yet.');
+          return;
+      }
+    } catch {
+      showError('Failed to load draft.');
+      return;
     }
     // Remove the draft after loading
     handleDeleteDraftPost(draft.id);
   };
+
+  // Latest handler references (updated every render) so the scheduler can
+  // invoke the current closure with fresh state.
+  const latestHandlersRef = useRef<any>(null);
+  latestHandlersRef.current = {
+    handlePostStory, handlePostTextStory, handlePostThought, handlePostPhotos,
+    handlePostVideos, handlePostLive, handlePostMoment,
+  };
+
+  // Restore a scheduled record's media into the form and publish it now.
+  const runScheduledPost = async (post: ScheduledPost) => {
+    const content = (post?.content || {}) as any;
+    switch (post.type) {
+      case 'story':
+        setStoryFiles(content.files || []);
+        if (content.caption) {
+          setTimeout(() => {
+            const el = document.getElementById('story-caption') as HTMLTextAreaElement | null;
+            if (el) el.value = content.caption;
+          }, 0);
+        }
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostStory?.('post');
+        break;
+      case 'text-story':
+        setTextStoryContent(content.content || '');
+        setTextStoryBackground(content.background || '#000000');
+        setTextStoryColor(content.color || '#FFFFFF');
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostTextStory?.('post');
+        break;
+      case 'thought':
+        setThoughtContent(content.content || '');
+        setThoughtVideo(content.video || null);
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostThought?.('post');
+        break;
+      case 'photos':
+        setPhotoFiles(content.files || []);
+        setPhotoCaption(content.caption || '');
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostPhotos?.('post');
+        break;
+      case 'videos':
+        setVideoFiles(content.files || []);
+        setVideoCaption(content.caption || '');
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostVideos?.('post');
+        break;
+      case 'moments':
+        setMomentFiles(content.files || []);
+        setMomentContent(content.content || '');
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostMoment?.('post');
+        break;
+      case 'live':
+        setLiveTitle(content.title || '');
+        setLiveDescription(content.description || '');
+        await new Promise((r) => setTimeout(r, 120));
+        await latestHandlersRef.current?.handlePostLive?.('post');
+        break;
+      default:
+        throw new Error('Unknown scheduled type');
+    }
+  };
+
+  const scheduledPostsRef = useRef<ScheduledPost[]>(scheduledPosts);
+  scheduledPostsRef.current = scheduledPosts;
+
+  // Auto-publish scheduler: polls every 15s (and on visibility) and publishes
+  // any scheduled post whose time has arrived.
+  useEffect(() => {
+    if (!storeReady) return;
+    let cancelled = false;
+
+    const tick = async () => {
+      if (cancelled) return;
+      const now = Date.now();
+      const due = (scheduledPostsRef.current || []).filter(
+        (p: ScheduledPost) => p.status === 'scheduled' && new Date(p.scheduledTime).getTime() <= now,
+      );
+      for (const post of due) {
+        // mark as processing to avoid duplicate triggers
+        setScheduledPosts((prev) =>
+          prev.map((p) => (p.id === post.id ? { ...p, status: 'posted' } : p)),
+        );
+        try {
+          await runScheduledPost(post);
+        } catch (err) {
+          console.error('Scheduled publish failed:', err);
+          setScheduledPosts((prev) =>
+            prev.map((p) => (p.id === post.id ? { ...p, status: 'failed' } : p)),
+          );
+        }
+      }
+    };
+
+    const id = window.setInterval(tick, 15000);
+    // initial check after load
+    const initial = window.setTimeout(tick, 2000);
+    const onVis = () => { if (document.visibilityState === 'visible') void tick(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+      window.clearTimeout(initial);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+  }, [storeReady]);
 
   const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes';
