@@ -6852,6 +6852,62 @@ export const onRequest = async (context) => {
     }
 
     // ── LIVE PRESENCE ──────────────────────────────────────────────────────
+    // ── ADMIN CONTENT BROWSER (dashboard.acronous.com) ───────────────────
+    // GET /api/admin/content?limit= — admin-gated via X-Admin-Token. Returns
+    // EVERY content item uploaded by users (posts/thoughts/stories/moments)
+    // unless the uploading user deleted it themselves (deleted items are gone
+    // from KV). Includes full media fields so developers can view content.
+    if (path === '/api/admin/content' && method === 'GET') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String(env.REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return json({ error: 'Forbidden' }, 403, cors);
+      const limit = Math.min(1000, Math.max(1, parseInt(url.searchParams.get('limit') || '500') || 500));
+      const ownerFilter = String(url.searchParams.get('owner') || '').trim().toLowerCase();
+      const kindFilter = String(url.searchParams.get('kind') || url.searchParams.get('type') || '').trim().toLowerCase();
+      const lists = [
+        { kind: 'post', listKey: KEYS.POSTS, getKey: KEYS.POST },
+        { kind: 'thought', listKey: KEYS.THOUGHTS, getKey: KEYS.THOUGHT },
+        { kind: 'story', listKey: KEYS.STORIES, getKey: KEYS.STORY },
+        { kind: 'moment', listKey: KEYS.MOMENTS, getKey: KEYS.MOMENT },
+      ];
+      const items = [];
+      const stats = { total: 0, byType: {}, byUser: {} };
+      for (const L of lists) {
+        if (kindFilter && kindFilter !== 'all' && L.kind !== kindFilter && (L.kind + 's') !== kindFilter) continue;
+        let ids = [];
+        try {
+          const raw = await kv.get(L.listKey);
+          ids = raw ? JSON.parse(raw) : [];
+          if (!Array.isArray(ids)) ids = [];
+        } catch { ids = []; }
+        for (const cid of ids) {
+          if (items.length >= limit) break;
+          try {
+            const craw = await kv.get(L.getKey(cid));
+            if (!craw) continue;
+            const c = JSON.parse(craw);
+            const owner = String(c.ownerId || c.userId || c.user_id || c.creator || c.user || '');
+            if (ownerFilter && !owner.toLowerCase().includes(ownerFilter)) continue;
+            const transformed = transformItem({ ...c });
+            transformed.kind = L.kind;
+            transformed.id = transformed.id || cid;
+            items.push(transformed);
+            stats.total++;
+            const t = String(transformed.type || transformed.contentType || L.kind);
+            stats.byType[t] = (stats.byType[t] || 0) + 1;
+            if (owner) {
+              const key = owner;
+              if (!stats.byUser[key]) stats.byUser[key] = { count: 0, name: String(transformed.user || transformed.creator || owner) };
+              stats.byUser[key].count++;
+            }
+          } catch { /* skip bad */ }
+        }
+        if (items.length >= limit) break;
+      }
+      items.sort((a, b) => String(b.createdAt || b.created_at || '').localeCompare(String(a.createdAt || a.created_at || '')));
+      return json({ data: { items: items.slice(0, limit), stats }, error: null }, 200, cors);
+    }
+
     // POST /api/live/start|stop — owner toggles their live flag; followers
     // get a "X is live now" notification (bounded 50, background).
     // The flag lives on the profile row AND is mirrored into the bounded
