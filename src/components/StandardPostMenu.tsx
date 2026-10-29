@@ -27,7 +27,7 @@ interface StandardPostMenuProps {
   contentType?: string;
   isProfilePage?: boolean;
   onReport?: (postId: string) => void;
-  onDelete?: (postId: string) => void;
+  onDelete?: (postId: string) => void | Promise<void>;
   /** Fired after any successful delete (including the built-in fallback). */
   onDeleted?: (postId: string) => void;
   onEdit?: (postId: string) => void;

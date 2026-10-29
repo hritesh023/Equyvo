@@ -90,8 +90,8 @@ export async function getUserCountry(): Promise<string> {
   if (!country) {
     try {
       // Intl.Locale countries where available (privacy-friendly, no network).
-      const base = new Intl.Locale(Intl.NumberFormat().resolvedOptions().locale || 'en');
-      // @ts-expect-error region exists in modern engines
+      // `region` is on Intl.Locale in modern engines; guard for older ones.
+      const base = new Intl.Locale(Intl.NumberFormat().resolvedOptions().locale || 'en') as unknown as { region?: string };
       if (base.region) country = String(base.region).toUpperCase();
     } catch { /* ignore */ }
   }

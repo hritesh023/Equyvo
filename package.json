@@ -14,7 +14,7 @@
     "preview:dist": "vite preview --port 4173",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
-    "type-check": "tsc --noEmit",
+    "type-check": "tsc --noEmit -p tsconfig.app.json",
     "optimize": "npm run build:production && npm run analyze-bundle",
     "analyze-bundle": "npx rollup-plugin-visualizer dist/stats.html",
     "clean": "rimraf dist node_modules/.vite",

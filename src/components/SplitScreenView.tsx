@@ -18,28 +18,12 @@ import { cn } from '@/lib/utils';
 import { showSuccess, showError } from '@/utils/toast';
 import { shareItem } from '@/utils/share';
 import ReportButton from './ReportButton';
-
-interface ContentItem {
-  id: string;
-  title: string;
-  description: string;
-  type: 'video' | 'photo' | 'article';
-  creator: string;
-  views: string;
-  likes?: string;
-  comments?: string;
-  thumbnail: string;
-  duration?: string;
-  publishedAt: string;
-  category: string;
-  tags: string[];
-  videoUrl?: string;
-}
+import type { ContentIndexItem } from '@/lib/content-index';
 
 interface SplitScreenViewProps {
-  items: ContentItem[];
-  selectedItem: ContentItem | null;
-  onSelectItem: (item: ContentItem) => void;
+  items: ContentIndexItem[];
+  selectedItem: ContentIndexItem | null;
+  onSelectItem: (item: ContentIndexItem) => void;
   onClose: () => void;
   onFullscreen?: (content: any) => void;
   className?: string;
@@ -76,8 +60,8 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
     setIsFullscreen(!isFullscreen);
   };
 
-  const formatNumber = (num: string) => {
-    const n = parseInt(num);
+  const formatNumber = (num: string | number) => {
+    const n = typeof num === 'number' ? num : parseInt(num);
     if (n >= 1000000) return `${(n / 1000000).toFixed(1)}M`;
     if (n >= 1000) return `${(n / 1000).toFixed(1)}K`;
     return n.toString();

@@ -415,14 +415,14 @@ export async function signUpWithEmail(
 
 // No email verification is required anymore. These are retained as no-ops so
 // older callers/UI keep compiling.
-export async function confirmEmail(_email: string, _code: string) {
+export async function confirmEmail(_email: string, _code: string): Promise<{ success: boolean; error?: string }> {
   return { success: true };
 }
-export async function resendConfirmation(_email: string) {
+export async function resendConfirmation(_email: string): Promise<{ success: boolean; error?: string }> {
   return { success: true };
 }
 
-export async function signOutUser() {
+export async function signOutUser(): Promise<{ success: boolean; error?: string }> {
   const t = getToken();
   if (t) {
     try { await authFetch(API_BASE + '/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + t } }); } catch { /* ignore */ }

@@ -15,6 +15,7 @@ import { hideFromMyView } from '@/lib/feed-store';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import { resolveMediaFields } from '@/lib/media';
 import { toCount } from '@/lib/count';
+import type { FullscreenContent } from '@/types';
 
 interface Moment {
   id: string;
@@ -36,7 +37,8 @@ interface Moment {
 
 interface MomentsProps {
   moments: Moment[];
-  onFullscreen: (moment: Moment) => void;
+  /** Receives a viewer-ready payload; pages pass straight to FullscreenViewer state. */
+  onFullscreen: (content: FullscreenContent) => void;
   onComment: (momentId: string, user: string) => void;
   onLike?: (momentId: string) => void;
   likedMoments?: Set<string>;
@@ -251,7 +253,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
     stopAllVideos();
     
     // On tap/click, go to fullscreen portrait mode with proper moment structure
-    const momentContent = {
+    const momentContent: FullscreenContent = {
       ...moment,
       type: 'moment',
       contentType: 'moment',

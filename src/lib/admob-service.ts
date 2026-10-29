@@ -78,7 +78,7 @@ function loadPlugin(): Promise<{ plugin: AdMobPlugin | null }> {
     pluginPromise = import('@capacitor-community/admob').then(
       (mod) => {
         const candidate =
-          (mod as { AdMob?: AdMobPlugin } | null)?.AdMob ?? null;
+          (mod as unknown as { AdMob?: AdMobPlugin } | null)?.AdMob ?? null;
         return {
           plugin:
             candidate && typeof candidate === 'object' ? candidate : null,
@@ -118,7 +118,7 @@ export function initializeAds(): Promise<void> {
           ? { testingDevices: testDevices, initializeForTesting: true }
           : {}),
       };
-      await plugin.initialize(options).catch(() => undefined);
+      await plugin.initialize(options as unknown as Record<string, unknown>).catch(() => undefined);
       // UMP consent (EEA/GDPR): resolves immediately where no Funding
       // Choices message is configured. Non-fatal everywhere.
       try {

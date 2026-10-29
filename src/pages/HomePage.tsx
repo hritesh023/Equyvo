@@ -33,7 +33,7 @@ import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { sharePost } from '@/utils/share';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
-import { sendHumanEval, evalVote } from '@/lib/human-eval';
+import { sendHumanEval, evalVote, evalLike } from '@/lib/human-eval';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 
 const HomePage = () => {

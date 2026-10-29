@@ -136,7 +136,7 @@ function hasStoredToken(): boolean {
 async function request<T = any>(
   path: string,
   options?: RequestInit
-): Promise<{ data?: T; error?: string }> {
+): Promise<T> {
   // Resilience: idempotent GETs survive flaky mobile networks with one quiet
   // retry (network failure or transient 502/503/504). Mutations are never
   // retried automatically — they may not be safe to replay.
@@ -179,7 +179,7 @@ async function request<T = any>(
         const bodyError =
           typeof json.error === 'string' && json.error ? json.error : null;
         if (!bodyError) warnLocalApiOnce(path, res.status);
-        return { error: bodyError || `Request failed with status ${res.status}` };
+        return { error: bodyError || `Request failed with status ${res.status}` } as T;
       }
       return json as T;
     } catch (err: any) {
@@ -192,13 +192,13 @@ async function request<T = any>(
         continue;
       }
       warnLocalApiOnce(path, 'network');
-      return { error: message || lastError || 'Network error' };
+      return { error: message || lastError || 'Network error' } as T;
     } finally {
       clearTimeout(timer);
     }
   }
   warnLocalApiOnce(path, lastError || 'network');
-  return { error: lastError || 'Network error' };
+  return { error: lastError || 'Network error' } as T;
 }
 
 // Upload sizing contract:
@@ -288,7 +288,7 @@ async function uploadChunked(
 ): Promise<{ data?: UploadResult; error?: string }> {
   const type = (payload as File).type || 'application/octet-stream';
   const total = payload.size;
-  const init = await request<{ chunked: boolean; uploadId?: string; partSize?: number; r2Key?: string | null }>(
+  const init = await request<{ data?: { chunked: boolean; uploadId?: string; partSize?: number; r2Key?: string | null }; error?: string }>(
     '/upload/init',
     {
       method: 'POST',
@@ -308,7 +308,7 @@ async function uploadChunked(
     const formData = new FormData();
     formData.append('file', payload);
     if (folder) formData.append('folder', folder);
-    const res = await request<UploadResult>('/upload', { method: 'POST', body: formData });
+    const res = await request<{ data?: UploadResult; error?: string }>('/upload', { method: 'POST', body: formData });
     if (res.data) onProgress(total, 'done');
     return res;
   }
@@ -343,7 +343,7 @@ async function uploadChunked(
       onProgress(uploaded, 'uploading');
     }
     onProgress(total, 'finalizing');
-    const comp = await request<UploadResult>('/upload/complete', {
+    const comp = await request<{ data?: UploadResult; error?: string }>('/upload/complete', {
       method: 'POST',
       body: JSON.stringify({ uploadId, duration: meta?.duration }),
     });
@@ -606,7 +606,7 @@ export const api = {
 
   // Persist a share so the count is real across devices/reloads.
   share: (itemId: string) =>
-    request<{ id: string; shares: number; shares_count: number; alreadyShared?: boolean; offline?: boolean }>('/shares', {
+    request<{ data: { id: string; shares: number; shares_count: number; alreadyShared?: boolean; offline?: boolean }; error?: string }>('/shares', {
       method: 'POST',
       body: JSON.stringify({ itemId }),
     }),
@@ -706,7 +706,7 @@ export const api = {
       const formData = new FormData();
       formData.append('file', payload);
       if (folder) formData.append('folder', folder);
-      const res = await request<UploadResult>('/upload', {
+      const res = await request<{ data?: UploadResult; error?: string }>('/upload', {
         method: 'POST',
         body: formData,
       });
@@ -825,7 +825,7 @@ export const api = {
     }),
 
   shareComment: (id: string) =>
-    request<{ comment: any; shareUrl: string; shareText: string; alreadyShared?: boolean; offline?: boolean }>(
+    request<{ data: { comment: any; shareUrl: string; shareText: string; alreadyShared?: boolean; offline?: boolean }; error?: string }>(
       `/comments/${encodeURIComponent(id)}/share`,
       { method: 'POST', body: JSON.stringify({}) },
     ),

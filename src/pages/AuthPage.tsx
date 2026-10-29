@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { signInWithEmail, signUpWithEmail, confirmEmail, resendConfirmation } from '../lib/auth';
+import { signInWithEmail, signUpWithEmail, confirmEmail as confirmEmailCode, resendConfirmation } from '../lib/auth';
 import { Button } from '../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../components/ui/card';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../components/ui/tabs';
@@ -78,7 +78,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
     setError('');
     setLoading(true);
     try {
-      const r = await confirmEmail(confirmEmail, confirmCode.trim());
+      const r = await confirmEmailCode(confirmEmail, confirmCode.trim());
       if (!r.success) {
         setError(r.error || 'Confirmation failed');
         return;

@@ -83,8 +83,10 @@ const SearchPage: React.FC = () => {
     return 'image';
   };
 
-  const handleOpenFullscreen = (content: FullscreenContent, type: 'post' | 'live' | 'video' | 'moment' | 'image') => {
-    setFullscreenContent(content);
+  const handleOpenFullscreen = (content: SearchItem, type: 'post' | 'live' | 'video' | 'moment' | 'image') => {
+    // Search results are content-index records; FullscreenViewer normalizes
+    // every media/engagement field itself, so carry the record through as-is.
+    setFullscreenContent(content as unknown as FullscreenContent);
     setFullscreenType(type);
   };
 

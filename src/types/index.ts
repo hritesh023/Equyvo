@@ -27,7 +27,7 @@ export interface FullscreenContent {
   live?: boolean;
   views?: number;
   published?: string;
-  duration?: string;
+  duration?: string | number;
   verified?: boolean;
   subscribers?: number;
   forcePortrait?: boolean;

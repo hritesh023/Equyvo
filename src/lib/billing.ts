@@ -161,7 +161,7 @@ let razorpayLoad: Promise<void> | null = null;
 function loadRazorpay(): Promise<void> {
   if (window.Razorpay) return Promise.resolve();
   if (razorpayLoad) return razorpayLoad;
-  razorpayLoad = new Promise((resolve, reject) => {
+  razorpayLoad = new Promise<void>((resolve, reject) => {
     const s = document.createElement('script');
     const timer = setTimeout(() => {
       s.remove();
@@ -260,17 +260,18 @@ export async function buyPlan(plan: string, email?: string): Promise<{ ok: boole
         : 'Payment received, but activation could not be confirmed. Please contact support if your plan stays inactive.'
     );
   }
-  return (async () => {
-    // Persist instantly so ads/quotas update without reload, and notify the
-    // whole app (PricingPage also writes equyvo_active_plan + planChanged).
-    try {
-      const out = v as { ok: boolean; plan: string };
-      const active = out.plan || plan;
-      localStorage.setItem('equyvo_active_plan', active);
-      localStorage.setItem('equyvo_last_plan', JSON.stringify({ plan: active, at: new Date().toISOString() }));
-      window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: active } }));
-      window.dispatchEvent(new CustomEvent('equyvo:plan-active', { detail: { plan: active } }));
-    } catch { /* ignore */ }
-    return v;
-  });
+  // Persist instantly so ads/quotas update without reload, and notify the
+  // whole app (PricingPage also writes equyvo_active_plan + planChanged).
+  // Runs inline — a returned-but-never-invoked `async () => …` thunk used to
+  // skip this whole block AND make buyPlan resolve to a function instead of
+  // the result its callers expect.
+  try {
+    const out = v as { ok: boolean; plan: string };
+    const active = out.plan || plan;
+    localStorage.setItem('equyvo_active_plan', active);
+    localStorage.setItem('equyvo_last_plan', JSON.stringify({ plan: active, at: new Date().toISOString() }));
+    window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: active } }));
+    window.dispatchEvent(new CustomEvent('equyvo:plan-active', { detail: { plan: active } }));
+  } catch { /* ignore */ }
+  return v;
 }
