@@ -1842,6 +1842,51 @@ const PLAN_CATALOG = {
 const DEFAULT_PLAN_ID = 'eq_free';
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
 
+// Monthly AI credit allowances per plan (per EQUYVO SUBSCRIPTION MODEL).
+// Premium gets AI content tools; Creator/Creator Pro get captions + thumbnails + editing.
+const AI_CREDITS_MONTHLY = {
+  eq_free: 0,
+  eq_plus: 0,
+  eq_premium: 100,
+  eq_creator: 500,
+  eq_creator_pro: 2000,
+  eq_business: 5000,
+};
+
+function aiCreditsForPlan(planId) {
+  const v = AI_CREDITS_MONTHLY[planId];
+  return Number.isFinite(v) ? v : 0;
+}
+
+function planEntitlements(planId) {
+  const p = PLAN_CATALOG[planId] || PLAN_CATALOG[DEFAULT_PLAN_ID];
+  const creator = !!p.creator;
+  const business = !!p.business;
+  return {
+    planId,
+    planLabel: p.label,
+    adFree: p.ads === false,
+    adLight: p.ads === 'light',
+    storageBytes: p.storageBytes,
+    maxUploadMB: p.maxUploadMB,
+    maxVideoSec: p.maxVideoSec,
+    monthlyUploads: p.monthlyUploads,
+    creator,
+    business,
+    verifiedEligible: !!p.verified,
+    aiCreditsMonthly: aiCreditsForPlan(planId),
+    scheduling: creator || business,
+    analytics: ['eq_premium','eq_creator','eq_creator_pro','eq_business'].includes(planId),
+    marketplace: creator || business,
+    apiAccess: ['eq_creator_pro','eq_business'].includes(planId),
+    teamCollab: ['eq_creator_pro','eq_business'].includes(planId),
+    brandTools: ['eq_creator_pro','eq_business'].includes(planId),
+    businessProfile: business,
+    adsManager: business,
+    prioritySupport: ['eq_creator_pro','eq_business'].includes(planId),
+  };
+}
+
 // Platform fee for creator earnings (tips / paid subs / digital products).
 const PLATFORM_FEE_BPS = 1500; // 15% (Creator tier platform fee per spec)
 
@@ -2842,6 +2887,31 @@ async function getUsage(env, userId) {
   }
 }
 
+async function getAiCredits(env, userId, quota) {
+  const month = monthlyBucket();
+  const key = 'ai:credits:' + String(userId || '').slice(0, 200) + ':' + month;
+  try {
+    const raw = await env.EQUYVO_KV.get(key);
+    const used = raw ? (JSON.parse(raw).used || 0) : 0;
+    return { used: Number(used) || 0, quota: quota || 0, month };
+  } catch {
+    return { used: 0, quota: quota || 0, month };
+  }
+}
+
+async function consumeAiCredits(env, userId, quota, amount) {
+  const month = monthlyBucket();
+  const key = 'ai:credits:' + String(userId || '').slice(0, 200) + ':' + month;
+  const cur = await getAiCredits(env, userId, quota);
+  const amt = Math.max(1, Math.floor(Number(amount) || 1));
+  if (cur.used + amt > quota) {
+    return { ok: false, used: cur.used, quota, remaining: Math.max(0, quota - cur.used), month };
+  }
+  const next = cur.used + amt;
+  try { await env.EQUYVO_KV.put(key, JSON.stringify({ used: next, month }), { expirationTtl: 60 * 86400 }); } catch { /* best effort */ }
+  return { ok: true, used: next, quota, remaining: Math.max(0, quota - next), month };
+}
+
 function monthlyBucket() {
   const d = new Date();
   return d.getUTCFullYear() + '-' + String(d.getUTCMonth() + 1).padStart(2, '0');
@@ -3799,6 +3869,7 @@ export const onRequest = async (context) => {
       const { planId, source } = await resolvePlan(env, actor, bearerFrom(request));
       const quota = planQuota(planId);
       const usage = await getUsage(env, actor.id);
+      const ai = await getAiCredits(env, actor.id, aiCreditsForPlan(planId));
       return json({ data: {
         planId, planLabel: quota.label, source,
         usedBytes: usage.bytes, quotaBytes: quota.storageBytes,
@@ -3806,7 +3877,32 @@ export const onRequest = async (context) => {
         files: usage.files,
         monthlyUploads: usage.monthUploads, monthlyCap: quota.monthlyUploads,
         maxUploadMB: quota.maxUploadMB, maxVideoSec: quota.maxVideoSec,
+        entitlements: planEntitlements(planId),
+        aiCredits: { used: ai.used, quota: ai.quota, remaining: Math.max(0, ai.quota - ai.used), month: ai.month },
       }, error: null }, 200, cors);
+
+    // AI credits: consume monthly credits (Premium/Creator/Creator Pro).
+    if (path === '/api/ai/credits/consume' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const body = await readJson(request);
+      const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+      const quota = aiCreditsForPlan(planId);
+      const amount = Math.max(1, Math.floor(Number(body.amount || 1)));
+      const res = await consumeAiCredits(env, actor.id, quota, amount);
+      if (!res.ok) return json({ error: 'AI credits exhausted for this month. Upgrade for more.', code: 'AI_CREDITS_EXHAUSTED', ...res }, 402, cors);
+      return json({ data: res, error: null }, 200, cors);
+    }
+
+    // Entitlements (read-only) for the current plan.
+    if (path === '/api/entitlements' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const { planId, source } = await resolvePlan(env, actor, bearerFrom(request));
+      return json({ data: { ...planEntitlements(planId), source }, error: null }, 200, cors);
+    }
     }
 
     // POSTS (interest-ranked when userId/sort present; plain otherwise —

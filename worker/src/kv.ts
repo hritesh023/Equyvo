@@ -58,6 +58,36 @@ export const PLAN_CATALOG: Record<string, { id: string; label: string; priceInr:
 };
 export const DEFAULT_PLAN_ID = 'eq_free';
 export const PLATFORM_FEE_BPS = 1500;
+
+export const AI_CREDITS_MONTHLY: Record<string, number> = {
+  eq_free: 0, eq_plus: 0, eq_premium: 100, eq_creator: 500, eq_creator_pro: 2000, eq_business: 5000,
+};
+
+export function aiCreditsForPlan(planId: string): number {
+  const v = AI_CREDITS_MONTHLY[planId];
+  return Number.isFinite(v) ? v : 0;
+}
+
+export function planEntitlements(planId: string) {
+  const p = PLAN_CATALOG[planId] || PLAN_CATALOG[DEFAULT_PLAN_ID];
+  const creator = !!p.creator;
+  const business = !!p.business;
+  return {
+    planId, planLabel: p.label,
+    adFree: p.ads === false, adLight: p.ads === 'light',
+    storageBytes: p.storageBytes, maxUploadMB: p.maxUploadMB, maxVideoSec: p.maxVideoSec, monthlyUploads: p.monthlyUploads,
+    creator, business, verifiedEligible: !!p.verified,
+    aiCreditsMonthly: aiCreditsForPlan(planId),
+    scheduling: creator || business,
+    analytics: ['eq_premium','eq_creator','eq_creator_pro','eq_business'].includes(planId),
+    marketplace: creator || business,
+    apiAccess: ['eq_creator_pro','eq_business'].includes(planId),
+    teamCollab: ['eq_creator_pro','eq_business'].includes(planId),
+    brandTools: ['eq_creator_pro','eq_business'].includes(planId),
+    businessProfile: business, adsManager: business,
+    prioritySupport: ['eq_creator_pro','eq_business'].includes(planId),
+  };
+}
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
 export function planQuota(planId: string) { return PLAN_CATALOG[planId] || PLAN_CATALOG[DEFAULT_PLAN_ID]; }
 

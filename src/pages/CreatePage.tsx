@@ -22,6 +22,7 @@ import { setAppBusy } from '@/lib/back-navigation';
 import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
+import { useEntitlements } from '@/hooks/use-entitlements';
 import { toCount } from '@/lib/count';
 
 // Freshest real author identity: profile edits (name/avatar) win over the auth
@@ -508,6 +509,14 @@ const CreatePage = () => {
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(null);
   // Plan caps for pre-publish validation (size / length) + upgrade hints.
   const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
+  const { entitlements: planEntitlements } = useEntitlements();
+  const openScheduleModal = () => {
+    if (!planEntitlements?.scheduling) {
+      showError('Content scheduling requires a Creator plan or higher. Upgrade to unlock.');
+      return;
+    }
+    setShowScheduleModal(true);
+  };
   // SINGLE-FLIGHT publish lock: every post/schedule/draft/live action runs at
   // most once even if the button is tapped repeatedly (dup-inducing tap
   // races all happened inside the async upload window).
@@ -4223,7 +4232,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => {
                     setCurrentContentType('story');
-                    setShowScheduleModal(true);
+                    openScheduleModal();
                   }}
                   disabled={isUploading}
                   variant="outline"
@@ -4370,7 +4379,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => {
                     setCurrentContentType('text-story');
-                    setShowScheduleModal(true);
+                    openScheduleModal();
                   }}
                   variant="outline"
                   disabled={isUploading}
@@ -4519,7 +4528,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => {
                     setCurrentContentType('thought');
-                    setShowScheduleModal(true);
+                    openScheduleModal();
                   }}
                   disabled={isUploading}
                   variant="outline"
@@ -4618,7 +4627,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => {
                     setCurrentContentType('photos');
-                    setShowScheduleModal(true);
+                    openScheduleModal();
                   }}
                   disabled={isUploading}
                   variant="outline"
@@ -4769,7 +4778,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => {
                     setCurrentContentType('videos');
-                    setShowScheduleModal(true);
+                    openScheduleModal();
                   }}
                   disabled={isUploading}
                   variant="outline"
@@ -4947,7 +4956,7 @@ const CreatePage = () => {
                   <Button
                     onClick={() => {
                       setCurrentContentType('live');
-                      setShowScheduleModal(true);
+                      openScheduleModal();
                     }}
                     disabled={isUploading}
                     variant="outline"
@@ -5103,7 +5112,7 @@ const CreatePage = () => {
                 <Button
                   onClick={() => {
                     setCurrentContentType('moments');
-                    setShowScheduleModal(true);
+                    openScheduleModal();
                   }}
                   variant="outline"
                   className="w-full sm:flex-1"
@@ -5457,3 +5466,4 @@ const CreatePage = () => {
 };
 
 export default CreatePage;
+

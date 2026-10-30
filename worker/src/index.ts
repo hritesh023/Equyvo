@@ -8,7 +8,7 @@ import {
   getInterests, recordEngagement, bumpPopularity, brainSearchSuggest, brainFeedSuggest,
   rankFeedItems, ensureContentIndex,
   getActor, bearerFrom, requiresVerifiedWrites, sanitizeBody, rateLimit, rateLimitFor,
-  resolvePlan, planQuota, getUsage, addUsage, PLAN_CATALOG, PLATFORM_FEE_BPS, sha256Hex, cloudinaryVariants,
+  resolvePlan, planQuota, getUsage, addUsage, PLAN_CATALOG, PLATFORM_FEE_BPS, aiCreditsForPlan, planEntitlements, sha256Hex, cloudinaryVariants,
   r2KeyFor, extFromFile, r2DeliveryUrl, validMediaKey,
   nameQuotaState, prepareProfileUpdate,
   readIdList, profileSummary, isFollowingPair, getViewer,
@@ -1225,12 +1225,15 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       const { planId, source } = await resolvePlan(env, actor.id, bearerFrom(request));
       const quota = planQuota(planId);
       const usage = await getUsage(env, actor.id);
+      const aiQuota = aiCreditsForPlan(planId);
       return respond({ data: {
         planId, planLabel: quota.label, source,
         usedBytes: usage.bytes, quotaBytes: quota.storageBytes,
         usedPct: quota.storageBytes ? Math.round((usage.bytes / quota.storageBytes) * 1000) / 10 : 0,
         files: usage.files, monthlyUploads: usage.monthUploads, monthlyCap: quota.monthlyUploads,
         maxUploadMB: quota.maxUploadMB,
+        entitlements: planEntitlements(planId),
+        aiCredits: { used: 0, quota: aiQuota, remaining: aiQuota, month: '' },
       }, error: null });
     }
 
