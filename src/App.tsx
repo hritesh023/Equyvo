@@ -24,6 +24,7 @@ import SearchPage from './pages/SearchPage';
 import MomentsPage from './pages/MomentsPage';
 import ThoughtsPage from './pages/ThoughtsPage';
 import PricingPage from './pages/PricingPage';
+import SubscriptionFeaturesPage from './pages/SubscriptionFeaturesPage';
 import NotFound from './pages/NotFound';
 import type { User as AppUser } from './lib/auth';
 import { useIsMobile } from './hooks/use-mobile';
@@ -259,6 +260,8 @@ const AppContent = () => {
           <Route path="/profile/:userId" element={<ProfilePage />} />
           <Route path="/profile/@:username" element={<ProfilePage />} />
           <Route path="/pricing" element={<PricingPage />} />
+          <Route path="/features" element={<SubscriptionFeaturesPage />} />
+          <Route path="/app/features" element={<SubscriptionFeaturesPage />} />
           <Route path="/app/pricing" element={<PricingPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/search" element={<SearchPage />} />

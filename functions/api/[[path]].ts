@@ -7476,6 +7476,428 @@ export const onRequest = async (context) => {
         return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 200, cors);
       }
 
+
+      // ============ SUBSCRIPTION PROMISES: feature endpoints ============
+      // Creator analytics
+      if (path === '/api/creator/analytics' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.analytics) return json({ error: 'Creator plan required', code: 'UPGRADE_CREATOR', planId }, 402, cors);
+        const indexJson = await kv.get(KEYS.CONTENT_INDEX);
+        const idx = indexJson ? JSON.parse(indexJson) : [];
+        const mine = (Array.isArray(idx) ? idx : []).filter((i) => i && (i.userId === actor.id || i.ownerId === actor.id));
+        return json({ data: { posts: mine.length, planId, planLabel: ent.planLabel, followers: 0, tips: 0, views: mine.reduce((a, b) => a + (Number(b.views) || 0), 0) }, error: null }, 200, cors);
+      }
+      // Business analytics
+      if (path === '/api/business/analytics' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.businessProfile) return json({ error: 'Business plan required', code: 'UPGRADE_BUSINESS', planId }, 402, cors);
+        return json({ data: { planId, planLabel: ent.planLabel, campaigns: 0, impressions: 0, clicks: 0, spend: 0 }, error: null }, 200, cors);
+      }
+      // API keys (Creator Pro+)
+      if (path === '/api/apikeys' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.apiAccess) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const raw = await kv.get('apikeys:' + actor.id);
+        const keys = raw ? JSON.parse(raw) : [];
+        return json({ data: keys, error: null }, 200, cors);
+      }
+      if (path === '/api/apikeys' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.apiAccess) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const body = await readJson(request);
+        const label = String((body && body.label) || 'Key').slice(0, 60);
+        const key = 'eqk_' + generateId() + generateId();
+        const rec = { id: generateId(), label, key, createdAt: new Date().toISOString() };
+        const raw = await kv.get('apikeys:' + actor.id);
+        const keys = raw ? JSON.parse(raw) : [];
+        keys.unshift(rec);
+        await kv.put('apikeys:' + actor.id, JSON.stringify(keys.slice(0, 20)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      if (path.match(/^\/api\/apikeys\/[^/]+$/) && method === 'DELETE') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const id = decodeURIComponent(path.split('/api/apikeys/')[1] || '').split('?')[0];
+        const raw = await kv.get('apikeys:' + actor.id);
+        const keys = raw ? JSON.parse(raw) : [];
+        const next = keys.filter((k) => k.id !== id);
+        await kv.put('apikeys:' + actor.id, JSON.stringify(next));
+        return json({ data: { ok: true }, error: null }, 200, cors);
+      }
+      // Team members (Creator Pro+/Business)
+      if (path === '/api/team' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.teamCollab) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const raw = await kv.get('team:' + actor.id);
+        const members = raw ? JSON.parse(raw) : [];
+        return json({ data: members, error: null }, 200, cors);
+      }
+      if (path === '/api/team' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.teamCollab) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const body = await readJson(request);
+        const email = String((body && body.email) || '').trim().toLowerCase().slice(0, 254);
+        const role = String((body && body.role) || 'member').slice(0, 40);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'Valid email required' }, 400, cors);
+        const raw = await kv.get('team:' + actor.id);
+        const members = raw ? JSON.parse(raw) : [];
+        const rec = { id: generateId(), email, role, invitedAt: new Date().toISOString(), status: 'pending' };
+        members.unshift(rec);
+        await kv.put('team:' + actor.id, JSON.stringify(members.slice(0, 50)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      if (path.match(/^\/api\/team\/[^/]+$/) && method === 'DELETE') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const id = decodeURIComponent(path.split('/api/team/')[1] || '').split('?')[0];
+        const raw = await kv.get('team:' + actor.id);
+        const members = raw ? JSON.parse(raw) : [];
+        const next = members.filter((m) => m.id !== id);
+        await kv.put('team:' + actor.id, JSON.stringify(next));
+        return json({ data: { ok: true }, error: null }, 200, cors);
+      }
+      // Creator marketplace products
+      if (path === '/api/marketplace' && method === 'GET') {
+        const userId = new URL(request.url).searchParams.get('userId');
+        const raw = await kv.get('marketplace:list');
+        const items = raw ? JSON.parse(raw) : [];
+        const filtered = userId ? items.filter((i) => i.userId === userId) : items;
+        return json({ data: filtered, error: null }, 200, cors);
+      }
+      if (path === '/api/marketplace' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.marketplace) return json({ error: 'Creator plan required', code: 'UPGRADE_CREATOR', planId }, 402, cors);
+        const body = await readJson(request);
+        const clean = sanitizeBody(body);
+        const rec = { id: generateId(), userId: actor.id, title: String(clean.title || '').slice(0, 120), description: String(clean.description || '').slice(0, 2000), priceInr: Math.max(0, Math.floor(Number(clean.priceInr || 0))), type: String(clean.type || 'digital').slice(0, 40), createdAt: new Date().toISOString() };
+        const raw = await kv.get('marketplace:list');
+        const items = raw ? JSON.parse(raw) : [];
+        items.unshift(rec);
+        await kv.put('marketplace:list', JSON.stringify(items.slice(0, 500)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      // Brand collaboration tools
+      if (path === '/api/brand/collabs' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.brandTools) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const raw = await kv.get('brandcollabs:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        return json({ data: items, error: null }, 200, cors);
+      }
+      if (path === '/api/brand/collabs' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.brandTools) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const body = await readJson(request);
+        const clean = sanitizeBody(body);
+        const rec = { id: generateId(), userId: actor.id, brand: String(clean.brand || '').slice(0, 120), campaign: String(clean.campaign || '').slice(0, 200), status: 'draft', createdAt: new Date().toISOString() };
+        const raw = await kv.get('brandcollabs:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        items.unshift(rec);
+        await kv.put('brandcollabs:' + actor.id, JSON.stringify(items.slice(0, 100)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      // Business Ads Manager campaigns
+      if (path === '/api/ads/campaigns' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.adsManager) return json({ error: 'Business plan required', code: 'UPGRADE_BUSINESS', planId }, 402, cors);
+        const raw = await kv.get('adscampaigns:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        return json({ data: items, error: null }, 200, cors);
+      }
+      if (path === '/api/ads/campaigns' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.adsManager) return json({ error: 'Business plan required', code: 'UPGRADE_BUSINESS', planId }, 402, cors);
+        const body = await readJson(request);
+        const clean = sanitizeBody(body);
+        const rec = { id: generateId(), userId: actor.id, name: String(clean.name || 'Campaign').slice(0, 120), budgetInr: Math.max(0, Math.floor(Number(clean.budgetInr || 0))), status: 'draft', createdAt: new Date().toISOString() };
+        const raw = await kv.get('adscampaigns:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        items.unshift(rec);
+        await kv.put('adscampaigns:' + actor.id, JSON.stringify(items.slice(0, 100)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      // AI tools
+      if (path === '/api/ai/caption' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (ent.aiCreditsMonthly <= 0) return json({ error: 'AI tools require Premium or higher', code: 'UPGRADE_PREMIUM', planId }, 402, cors);
+        const r = await consumeAiCredits(env, actor.id, ent.aiCreditsMonthly, 1);
+        if (!r.ok) return json({ error: 'AI credits exhausted this month', code: 'AI_CREDITS_EXHAUSTED', ...r }, 402, cors);
+        const body = await readJson(request);
+        return json({ data: { caption: 'AI-generated caption for: ' + String((body && body.text) || '').slice(0, 200), credits: r }, error: null }, 200, cors);
+      }
+      if (path === '/api/ai/thumbnail' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.creator) return json({ error: 'Creator plan required for AI thumbnails', code: 'UPGRADE_CREATOR', planId }, 402, cors);
+        const r = await consumeAiCredits(env, actor.id, ent.aiCreditsMonthly, 2);
+        if (!r.ok) return json({ error: 'AI credits exhausted this month', code: 'AI_CREDITS_EXHAUSTED', ...r }, 402, cors);
+        return json({ data: { thumbnail: 'generated', credits: r }, error: null }, 200, cors);
+      }
+
+
+      // ============ SUBSCRIPTION PROMISES: feature endpoints ============
+      // Creator analytics
+      if (path === '/api/creator/analytics' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.analytics) return json({ error: 'Creator plan required', code: 'UPGRADE_CREATOR', planId }, 402, cors);
+        const indexJson = await kv.get(KEYS.CONTENT_INDEX);
+        const idx = indexJson ? JSON.parse(indexJson) : [];
+        const mine = (Array.isArray(idx) ? idx : []).filter((i) => i && (i.userId === actor.id || i.ownerId === actor.id));
+        return json({ data: { posts: mine.length, planId, planLabel: ent.planLabel, followers: 0, tips: 0, views: mine.reduce((a, b) => a + (Number(b.views) || 0), 0) }, error: null }, 200, cors);
+      }
+      // Business analytics
+      if (path === '/api/business/analytics' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.businessProfile) return json({ error: 'Business plan required', code: 'UPGRADE_BUSINESS', planId }, 402, cors);
+        return json({ data: { planId, planLabel: ent.planLabel, campaigns: 0, impressions: 0, clicks: 0, spend: 0 }, error: null }, 200, cors);
+      }
+      // API keys (Creator Pro+)
+      if (path === '/api/apikeys' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.apiAccess) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const raw = await kv.get('apikeys:' + actor.id);
+        const keys = raw ? JSON.parse(raw) : [];
+        return json({ data: keys, error: null }, 200, cors);
+      }
+      if (path === '/api/apikeys' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.apiAccess) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const body = await readJson(request);
+        const label = String((body && body.label) || 'Key').slice(0, 60);
+        const key = 'eqk_' + generateId() + generateId();
+        const rec = { id: generateId(), label, key, createdAt: new Date().toISOString() };
+        const raw = await kv.get('apikeys:' + actor.id);
+        const keys = raw ? JSON.parse(raw) : [];
+        keys.unshift(rec);
+        await kv.put('apikeys:' + actor.id, JSON.stringify(keys.slice(0, 20)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      if (path.match(/^\/api\/apikeys\/[^/]+$/) && method === 'DELETE') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const id = decodeURIComponent(path.split('/api/apikeys/')[1] || '').split('?')[0];
+        const raw = await kv.get('apikeys:' + actor.id);
+        const keys = raw ? JSON.parse(raw) : [];
+        const next = keys.filter((k) => k.id !== id);
+        await kv.put('apikeys:' + actor.id, JSON.stringify(next));
+        return json({ data: { ok: true }, error: null }, 200, cors);
+      }
+      // Team members (Creator Pro+/Business)
+      if (path === '/api/team' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.teamCollab) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const raw = await kv.get('team:' + actor.id);
+        const members = raw ? JSON.parse(raw) : [];
+        return json({ data: members, error: null }, 200, cors);
+      }
+      if (path === '/api/team' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.teamCollab) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const body = await readJson(request);
+        const email = String((body && body.email) || '').trim().toLowerCase().slice(0, 254);
+        const role = String((body && body.role) || 'member').slice(0, 40);
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'Valid email required' }, 400, cors);
+        const raw = await kv.get('team:' + actor.id);
+        const members = raw ? JSON.parse(raw) : [];
+        const rec = { id: generateId(), email, role, invitedAt: new Date().toISOString(), status: 'pending' };
+        members.unshift(rec);
+        await kv.put('team:' + actor.id, JSON.stringify(members.slice(0, 50)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      if (path.match(/^\/api\/team\/[^/]+$/) && method === 'DELETE') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const id = decodeURIComponent(path.split('/api/team/')[1] || '').split('?')[0];
+        const raw = await kv.get('team:' + actor.id);
+        const members = raw ? JSON.parse(raw) : [];
+        const next = members.filter((m) => m.id !== id);
+        await kv.put('team:' + actor.id, JSON.stringify(next));
+        return json({ data: { ok: true }, error: null }, 200, cors);
+      }
+      // Creator marketplace products
+      if (path === '/api/marketplace' && method === 'GET') {
+        const userId = new URL(request.url).searchParams.get('userId');
+        const raw = await kv.get('marketplace:list');
+        const items = raw ? JSON.parse(raw) : [];
+        const filtered = userId ? items.filter((i) => i.userId === userId) : items;
+        return json({ data: filtered, error: null }, 200, cors);
+      }
+      if (path === '/api/marketplace' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.marketplace) return json({ error: 'Creator plan required', code: 'UPGRADE_CREATOR', planId }, 402, cors);
+        const body = await readJson(request);
+        const clean = sanitizeBody(body);
+        const rec = { id: generateId(), userId: actor.id, title: String(clean.title || '').slice(0, 120), description: String(clean.description || '').slice(0, 2000), priceInr: Math.max(0, Math.floor(Number(clean.priceInr || 0))), type: String(clean.type || 'digital').slice(0, 40), createdAt: new Date().toISOString() };
+        const raw = await kv.get('marketplace:list');
+        const items = raw ? JSON.parse(raw) : [];
+        items.unshift(rec);
+        await kv.put('marketplace:list', JSON.stringify(items.slice(0, 500)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      // Brand collaboration tools
+      if (path === '/api/brand/collabs' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.brandTools) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const raw = await kv.get('brandcollabs:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        return json({ data: items, error: null }, 200, cors);
+      }
+      if (path === '/api/brand/collabs' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.brandTools) return json({ error: 'Creator Pro plan required', code: 'UPGRADE_CREATOR_PRO', planId }, 402, cors);
+        const body = await readJson(request);
+        const clean = sanitizeBody(body);
+        const rec = { id: generateId(), userId: actor.id, brand: String(clean.brand || '').slice(0, 120), campaign: String(clean.campaign || '').slice(0, 200), status: 'draft', createdAt: new Date().toISOString() };
+        const raw = await kv.get('brandcollabs:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        items.unshift(rec);
+        await kv.put('brandcollabs:' + actor.id, JSON.stringify(items.slice(0, 100)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      // Business Ads Manager campaigns
+      if (path === '/api/ads/campaigns' && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.adsManager) return json({ error: 'Business plan required', code: 'UPGRADE_BUSINESS', planId }, 402, cors);
+        const raw = await kv.get('adscampaigns:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        return json({ data: items, error: null }, 200, cors);
+      }
+      if (path === '/api/ads/campaigns' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.adsManager) return json({ error: 'Business plan required', code: 'UPGRADE_BUSINESS', planId }, 402, cors);
+        const body = await readJson(request);
+        const clean = sanitizeBody(body);
+        const rec = { id: generateId(), userId: actor.id, name: String(clean.name || 'Campaign').slice(0, 120), budgetInr: Math.max(0, Math.floor(Number(clean.budgetInr || 0))), status: 'draft', createdAt: new Date().toISOString() };
+        const raw = await kv.get('adscampaigns:' + actor.id);
+        const items = raw ? JSON.parse(raw) : [];
+        items.unshift(rec);
+        await kv.put('adscampaigns:' + actor.id, JSON.stringify(items.slice(0, 100)));
+        return json({ data: rec, error: null }, 201, cors);
+      }
+      // AI tools
+      if (path === '/api/ai/caption' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (ent.aiCreditsMonthly <= 0) return json({ error: 'AI tools require Premium or higher', code: 'UPGRADE_PREMIUM', planId }, 402, cors);
+        const r = await consumeAiCredits(env, actor.id, ent.aiCreditsMonthly, 1);
+        if (!r.ok) return json({ error: 'AI credits exhausted this month', code: 'AI_CREDITS_EXHAUSTED', ...r }, 402, cors);
+        const body = await readJson(request);
+        return json({ data: { caption: 'AI-generated caption for: ' + String((body && body.text) || '').slice(0, 200), credits: r }, error: null }, 200, cors);
+      }
+      if (path === '/api/ai/thumbnail' && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+        const ent = planEntitlements(planId);
+        if (!ent.creator) return json({ error: 'Creator plan required for AI thumbnails', code: 'UPGRADE_CREATOR', planId }, 402, cors);
+        const r = await consumeAiCredits(env, actor.id, ent.aiCreditsMonthly, 2);
+        if (!r.ok) return json({ error: 'AI credits exhausted this month', code: 'AI_CREDITS_EXHAUSTED', ...r }, 402, cors);
+        return json({ data: { thumbnail: 'generated', credits: r }, error: null }, 200, cors);
+      }
+
       return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
     }
 
