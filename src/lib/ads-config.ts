@@ -98,7 +98,7 @@ export type PlanId =
   | 'eq_creator_pro'
   | string;
 
-const AD_FREE_PLANS = new Set(['eq_premium', 'eq_creator', 'eq_creator_pro']);
+const AD_FREE_PLANS = new Set(['eq_premium', 'eq_creator', 'eq_creator_pro', 'eq_business']);
 const AD_LIGHT_PLANS = new Set(['eq_plus']);
 
 /** Premium / Creator plans never see ads. */

@@ -314,9 +314,17 @@ const PricingPage: React.FC = () => {
             <h3 className="font-bold text-lg">Business</h3>
             <p className="text-xs text-muted-foreground">Brands / businesses</p>
             <p className="text-3xl font-extrabold mt-2">Custom</p>
+            <p className="text-sm text-muted-foreground">Suggested from ₹2,999/mo</p>
             <ul className="mt-4 space-y-2 text-sm text-muted-foreground flex-1">
-              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Everything in Creator Pro</li>
-              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Brand suite + ads manager</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Business and brand profiles</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Business analytics</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Equyvo Ads Manager</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Multiple team members and administrators</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Campaign and promotion tools</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Custom storage and upload allowances</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />API and business integrations</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Dedicated support options</li>
+              <li className="flex gap-2"><Check className="h-4 w-4 text-pink-500 shrink-0 mt-0.5" />Ad-free experience</li>
             </ul>
             <div className="mt-5"><a href="mailto:enterprise@acronous.com?subject=Equyvo%20Business" className="block"><Button variant="outline" className="w-full">Contact us</Button></a></div>
           </div>
