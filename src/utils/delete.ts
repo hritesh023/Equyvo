@@ -35,6 +35,15 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
   const label = friendlyType(String(contentType));
 
   const finishLocalDelete = () => {
+    // Persist the deleted id so a stale cached/server response can never
+    // resurrect a post the user already removed.
+    try {
+      const key = 'equyvo_deleted_ids';
+      const raw = localStorage.getItem(key);
+      const set = new Set<string>(raw ? JSON.parse(raw) : []);
+      set.add(String(postId));
+      localStorage.setItem(key, JSON.stringify([...set].slice(-500)));
+    } catch { /* ignore */ }
     try {
       window.dispatchEvent(new CustomEvent('userPostDeleted', { detail: { postId, contentType } }));
     } catch {
@@ -91,6 +100,18 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
   showSuccess(`${label.charAt(0).toUpperCase() + label.slice(1)} deleted`);
 
   finishLocalDelete();
+};
+
+/** Returns true when an id was removed by the user (persisted locally). */
+export const isDeletedContent = (id: unknown): boolean => {
+  try {
+    const raw = localStorage.getItem('equyvo_deleted_ids');
+    if (!raw) return false;
+    const set = new Set<string>(JSON.parse(raw));
+    return set.has(String(id));
+  } catch {
+    return false;
+  }
 };
 
 export const confirmDelete = (contentType: string = 'post'): boolean => {

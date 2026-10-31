@@ -26,7 +26,7 @@ import { bumpCount, toCount } from '@/lib/count';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import api from '@/lib/api';
 import { isOwnContent } from '@/utils/ownership';
-import { deleteContent } from '@/utils/delete';
+import { deleteContent, isDeletedContent } from '@/utils/delete';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
@@ -185,6 +185,7 @@ const HomePage = () => {
         const merged = [...(posts as any[]), ...momentPosts, ...thoughts]
           .filter((p: any) => allowedForSurface(String(p.type || 'post'), 'foryou'))
           .filter((post: any) => !deletedPostIds.current.has(post.id))
+          .filter((post: any) => !isDeletedContent(post.id))
           .sort((a: any, b: any) => {
             const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
             const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;

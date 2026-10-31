@@ -1,4 +1,5 @@
 import api from './api';
+import { isDeletedContent } from '@/utils/delete';
 
 export interface ContentIndexItem {
   id: string;
@@ -46,9 +47,10 @@ async function getIndex(): Promise<ContentIndexItem[]> {
     // Fetch from API with empty query to get all content
     const { data, error } = await api.search('');
     if (!error && data?.results) {
-      cachedIndex = data.results;
+      const filtered = (data.results as any[]).filter((r: any) => !isDeletedContent(r.id));
+      cachedIndex = filtered;
       lastFetch = now;
-      return data.results;
+      return filtered;
     }
   } catch {}
   
@@ -127,7 +129,7 @@ export async function searchContentAsync(query: string): Promise<{
     const { data, error } = await api.search(trimmed);
     if (!error && data) {
       return {
-        results: data.results || [],
+        results: (data.results || []).filter((r: any) => !isDeletedContent(r.id)),
         users: (data as any).users || [],
         totalCount: data.totalCount || 0,
         userCount: (data as any).userCount || ((data as any).users || []).length,
@@ -139,7 +141,8 @@ export async function searchContentAsync(query: string): Promise<{
   // Fallback to client-side search on cached index (honest empty — never invent)
   const index = await getIndex();
   if (!trimmed) {
-    return { results: index.slice(0, 12), users: [], totalCount: index.length, userCount: 0, isAiRecommended: false };
+    const filteredIndex = index.filter((r: any) => !isDeletedContent(r.id));
+    return { results: filteredIndex.slice(0, 12), users: [], totalCount: filteredIndex.length, userCount: 0, isAiRecommended: false };
   }
   
   const q = trimmed.toLowerCase();
@@ -200,13 +203,14 @@ export function searchContent(query: string): {
   const trimmed = query.trim();
 
   // Try cached index first
-  if (cachedIndex && cachedIndex.length > 0) {
+  const filteredCached = (cachedIndex || []).filter((r: any) => !isDeletedContent(r.id));
+  if (filteredCached.length > 0) {
     if (!trimmed) {
-      return { results: cachedIndex.slice(0, 12), users: [], totalCount: cachedIndex.length, userCount: 0, isAiRecommended: false };
+      return { results: filteredCached.slice(0, 12), users: [], totalCount: filteredCached.length, userCount: 0, isAiRecommended: false };
     }
 
     const q = trimmed.toLowerCase();
-    const scored = cachedIndex.map(item => {
+    const scored = filteredCached.map(item => {
       let score = 0;
       const searchableText = [item.title, item.description, item.content, item.category, item.creator, ...item.tags]
         .filter(Boolean).join(' ').toLowerCase();
@@ -274,7 +278,7 @@ if (typeof window !== 'undefined') {
 }
 
 export function getAllContent(): ContentIndexItem[] {
-  if (cachedIndex && cachedIndex.length > 0) return cachedIndex;
+  if (cachedIndex && cachedIndex.length > 0) return cachedIndex.filter((r: any) => !isDeletedContent(r.id));
   // Kick off async fetch
   getIndex().catch(() => {});
   return cachedIndex || [];

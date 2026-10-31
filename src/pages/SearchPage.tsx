@@ -20,6 +20,7 @@ import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
 import { navigateToProfile } from '@/utils/profile-navigation';
+import { isDeletedContent } from '@/utils/delete';
 import { profilePreviewFrom } from '@/lib/identity';
 import { shareItem } from '@/utils/share';
 
@@ -32,7 +33,7 @@ const SearchPage: React.FC = () => {
   const [sortBy, setSortBy] = useState('relevance');
   const [filterCategory, setFilterCategory] = useState('all');
   const [activeTab, setActiveTab] = useState<'all' | 'people' | 'content'>('all');
-  const [results, setResults] = useState<SearchItem[]>(getAllContent().slice(0, 12));
+  const [results, setResults] = useState<SearchItem[]>(getAllContent().filter((r: any) => !isDeletedContent(r.id)).slice(0, 12));
   const [userResults, setUserResults] = useState<SearchedUser[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isInitialLoad, setIsInitialLoad] = useState(true);
@@ -148,7 +149,7 @@ const SearchPage: React.FC = () => {
     try {
       const sync = searchContent(searchQuery);
       if (reqId === requestIdRef.current && sync.results.length > 0) {
-        setResults(sync.results);
+        setResults(sync.results.filter((r: any) => !isDeletedContent(r.id)));
       }
     } catch { /* ignore sync errors */ }
 
@@ -156,7 +157,7 @@ const SearchPage: React.FC = () => {
     try {
       const { results, users, isAiRecommended: aiRec } = await searchContentAsync(searchQuery);
       if (reqId !== requestIdRef.current) return;
-      setResults(results);
+      setResults((results || []).filter((r: any) => !isDeletedContent(r.id)));
       setUserResults(users || []);
       setIsAiRecommended(aiRec);
     } catch {
