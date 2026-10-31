@@ -21,7 +21,7 @@ import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
 import { shareItem } from '@/utils/share';
-import { isDeletedContent } from '@/utils/delete';
+import { isBlockedContent } from '@/utils/delete';
 import type { FullscreenContent, ContentType } from '@/types';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
@@ -491,7 +491,7 @@ const DiscoverPage = () => {
             ...t,
             contentType: t.videoUrl ? 'video' : t.image || t.thumbnail ? 'image' : 'text',
           })),
-        ].filter((i) => allowedForSurface(String(i.type || 'post'), 'discover') && hasRenderableMedia(i) && !isDeletedContent(i.id));
+        ].filter((i) => allowedForSurface(String(i.type || 'post'), 'discover') && hasRenderableMedia(i) && !isBlockedContent(i));
         if (!cancelled) setDiscoverItems(mapped.sort((a, b) => timeOf(b) - timeOf(a)));
       } catch {
         if (!cancelled) setDiscoverItems([]);

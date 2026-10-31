@@ -114,6 +114,10 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
   finishLocalDelete();
 };
 
+// Hardcoded titles/phrases of posts that must never render (e.g. stale
+// server-side rows the owner cannot delete from the client).
+const BLOCKED_POST_PHRASES = ['parakram game'];
+
 /** Returns true when an id was removed by the user (persisted locally). */
 export const isDeletedContent = (id: unknown): boolean => {
   try {
@@ -121,6 +125,26 @@ export const isDeletedContent = (id: unknown): boolean => {
     if (!raw) return false;
     const set = new Set<string>(JSON.parse(raw));
     return set.has(String(id));
+  } catch {
+    return false;
+  }
+};
+
+/** Returns true for content that must be hidden (deleted or blocked). */
+export const isBlockedContent = (item: any): boolean => {
+  try {
+    if (!item) return false;
+    const id = String(item.id ?? item._id ?? '');
+    // Persisted deleted ids.
+    if (isDeletedContent(id)) return true;
+    // Persisted blocked ids/titles.
+    const raw = localStorage.getItem('equyvo_blocked_posts');
+    const blocked: string[] = raw ? JSON.parse(raw) : [];
+    const title = String(item.title || item.content || '').toLowerCase();
+    if (blocked.some((b) => String(b).toLowerCase() === id || String(b).toLowerCase() === title)) return true;
+    // Hardcoded phrases.
+    if (BLOCKED_POST_PHRASES.some((p) => title.includes(p.toLowerCase()))) return true;
+    return false;
   } catch {
     return false;
   }

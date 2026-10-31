@@ -1,5 +1,5 @@
 import api from './api';
-import { isDeletedContent } from '@/utils/delete';
+import { isBlockedContent } from '@/utils/delete';
 
 export interface ContentIndexItem {
   id: string;
@@ -47,7 +47,7 @@ async function getIndex(): Promise<ContentIndexItem[]> {
     // Fetch from API with empty query to get all content
     const { data, error } = await api.search('');
     if (!error && data?.results) {
-      const filtered = (data.results as any[]).filter((r: any) => !isDeletedContent(r.id));
+      const filtered = (data.results as any[]).filter((r: any) => !isBlockedContent(r));
       cachedIndex = filtered;
       lastFetch = now;
       return filtered;
@@ -129,7 +129,7 @@ export async function searchContentAsync(query: string): Promise<{
     const { data, error } = await api.search(trimmed);
     if (!error && data) {
       return {
-        results: (data.results || []).filter((r: any) => !isDeletedContent(r.id)),
+        results: (data.results || []).filter((r: any) => !isBlockedContent(r)),
         users: (data as any).users || [],
         totalCount: data.totalCount || 0,
         userCount: (data as any).userCount || ((data as any).users || []).length,
@@ -141,7 +141,7 @@ export async function searchContentAsync(query: string): Promise<{
   // Fallback to client-side search on cached index (honest empty — never invent)
   const index = await getIndex();
   if (!trimmed) {
-    const filteredIndex = index.filter((r: any) => !isDeletedContent(r.id));
+    const filteredIndex = index.filter((r: any) => !isBlockedContent(r));
     return { results: filteredIndex.slice(0, 12), users: [], totalCount: filteredIndex.length, userCount: 0, isAiRecommended: false };
   }
   
@@ -203,7 +203,7 @@ export function searchContent(query: string): {
   const trimmed = query.trim();
 
   // Try cached index first
-  const filteredCached = (cachedIndex || []).filter((r: any) => !isDeletedContent(r.id));
+  const filteredCached = (cachedIndex || []).filter((r: any) => !isBlockedContent(r));
   if (filteredCached.length > 0) {
     if (!trimmed) {
       return { results: filteredCached.slice(0, 12), users: [], totalCount: filteredCached.length, userCount: 0, isAiRecommended: false };
@@ -278,7 +278,7 @@ if (typeof window !== 'undefined') {
 }
 
 export function getAllContent(): ContentIndexItem[] {
-  if (cachedIndex && cachedIndex.length > 0) return cachedIndex.filter((r: any) => !isDeletedContent(r.id));
+  if (cachedIndex && cachedIndex.length > 0) return cachedIndex.filter((r: any) => !isBlockedContent(r));
   // Kick off async fetch
   getIndex().catch(() => {});
   return cachedIndex || [];
