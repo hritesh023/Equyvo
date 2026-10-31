@@ -5,6 +5,8 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.app.PictureInPictureParams;
+import android.util.Rational;
 import androidx.activity.EdgeToEdge;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
@@ -65,6 +67,22 @@ public class MainActivity extends BridgeActivity {
         }
         super.onCreate(savedInstanceState);
 
+        // Expose a system-level Picture-in-Picture trigger to the web layer.
+        final Handler pipHandler = new Handler(Looper.getMainLooper());
+        final Runnable registerPip = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (bridge != null && bridge.getWebView() != null) {
+                        bridge.getWebView().addJavascriptInterface(new PiPBridge(), "AndroidPiP");
+                    } else {
+                        pipHandler.postDelayed(this, 200L);
+                    }
+                } catch (Throwable ignored) {}
+            }
+        };
+        pipHandler.postDelayed(registerPip, 200L);
+
         final View content = findViewById(android.R.id.content);
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, windowInsets) -> {
             Insets bars = windowInsets.getInsets(
@@ -94,6 +112,23 @@ public class MainActivity extends BridgeActivity {
     public void onDestroy() {
         insetHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    /** JS bridge for system-level Picture-in-Picture. */
+    public class PiPBridge {
+        @android.webkit.JavascriptInterface
+        public void enter() {
+            runOnUiThread(() -> {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    try {
+                        PictureInPictureParams params = new PictureInPictureParams.Builder()
+                                .setAspectRatio(new Rational(16, 9))
+                                .build();
+                        enterPictureInPictureMode(params);
+                    } catch (Throwable ignored) {}
+                }
+            });
+        }
     }
 
     /**

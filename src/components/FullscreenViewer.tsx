@@ -795,7 +795,30 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
 
   const handleMinimize = () => {
     const video = videoRef.current;
-    
+
+    // 1. Prefer TRUE system-level Picture-in-Picture (persists across apps,
+    //    draggable across the whole device) — like YouTube/Netflix.
+    try {
+      if (video && (document as any).pictureInPictureEnabled && typeof (video as any).requestPictureInPicture === 'function') {
+        (video as any).requestPictureInPicture().then(() => {
+          try { onClose(); } catch { /* ignore */ }
+        }).catch(() => { /* fall through to native/app fallback */ });
+        // If the promise resolves we are done; if it rejects we fall through.
+        return;
+      }
+    } catch { /* ignore */ }
+
+    // 2. Native Android PiP bridge (system-level, survives app background).
+    try {
+      const bridge = (window as any).AndroidPiP;
+      if (bridge && typeof bridge.enter === 'function') {
+        bridge.enter();
+        try { onClose(); } catch { /* ignore */ }
+        return;
+      }
+    } catch { /* ignore */ }
+
+    // 3. Fallback: in-app draggable mini window (legacy).
     // Create a minimized picture-in-picture style window
     const minimizedViewer = document.createElement('div');
     minimizedViewer.id = 'minimized-video-viewer';
