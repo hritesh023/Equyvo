@@ -800,9 +800,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     //    draggable across the whole device) — like YouTube/Netflix.
     try {
       if (video && (document as any).pictureInPictureEnabled && typeof (video as any).requestPictureInPicture === 'function') {
-        (video as any).requestPictureInPicture().then(() => {
-          try { onClose(); } catch { /* ignore */ }
-        }).catch(() => { /* fall through to native/app fallback */ });
+        (video as any).requestPictureInPicture().catch(() => { /* fall through to native/app fallback */ });
         // If the promise resolves we are done; if it rejects we fall through.
         return;
       }
@@ -813,7 +811,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       const bridge = (window as any).AndroidPiP;
       if (bridge && typeof bridge.enter === 'function') {
         bridge.enter();
-        try { onClose(); } catch { /* ignore */ }
+        // Keep the fullscreen viewer mounted so the PiP window shows THIS
+        // post (not the app shell/header). The user exits via the OS PiP
+        // close affordance; do not tear the viewer down here.
         return;
       }
     } catch { /* ignore */ }
@@ -883,10 +883,45 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       }
     };
 
-    // Add event listeners for dragging
+    // Add event listeners for dragging (mouse + touch so the mini window is
+    // draggable on every platform, including phones/tablets).
     document.addEventListener('mousedown', dragStart);
     document.addEventListener('mouseup', dragEnd);
     document.addEventListener('mousemove', drag);
+
+    const touchStart = (e: TouchEvent) => {
+      if (e.target === closeBtn || e.target === expandBtn) return;
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      const rect = minimizedViewer.getBoundingClientRect();
+      initialX = t.clientX - rect.left;
+      initialY = t.clientY - rect.top;
+      isDragging = true;
+      minimizedViewer.style.cursor = 'grabbing';
+    };
+    const touchMove = (e: TouchEvent) => {
+      if (!isDragging) return;
+      e.preventDefault();
+      const t = e.touches && e.touches[0];
+      if (!t) return;
+      const newX = t.clientX - initialX;
+      const newY = t.clientY - initialY;
+      const maxX = window.innerWidth - minimizedViewer.offsetWidth;
+      const maxY = window.innerHeight - minimizedViewer.offsetHeight;
+      const boundedX = Math.max(0, Math.min(newX, maxX));
+      const boundedY = Math.max(0, Math.min(newY, maxY));
+      minimizedViewer.style.bottom = 'auto';
+      minimizedViewer.style.right = 'auto';
+      minimizedViewer.style.left = `${boundedX}px`;
+      minimizedViewer.style.top = `${boundedY}px`;
+    };
+    const touchEnd = () => {
+      isDragging = false;
+      minimizedViewer.style.cursor = 'move';
+    };
+    minimizedViewer.addEventListener('touchstart', touchStart, { passive: false });
+    minimizedViewer.addEventListener('touchmove', touchMove, { passive: false });
+    minimizedViewer.addEventListener('touchend', touchEnd);
     
     if (video && fallbackVideoSrc) {
       // Get current video state
@@ -945,6 +980,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       document.removeEventListener('mousedown', dragStart);
       document.removeEventListener('mouseup', dragEnd);
       document.removeEventListener('mousemove', drag);
+      minimizedViewer.removeEventListener('touchstart', touchStart);
+      minimizedViewer.removeEventListener('touchmove', touchMove);
+      minimizedViewer.removeEventListener('touchend', touchEnd);
       document.body.removeChild(minimizedViewer);
     };
     
@@ -979,6 +1017,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       document.removeEventListener('mousedown', dragStart);
       document.removeEventListener('mouseup', dragEnd);
       document.removeEventListener('mousemove', drag);
+      minimizedViewer.removeEventListener('touchstart', touchStart);
+      minimizedViewer.removeEventListener('touchmove', touchMove);
+      minimizedViewer.removeEventListener('touchend', touchEnd);
       
       // Remove minimized viewer
       document.body.removeChild(minimizedViewer);

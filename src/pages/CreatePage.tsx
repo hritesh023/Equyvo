@@ -1181,7 +1181,7 @@ const CreatePage = () => {
     return persistError;
   }
 
-  const handleFileUpload = async (files: FileList | null, type: string) => {
+  const handleFileUpload = async (files: FileList | File[] | null, type: string) => {
     if (!files || files.length === 0) return;
 
     // SAFETY PRE-SCREEN (before anything enters the editor): each picked file
@@ -4129,7 +4129,7 @@ const CreatePage = () => {
                   type="file"
                   accept="image/*,video/*"
                   multiple
-                  onChange={(e) => handleFileUpload(e.target.files, 'story')}
+                  onChange={(e) => { const picked = e.target.files ? Array.from(e.target.files) : null; e.target.value = ''; void handleFileUpload(picked, 'story'); }}
                   className="max-w-xs mx-auto"
                 />
               </div>
@@ -4455,7 +4455,7 @@ const CreatePage = () => {
                       <Input
                         type="file"
                         accept="video/*,image/*,image/gif"
-                        onChange={(e) => handleFileUpload(e.target.files, 'thought')}
+                        onChange={(e) => { const picked = e.target.files ? Array.from(e.target.files) : null; e.target.value = ''; void handleFileUpload(picked, 'thought'); }}
                         className="max-w-xs mx-auto"
                       />
                     </div>
@@ -4575,7 +4575,7 @@ const CreatePage = () => {
                   type="file"
                   accept="image/*"
                   multiple
-                  onChange={(e) => handleFileUpload(e.target.files, 'photo')}
+                  onChange={(e) => { const picked = e.target.files ? Array.from(e.target.files) : null; e.target.value = ''; void handleFileUpload(picked, 'photo'); }}
                   className="max-w-xs mx-auto"
                 />
               </div>
@@ -4673,7 +4673,7 @@ const CreatePage = () => {
                   type="file"
                   accept="video/*"
                   multiple
-                  onChange={(e) => handleFileUpload(e.target.files, 'video')}
+                  onChange={(e) => { const picked = e.target.files ? Array.from(e.target.files) : null; e.target.value = ''; void handleFileUpload(picked, 'video'); }}
                   className="max-w-xs mx-auto"
                 />
               </div>
@@ -5017,7 +5017,7 @@ const CreatePage = () => {
                   type="file"
                   accept="video/*"
                   multiple
-                  onChange={(e) => handleFileUpload(e.target.files, 'moment')}
+                  onChange={(e) => { const picked = e.target.files ? Array.from(e.target.files) : null; e.target.value = ''; void handleFileUpload(picked, 'moment'); }}
                   className="max-w-xs mx-auto"
                 />
               </div>
