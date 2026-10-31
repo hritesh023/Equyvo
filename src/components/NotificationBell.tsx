@@ -141,10 +141,11 @@ export function NotificationBell() {
             role="dialog"
             aria-modal="true"
             aria-label="Notifications"
+            style={{ top: 'calc(var(--equyvo-bar-top, 48px) - 24px)' }}
             className="
               pointer-events-auto fixed left-0 right-0 flex flex-col bg-background text-foreground shadow-2xl
-              nav-top-safe nav-bottom-safe -mt-6 sm:mt-0
-              sm:top-8 sm:right-4 sm:bottom-auto sm:left-auto sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border
+              nav-bottom-safe sm:mt-0
+              sm:right-4 sm:bottom-auto sm:left-auto sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border
             "
           >
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">

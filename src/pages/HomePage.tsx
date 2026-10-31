@@ -207,12 +207,14 @@ const HomePage = () => {
     window.addEventListener('momentCreated', handlePostCreated);
     window.addEventListener('thoughtCreated', handlePostCreated);
     window.addEventListener('profileUpdated', handlePostCreated);
+    window.addEventListener('userPostDeleted', handlePostCreated);
     return () => {
       window.removeEventListener('userPostCreated', handlePostCreated);
       window.removeEventListener('feedRefresh', handlePostCreated);
       window.removeEventListener('momentCreated', handlePostCreated);
       window.removeEventListener('thoughtCreated', handlePostCreated);
       window.removeEventListener('profileUpdated', handlePostCreated);
+      window.removeEventListener('userPostDeleted', handlePostCreated);
     };
   }, []);
 

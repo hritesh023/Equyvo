@@ -44,6 +44,18 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
       set.add(String(postId));
       localStorage.setItem(key, JSON.stringify([...set].slice(-500)));
     } catch { /* ignore */ }
+    // Also scrub the post from any locally cached profile/feed lists.
+    try {
+      const up = localStorage.getItem('userProfile');
+      if (up) {
+        const p = JSON.parse(up);
+        if (Array.isArray(p?.posts)) {
+          p.posts = p.posts.filter((x: any) => String(x?.id) !== String(postId));
+          localStorage.setItem('userProfile', JSON.stringify(p));
+        }
+      }
+    } catch { /* ignore */ }
+    // (cache invalidation is dispatched by finishLocalDelete below)
     try {
       window.dispatchEvent(new CustomEvent('userPostDeleted', { detail: { postId, contentType } }));
     } catch {
