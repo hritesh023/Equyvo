@@ -290,8 +290,8 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
               const post = row.value;
               return (
               <Card key={post.id} className="p-4 slide-up border-l-4 border-l-yellow-400">
-                <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
-                  <div className="flex items-center gap-3">
+                <CardHeader className="flex flex-row items-center justify-between p-0 mb-4 gap-2 min-w-0">
+                  <div className="flex items-center gap-3 min-w-0 flex-1">
                     <Avatar 
                       className="h-10 w-10 cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
                       onClick={() => {
@@ -305,15 +305,15 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                       <AvatarImage src={post.avatar} />
                       <AvatarFallback>{post.user.substring(0, 2)}</AvatarFallback>
                     </Avatar>
-                    <div>
-                      <CardTitle className="text-base">
+                    <div className="min-w-0">
+                      <CardTitle className="text-base truncate">
                         {post.user}
                       </CardTitle>
                       <p className="text-sm text-muted-foreground">{post.time}</p>
                     </div>
                   </div>
                   
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <FollowButton userId={ownerIdOf(post)} userName={post.user} />
                     
                     <StandardPostMenu
