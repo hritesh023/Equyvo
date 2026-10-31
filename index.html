@@ -48,6 +48,41 @@
     });
   </script>
   <script type="module" src="/src/main.tsx"></script>
+  <script>
+    // Enable mobile/tablet keyboard suggestions (predictive text) for every
+    // text input/textarea. Android WebView disables the suggestion strip when
+    // spellcheck/autocorrect are off; force them on for text fields so the
+    // default keyboard behaves like other apps. Password/email fields keep
+    // their own sensible settings.
+    (function () {
+      function fix(el) {
+        if (!el || !el.tagName) return;
+        var t = el.tagName.toLowerCase();
+        if (t !== 'input' && t !== 'textarea') return;
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        if (type === 'password' || type === 'email' || type === 'tel' || type === 'number' || type === 'url') return;
+        if (el.getAttribute('spellcheck') !== 'false') el.setAttribute('spellcheck', 'true');
+        if (!el.getAttribute('autocorrect')) el.setAttribute('autocorrect', 'on');
+        if (!el.getAttribute('autocomplete') || el.getAttribute('autocomplete') === 'off') el.setAttribute('autocomplete', 'on');
+      }
+      function scan(root) {
+        if (!root) return;
+        if (root.querySelectorAll) root.querySelectorAll('input,textarea').forEach(fix);
+        if (root.tagName) fix(root);
+      }
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', function () { scan(document); });
+      } else {
+        scan(document);
+      }
+      var obs = new MutationObserver(function (muts) {
+        muts.forEach(function (m) {
+          m.addedNodes && m.addedNodes.forEach(function (n) { scan(n); });
+        });
+      });
+      obs.observe(document.documentElement, { childList: true, subtree: true });
+    })();
+  </script>
 </body>
 
 </html>

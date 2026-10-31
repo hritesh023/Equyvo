@@ -424,8 +424,9 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
           onBlur={handleInputBlur}
           onKeyDown={handleKeyDown}
           disabled={isSearching}
-          autoComplete="off"
-          spellCheck="false"
+          autoComplete="on"
+          spellCheck={true}
+          autoCorrect="on"
           autoFocus={autoFocus}
           // SEO attributes
           role="combobox"
