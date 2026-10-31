@@ -876,7 +876,7 @@ const HomePage = () => {
   return (
     <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 relative w-full">
       {/* Main Content Feed */}
-      <div className="flex-1 space-y-4 lg:space-y-8 w-full lg:max-w-2xl lg:mx-0 px-4 sm:px-6 lg:px-0">
+      <div className="flex-1 space-y-4 lg:space-y-8 w-full px-3 sm:px-4 lg:px-6">
 
         {/* Live Notification Banner */}
         {liveNotification && (

@@ -17,6 +17,12 @@ export interface SearchHistoryItem {
   query: string;
   timestamp: number;
   resultCount?: number;
+  // When the search resolved to a real Equyvo account, remember it so the
+  // recent-search row can render that account's avatar instead of a generic
+  // icon (Google/YouTube-style recent suggestions).
+  userId?: string;
+  avatar?: string;
+  username?: string;
 }
 
 // AI-powered search service
@@ -57,11 +63,14 @@ class AISearchService {
   }
 
   // Save search to history
-  saveSearch(query: string, resultCount?: number): void {
+  saveSearch(query: string, resultCount?: number, meta?: { userId?: string; avatar?: string; username?: string }): void {
     const historyItem: SearchHistoryItem = {
       query: query.trim(),
       timestamp: Date.now(),
-      resultCount
+      resultCount,
+      userId: meta?.userId,
+      avatar: meta?.avatar,
+      username: meta?.username,
     };
 
     // Remove duplicates and keep only last 50 items
@@ -100,7 +109,20 @@ class AISearchService {
     const queryLower = query.toLowerCase().trim();
 
     if (!queryLower) {
-      return this.getDefaultSuggestions();
+      // Google/YouTube-style: surface the user's recent searches first, then
+      // trending defaults. Recent searches carry the resolved account avatar
+      // when the query was a profile name.
+      const recent = this.getRecentSearchSuggestions('');
+      const defaults = this.getDefaultSuggestions();
+      const seen = new Set<string>();
+      const out: SearchSuggestion[] = [];
+      for (const s of [...recent, ...defaults]) {
+        const key = s.label.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(s);
+      }
+      return out.slice(0, 8);
     }
 
     const suggestions: SearchSuggestion[] = [];
@@ -437,7 +459,8 @@ class AISearchService {
       category: 'Recent',
       description: `Searched ${this.getRelativeTime(item.timestamp)}`,
       type: 'recent' as const,
-      confidence: 0.8
+      confidence: 0.8,
+      metadata: { userId: item.userId, avatar: item.avatar, username: item.username },
     }));
   }
 
@@ -556,8 +579,8 @@ export function useAISearch() {
     }
   }, [searchService]);
 
-  const saveSearch = useCallback((query: string, resultCount?: number) => {
-    searchService.saveSearch(query, resultCount);
+  const saveSearch = useCallback((query: string, resultCount?: number, meta?: { userId?: string; avatar?: string; username?: string }) => {
+    searchService.saveSearch(query, resultCount, meta);
     if (query && query.trim()) {
       const sessionId = `equyvo-search-${Date.now()}`;
       brainLearn({

@@ -71,8 +71,23 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const [isSearching, setIsSearching] = useState(false);
   const [people, setPeople] = useState<Array<{ id: string; username?: string; name?: string; avatar?: string; bio?: string; verified?: boolean }>>([]);
+  const [userAvatarByName, setUserAvatarByName] = useState<Record<string, string>>({});
   
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Keep a name->avatar cache populated from real Equyvo account matches so any
+  // suggestion row (AI/content/recent) that is actually a profile renders the
+  // profile icon instead of the generic Brain/Sparkles icon.
+  useEffect(() => {
+    setUserAvatarByName((prev) => {
+      const next = { ...prev };
+      for (const p of people) {
+        const keys = [p.username, p.name].map((v) => String(v || '').trim().toLowerCase()).filter(Boolean);
+        for (const k of keys) if (p.avatar) next[k] = p.avatar;
+      }
+      return next;
+    });
+  }, [people]);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const { suggestions, isLoading, generateSuggestions, saveSearch } = useAISearch();
 
@@ -223,12 +238,12 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   };
 
   const handleInputFocus = () => {
-    // Only open and generate suggestions if there's content or if we haven't generated default suggestions yet
-    if (query.trim() || suggestions.length === 0) {
-      setIsOpen(true);
-      if (!query.trim() && suggestions.length === 0) {
-        generateSuggestions(''); // Load default suggestions
-      }
+    // Open the (full-page-style) suggestion surface on focus and ensure the
+    // recent-search history is loaded even when the input is empty, mirroring
+    // Google/YouTube's recent-search suggestions.
+    setIsOpen(true);
+    if (!query.trim()) {
+      generateSuggestions(''); // Loads recent searches + defaults
     }
   };
 
@@ -259,23 +274,28 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     if (!searchQuery) return;
     setIsSearching(true);
     trackSearchEvent(searchQuery, 'search_executed');
-    saveSearch(searchQuery);
 
-    // A person match always opens THAT person's profile — never a content
-    // results page that could bounce back to the viewer's own identity.
+    // Resolve a person match first so we can record the account avatar alongside
+    // the recent search (Google/YouTube-style recent suggestions show the
+    // profile icon when the query was a profile name).
     const personMatch = await resolvePersonMatch(searchQuery);
     if (personMatch?.id) {
+      saveSearch(searchQuery, undefined, {
+        userId: personMatch.id,
+        avatar: personMatch.avatar,
+        username: personMatch.username || personMatch.name,
+      });
       setIsSearching(false);
       setIsOpen(false);
       setSelectedIndex(-1);
       onClose?.();
-      // Hand the real name/avatar over so the profile header paints on the
-      // first frame (skeleton-based pages otherwise flash their own route).
       navigate(`/profile/${encodeURIComponent(personMatch.id)}`, {
         state: { profilePreview: profilePreviewFrom(personMatch) },
       });
       return;
     }
+
+    saveSearch(searchQuery);
 
     if (onSearch) {
       onSearch(searchQuery);
@@ -295,7 +315,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     setIsOpen(false);
     setSelectedIndex(-1);
     trackSearchEvent(suggestion.label, 'suggestion_clicked');
-    saveSearch(suggestion.label);
+    saveSearch(suggestion.label, undefined, suggestion.metadata ? { userId: suggestion.metadata.userId, avatar: suggestion.metadata.avatar, username: suggestion.metadata.username } : undefined);
     
     if (onSearch) {
       onSearch(suggestion.label);
@@ -304,6 +324,18 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
       navigate(`/app/search?q=${encodeURIComponent(suggestion.label)}&category=${encodeURIComponent(suggestion.category)}`);
     }
   }, [onSearch, trackSearchEvent, saveSearch, navigate]);
+
+  const getSuggestionAvatar = (suggestion: SearchSuggestion): string | undefined => {
+    if (suggestion.metadata?.avatar) return suggestion.metadata.avatar;
+    const key = String(suggestion.label || '').trim().toLowerCase().replace(/^@+/, '');
+    if (userAvatarByName[key]) return userAvatarByName[key];
+    // People matches from the server (typed query)
+    const person = people.find((p) =>
+      [p.username, p.name].map((v) => String(v || '').trim().toLowerCase()).includes(key),
+    );
+    if (person?.avatar) return person.avatar;
+    return undefined;
+  };
 
   const getSuggestionIcon = (type: SearchSuggestion['type']) => {
     switch (type) {
@@ -433,7 +465,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         key={`person-${p.id}`}
                         onClick={() => {
                           setIsOpen(false);
-                          saveSearch(query.trim());
+                          saveSearch(query.trim(), undefined, { userId: p.id, avatar: p.avatar, username: p.username || p.name });
                           onClose?.();
                           // Defer navigation slightly so the dialog closes cleanly
                           // on mobile before the route change (prevents a blank
@@ -493,7 +525,12 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         title="Press Tab to accept, Enter to search"
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          {getSuggestionIcon(suggestion.type)}
+                          {getSuggestionAvatar(suggestion) ? (
+                            <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarImage src={getSuggestionAvatar(suggestion)} alt={suggestion.label} />
+                              <AvatarFallback className="text-xs">{suggestion.label.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                          ) : getSuggestionIcon(suggestion.type)}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm group-hover:text-primary transition-colors duration-200 truncate">
                               {renderGuessLabel(suggestion.label, query)}
@@ -527,7 +564,12 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         aria-selected={selectedIndex === navIndexOf(suggestion.id)}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          {getSuggestionIcon(suggestion.type)}
+                          {getSuggestionAvatar(suggestion) ? (
+                            <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarImage src={getSuggestionAvatar(suggestion)} alt={suggestion.label} />
+                              <AvatarFallback className="text-xs">{suggestion.label.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                          ) : getSuggestionIcon(suggestion.type)}
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-sm group-hover:text-primary transition-colors duration-200 truncate">
                               {suggestion.label}
@@ -567,7 +609,12 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         aria-selected={selectedIndex === navIndexOf(suggestion.id)}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          {getSuggestionIcon(suggestion.type)}
+                          {getSuggestionAvatar(suggestion) ? (
+                            <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarImage src={getSuggestionAvatar(suggestion)} alt={suggestion.label} />
+                              <AvatarFallback className="text-xs">{suggestion.label.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                          ) : getSuggestionIcon(suggestion.type)}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm group-hover:text-primary transition-colors duration-200 truncate">
                               {suggestion.label}
@@ -602,7 +649,12 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         aria-selected={selectedIndex === navIndexOf(suggestion.id)}
                       >
                         <div className="flex items-center gap-3 flex-1 min-w-0">
-                          {getSuggestionIcon(suggestion.type)}
+                          {getSuggestionAvatar(suggestion) ? (
+                            <Avatar className="h-7 w-7 shrink-0">
+                              <AvatarImage src={getSuggestionAvatar(suggestion)} alt={suggestion.label} />
+                              <AvatarFallback className="text-xs">{suggestion.label.charAt(0).toUpperCase()}</AvatarFallback>
+                            </Avatar>
+                          ) : getSuggestionIcon(suggestion.type)}
                           <div className="flex-1 min-w-0">
                             <div className="text-sm font-medium group-hover:text-primary transition-colors duration-200 truncate">
                               {suggestion.label}
