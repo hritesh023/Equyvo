@@ -369,13 +369,26 @@ export async function showFeedBanner(): Promise<boolean> {
     lastBannerAttemptAt = Date.now();
     const narrow =
       typeof window !== 'undefined' && window.innerWidth < 768;
+    // Lift above the in-flow bottom nav (+ system nav clearance).
+    let lift = 70;
+    try {
+      if (narrow && typeof document !== 'undefined') {
+        const v = getComputedStyle(document.documentElement)
+          .getPropertyValue('--equyvo-bar-bottom')
+          .trim();
+        const n = parseFloat(v);
+        if (Number.isFinite(n) && n > 0) lift = Math.round(n + 8);
+      }
+    } catch {
+      /* keep fallback */
+    }
     try {
       await plugin.showBanner({
         adId,
         position: 'BOTTOM_CENTER',
         adSize: 'ADAPTIVE_BANNER',
         // Lift above the app bottom nav on phones.
-        margin: narrow ? 70 : 0,
+        margin: narrow ? lift : 0,
         isTesting: isDevEnvironment(),
         npa: !personalizedAdsEnabled(),
       });
