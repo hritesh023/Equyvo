@@ -68,7 +68,6 @@ export function useNavMode() {
     window.addEventListener('pageshow', onAny);
     document.addEventListener('visibilitychange', onAny);
     window.visualViewport?.addEventListener('resize', onAny);
-    window.visualViewport?.addEventListener('scroll', onAny);
 
     const timers = [50, 200, 600, 1200, 2500, 5000].map((ms) =>
       window.setTimeout(apply, ms),
@@ -81,7 +80,6 @@ export function useNavMode() {
       window.removeEventListener('pageshow', onAny);
       document.removeEventListener('visibilitychange', onAny);
       window.visualViewport?.removeEventListener('resize', onAny);
-      window.visualViewport?.removeEventListener('scroll', onAny);
       timers.forEach((t) => window.clearTimeout(t));
     };
   }, []);
