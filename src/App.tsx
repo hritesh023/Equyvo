@@ -29,6 +29,7 @@ import NotFound from './pages/NotFound';
 import type { User as AppUser } from './lib/auth';
 import { useIsMobile } from './hooks/use-mobile';
 import { useIsTablet } from './hooks/use-tablet';
+import { useNavMode } from './hooks/use-nav-mode';
 import { initializeAds } from './lib/admob-service';
 import { useAdPlan } from './hooks/use-ad-plan';
 import { useFeedBanner } from './hooks/use-feed-banner';
@@ -64,6 +65,7 @@ const AppContent = () => {
   const navigate = useNavigate();
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
+  useNavMode();
 
   // ── Hardware/system back wiring ────────────────────────────────────────
   // Every source navigation is mirrored into the coordinator's in-app depth:

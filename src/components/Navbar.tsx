@@ -309,9 +309,9 @@ export function MobileBottomNav() {
   return (
     <div
       ref={barRef}
-      className="mobile-bottom-nav-fill relative z-50 shrink-0 border-t border-border/50 bg-background shadow-lg"
+      className="mobile-bottom-nav-fill relative z-50 shrink-0 w-full flex justify-center px-3"
     >
-      <div className="mx-auto flex w-full max-w-3xl items-stretch justify-around px-2 py-1">
+      <div className="floating-bottom-nav-pill mx-auto flex w-full max-w-md items-stretch justify-around rounded-3xl border border-border/40 bg-background/70 px-2 py-1.5 shadow-2xl backdrop-blur-xl">
       {navItems.slice(0, 6).map((item) => (
         <Link
           key={item.name}
