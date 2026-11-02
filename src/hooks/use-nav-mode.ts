@@ -14,12 +14,15 @@ export function useNavMode() {
     const root = document.documentElement;
 
     const readInset = (): number => {
-      const isNative = root.classList.contains('cap-native');
-      if (isNative) {
-        const v = getComputedStyle(root).getPropertyValue('--native-safe-bottom').trim();
-        const n = parseFloat(v);
-        return Number.isFinite(n) ? n : 0;
+      // Prefer a real native inset whenever MainActivity has published one,
+      // even before the cap-native class is applied.
+      const nativeRaw = getComputedStyle(root).getPropertyValue('--native-safe-bottom').trim();
+      const nativeNum = parseFloat(nativeRaw);
+      if (Number.isFinite(nativeNum) && nativeNum > 0) {
+        root.classList.add('cap-native');
+        return nativeNum;
       }
+      // Web / no native insets: probe env(safe-area-inset-bottom).
       let probe: HTMLDivElement | null = document.createElement('div');
       probe.style.cssText =
         'position:fixed;bottom:0;left:0;visibility:hidden;pointer-events:none;' +
@@ -34,15 +37,24 @@ export function useNavMode() {
 
     const apply = () => {
       const inset = readInset();
-      const isButtons = inset >= 36;
+      let isButtons = inset >= 36;
+      // Fallback: when no measurable inset is available on a mobile device,
+      // assume 3-button nav so the bar is raised instead of overlapping the
+      // system navigation buttons (safer than the gesture default).
+      if (!isButtons && inset === 0) {
+        const ua = (navigator.userAgent || '');
+        if (/Android/i.test(ua)) isButtons = true;
+      }
       const newMode = isButtons ? 'buttons' : 'gesture';
       const newFloor = isButtons ? '64px' : '8px';
 
       const currentMode = root.getAttribute('data-nav-mode');
-      const currentFloor = root.style.getPropertyValue('--equyvo-safe-bottom-floor').trim();
-      if (currentMode === newMode && currentFloor === newFloor) return;
+      const currentSafe = root.style.getPropertyValue('--equyvo-safe-bottom').trim();
+      const newSafe = Math.max(parseInt(newFloor, 10), inset) + 'px';
+      if (currentMode === newMode && currentSafe === newSafe) return;
 
       root.style.setProperty('--equyvo-safe-bottom-floor', newFloor);
+      root.style.setProperty('--equyvo-safe-bottom', newSafe);
       root.classList.remove('nav-mode-buttons', 'nav-mode-gesture');
       root.classList.add(isButtons ? 'nav-mode-buttons' : 'nav-mode-gesture');
       root.setAttribute('data-nav-mode', newMode);
