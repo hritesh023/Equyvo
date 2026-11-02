@@ -222,7 +222,7 @@ const AppContent = () => {
        and reserves the OS status-bar safe area itself, so the content
        column needs no extra padding (that would create a double gap).
        Desktop keeps the top nav + sidebar. */
-    <div className="flex flex-col overflow-hidden bg-background text-foreground h-screen h-[100dvh] md:h-auto md:min-h-screen md:overflow-visible">
+    <div className="flex flex-col overflow-hidden bg-background text-foreground h-screen h-[100svh] md:h-auto md:min-h-screen md:overflow-visible">
       {shouldShowNavbar && <Sidebar isOpen={isSidebarOpen} onToggle={toggleSidebar} />}
       
       <div className={`flex-1 flex flex-col min-h-0 transition-all duration-300 ease-in-out ${

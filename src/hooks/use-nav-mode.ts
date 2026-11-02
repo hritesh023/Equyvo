@@ -43,7 +43,8 @@ export function useNavMode() {
       // system navigation buttons (safer than the gesture default).
       if (!isButtons && inset === 0) {
         const ua = (navigator.userAgent || '');
-        if (/Android/i.test(ua)) isButtons = true;
+        const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.maxTouchPoints || 0) > 1;
+        if (mobile) isButtons = true;
       }
       const newMode = isButtons ? 'buttons' : 'gesture';
       const newFloor = isButtons ? '64px' : '8px';
