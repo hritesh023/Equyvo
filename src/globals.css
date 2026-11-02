@@ -25,7 +25,7 @@
 :root {
   /* Website / browsers: floor wins over env() (max ≥ 48). */
   --equyvo-safe-top: max(48px, env(safe-area-inset-top, 0px));
-  --equyvo-safe-bottom: max(28px, env(safe-area-inset-bottom, 0px));
+  --equyvo-safe-bottom: max(56px, env(safe-area-inset-bottom, 0px));
   --equyvo-safe-left: 0px;
   --equyvo-safe-right: 0px;
 
@@ -61,7 +61,7 @@ html.cap-native {
      (proper Android-15 edge-to-edge insets handling). Fixed 28px bottom
      fill, no side pads. */
   --equyvo-safe-top: max(48px, var(--native-safe-top, 0px));
-  --equyvo-safe-bottom: max(28px, var(--native-safe-bottom, 0px));
+  --equyvo-safe-bottom: max(56px, var(--native-safe-bottom, 0px));
 }
 
 /* Fixed screen overlays anchored to the shell (notification panel &
@@ -88,7 +88,9 @@ html.cap-native {
   padding-top: max(1rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
 }
 .eq-safe-bottom {
-  padding-bottom: max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) !important;
+  /* Floor raised so the default 3-button / tablet nav bar (48-56dp) can
+     never cover fullscreen bottom action bars. */
+  padding-bottom: max(3.5rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) !important;
 }
 
 /* Fullscreen action buttons need a deliberate gap below the OS status/

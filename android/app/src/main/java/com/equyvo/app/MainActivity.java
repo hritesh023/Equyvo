@@ -88,8 +88,17 @@ public class MainActivity extends BridgeActivity {
             Insets bars = windowInsets.getInsets(
                     WindowInsetsCompat.Type.systemBars()
                             | WindowInsetsCompat.Type.displayCutout());
-            int top = Math.min(bars.top, 96);
-            int bottom = Math.min(bars.bottom, 64);
+            // WindowInsets are in PHYSICAL pixels; CSS pixels are density-
+            // independent (1 CSS px ~= 1 dp). Convert before forwarding so
+            // high-density devices don't receive shrunk values. Caps are
+            // expressed in CSS pixels to match the web floors.
+            float density = 1f;
+            try {
+                density = getResources().getDisplayMetrics().density;
+                if (density <= 0f) density = 1f;
+            } catch (Throwable ignored) {}
+            int top = Math.min(Math.round(bars.top / density), 96);
+            int bottom = Math.min(Math.round(bars.bottom / density), 80);
             String payload = top + "/" + bottom;
             if (!payload.equals(lastInsetsPayload)) {
                 lastInsetsPayload = payload;
