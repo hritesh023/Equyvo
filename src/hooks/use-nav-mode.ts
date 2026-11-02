@@ -47,7 +47,7 @@ export function useNavMode() {
         if (mobile) isButtons = true;
       }
       const newMode = isButtons ? 'buttons' : 'gesture';
-      const newFloor = isButtons ? '64px' : '8px';
+      const newFloor = isButtons ? '56px' : '8px';
 
       const currentMode = root.getAttribute('data-nav-mode');
       const currentSafe = root.style.getPropertyValue('--equyvo-safe-bottom').trim();
