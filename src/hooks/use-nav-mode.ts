@@ -37,15 +37,8 @@ export function useNavMode() {
 
     const apply = () => {
       const inset = readInset();
-      let isButtons = inset >= 36;
-      // Fallback: when no measurable inset is available on a mobile device,
-      // assume 3-button nav so the bar is raised instead of overlapping the
-      // system navigation buttons (safer than the gesture default).
-      if (!isButtons && inset === 0) {
-        const ua = (navigator.userAgent || '');
-        const mobile = /Android|iPhone|iPad|iPod|Mobile/i.test(ua) || (navigator.maxTouchPoints || 0) > 1;
-        if (mobile) isButtons = true;
-      }
+      // Buttons report >= ~32px (usually 48); gesture reports < ~32px (or 0).
+      const isButtons = inset >= 32;
       const newMode = isButtons ? 'buttons' : 'gesture';
       const newFloor = isButtons ? '56px' : '8px';
 

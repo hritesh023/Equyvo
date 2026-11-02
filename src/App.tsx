@@ -234,7 +234,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain' : ''} edge-fill`}>
+        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`}>
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
             next navigation instead of a full-app "reload" wall. */}

@@ -309,7 +309,7 @@ export function MobileBottomNav() {
   return (
     <div
       ref={barRef}
-      className="mobile-bottom-nav-fill relative z-50 shrink-0 w-full flex justify-center px-3"
+      className="mobile-bottom-nav-fill fixed bottom-0 left-0 right-0 z-50 flex justify-center px-3"
     >
       <div className="floating-bottom-nav-pill mx-auto flex w-full max-w-md items-stretch justify-around rounded-3xl border border-border/40 bg-background/70 px-2 py-1.5 shadow-2xl backdrop-blur-xl">
       {navItems.slice(0, 6).map((item) => (
