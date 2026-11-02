@@ -30,6 +30,7 @@ export function useNavMode() {
         inset = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
         document.body.removeChild(probe);
       }
+      const isButtons = inset >= 40;
       const newMode = isButtons ? 'buttons' : 'gesture';
       if (root.getAttribute('data-nav-mode') === newMode) return;
       root.style.setProperty('--equyvo-safe-bottom-floor', isButtons ? '56px' : '4px');
