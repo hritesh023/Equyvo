@@ -32,7 +32,7 @@ export function useNavMode() {
       }
       const newMode = isButtons ? 'buttons' : 'gesture';
       if (root.getAttribute('data-nav-mode') === newMode) return;
-      root.style.setProperty('--equyvo-safe-bottom-floor', isButtons ? '56px' : '12px');
+      root.style.setProperty('--equyvo-safe-bottom-floor', isButtons ? '56px' : '4px');
       root.classList.remove('nav-mode-buttons', 'nav-mode-gesture');
       root.classList.add(isButtons ? 'nav-mode-buttons' : 'nav-mode-gesture');
       root.setAttribute('data-nav-mode', newMode);
