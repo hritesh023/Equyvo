@@ -77,7 +77,7 @@ export function useNavMode() {
       // overlap the system navigation bar (3-button or gesture) on any device.
       const isButtons = inset >= 24;
       const newMode = isButtons ? 'buttons' : 'gesture';
-      const newFloor = '56px';
+      const newFloor = '64px';
 
       const currentMode = root.getAttribute('data-nav-mode');
       const currentSafe = root.style.getPropertyValue('--equyvo-safe-bottom').trim();
