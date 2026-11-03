@@ -23,8 +23,9 @@
      paint or if JS measurement ever failed). The bottom bar publishes
      --equyvo-bar-bottom (measured by MobileBottomNav). */
 :root {
-  /* Website / browsers: floor wins over env() (max ≥ 48). */
-  --equyvo-safe-top: max(48px, env(safe-area-inset-top, 0px));
+  /* Website / browsers: no forced top floor, so the header sits flush at the
+     top (no empty gap) on desktop; env() still clears notches on mobile web. */
+  --equyvo-safe-top: env(safe-area-inset-top, 0px);
   --equyvo-safe-bottom-floor: 56px;
   --equyvo-safe-bottom: max(var(--equyvo-safe-bottom-floor), env(safe-area-inset-bottom, 0px));
   --equyvo-safe-left: 0px;

@@ -14,14 +14,14 @@ export function useNavMode() {
     const root = document.documentElement;
 
     const readInset = (): number => {
+      const isNative = root.classList.contains('cap-native') ||
+        !!(window as any)?.Capacitor?.isNativePlatform?.();
+
       // Prefer a real native inset whenever MainActivity has published one,
       // even before the cap-native class is applied.
       const nativeRaw = getComputedStyle(root).getPropertyValue('--native-safe-bottom').trim();
       const nativeNum = parseFloat(nativeRaw);
-      if (Number.isFinite(nativeNum) && nativeNum > 0) {
-        root.classList.add('cap-native');
-        return nativeNum;
-      }
+
       // Web / no native insets: probe env(safe-area-inset-bottom).
       let probe: HTMLDivElement | null = document.createElement('div');
       probe.style.cssText =
@@ -29,16 +29,36 @@ export function useNavMode() {
         'padding-bottom:env(safe-area-inset-bottom,0px);';
       document.body.appendChild(probe);
       const cs = getComputedStyle(probe);
-      const n = parseFloat(cs.paddingBottom) || 0;
+      const envNum = parseFloat(cs.paddingBottom) || 0;
       document.body.removeChild(probe);
       probe = null;
-      return n;
+
+      // Native fallback heuristic: when the OS inset is not published (or is 0)
+      // but the WebView viewport is clearly shorter than the screen, treat the
+      // difference as a button/gesture nav bar. This mirrors the website's
+      // env()-based detection for native shells.
+      let heuristic = 0;
+      if (isNative) {
+        try {
+          heuristic = Math.max(0, (window.screen?.height || 0) - (window.innerHeight || 0));
+        } catch {
+          heuristic = 0;
+        }
+      }
+
+      const inset = Math.max(
+        Number.isFinite(nativeNum) && nativeNum > 0 ? nativeNum : 0,
+        envNum,
+        heuristic,
+      );
+      if (isNative && inset > 0) root.classList.add('cap-native');
+      return inset;
     };
 
     const apply = () => {
       const inset = readInset();
-      // Buttons report >= ~32px (usually 48); gesture reports < ~32px (or 0).
-      const isButtons = inset >= 32;
+      // Buttons report >= ~24px (usually 42-48); gesture reports < ~24px.
+      const isButtons = inset >= 24;
       const newMode = isButtons ? 'buttons' : 'gesture';
       const newFloor = isButtons ? '56px' : '8px';
 
