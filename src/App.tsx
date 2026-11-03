@@ -109,25 +109,33 @@ const AppContent = () => {
 
   useEffect(() => {
     const initAuth = async () => {
-      extractTokenFromUrl();
-      const authStatus = await checkAuthStatus();
-      if (authStatus.isAuthenticated && authStatus.user) {
-        setUser(authStatus.user);
-        // Link any guest-paid plan (same email) to this account.
-        claimBilling().then((c) => {
-          if (c && c.granted.length) {
-            window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
+      try {
+        extractTokenFromUrl();
+        const authStatus = await checkAuthStatus();
+        if (authStatus.isAuthenticated && authStatus.user) {
+          setUser(authStatus.user);
+          // Link any guest-paid plan (same email) to this account.
+          claimBilling().then((c) => {
+            if (c && c.granted.length) {
+              window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
+            }
+          }).catch(() => { /* ignore */ });
+        } else {
+          const storedUser = getStoredUser();
+          if (storedUser) {
+            setUser(storedUser);
           }
-        });
-      } else {
-        const storedUser = getStoredUser();
-        if (storedUser) {
-          setUser(storedUser);
         }
+      } catch (e) {
+        console.error('initAuth failed', e);
+      } finally {
+        setIsLoading(false);
       }
-      setIsLoading(false);
     };
     initAuth();
+    // Hard fallback so the app can never hang forever on the loading screen.
+    const fallback = window.setTimeout(() => setIsLoading(false), 8000);
+    return () => window.clearTimeout(fallback);
   }, []);
 
   const toggleSidebar = () => {

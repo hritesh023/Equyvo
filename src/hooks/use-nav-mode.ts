@@ -14,6 +14,7 @@ export function useNavMode() {
     const root = document.documentElement;
 
     const readInset = (): number => {
+      try {
       const isNative = root.classList.contains('cap-native') ||
         !!(window as any)?.Capacitor?.isNativePlatform?.();
 
@@ -68,6 +69,9 @@ export function useNavMode() {
       );
       if (isNative && inset > 0) root.classList.add('cap-native');
       return inset;
+      } catch {
+        return 0;
+      }
     };
 
     const apply = () => {
@@ -97,7 +101,7 @@ export function useNavMode() {
       }
     };
 
-    apply();
+    try { apply(); } catch { /* ignore */ }
 
     const observer = new MutationObserver(() => apply());
     observer.observe(root, {
@@ -105,7 +109,7 @@ export function useNavMode() {
       attributeFilter: ['style', 'class', 'data-native-insets', 'data-nav-mode'],
     });
 
-    const onAny = () => apply();
+    const onAny = () => { try { apply(); } catch { /* ignore */ } };
     window.addEventListener('resize', onAny);
     window.addEventListener('orientationchange', onAny);
     window.addEventListener('pageshow', onAny);
