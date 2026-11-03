@@ -99,9 +99,6 @@ public class MainActivity extends BridgeActivity {
                 if (density <= 0f) density = 1f;
             } catch (Throwable ignored) {}
             int top = Math.min(Math.round(bars.top / density), 96);
-            // Some devices report 0 bottom inset for transparent 3-button navs;
-            // fall back to the platform navigation-bar resource height so the
-            // web layer can always reserve real space for the system nav.
             int navBarRes = 0;
             try {
                 int resId = getResources().getIdentifier("navigation_bar_height", "dimen", "android");

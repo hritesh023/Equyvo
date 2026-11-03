@@ -114,7 +114,6 @@ const AppContent = () => {
         const authStatus = await checkAuthStatus();
         if (authStatus.isAuthenticated && authStatus.user) {
           setUser(authStatus.user);
-          // Link any guest-paid plan (same email) to this account.
           claimBilling().then((c) => {
             if (c && c.granted.length) {
               window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
@@ -133,7 +132,6 @@ const AppContent = () => {
       }
     };
     initAuth();
-    // Hard fallback so the app can never hang forever on the loading screen.
     const fallback = window.setTimeout(() => setIsLoading(false), 8000);
     return () => window.clearTimeout(fallback);
   }, []);
@@ -294,14 +292,22 @@ const AppContent = () => {
 };
 
 const App = () => {
-  // Skip the animated splash on startup: it has intermittently hung on some
-  // devices and blocked the whole app. Render the real app immediately.
-  const [showApp, setShowApp] = useState(true);
+  const [showApp, setShowApp] = useState(false);
+  React.useEffect(() => {
+    const timer = setTimeout(() => {
+      setShowApp(true);
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, []);
   // Initialize Mobile Ads SDK once (no-op on web; real fill on native shell).
   React.useEffect(() => {
     initializeAds();
     initBackNavigation();
   }, []);
+
+  if (!showApp) {
+    return <SplashScreen onFinish={() => setShowApp(true)} />;
+  }
 
   return (
     <ThemeProvider defaultTheme="dark">
