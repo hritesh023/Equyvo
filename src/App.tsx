@@ -294,22 +294,14 @@ const AppContent = () => {
 };
 
 const App = () => {
-  const [showApp, setShowApp] = useState(false);
-  React.useEffect(() => {
-    const timer = setTimeout(() => {
-      setShowApp(true);
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, []);
+  // Skip the animated splash on startup: it has intermittently hung on some
+  // devices and blocked the whole app. Render the real app immediately.
+  const [showApp, setShowApp] = useState(true);
   // Initialize Mobile Ads SDK once (no-op on web; real fill on native shell).
   React.useEffect(() => {
     initializeAds();
     initBackNavigation();
   }, []);
-
-  if (!showApp) {
-    return <SplashScreen onFinish={() => setShowApp(true)} />;
-  }
 
   return (
     <ThemeProvider defaultTheme="dark">
