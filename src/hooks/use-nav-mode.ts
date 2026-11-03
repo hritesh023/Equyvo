@@ -73,9 +73,11 @@ export function useNavMode() {
     const apply = () => {
       const inset = readInset();
       // Buttons report >= ~24px (usually 42-48); gesture reports < ~24px.
+      // Mirror the website: always keep a 56px floor so the bottom nav can never
+      // overlap the system navigation bar (3-button or gesture) on any device.
       const isButtons = inset >= 24;
       const newMode = isButtons ? 'buttons' : 'gesture';
-      const newFloor = isButtons ? '56px' : '8px';
+      const newFloor = '56px';
 
       const currentMode = root.getAttribute('data-nav-mode');
       const currentSafe = root.style.getPropertyValue('--equyvo-safe-bottom').trim();
