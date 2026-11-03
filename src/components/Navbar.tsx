@@ -309,20 +309,20 @@ export function MobileBottomNav() {
   return (
     <div
       ref={barRef}
-      className="mobile-bottom-nav-fill fixed bottom-0 left-0 right-0 z-50 flex justify-center px-3"
+      className="mobile-bottom-nav-fill fixed bottom-0 left-0 right-0 z-50 flex justify-center px-2"
     >
-      <div className="floating-bottom-nav-pill mx-auto flex w-full max-w-sm items-stretch justify-around rounded-3xl border border-border/40 bg-background/70 px-2 py-1.5 shadow-2xl backdrop-blur-xl">
+      <div className="floating-bottom-nav-pill mx-auto flex w-full max-w-xs items-stretch justify-around rounded-2xl border border-border/40 bg-background/70 px-1.5 py-1 shadow-2xl backdrop-blur-xl">
       {navItems.slice(0, 6).map((item) => (
         <Link
           key={item.name}
           to={item.path}
-          className={`flex min-w-0 flex-1 flex-col items-center gap-1 rounded-lg px-1 py-1 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
+          className={`flex min-w-0 flex-1 flex-col items-center gap-0.5 rounded-lg px-0.5 py-0.5 text-xs transition-all duration-200 hover:scale-105 touch-target mobile-nav-item ${location.pathname === item.path
             ? 'text-primary scale-105 bg-primary/10 mobile-nav-active'
             : 'text-muted-foreground hover:text-foreground hover:bg-accent/20 mobile-nav-inactive'
             }`}
         >
-          <item.icon className="h-4 w-4 shrink-0" />
-          <span className="max-w-full truncate text-[10px] font-medium">{t(item.name)}</span>
+          <item.icon className="h-3.5 w-3.5 shrink-0" />
+          <span className="max-w-full truncate text-[9px] font-medium leading-tight">{t(item.name)}</span>
           <span className="sr-only">{t(item.name)}</span>
         </Link>
       ))}
