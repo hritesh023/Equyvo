@@ -39,8 +39,8 @@ export function useNavMode() {
         const inset = readInset();
         const isButtons = inset >= 24;
         const newMode = isButtons ? 'buttons' : 'gesture';
-        const newFloor = '52px';
-        const newSafe = Math.max(52, inset) + 'px';
+        const newFloor = '12px';
+        const newSafe = Math.max(12, inset) + 'px';
 
         const currentMode = root.getAttribute('data-nav-mode');
         const currentSafe = root.style.getPropertyValue('--equyvo-safe-bottom').trim();
