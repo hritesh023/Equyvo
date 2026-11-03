@@ -1428,6 +1428,9 @@ html.cap-native {
     padding-left: max(0px, var(--equyvo-safe-left));
     padding-right: max(0px, var(--equyvo-safe-right));
     box-sizing: border-box;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
   }
 
   .mobile-top-nav-fill {
@@ -1439,6 +1442,11 @@ html.cap-native {
     padding-left: max(0.5rem, var(--equyvo-safe-left));
     padding-right: max(0.5rem, var(--equyvo-safe-right));
     box-sizing: border-box;
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-user-drag: none;
+    user-drag: none;
   }
 
   /* Mobile chat shell: exact unibody content-column height (viewport minus
