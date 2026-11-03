@@ -75,6 +75,7 @@ public class MainActivity extends BridgeActivity {
                 try {
                     if (bridge != null && bridge.getWebView() != null) {
                         bridge.getWebView().addJavascriptInterface(new PiPBridge(), "AndroidPiP");
+                        bridge.getWebView().addJavascriptInterface(new NavBridge(), "AndroidNav");
                     } else {
                         pipHandler.postDelayed(this, 200L);
                     }
@@ -121,6 +122,31 @@ public class MainActivity extends BridgeActivity {
     public void onDestroy() {
         insetHandler.removeCallbacksAndMessages(null);
         super.onDestroy();
+    }
+
+    /** JS bridge exposing the measured bottom nav inset. */
+    public class NavBridge {
+        @android.webkit.JavascriptInterface
+        public int getBottomInset() {
+            try {
+                View content = findViewById(android.R.id.content);
+                if (content != null) {
+                    WindowInsetsCompat insets = ViewCompat.getRootWindowInsets(content);
+                    if (insets != null) {
+                        Insets bars = insets.getInsets(
+                                WindowInsetsCompat.Type.systemBars()
+                                        | WindowInsetsCompat.Type.displayCutout());
+                        float density = 1f;
+                        try {
+                            density = getResources().getDisplayMetrics().density;
+                            if (density <= 0f) density = 1f;
+                        } catch (Throwable ignored) {}
+                        return Math.min(Math.round(bars.bottom / density), 80);
+                    }
+                }
+            } catch (Throwable ignored) {}
+            return pendingBottom;
+        }
     }
 
     /** JS bridge for system-level Picture-in-Picture. */

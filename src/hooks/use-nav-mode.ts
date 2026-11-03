@@ -22,6 +22,20 @@ export function useNavMode() {
       const nativeRaw = getComputedStyle(root).getPropertyValue('--native-safe-bottom').trim();
       const nativeNum = parseFloat(nativeRaw);
 
+      // Native bridge (MainActivity) — direct query, bypasses CSS var timing.
+      let bridgeNum = 0;
+      if (isNative) {
+        try {
+          const nav = (window as any)?.AndroidNav;
+          if (nav && typeof nav.getBottomInset === 'function') {
+            const v = nav.getBottomInset();
+            if (Number.isFinite(v) && v > 0) bridgeNum = v;
+          }
+        } catch {
+          bridgeNum = 0;
+        }
+      }
+
       // Web / no native insets: probe env(safe-area-inset-bottom).
       let probe: HTMLDivElement | null = document.createElement('div');
       probe.style.cssText =
@@ -48,6 +62,7 @@ export function useNavMode() {
 
       const inset = Math.max(
         Number.isFinite(nativeNum) && nativeNum > 0 ? nativeNum : 0,
+        bridgeNum,
         envNum,
         heuristic,
       );
