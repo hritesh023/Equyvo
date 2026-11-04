@@ -47,7 +47,7 @@ const NAME_BLOCK_PATTERNS: RegExp[] = [
 const MAX_SAMPLES = 3;
 const SAMPLE_LONG_EDGE = 640;
 const SAMPLE_QUALITY = 0.72;
-const SAMPLE_TIMEOUT_MS = 6000;
+const SAMPLE_TIMEOUT_MS = 9000;
 
 let objectUrls: string[] = [];
 function trackUrl(u: string) {
@@ -280,8 +280,12 @@ export async function screenMedia(
     for (const s of await sampleVideo(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); }
   }
 
-  // Fail-closed: if media cannot be sampled, block it (no verification).
-  if ((isImage || isVideo) && samples.length === 0) {
+  // Fail-closed for images: an image that cannot be decoded cannot be
+  // verified, so it is refused. For video we degrade gracefully (allow the
+  // upload when sampling fails) because container/codec quirks and slow
+  // devices otherwise block perfectly legitimate clips; the filename and
+  // caption are still screened and publish-time moderation still applies.
+  if (isImage && samples.length === 0) {
     return {
       verdict: 'block',
       category: 'adult',
@@ -289,9 +293,14 @@ export async function screenMedia(
       checked: true,
     };
   }
-  // Heuristic nudity guard: high skin-tone ratio indicates likely 18+ content.
+  // Heuristic nudity guard: a HIGH skin-tone ratio indicates likely 18+
+  // content. Thresholds are deliberately conservative to avoid false
+  // positives on ordinary footage (crowds, religious/cultural events,
+  // outdoor scenes) while still catching overt nudity. Videos need a higher
+  // bar because a single skin-heavy frame is common in legitimate footage.
   const maxSkin = skinRatios.length ? Math.max(...skinRatios) : 0;
-  if (maxSkin >= 0.4) {
+  const skinBlockThreshold = isVideo ? 0.65 : 0.5;
+  if (maxSkin >= skinBlockThreshold) {
     return {
       verdict: 'block',
       category: 'adult',

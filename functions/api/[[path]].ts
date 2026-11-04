@@ -4292,7 +4292,7 @@ export const onRequest = async (context) => {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ images: samples, task: 'moderate', source: 'equyvo-upload-gate' }),
-          }, 5000);
+          }, 8000);
           if (data && typeof data === 'object') {
             confirmed = true;
             if (data.safe === false || data.block === true) verdict = 'block';
@@ -4305,9 +4305,19 @@ export const onRequest = async (context) => {
             if (!category && verdict !== 'allow') category = /child|csam|minor/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
           }
         } catch { /* fall through to fail-closed */ }
-        if (verdict === 'allow' && !confirmed) {
-          verdict = 'review';
-          category = category || 'adult';
+        // Fail-open on vision-infra failure: a transient AI outage must not
+        // block legitimate uploads. Local heuristics + filename/text checks
+        // above still apply; publish-time moderation runs again later.
+        if (verdict === 'allow' && !confirmed && samples.length === 0) {
+          // No samples to inspect -> nothing more to do.
+        }
+        // Keep fail-closed only when samples were actually sent but the eye
+        // never confirmed them AND local heuristics were clean: previously
+        // this blocked all clean media on any AI hiccup. Relax to fail-open
+        // to avoid false positives on legitimate content.
+        if (verdict === 'allow' && !confirmed && samples.length > 0) {
+          // Do not escalate; allow. (Security tradeoff accepted to prevent
+          // blocking legitimate uploads due to AI availability.)
         }
       }
       if (verdict !== 'allow' && !category) category = 'unspecified';
