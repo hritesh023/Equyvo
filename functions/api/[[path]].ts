@@ -1837,8 +1837,8 @@ const PLAN_CATALOG = {
   eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 50,   maxVideoSec: 300,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
   eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 100,  maxVideoSec: 1800,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
   eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 250,  maxVideoSec: 3600,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 1999, storageBytes: 150 * GB,  maxUploadMB: 500,  maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 5999, storageBytes: 500 * GB,  maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 500,  maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
   eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true, superchat: true, liveMoments: true },
 };
 const DEFAULT_PLAN_ID = 'eq_free';
