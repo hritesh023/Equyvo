@@ -7245,6 +7245,14 @@ export const onRequest = async (context) => {
       const starting = path === '/api/live/start';
       const clean = sanitizeBody(body || {});
       const liveTitle = String(clean.title || clean.liveTitle || '').trim().slice(0, 160);
+      // Content safety: live titles must follow community guidelines.
+      if (starting && liveTitle) {
+        try {
+          await moderateContent(env, { text: liveTitle });
+        } catch (e) {
+          return json({ error: (e && e.message) || 'Stream title violates community guidelines.', code: 'CONTENT_BLOCKED' }, (e && e.status) || 400, cors);
+        }
+      }
       const liveContentId = String(clean.contentId || clean.liveContentId || clean.id || '').slice(0, 64);
       const liveThumbnail = String(clean.thumbnail || clean.liveThumbnail || '').slice(0, 1000);
       try {
