@@ -47,7 +47,7 @@ export const EQUYVO_PLANS: PlanDef[] = [
     'AI content tools with monthly credits',
     'Priority media processing',
   ] },
-  { id: 'eq_creator', label: 'Creator', priceInr: 499, tagline: 'Content Creator', creatorPick: true, storageGB: 150, maxUploadMB: 500, maxVideoSec: 7200, monthlyUploads: 5000, features: [
+  { id: 'eq_creator', label: 'Creator', priceInr: 1999, tagline: 'Content Creator', creatorPick: true, storageGB: 150, maxUploadMB: 500, maxVideoSec: 7200, monthlyUploads: 5000, features: [
     '150 GB storage',
     '500 MB maximum upload',
     'Creator analytics and audience insights',
@@ -62,7 +62,7 @@ export const EQUYVO_PLANS: PlanDef[] = [
     '15% Equyvo platform fee, subject to payment and store charges',
     'Ad-free experience',
   ] },
-  { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, tagline: 'Professional Creator', storageGB: 500, maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, features: [
+  { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 5999, tagline: 'Professional Creator', storageGB: 500, maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, features: [
     '500 GB storage',
     '1 GB maximum upload',
     'Advanced AI editing credits and workflows',
