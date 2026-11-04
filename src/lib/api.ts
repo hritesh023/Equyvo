@@ -3,7 +3,7 @@
 // In production, same origin (Pages serves both frontend and functions)
 
 import { normalizeContentItem, normalizeContentList } from './media';
-import { inferMimeType } from './mime';
+import { inferMimeType, detectMimeFromBytes, isAllowedMime } from './mime';
 
 function resolveApiBase(): string {
   try {
@@ -284,10 +284,10 @@ async function uploadOnePart(
 async function uploadChunked(
   payload: Blob,
   folder: string | undefined,
-  meta: { duration?: number } | undefined,
+  meta: { duration?: number; type?: string } | undefined,
   onProgress: (loaded: number, phase: UploadPhase) => void,
 ): Promise<{ data?: UploadResult; error?: string }> {
-  const type = inferMimeType(payload as any) || 'application/octet-stream';
+  const type = (meta?.type && isAllowedMime(meta.type) ? meta.type : inferMimeType(payload as any)) || 'application/octet-stream';
   const total = payload.size;
   const init = await request<{ data?: { chunked: boolean; uploadId?: string; partSize?: number; r2Key?: string | null }; error?: string }>(
     '/upload/init',
@@ -707,6 +707,18 @@ export const api = {
       // (network hiccup, sampling quirk) fails open and the publish-time
       // server moderation still applies.
       if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
+    }
+    // Security: detect the real media type from the file's magic bytes so a
+    // renamed/disguised file cannot bypass the type gate.
+    let detectedMime = '';
+    try {
+      const head = await file.slice(0, 64).arrayBuffer();
+      detectedMime = detectMimeFromBytes(head);
+      if (detectedMime && !isAllowedMime(detectedMime)) {
+        throw new Error('Only images, videos and audio are allowed');
+      }
+    } catch (e) {
+      if (e instanceof Error && e.message === 'Only images, videos and audio are allowed') throw e;
     }
     step(0, 1, 'processing');
     let payload: File | Blob = file;

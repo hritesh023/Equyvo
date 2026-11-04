@@ -2995,6 +2995,47 @@ function inferMimeTypeServer(fileOrType, name) {
   }
   return t || 'application/octet-stream';
 }
+function detectMimeFromBytes(bytes) {
+  try {
+    const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+    if (b.length < 4) return '';
+    // JPEG
+    if (b[0] === 0xFF && b[1] === 0xD8 && b[2] === 0xFF) return 'image/jpeg';
+    // PNG
+    if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4E && b[3] === 0x47) return 'image/png';
+    // GIF
+    if (b[0] === 0x47 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x38) return 'image/gif';
+    // WebP
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x45 && b[10] === 0x42 && b[11] === 0x50) return 'image/webp';
+    // BMP
+    if (b[0] === 0x42 && b[1] === 0x4D) return 'image/bmp';
+    // ftyp-based (MP4/MOV/HEIC/M4A)
+    if (b[4] === 0x66 && b[5] === 0x74 && b[6] === 0x79 && b[7] === 0x70) {
+      const brand = String.fromCharCode(b[8]||0, b[9]||0, b[10]||0, b[11]||0);
+      if (/heic|heix|mif1|msf1|hevc|hevx/.test(brand)) return 'image/heic';
+      if (brand === 'qt  ') return 'video/quicktime';
+      if (/M4A |M4B |M4P /.test(brand)) return 'audio/mp4';
+      if (/isom|iso2|mp41|mp42|avc1|mp4v/.test(brand)) return 'video/mp4';
+    }
+    // WebM / Matroska
+    if (b[0] === 0x1A && b[1] === 0x45 && b[2] === 0xDF && b[3] === 0xA3) return 'video/webm';
+    // AVI
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x41 && b[9] === 0x56 && b[10] === 0x49 && b[11] === 0x20) return 'video/x-msvideo';
+    // OGG
+    if (b[0] === 0x4F && b[1] === 0x67 && b[2] === 0x67 && b[3] === 0x53) return 'audio/ogg';
+    // FLAC
+    if (b[0] === 0x66 && b[1] === 0x4C && b[2] === 0x61 && b[3] === 0x43) return 'audio/flac';
+    // WAV
+    if (b[0] === 0x52 && b[1] === 0x49 && b[2] === 0x46 && b[3] === 0x46 && b[8] === 0x57 && b[9] === 0x41 && b[10] === 0x56 && b[11] === 0x45) return 'audio/wav';
+    // MP3
+    if (b[0] === 0x49 && b[1] === 0x44 && b[2] === 0x33) return 'audio/mpeg';
+    if (b[0] === 0xFF && (b[1] === 0xFB || b[1] === 0xF3 || b[1] === 0xF2)) return 'audio/mpeg';
+    // ADTS AAC
+    if (b[0] === 0xFF && (b[1] === 0xF1 || b[1] === 0xF9)) return 'audio/aac';
+  } catch { /* ignore */ }
+  return '';
+}
+
 function mimeAllowed(mime) {
   const t = String(mime || '').trim();
   if (!t) return false;
@@ -5867,6 +5908,17 @@ export const onRequest = async (context) => {
         partBytes = await file.arrayBuffer();
         partHash = await sha256Hex(partBytes);
       } catch { /* hashing is metadata only — continue */ }
+      // Security: verify the first chunk's real bytes.
+      if (partIndex === 1 && partBytes) {
+        const detected = detectMimeFromBytes(partBytes);
+        if (detected && !mimeAllowed(detected)) {
+          return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
+        }
+        if (detected) {
+          session.detectedMime = detected;
+          try { await kv.put('upl:' + uploadId, JSON.stringify(session), { expirationTtl: 6 * 60 * 60 }); } catch {}
+        }
+      }
       let etag = '';
       try {
         const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
@@ -6033,7 +6085,7 @@ export const onRequest = async (context) => {
         .replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
 
       if (!file || typeof file === 'string') return json({ error: 'No file provided' }, 400, cors);
-      const fileMime = inferMimeTypeServer(file, file.name);
+      let fileMime = inferMimeTypeServer(file, file.name);
       if (!mimeAllowed(fileMime)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
 
       // Per-plan size cap wins over the global MAX_UPLOAD_MB env.
@@ -6066,6 +6118,19 @@ export const onRequest = async (context) => {
         }
       } catch { /* dedupe best-effort; continue to upload */ }
 
+      // Security: verify the file's actual bytes, not just its declared
+      // type/extension. Spoofed executables or mislabeled media are rejected.
+      try {
+        if (bytes) {
+          const detectedMime = detectMimeFromBytes(bytes);
+          if (detectedMime) {
+            if (!mimeAllowed(detectedMime)) {
+              return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
+            }
+            fileMime = detectedMime;
+          }
+        }
+      } catch { /* best-effort */ }
       const cloudName = env.CLOUDINARY_CLOUD_NAME;
       const uploadPreset = env.CLOUDINARY_UPLOAD_PRESET;
       const hasR2 = !!env.EQUYVO_R2;

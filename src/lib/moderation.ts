@@ -12,7 +12,7 @@
 // blocks (verdict !== 'allow') are hard blocks here.
 // ---------------------------------------------------------------------------
 
-import { inferMimeType } from './mime';
+import { inferMimeType, detectMimeFromBytes, isAllowedMime } from './mime';
 
 export type ScreenVerdict = 'allow' | 'review' | 'block';
 
@@ -226,6 +226,20 @@ export async function screenMedia(
   }
 
   const inferred = inferMimeType(file as any);
+  // Security: verify real bytes, not just name/type.
+  try {
+    const head = await (file as Blob).slice(0, 64).arrayBuffer();
+    const detected = detectMimeFromBytes(head);
+    if (detected && !isAllowedMime(detected)) {
+      return {
+        verdict: 'block',
+        category: 'illegal',
+        message: 'This file type is not allowed on Equyvo. Only photos, videos and audio can be posted.',
+        checked: true,
+      };
+    }
+  } catch { /* best-effort */ }
+
   const isImage = inferred.startsWith('image/') && !inferred.includes('gif');
   const isVideo = inferred.startsWith('video/');
   const samples: string[] = [];
