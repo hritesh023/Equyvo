@@ -54,12 +54,33 @@ class AISearchService {
     try {
       const stored = localStorage.getItem('equyvo_search_history');
       if (stored) {
-        this.searchHistory = JSON.parse(stored);
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          this.searchHistory = parsed;
+        } else {
+          this.searchHistory = [];
+        }
+      } else {
+        this.searchHistory = [];
       }
     } catch {
       // If loading fails, just return empty history
+      this.searchHistory = [];
     }
     return this.searchHistory;
+  }
+
+  // Delete one recent search (by exact query) and persist.
+  deleteSearch(query: string): void {
+    const q = String(query || '').trim();
+    if (!q) return;
+    this.loadSearchHistory();
+    this.searchHistory = this.searchHistory.filter((item) => item.query !== q);
+    try {
+      localStorage.setItem('equyvo_search_history', JSON.stringify(this.searchHistory));
+    } catch {
+      // ignore storage failures
+    }
   }
 
   // Save search to history
@@ -106,6 +127,9 @@ class AISearchService {
 
   // Generate AI-powered suggestions based on input
   async generateSuggestions(query: string): Promise<SearchSuggestion[]> {
+    // Always rehydrate recent searches from storage so they appear reliably
+    // (the in-memory list can be stale after a reload or a new tab).
+    this.loadSearchHistory();
     const queryLower = query.toLowerCase().trim();
 
     if (!queryLower) {
@@ -598,12 +622,17 @@ export function useAISearch() {
     return searchService.loadSearchHistory();
   }, [searchService]);
 
+  const deleteSearch = useCallback((query: string) => {
+    searchService.deleteSearch(query);
+  }, [searchService]);
+
   return {
     suggestions,
     isLoading,
     generateSuggestions,
     saveSearch,
-    getSearchHistory
+    getSearchHistory,
+    deleteSearch
   };
 }
 

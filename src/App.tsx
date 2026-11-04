@@ -61,6 +61,7 @@ const AppContent = () => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
+  const [chatOpen, setChatOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
   const isMobile = useIsMobile();
@@ -98,6 +99,17 @@ const AppContent = () => {
       setIsSidebarOpen(true);
     }
   }, [isTablet]);
+
+  // Hide the mobile bottom nav while a chat conversation is open so it can't
+  // overlay the message composer.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent)?.detail;
+      setChatOpen(!!detail?.open);
+    };
+    window.addEventListener('equyvo:chat-open', handler);
+    return () => window.removeEventListener('equyvo:chat-open', handler);
+  }, []);
 
   // Scroll to top when route changes (the unibody shell scrolls inside the
   // <main> column on phones; the window scrolls on desktop).
@@ -284,7 +296,7 @@ const AppContent = () => {
       <WebInterstitialAd pathname={location.pathname} />
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
-      {shouldShowNavbar && <MobileBottomNav />}
+      {shouldShowNavbar && !chatOpen && <MobileBottomNav />}
       <Toaster />
     </div>
   </div>

@@ -108,6 +108,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const activeChat = threads.find((t) => t.id === activeId) || null;
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
 
+  // Notify the app shell (bottom nav) whenever a conversation is open so the
+  // nav can step out of the way of the pinned composer (WhatsApp-style).
+  useEffect(() => {
+    window.dispatchEvent(new CustomEvent('equyvo:chat-open', { detail: { open: !!activeId } }));
+    return () => {
+      window.dispatchEvent(new CustomEvent('equyvo:chat-open', { detail: { open: false } }));
+    };
+  }, [activeId]);
+
   const refreshThreads = () => setThreads(listThreads());
   const refreshMsgs = (id: string | null) => setMsgs(id ? listMessages(id) : []);
 

@@ -74,6 +74,34 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
   const [userAvatarByName, setUserAvatarByName] = useState<Record<string, string>>({});
   
   const inputRef = useRef<HTMLInputElement>(null);
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressedRef = useRef(false);
+
+  const { suggestions, isLoading, generateSuggestions, saveSearch, deleteSearch } = useAISearch();
+
+  const startLongPress = useCallback((suggestion: SearchSuggestion) => {
+    longPressedRef.current = false;
+    if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = window.setTimeout(() => {
+      longPressedRef.current = true;
+      const ok = window.confirm(`Delete "${suggestion.label}" from recent searches?`);
+      if (ok) {
+        deleteSearch(suggestion.label);
+        if (!query.trim()) {
+          void generateSuggestions('');
+        } else {
+          void generateSuggestions(query);
+        }
+      }
+    }, 500);
+  }, [deleteSearch, generateSuggestions, query]);
+
+  const cancelLongPress = useCallback(() => {
+    if (longPressTimerRef.current) {
+      window.clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }, []);
 
   // Keep a name->avatar cache populated from real Equyvo account matches so any
   // suggestion row (AI/content/recent) that is actually a profile renders the
@@ -89,8 +117,6 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     });
   }, [people]);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const { suggestions, isLoading, generateSuggestions, saveSearch } = useAISearch();
-
   // Enhanced SEO-friendly search tracking
   const trackSearchEvent = useCallback((searchQuery: string, action: string) => {
     // Google Analytics-like tracking
@@ -227,9 +253,12 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     // Only update state if value actually changed to prevent unnecessary re-renders
     if (value !== query) {
       setQuery(value);
-      // Only open dropdown if there's content or if we're typing (not deleting to empty)
-      if (value.trim() || value.length > query.length) {
+      // Keep the suggestion surface open so recent searches stay visible.
+      if (value.trim() || value === '' || value.length > query.length) {
         setIsOpen(true);
+        if (value === '') {
+          void generateSuggestions('');
+        }
       } else {
         setIsOpen(false);
       }
@@ -243,7 +272,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
     // Google/YouTube's recent-search suggestions.
     setIsOpen(true);
     if (!query.trim()) {
-      generateSuggestions(''); // Loads recent searches + defaults
+      void generateSuggestions(''); // Loads recent searches + defaults
     }
   };
 
@@ -601,7 +630,26 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                     {groupedSuggestions['recent'].map((suggestion, index) => (
                       <button
                         key={suggestion.id}
-                        onClick={() => handleSuggestionClick(suggestion)}
+                        onClick={(e) => {
+                          if (longPressedRef.current) {
+                            e.preventDefault();
+                            longPressedRef.current = false;
+                            return;
+                          }
+                          handleSuggestionClick(suggestion);
+                        }}
+                        onTouchStart={() => startLongPress(suggestion)}
+                        onTouchEnd={cancelLongPress}
+                        onTouchMove={cancelLongPress}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          const ok = window.confirm(`Delete "${suggestion.label}" from recent searches?`);
+                          if (ok) {
+                            deleteSearch(suggestion.label);
+                            if (!query.trim()) void generateSuggestions('');
+                            else void generateSuggestions(query);
+                          }
+                        }}
                         className={cn(
                           "w-full flex items-center justify-between p-3 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group transform hover:scale-[1.02]",
                           selectedIndex === navIndexOf(suggestion.id) && "bg-accent/80"
@@ -641,7 +689,26 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                     {groupedSuggestions['trending'].slice(0, 3).map((suggestion, index) => (
                       <button
                         key={suggestion.id}
-                        onClick={() => handleSuggestionClick(suggestion)}
+                        onClick={(e) => {
+                          if (longPressedRef.current) {
+                            e.preventDefault();
+                            longPressedRef.current = false;
+                            return;
+                          }
+                          handleSuggestionClick(suggestion);
+                        }}
+                        onTouchStart={() => startLongPress(suggestion)}
+                        onTouchEnd={cancelLongPress}
+                        onTouchMove={cancelLongPress}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          const ok = window.confirm(`Delete "${suggestion.label}" from recent searches?`);
+                          if (ok) {
+                            deleteSearch(suggestion.label);
+                            if (!query.trim()) void generateSuggestions('');
+                            else void generateSuggestions(query);
+                          }
+                        }}
                         className={cn(
                           "w-full flex items-center justify-between p-3 text-left hover:bg-accent/60 transition-all duration-200 rounded-md group transform hover:scale-[1.02]",
                           selectedIndex === navIndexOf(suggestion.id) && "bg-accent/80"
