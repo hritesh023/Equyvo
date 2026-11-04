@@ -78,6 +78,7 @@ const MomentsPage = () => {
   // Real moments feed — strict routing: moment-type ONLY (photo or video).
   // Photos uploaded via Photos NEVER land here; videos via Videos never do.
   const [moments, setMoments] = useState<any[]>([]);
+  const [liveMoments, setLiveMoments] = useState<any[]>([]);
   const [isLoadingMoments, setIsLoadingMoments] = useState(true);
 
   useEffect(() => {
@@ -137,6 +138,22 @@ const MomentsPage = () => {
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('profileUpdated', refresh);
     };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadLive = async () => {
+      try {
+        const res = await api.liveNow();
+        const items = (res as { data?: { live?: any[] } })?.data?.live || [];
+        if (!cancelled) setLiveMoments(Array.isArray(items) ? items : []);
+      } catch {
+        if (!cancelled) setLiveMoments([]);
+      }
+    };
+    void loadLive();
+    const t = window.setInterval(loadLive, 30000);
+    return () => { cancelled = true; window.clearInterval(t); };
   }, []);
 
   useMediaSession({
@@ -633,6 +650,20 @@ const MomentsPage = () => {
       }}
       onClick={() => setHasEngaged(true)}
     >
+      {liveMoments.length > 0 && (
+        <div className="sticky top-0 z-30 flex gap-2 overflow-x-auto bg-black/70 px-3 py-2 backdrop-blur">
+          <span className="shrink-0 text-xs font-semibold text-white">Live Moments</span>
+          {liveMoments.map((l: any) => (
+            <button
+              key={l.id || l.userId}
+              onClick={(e) => { e.stopPropagation(); navigate(`/app/live/${encodeURIComponent(l.userId || l.id)}`); }}
+              className="shrink-0 rounded-full bg-rose-600 px-3 py-1 text-xs text-white"
+            >
+              {l.user || l.name || 'Live'} · LIVE
+            </button>
+          ))}
+        </div>
+      )}
       {moments.map((moment, index) => (
         <div
           key={moment.id}

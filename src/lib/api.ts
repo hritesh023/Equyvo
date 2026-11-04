@@ -790,6 +790,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  sendSuperChat: (data: { to: string; contentId?: string; amountInr: number; paymentId?: string }) =>
+    request<{ data: any; error: null }>('/superchat', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   subscribe: (data: { creator: string; plan?: string; amountInr: number; paymentId?: string }) =>
     request<{ data: any; error: null }>('/subscriptions', {
       method: 'POST',

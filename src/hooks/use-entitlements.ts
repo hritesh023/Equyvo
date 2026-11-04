@@ -14,6 +14,8 @@ export interface Entitlements {
   monthlyUploads?: number;
   creator?: boolean;
   business?: boolean;
+  superchat?: boolean;
+  liveMoments?: boolean;
   verifiedEligible?: boolean;
   aiCreditsMonthly?: number;
   scheduling?: boolean;

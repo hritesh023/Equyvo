@@ -510,6 +510,7 @@ const CreatePage = () => {
   // Plan caps for pre-publish validation (size / length) + upgrade hints.
   const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
   const { entitlements: planEntitlements } = useEntitlements();
+  const [livePortrait, setLivePortrait] = useState(false);
   const openScheduleModal = () => {
     if (!planEntitlements?.scheduling) {
       showError('Content scheduling requires a Creator plan or higher. Upgrade to unlock.');
@@ -4031,7 +4032,7 @@ const CreatePage = () => {
           <Button
             variant={activeTab === 'live' ? 'default' : 'outline'}
             className="flex flex-col h-28 items-center justify-center gap-2 hover:scale-105 transition-transform duration-200"
-            onClick={() => setActiveTab('live')}
+            onClick={() => { setLivePortrait(false); setActiveTab('live'); }}
           >
             <Zap className="h-8 w-8 text-red-500 fill-red-500 animate-pulse" />
             <span>Go Live!</span>
@@ -4046,6 +4047,17 @@ const CreatePage = () => {
             <span>Moments</span>
             <span className="text-xs text-muted-foreground">Clips</span>
           </Button>
+          {planEntitlements?.liveMoments && (
+            <Button
+              variant={activeTab === 'live' && livePortrait ? 'default' : 'outline'}
+              className="flex flex-col h-28 items-center justify-center gap-2 hover:scale-105 transition-transform duration-200"
+              onClick={() => { setLivePortrait(true); setActiveTab('live'); }}
+            >
+              <Video className="h-8 w-8 text-rose-500" />
+              <span>Live Moments</span>
+              <span className="text-xs text-muted-foreground">Portrait</span>
+            </Button>
+          )}
         </CardContent>
       </Card>
 

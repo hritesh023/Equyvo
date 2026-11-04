@@ -83,6 +83,8 @@ const CommentSection: React.FC<CommentSectionProps> = ({
   const [totalCount, setTotalCount] = useState(0);
   const [commentsEnabled, setCommentsEnabled] = useState(true);
   const [isOwner, setIsOwner] = useState(false);
+  const [ownerId, setOwnerId] = useState('');
+  const [superchatEligible, setSuperchatEligible] = useState(false);
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [newComment, setNewComment] = useState('');
@@ -93,6 +95,9 @@ const CommentSection: React.FC<CommentSectionProps> = ({
   const [busyId, setBusyId] = useState<string | null>(null);
   const [togglingSettings, setTogglingSettings] = useState(false);
   const [me, setMe] = useState<CommentIdentity>(() => myCommentIdentity());
+  const [superchatOpen, setSuperchatOpen] = useState(false);
+  const [superchatAmount, setSuperchatAmount] = useState('');
+  const [sendingSuperchat, setSendingSuperchat] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const navigate = useNavigate();
@@ -107,11 +112,20 @@ const CommentSection: React.FC<CommentSectionProps> = ({
         setLoadError(res.error);
         return;
       }
-      const d = (res as { data?: { comments?: CommentItem[]; totalCount?: number; commentsEnabled?: boolean; isOwner?: boolean } }).data;
+      const d = (res as { data?: { comments?: CommentItem[]; totalCount?: number; commentsEnabled?: boolean; isOwner?: boolean; ownerId?: string } }).data;
       setComments(Array.isArray(d?.comments) ? d.comments : []);
       setTotalCount(Number(d?.totalCount ?? d?.comments?.length ?? 0));
       setCommentsEnabled(d?.commentsEnabled !== false);
       setIsOwner(d?.isOwner === true);
+      const oid = String(d?.ownerId || '');
+      setOwnerId(oid);
+      setSuperchatEligible(false);
+      if (oid) {
+        api.getCreator(oid).then((r) => {
+          const dd = (r as { data?: { superchatEligible?: boolean; superchatEnabled?: boolean } }).data;
+          setSuperchatEligible(!!(dd?.superchatEligible && dd?.superchatEnabled !== false));
+        }).catch(() => setSuperchatEligible(false));
+      }
     } catch {
       setLoadError('Could not load comments. Check your connection and retry.');
     } finally {
@@ -227,6 +241,28 @@ const CommentSection: React.FC<CommentSectionProps> = ({
       showError('Could not post your comment. Try again.');
     } finally {
       setPosting(false);
+    }
+  };
+
+  const handleSendSuperChat = async () => {
+    const amt = Math.floor(Number(superchatAmount));
+    if (!Number.isFinite(amt) || amt < 10 || amt > 100000) {
+      showError('Enter an amount between ₹10 and ₹1,00,000.');
+      return;
+    }
+    if (!me.id) { showError('Please sign in to send a SuperChat.'); return; }
+    if (!ownerId) { showError('Creator not found.'); return; }
+    setSendingSuperchat(true);
+    try {
+      const res = await api.sendSuperChat({ to: ownerId, contentId: postId, amountInr: amt });
+      if (res.error) { showError(res.error); return; }
+      showSuccess(`SuperChat of ₹${amt} sent!`);
+      setSuperchatOpen(false);
+      setSuperchatAmount('');
+    } catch {
+      showError('Could not send SuperChat. Try again.');
+    } finally {
+      setSendingSuperchat(false);
     }
   };
 
@@ -573,6 +609,17 @@ const CommentSection: React.FC<CommentSectionProps> = ({
                   )}
                 </Button>
               )}
+              {superchatEligible && !isOwner && (
+                <Button
+                  variant="default"
+                  size="sm"
+                  className="h-8 bg-pink-600 text-white hover:bg-pink-700"
+                  onClick={() => setSuperchatOpen(true)}
+                  aria-label="Send SuperChat"
+                >
+                  SuperChat
+                </Button>
+              )}
               <Button variant="ghost" size="icon" onClick={onClose} aria-label="Close comments">
                 <X className="h-5 w-5" />
               </Button>
@@ -688,6 +735,31 @@ const CommentSection: React.FC<CommentSectionProps> = ({
           </div>
         </CardContent>
       </Card>
+      {superchatOpen && (
+        <div className="fixed inset-0 z-[260] flex items-center justify-center bg-black/60 p-4" onClick={() => setSuperchatOpen(false)}>
+          <div className="w-full max-w-sm rounded-2xl bg-background p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-center justify-between">
+              <h4 className="font-semibold">Send SuperChat</h4>
+              <Button variant="ghost" size="icon" onClick={() => setSuperchatOpen(false)} aria-label="Close">
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">Support {postUser} with any amount (₹10 – ₹1,00,000). Equyvo takes 15% platform fee.</p>
+            <Input
+              type="number"
+              min={10}
+              max={100000}
+              value={superchatAmount}
+              onChange={(e) => setSuperchatAmount(e.target.value)}
+              placeholder="Amount in ₹"
+              className="mb-3"
+            />
+            <Button className="w-full" onClick={() => void handleSendSuperChat()} disabled={sendingSuperchat}>
+              {sendingSuperchat ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Send SuperChat'}
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

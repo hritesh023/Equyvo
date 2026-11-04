@@ -70,6 +70,8 @@ const KEYS = {
   MEDIA: (publicId) => 'media:' + publicId,
   TIPS_LIST: 'tips:list',
   TIP: (id) => 'tip:' + id,
+  SUPERCHATS_LIST: 'superchats:list',
+  SUPERCHAT: (id) => 'superchat:' + id,
   SUBS_LIST: 'subs:list',
   SUB: (id) => 'sub:' + id,
   BIZ: (userId) => 'biz:' + userId,
@@ -1835,9 +1837,9 @@ const PLAN_CATALOG = {
   eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 50,   maxVideoSec: 300,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
   eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 100,  maxVideoSec: 1800,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
   eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 250,  maxVideoSec: 3600,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 500,  maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true },
-  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 500,  maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
+  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true, superchat: true, liveMoments: true },
 };
 const DEFAULT_PLAN_ID = 'eq_free';
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
@@ -3701,6 +3703,7 @@ export const onRequest = async (context) => {
         maxUploadMB: p.maxUploadMB, maxVideoSec: p.maxVideoSec,
         monthlyUploads: p.monthlyUploads, ads: p.ads,
         creator: !!p.creator, business: !!p.business,
+        superchat: !!p.superchat, liveMoments: !!p.liveMoments,
       }));
       return json({ data: { plans, platformFeeBps: PLATFORM_FEE_BPS }, error: null }, 200, cors);
     }
@@ -6279,7 +6282,11 @@ export const onRequest = async (context) => {
         displayName: String(clean.displayName || actor.username || '').slice(0, 80),
         bio: String(clean.bio || '').slice(0, 500),
         tipEnabled: clean.tipEnabled !== false,
+        superchatEnabled: clean.superchatEnabled !== false,
         subPriceInr: clamp(Math.floor(Number(clean.subPriceInr || 0)), 0, 100000),
+        bankAccount: String(clean.bankAccount || '').slice(0, 40),
+        bankIfsc: String(clean.bankIfsc || '').slice(0, 20),
+        bankHolder: String(clean.bankHolder || '').slice(0, 80),
         updatedAt: new Date().toISOString(),
       };
       await kv.put(KEYS.CREATOR(actor.id), JSON.stringify(settings));
@@ -6304,7 +6311,17 @@ export const onRequest = async (context) => {
         }
       }
       if (!raw) return json({ data: null, error: null }, 200, cors);
-      return json({ data: JSON.parse(raw), error: null }, 200, cors);
+      const settings = JSON.parse(raw);
+      try {
+        const grant = await getLocalGrant(env, userId);
+        const planId = grant?.plan || DEFAULT_PLAN_ID;
+        const quota = planQuota(planId);
+        settings.planId = planId;
+        settings.eligible = !!quota.creator;
+        settings.superchatEligible = !!quota.superchat;
+        settings.liveMomentsEligible = !!quota.liveMoments;
+      } catch { /* best-effort */ }
+      return json({ data: settings, error: null }, 200, cors);
     }
 
     if (path === '/api/tips' && method === 'POST') {
@@ -6338,6 +6355,74 @@ export const onRequest = async (context) => {
       ids.unshift(tip.id);
       await kv.put(KEYS.TIPS_LIST, JSON.stringify(ids.slice(0, 1000)));
       return json({ data: tip, error: null }, 201, cors);
+    }
+
+    // ---- SUPERCHAT (creator/creator pro only): audience pays any amount in a
+    // content's comment section. Equyvo takes 15% platform fee; creator gets
+    // the rest. Money movement is completed via Razorpay (api.acronous.com);
+    // this ledger records the verified intent + fee split.
+    if (path === '/api/superchat' && method === 'POST') {
+      const body = await readJson(request);
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+      const rl = await rateLimit(kv, 'superchat', actor.id, rateLimitFor(planId, 'tips'));
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      const clean = sanitizeBody(body);
+      const to = await canonicalAccountId(env, String(clean.to || clean.creator || '').slice(0, 200));
+      const contentId = String(clean.contentId || clean.content_id || '').slice(0, 64);
+      const amountInr = Math.floor(Number(clean.amountInr || 0));
+      if (!to || to === actor.id) return json({ error: 'Invalid recipient' }, 400, cors);
+      if (!Number.isFinite(amountInr) || amountInr < 10 || amountInr > 100000) {
+        return json({ error: 'SuperChat must be ₹10–₹1,00,000' }, 400, cors);
+      }
+      // Recipient must be an eligible creator.
+      try {
+        const grant = await getLocalGrant(env, to);
+        const rPlan = grant?.plan || DEFAULT_PLAN_ID;
+        const quota = planQuota(rPlan);
+        if (!quota.superchat) return json({ error: 'Recipient is not a SuperChat-enabled creator', code: 'NOT_ELIGIBLE' }, 402, cors);
+      } catch { /* best-effort */ }
+      const fee = Math.floor((amountInr * PLATFORM_FEE_BPS) / 10000);
+      const superchat = {
+        id: generateId(), from: actor.id, to, contentId, amountInr,
+        platformFeeInr: fee, creatorGetsInr: amountInr - fee,
+        status: 'pending', paymentId: String(clean.paymentId || '').slice(0, 100),
+        createdAt: new Date().toISOString(),
+      };
+      await kv.put(KEYS.SUPERCHAT(superchat.id), JSON.stringify(superchat));
+      const listJson = await kv.get(KEYS.SUPERCHATS_LIST);
+      const ids = listJson ? JSON.parse(listJson) : [];
+      ids.unshift(superchat.id);
+      await kv.put(KEYS.SUPERCHATS_LIST, JSON.stringify(ids.slice(0, 2000)));
+      try {
+        if (contentId) {
+          const comment = {
+            id: generateId(),
+            contentId,
+            contentKind: 'superchat',
+            parentId: null,
+            authorId: actor.id,
+            authorName: 'SuperChat',
+            authorUsername: 'SuperChat',
+            authorAvatar: '',
+            text: `SuperChat ₹${amountInr}`,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+            likes: 0, likedBy: [], shares: 0, repliesCount: 0, isPinned: false, isEdited: false,
+            superchat: { amountInr, platformFeeInr: fee, creatorGetsInr: amountInr - fee, status: 'pending' },
+          };
+        }
+      } catch { /* best-effort */ }
+      try {
+        await pushUserNotification(env, to, {
+          kind: 'superchat', title: 'New SuperChat',
+          body: 'Someone sent you ₹' + amountInr + ' via SuperChat.',
+          actorId: actor.id, contentId: contentId || undefined,
+        });
+      } catch { /* ignore */ }
+      return json({ data: superchat, error: null }, 201, cors);
     }
 
     if (path === '/api/subscriptions' && method === 'POST') {
