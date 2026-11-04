@@ -17,6 +17,9 @@ import { Palette, Upload, RotateCcw, Check, X, Trash2, Crop } from 'lucide-react
 import { useChatTheme, CHAT_THEME_DEFAULT } from '@/contexts/ChatThemeContext';
 import { showSuccess, showError } from '@/utils/toast';
 import MediaCropper from './MediaCropper';
+import { screenMedia } from '@/lib/moderation';
+import { api } from '@/lib/api';
+import { isImageFile } from '@/lib/mime';
 
 interface ChatThemeSelectorProps {
   children: React.ReactNode;
@@ -104,10 +107,10 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
     setDraftType('color');
   };
 
-  const processFile = (file: File | undefined | null) => {
+  const processFile = async (file: File | undefined | null) => {
     setFileError('');
     if (!file) return;
-    if (!file.type.startsWith('image/')) {
+    if (!isImageFile(file)) {
       setFileError('Please choose an image or GIF file.');
       return;
     }
@@ -116,6 +119,14 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       showError('File must be smaller than 5MB.');
       return;
     }
+    try {
+      const r = await screenMedia(file, { kind: 'chat-theme' });
+      if (r.verdict !== 'allow') {
+        setFileError(r.message || 'This image is not allowed on Equyvo.');
+        showError(r.message || 'This image is not allowed on Equyvo.');
+        return;
+      }
+    } catch { /* fail-open handled by screenMedia */ }
     // Selecting a file immediately switches to the Image theme so the
     // upcoming upload can never be mistaken for (or lost to) a color theme.
     setTab('image');
@@ -175,25 +186,22 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       const file = new File([blob], `chat-background.${ext}`, {
         type: blob.type || (ext === 'gif' ? 'image/gif' : 'image/jpeg'),
       });
-      const form = new FormData();
-      form.append('file', file);
-      form.append('folder', 'equyvo/chat-themes');
-      const apiBase = (window as any)?.Capacitor?.isNativePlatform?.() ? 'https://equyvo.pages.dev/api' : '/api';
-      const headers: Record<string, string> = {};
+      // Security: screen the reconstructed image/GIF before upload.
       try {
-        const stored = localStorage.getItem('equyvo_cognito_user');
-        if (stored) {
-          const u = JSON.parse(stored);
-          const id = u?.id || u?.email;
-          if (id) headers['X-User-Id'] = String(id);
+        const r = await screenMedia(file, { kind: 'chat-theme' });
+        if (r.verdict !== 'allow') {
+          showError(r.message || 'This image is not allowed on Equyvo.');
+          value = await compressDataUrl(dataUrl);
+          setUploading(false);
+          setDraftImage(value);
+          const ok = setChatTheme({ type: 'image', value, opacity });
+          if (!ok) showError('Could not save background. Try a smaller image.');
+          return;
         }
-        const tok = localStorage.getItem('equyvo_cognito_token');
-        if (tok) headers['Authorization'] = 'Bearer ' + tok;
-      } catch { /* ignore */ }
-      const up = await fetch(`${apiBase}/upload`, { method: 'POST', headers, body: form });
-      const json = await up.json().catch(() => ({} as any));
-      if (up.ok && (json?.data?.secureUrl || json?.data?.originalUrl)) {
-        value = json.data.secureUrl || json.data.originalUrl;
+      } catch { /* fail-open handled by screenMedia */ }
+      const upRes = await api.uploadFile(file, 'equyvo/chat-themes');
+      if (upRes?.data?.secureUrl || upRes?.data?.originalUrl) {
+        value = upRes.data.secureUrl || upRes.data.originalUrl;
       } else {
         value = await compressDataUrl(dataUrl);
       }
@@ -310,12 +318,23 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
             const tok = localStorage.getItem('equyvo_cognito_token');
             if (tok) headers['Authorization'] = 'Bearer ' + tok;
           } catch { /* ignore */ }
-          const up = await fetch(`${apiBase}/upload`, { method: 'POST', headers, body: form });
-          const json = await up.json().catch(() => ({}));
-          if (up.ok && (json?.data?.secureUrl || json?.data?.originalUrl)) {
-            value = json.data.secureUrl || json.data.originalUrl;
+          // Security: screen the reconstructed image/GIF before upload.
+          try {
+            const r = await screenMedia(file, { kind: 'chat-theme' });
+            if (r.verdict !== 'allow') {
+              showError(r.message || 'This image is not allowed on Equyvo.');
+              value = await compressDataUrl(value);
+              setUploading(false);
+              setDraftImage(value);
+              const ok = setChatTheme({ type: 'image', value, opacity: draftOpacity });
+              if (!ok) showError('Could not save background. Try a smaller image.');
+              return;
+            }
+          } catch { /* fail-open handled by screenMedia */ }
+          const upRes = await api.uploadFile(file, 'equyvo/chat-themes');
+          if (upRes?.data?.secureUrl || upRes?.data?.originalUrl) {
+            value = upRes.data.secureUrl || upRes.data.originalUrl;
           } else {
-            // Fall back to compressed data URL if upload fails.
             value = await compressDataUrl(value);
           }
         } catch {
