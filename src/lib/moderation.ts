@@ -40,7 +40,7 @@ export class ContentBlockedError extends Error {
 const NAME_BLOCK_PATTERNS: RegExp[] = [
   /(\b|_)(porn|xxx|nude|naked|nsfw|18\+|adult|sex(tape)?|erotic|hentai|onlyfans)\b/i,
   /(\b|_)csam(\b|_)/i,
-  /\b(rape|bestiality|gore|behead|terror|terrorism|terrorist|bomb|bombing|explosion|massacre|shooting|weapon|gunfire|bloodshed)\b/i,
+  /\b(rape|bestiality|gore|behead|terror|terrorism|terrorist|bomb|bombing|explosion|massacre|shooting|weapon|gunfire|bloodshed|suicide|self[- ]?harm|self[- ]?injury)\b/i,
   /(\.exe|\.apk|\.bat|\.msi|\.scr|\.js|\.html)$/i,
 ];
 

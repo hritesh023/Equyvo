@@ -1265,6 +1265,9 @@ const SAFETY_BLOCK_PATTERNS = [
   /\b(rape|gangbang|forced\s?sex|non[\s-]?consensual)\b/i,
   /\b(terror|terrorism|terrorist|isis|al[- ]?qaeda|bomb|bombing|explosive|suicide (bomber|attack)|mass (shooting|shooter)|genocide)\b/i,
   /\b(how to (kill|murder|stab|shoot|behead|bomb|make a bomb|build a bomb))\b/i,
+  /\b(how to (commit suicide|kill myself|self[- ]?harm|cut (myself|yourself)|end (my|your) life|overdose))\b/i,
+  /\b(suicide (method|tutorial|guide|tips|instructions)|self[- ]?harm (tips|guide|how to))\b/i,
+  /\b(kill yourself|end your life|you should die|go kill yourself)\b/i,
   /\b(how to (make|build).{0,30}(bomb|explosive|bioweapon|chemical weapon|nuke|dirty bomb))\b/i,
   /\b(join (isis|al-?qaeda|terror))\b/i,
   /\b(i will kill you|i['’]m going to kill (you|them)|kill all (muslims|christians|jews|hindus|whites|blacks))\b/i,
@@ -1276,6 +1279,7 @@ const SAFETY_BLOCK_PATTERNS = [
 const SAFETY_REVIEW_PATTERNS = [
   /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic)\b/i,
   /\b(behead|gore|dismember|mutilat|blood|weapon|gun|knife|attack|explosion|violence|violent|fight)\b/i,
+  /\b(suicide|self[- ]?harm|self[- ]?injury|cutting (myself|yourself)|overdose|hang myself|end (my|your) life)\b/i,
   /\b(kill myself|suicide|self[\s-]?harm|cutting myself)\b/i,
   /\b(fuck (you|off)|slut|whore|retard|kike|chink|fag(got)?)\b/i,
   /\b(send money|wire transfer|gift card|crypto (doubling|giveaway)|you (have )?won (a|₹|\$))\b/i,
@@ -1315,7 +1319,7 @@ async function brainSafetyCheck(env, text) {
     if (data && typeof data === 'object') {
       if (data.safe === false || data.block === true) return 'block';
       if (data.review === true || data.quarantine === true) return 'review';
-      if (Array.isArray(data.categories) && data.categories.some((c) => /child|csam|terror|non-consensual|assault/i.test(String(c)))) return 'block';
+      if (Array.isArray(data.categories) && data.categories.some((c) => /child|csam|terror|non-consensual|assault|self[- ]?harm|suicide|weapon|bomb/i.test(String(c)))) return 'block';
     }
   } catch { /* fail-open */ }
   return null;
@@ -4301,8 +4305,8 @@ export const onRequest = async (context) => {
             else if (data.review === true || data.quarantine === true) verdict = 'review';
             else {
               const cats = (data.categories || data.labels || []);
-              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence|blood|fight|attack|weapon/i.test(String(c)))) { verdict = 'review'; category = /child|minor/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
+              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence|blood|fight|attack|weapon|self[- ]?harm|suicide/i.test(String(c)))) { verdict = 'review'; category = /child|minor|self[- ]?harm|suicide/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
             }
             if (!category && verdict !== 'allow') category = /child|csam|minor/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
           }
