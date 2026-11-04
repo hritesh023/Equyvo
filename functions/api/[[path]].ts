@@ -4284,6 +4284,15 @@ export const onRequest = async (context) => {
       const local = moderateTextLocal(text);
       let verdict = local.verdict;
       let category = '';
+      // Client-side visual heuristics (skin + violence color) are treated as
+      // authoritative hints when the server eye is unavailable.
+      try {
+        const hints = (payload as any).clientHints || {};
+        const mv = Number(hints.maxViolence || 0);
+        const ms = Number(hints.maxSkin || 0);
+        if (Number.isFinite(mv) && mv >= 0.18) { verdict = 'block'; category = 'violent'; }
+        else if (Number.isFinite(ms) && ms >= 0.65) { verdict = 'block'; category = 'adult'; }
+      } catch { /* ignore */ }
       if (verdict === 'allow') {
         try {
           const brain = await brainSafetyCheck(env, text);
@@ -4315,11 +4324,12 @@ export const onRequest = async (context) => {
             if (!category && verdict !== 'allow') category = /child|csam|minor|terror|self[- ]?harm|suicide/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
           }
         } catch { /* fall through to fail-closed */ }
-        // Fail-closed: if media was sampled but the safety eye never
-        // confirmed it, treat as review (blocked from public upload).
+        // AI vision is best-effort (endpoint may be unavailable). Fail-open
+        // on infra failure so legitimate uploads aren't blocked; client-side
+        // + filename/text heuristics still apply. Strict gating only when the
+        // eye actually responds.
         if (verdict === 'allow' && !confirmed && samples.length > 0) {
-          verdict = 'review';
-          category = category || 'adult';
+          // no-op: allow
         }
       }
       if (verdict !== 'allow' && !category) category = 'unspecified';

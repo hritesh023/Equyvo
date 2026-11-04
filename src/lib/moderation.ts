@@ -98,8 +98,34 @@ function computeSkinRatio(ctx, w, h) {
   }
 }
 
+// Heuristic for violence/terrorism/explosions: red-dominant and fire-colored
+// pixels. Terrorism footage often contains blood, fire, explosions and
+// weapons; these show up as concentrated red/orange regions. Threshold is
+// conservative to avoid flagging ordinary red objects.
+function isViolentPixel(r, g, b) {
+  // Blood / red-dominant
+  if (r > 150 && r > g * 1.5 && r > b * 1.5 && (r - Math.max(g, b)) > 60) return true;
+  // Fire / explosion
+  if (r > 200 && g >= 80 && g <= 190 && b < 110 && r - b > 120) return true;
+  return false;
+}
+function computeViolenceRatio(ctx, w, h) {
+  try {
+    const img = ctx.getImageData(0, 0, w, h);
+    const d = img.data;
+    let v = 0;
+    const total = w * h;
+    for (let i = 0; i < d.length; i += 4) {
+      if (isViolentPixel(d[i], d[i + 1], d[i + 2])) v++;
+    }
+    return total > 0 ? v / total : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Downscale an image to a small JPEG data URL for the server-side eye. */
-async function sampleImage(blob: Blob): Promise<{ dataUrl: string; skinRatio: number } | null> {
+async function sampleImage(blob: Blob): Promise<{ dataUrl: string; skinRatio: number; violenceRatio: number } | null> {
   // Decode at the sample size when the browser supports it. The previous
   // implementation decoded the full original first, which could exhaust
   // memory on very large phone photos before the safety request even ran.
@@ -124,7 +150,8 @@ async function sampleImage(blob: Blob): Promise<{ dataUrl: string; skinRatio: nu
       ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       bitmap.close();
       const sr = computeSkinRatio(ctx, canvas.width, canvas.height);
-      return { dataUrl: canvas.toDataURL('image/jpeg', SAMPLE_QUALITY), skinRatio: sr };
+      const vr = computeViolenceRatio(ctx, canvas.width, canvas.height);
+      return { dataUrl: canvas.toDataURL('image/jpeg', SAMPLE_QUALITY), skinRatio: sr, violenceRatio: vr };
     }
   } catch {
     // Fall through to the Safari-safe <img> decoder below.
@@ -154,15 +181,16 @@ async function sampleImage(blob: Blob): Promise<{ dataUrl: string; skinRatio: nu
     if (!ctx) return null;
     ctx.drawImage(bmp as HTMLImageElement, 0, 0, canvas.width, canvas.height);
     const sr2 = computeSkinRatio(ctx, canvas.width, canvas.height);
-    return { dataUrl: canvas.toDataURL('image/jpeg', SAMPLE_QUALITY), skinRatio: sr2 };
+    const vr2 = computeViolenceRatio(ctx, canvas.width, canvas.height);
+    return { dataUrl: canvas.toDataURL('image/jpeg', SAMPLE_QUALITY), skinRatio: sr2, violenceRatio: vr2 };
   } catch {
     return null;
   }
 }
 
 /** Grab frames near 12% / 45% / 75% of a video for the server-side eye. */
-async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number }[]> {
-  const out: { url: string; skinRatio: number }[] = [];
+async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number; violenceRatio: number }[]> {
+  const out: { url: string; skinRatio: number; violenceRatio: number }[] = [];
   try {
     const url = URL.createObjectURL(blob);
     trackUrl(url);
@@ -209,7 +237,8 @@ async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number
         const jpeg = canvas.toDataURL('image/jpeg', SAMPLE_QUALITY);
         if (jpeg && jpeg.length > 200) {
            const sr = computeSkinRatio(ctx, canvas.width, canvas.height);
-           out.push({ url: jpeg, skinRatio: sr });
+           const vr = computeViolenceRatio(ctx, canvas.width, canvas.height);
+           out.push({ url: jpeg, skinRatio: sr, violenceRatio: vr });
          }
       } catch { /* frame skip */ }
     }
@@ -273,11 +302,12 @@ export async function screenMedia(
   const isVideo = inferred.startsWith('video/');
   const samples: string[] = [];
   const skinRatios: number[] = [];
+  const violenceRatios: number[] = [];
   if (isImage) {
     const s = await sampleImage(file);
-    if (s) { samples.push(s.dataUrl); skinRatios.push(s.skinRatio); }
+    if (s) { samples.push(s.dataUrl); skinRatios.push(s.skinRatio); violenceRatios.push(s.violenceRatio); }
   } else if (isVideo) {
-    for (const s of await sampleVideo(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); }
+    for (const s of await sampleVideo(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); violenceRatios.push(s.violenceRatio); }
   }
 
   // Fail-closed: any media that cannot be sampled cannot be verified as safe,
@@ -305,18 +335,43 @@ export async function screenMedia(
       checked: true,
     };
   }
+  // Violence/terrorism heuristic: concentrated red/fire regions indicate
+  // blood, explosions or weapons. Block such content outright.
+  const maxViolence = violenceRatios.length ? Math.max(...violenceRatios) : 0;
+  if (maxViolence >= 0.18) {
+    return {
+      verdict: 'block',
+      category: 'violent',
+      message: 'This content looks like violent or otherwise prohibited material and is not allowed on Equyvo.',
+      checked: true,
+    };
+  }
 
   // Ask the shared safety gate. Network failures fail OPEN (allow) — the
   // server still runs its full check again at publish time and quarantines.
   try {
+    // Attach auth headers so the server-side safety gate actually runs
+    // (without them /api/content-screen returns 401 and screening is skipped).
+    const authHeaders: Record<string, string> = {};
+    try {
+      const stored = localStorage.getItem('equyvo_cognito_user');
+      if (stored) {
+        const u = JSON.parse(stored);
+        const id = u?.id || u?.email || '';
+        if (id) authHeaders['X-User-Id'] = String(id);
+      }
+      const token = localStorage.getItem('equyvo_cognito_token');
+      if (token) authHeaders['Authorization'] = 'Bearer ' + token;
+    } catch { /* ignore */ }
     const res = await withTimeout((signal) => fetch('/api/content-screen', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({
         kind: String(opts.kind || '').slice(0, 40),
         filename: filename.slice(0, 120),
         caption: String(opts.caption || '').slice(0, 400),
         samples,
+        clientHints: { maxSkin: maxSkin, maxViolence: maxViolence },
       }),
       signal,
     }), SAMPLE_TIMEOUT_MS + 4000);
