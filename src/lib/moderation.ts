@@ -44,7 +44,7 @@ const NAME_BLOCK_PATTERNS: RegExp[] = [
   /(\.exe|\.apk|\.bat|\.msi|\.scr|\.js|\.html)$/i,
 ];
 
-const MAX_SAMPLES = 5;
+const MAX_SAMPLES = 8;
 const SAMPLE_LONG_EDGE = 640;
 const SAMPLE_QUALITY = 0.72;
 const SAMPLE_TIMEOUT_MS = 9000;
@@ -180,7 +180,7 @@ async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number
       signal.addEventListener('abort', () => reject(new Error('timeout')));
     }), SAMPLE_TIMEOUT_MS);
     if (!dur || !isFinite(dur)) return out;
-    const fractions = [0.05, 0.2, 0.4, 0.65, 0.85];
+    const fractions = [0.02, 0.12, 0.25, 0.4, 0.55, 0.7, 0.82, 0.92];
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return out;

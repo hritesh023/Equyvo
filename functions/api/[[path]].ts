@@ -4275,10 +4275,10 @@ export const onRequest = async (context) => {
       const filename = String((payload as any).filename || '').slice(0, 200);
       const caption = String((payload as any).caption || '').slice(0, 600);
       let samples = Array.isArray((payload as any).samples) ? (payload as any).samples : [];
-      // Hard caps: at most 6 samples, each clipped, never logged.
+      // Hard caps: at most 8 samples, each clipped, never logged.
       samples = samples
         .filter((s) => typeof s === 'string' && /^data:image\/(jpe?g|png);base64,/.test(s.slice(0, 40)))
-        .slice(0, 6)
+        .slice(0, 8)
         .map((s) => s.slice(0, 260000));
       const text = [filename, caption].filter(Boolean).join('\n');
       const local = moderateTextLocal(text);
@@ -4297,18 +4297,22 @@ export const onRequest = async (context) => {
           const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ images: samples, task: 'moderate', source: 'equyvo-upload-gate' }),
+            body: JSON.stringify({ images: samples, task: 'moderate', prompt: 'Classify each image for safety. Block if it contains terrorism, violence, gore, weapons, blood, self-harm, suicide, nudity, sexual content, child exploitation, or any content users should not watch. Return safe:true only if clearly safe.', source: 'equyvo-upload-gate' }),
           }, 8000);
           if (data && typeof data === 'object') {
             confirmed = true;
+            // Strict: only an explicit safe===true (or safe===1) verdict lets
+            // content through. Anything ambiguous/missing is treated as review.
+            const explicitlySafe = (data.safe === true || data.safe === 1 || data.safe === 'true');
             if (data.safe === false || data.block === true) verdict = 'block';
             else if (data.review === true || data.quarantine === true) verdict = 'review';
+            else if (!explicitlySafe) verdict = 'review';
             else {
               const cats = (data.categories || data.labels || []);
               if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
               else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence|blood|fight|attack|weapon|self[- ]?harm|suicide/i.test(String(c)))) { verdict = 'review'; category = /child|minor|self[- ]?harm|suicide/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
             }
-            if (!category && verdict !== 'allow') category = /child|csam|minor/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
+            if (!category && verdict !== 'allow') category = /child|csam|minor|terror|self[- ]?harm|suicide/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
           }
         } catch { /* fall through to fail-closed */ }
         // Fail-closed: if media was sampled but the safety eye never
