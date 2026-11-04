@@ -14,6 +14,16 @@
 
 import { inferMimeType, detectMimeFromBytes, isAllowedMime } from './mime';
 
+function resolveApiBase(): string {
+  try {
+    const cap = (window as any)?.Capacitor;
+    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
+      return 'https://equyvo.pages.dev/api';
+    }
+  } catch { /* ignore */ }
+  return '/api';
+}
+
 export type ScreenVerdict = 'allow' | 'review' | 'block';
 
 export interface ScreenResult {
@@ -373,7 +383,7 @@ export async function screenMedia(
       const token = localStorage.getItem('equyvo_cognito_token');
       if (token) authHeaders['Authorization'] = 'Bearer ' + token;
     } catch { /* ignore */ }
-    const res = await withTimeout((signal) => fetch('/api/content-screen', {
+    const res = await withTimeout((signal) => fetch(resolveApiBase() + '/content-screen', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...authHeaders },
       body: JSON.stringify({
@@ -385,7 +395,10 @@ export async function screenMedia(
       }),
       signal,
     }), SAMPLE_TIMEOUT_MS + 4000);
-    if (!res.ok) return { verdict: 'allow', checked: false };
+    if (res.status === 401 || res.status === 403) {
+       return { verdict: 'block', category: 'unspecified', checked: false, message: 'Please sign in to upload content on Equyvo.' };
+     }
+     if (!res.ok) return { verdict: 'allow', checked: false };
     const data = await res.json().catch(() => null);
     const d = data && data.data ? data.data : data;
     if (!d) return { verdict: 'allow', checked: false };

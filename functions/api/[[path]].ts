@@ -3078,20 +3078,21 @@ function r2KeyFor(actorId, hash, ext) {
 }
 
 function extFromFile(file) {
-  const name = String(file?.name || '');
-  const dot = name.lastIndexOf('.');
-  if (dot > 0) {
-    const e = name.slice(dot + 1).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
-    if (e) return e.toLowerCase();
-  }
-  const mime = String(file?.type || '');
+  const mime = String(file?.type || '').toLowerCase();
+  // Prefer the (magic-byte-verified) MIME type so R2 delivery URLs always
+  // carry a playable extension even when the original filename had none.
   if (mime === 'image/jpeg') return 'jpg';
   if (mime === 'image/png') return 'png';
   if (mime === 'image/webp') return 'webp';
   if (mime === 'image/gif') return 'gif';
+  if (mime === 'image/avif') return 'avif';
+  if (mime === 'image/bmp') return 'bmp';
   if (mime === 'video/mp4') return 'mp4';
   if (mime === 'video/webm') return 'webm';
   if (mime === 'video/quicktime') return 'mov';
+  if (mime === 'video/x-matroska') return 'mkv';
+  if (mime === 'video/x-msvideo') return 'avi';
+  if (mime === 'video/ogg') return 'ogv';
   // Voice notes / audio uploads.
   if (mime === 'audio/webm') return 'webm';
   if (mime === 'audio/mp4' || mime === 'audio/x-m4a' || mime === 'audio/m4a') return 'm4a';
@@ -3099,6 +3100,13 @@ function extFromFile(file) {
   if (mime === 'audio/ogg' || mime === 'audio/opus') return 'ogg';
   if (mime === 'audio/aac') return 'aac';
   if (mime === 'audio/wav' || mime === 'audio/x-wav') return 'wav';
+  if (mime === 'audio/flac') return 'flac';
+  const name = String(file?.name || '');
+  const dot = name.lastIndexOf('.');
+  if (dot > 0) {
+    const e = name.slice(dot + 1).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8);
+    if (e) return e.toLowerCase();
+  }
   return 'bin';
 }
 
@@ -6208,7 +6216,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       // objects remain readable because serveR2 decompresses on read.
       let r2Key = null;
       if (hasR2 && bytes) {
-        r2Key = r2KeyFor(actor.id, hash, extFromFile(file));
+        r2Key = r2KeyFor(actor.id, hash, extFromFile({ type: fileMime, name: file.name }));
         try {
           await env.EQUYVO_R2.put(r2Key, bytes, {
             httpMetadata: {
@@ -6262,7 +6270,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         originalUrl: r2Url || result?.secure_url,
         delivery: r2Url ? 'r2' : 'cloudinary',
         resourceType,
-        format: result?.format || extFromFile(file),
+        format: result?.format || extFromFile({ type: fileMime, name: file.name }),
         bytes: result?.bytes || file.size || 0,
         width: result?.width,
         height: result?.height,
