@@ -6313,8 +6313,18 @@ export const onRequest = async (context) => {
       if (!raw) return json({ data: null, error: null }, 200, cors);
       const settings = JSON.parse(raw);
       try {
+        let planId = DEFAULT_PLAN_ID;
         const grant = await getLocalGrant(env, userId);
-        const planId = grant?.plan || DEFAULT_PLAN_ID;
+        if (grant?.plan) planId = grant.plan;
+        else {
+          try {
+            const cached = await env.EQUYVO_KV.get(KEYS.PLAN_CACHE(userId));
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (parsed && PLAN_IDS.has(parsed.planId) && (!parsed.until || parsed.until > Date.now())) planId = parsed.planId;
+            }
+          } catch { /* ignore */ }
+        }
         const quota = planQuota(planId);
         settings.planId = planId;
         settings.eligible = !!quota.creator;
@@ -6379,8 +6389,18 @@ export const onRequest = async (context) => {
       }
       // Recipient must be an eligible creator.
       try {
-        const grant = await getLocalGrant(env, to);
-        const rPlan = grant?.plan || DEFAULT_PLAN_ID;
+        let rPlan = DEFAULT_PLAN_ID;
+        const g = await getLocalGrant(env, to);
+        if (g?.plan) rPlan = g.plan;
+        else {
+          try {
+            const cached = await env.EQUYVO_KV.get(KEYS.PLAN_CACHE(to));
+            if (cached) {
+              const parsed = JSON.parse(cached);
+              if (parsed && PLAN_IDS.has(parsed.planId) && (!parsed.until || parsed.until > Date.now())) rPlan = parsed.planId;
+            }
+          } catch { /* ignore */ }
+        }
         const quota = planQuota(rPlan);
         if (!quota.superchat) return json({ error: 'Recipient is not a SuperChat-enabled creator', code: 'NOT_ELIGIBLE' }, 402, cors);
       } catch { /* best-effort */ }
