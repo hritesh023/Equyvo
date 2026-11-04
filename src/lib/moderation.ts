@@ -77,8 +77,29 @@ async function withTimeout<T>(p: (signal: AbortSignal) => Promise<T>, ms: number
   }
 }
 
+function isSkinTone(r, g, b) {
+  if (r > 95 && g > 40 && b > 20 && r > g && r > b) {
+    if ((r - Math.min(g, b)) > 15 && (Math.max(r, g, b) - Math.min(r, g, b)) > 15) return true;
+  }
+  return false;
+}
+function computeSkinRatio(ctx, w, h) {
+  try {
+    const img = ctx.getImageData(0, 0, w, h);
+    const d = img.data;
+    let skin = 0;
+    const total = w * h;
+    for (let i = 0; i < d.length; i += 4) {
+      if (isSkinTone(d[i], d[i + 1], d[i + 2])) skin++;
+    }
+    return total > 0 ? skin / total : 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** Downscale an image to a small JPEG data URL for the server-side eye. */
-async function sampleImage(blob: Blob): Promise<string | null> {
+async function sampleImage(blob: Blob): Promise<{ dataUrl: string; skinRatio: number } | null> {
   // Decode at the sample size when the browser supports it. The previous
   // implementation decoded the full original first, which could exhaust
   // memory on very large phone photos before the safety request even ran.
@@ -102,7 +123,8 @@ async function sampleImage(blob: Blob): Promise<string | null> {
       if (!ctx) { bitmap.close(); return null; }
       ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
       bitmap.close();
-      return canvas.toDataURL('image/jpeg', SAMPLE_QUALITY);
+      const sr = computeSkinRatio(ctx, canvas.width, canvas.height);
+      return { dataUrl: canvas.toDataURL('image/jpeg', SAMPLE_QUALITY), skinRatio: sr };
     }
   } catch {
     // Fall through to the Safari-safe <img> decoder below.
@@ -131,15 +153,16 @@ async function sampleImage(blob: Blob): Promise<string | null> {
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
     ctx.drawImage(bmp as HTMLImageElement, 0, 0, canvas.width, canvas.height);
-    return canvas.toDataURL('image/jpeg', SAMPLE_QUALITY);
+    const sr2 = computeSkinRatio(ctx, canvas.width, canvas.height);
+    return { dataUrl: canvas.toDataURL('image/jpeg', SAMPLE_QUALITY), skinRatio: sr2 };
   } catch {
     return null;
   }
 }
 
 /** Grab frames near 12% / 45% / 75% of a video for the server-side eye. */
-async function sampleVideo(blob: Blob): Promise<string[]> {
-  const out: string[] = [];
+async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number }[]> {
+  const out: { url: string; skinRatio: number }[] = [];
   try {
     const url = URL.createObjectURL(blob);
     trackUrl(url);
@@ -184,7 +207,10 @@ async function sampleVideo(blob: Blob): Promise<string[]> {
         canvas.height = Math.max(1, Math.round(vh * scale));
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const jpeg = canvas.toDataURL('image/jpeg', SAMPLE_QUALITY);
-        if (jpeg && jpeg.length > 200) out.push(jpeg);
+        if (jpeg && jpeg.length > 200) {
+           const sr = computeSkinRatio(ctx, canvas.width, canvas.height);
+           out.push({ url: jpeg, skinRatio: sr });
+         }
       } catch { /* frame skip */ }
     }
     try { video.pause(); } catch { /* ignore */ }
@@ -243,11 +269,32 @@ export async function screenMedia(
   const isImage = inferred.startsWith('image/') && !inferred.includes('gif');
   const isVideo = inferred.startsWith('video/');
   const samples: string[] = [];
+  const skinRatios: number[] = [];
   if (isImage) {
     const s = await sampleImage(file);
-    if (s) samples.push(s);
+    if (s) { samples.push(s.dataUrl); skinRatios.push(s.skinRatio); }
   } else if (isVideo) {
-    for (const s of await sampleVideo(file)) samples.push(s);
+    for (const s of await sampleVideo(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); }
+  }
+
+  // Fail-closed: if media cannot be sampled, block it (no verification).
+  if ((isImage || isVideo) && samples.length === 0) {
+    return {
+      verdict: 'block',
+      category: 'adult',
+      message: 'This content could not be verified as safe and was not added.',
+      checked: true,
+    };
+  }
+  // Heuristic nudity guard: high skin-tone ratio indicates likely 18+ content.
+  const maxSkin = skinRatios.length ? Math.max(...skinRatios) : 0;
+  if (maxSkin >= 0.4) {
+    return {
+      verdict: 'block',
+      category: 'adult',
+      message: 'This content looks like adult (18+) material and is not allowed on Equyvo.',
+      checked: true,
+    };
   }
 
   // Ask the shared safety gate. Network failures fail OPEN (allow) — the
