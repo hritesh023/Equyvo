@@ -21,17 +21,19 @@ const DEFAULTS: Required<CompressOptions> = {
   mimeType: 'image/webp',
 };
 
+import { inferMimeType } from './mime';
+
 export async function compressImage(
   file: File | Blob,
   opts: CompressOptions = {},
 ): Promise<File | Blob> {
   const { maxDimension, quality, mimeType } = { ...DEFAULTS, ...opts };
   if (typeof createImageBitmap !== 'function') return file;
-  if (!file.type || !file.type.startsWith('image/')) return file;
+  if (!inferMimeType(file).startsWith('image/')) return file;
   // Skip tiny files — compression overhead isn't worth it.
   if (file.size < 64 * 1024) return file;
   // Skip animated GIFs (canvas flattens them).
-  if (file.type === 'image/gif') return file;
+  if (inferMimeType(file) === 'image/gif') return file;
 
   try {
     const bitmap = await createImageBitmap(file);
@@ -59,7 +61,7 @@ export async function compressImage(
 }
 
 export async function compressMedia(file: File | Blob): Promise<File | Blob> {
-  if (file.type && file.type.startsWith('image/')) {
+  if (inferMimeType(file).startsWith('image/')) {
     return compressImage(file);
   }
   // Videos: best-effort no-op client-side; server enforces caps.

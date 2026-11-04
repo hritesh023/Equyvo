@@ -18,6 +18,7 @@ import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
+import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
 import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
@@ -103,7 +104,7 @@ const LocalMediaThumb: React.FC<{ file: File; className?: string }> = ({ file, c
   if (!url) {
     return (
       <div className="flex h-14 w-14 items-center justify-center rounded-lg border bg-muted">
-        {file.type.startsWith('image/') ? (
+        {isImageFile(file) ? (
           <ImageIcon className="h-5 w-5 text-blue-500" />
         ) : (
           <FileVideo className="h-5 w-5 text-green-500" />
@@ -111,10 +112,10 @@ const LocalMediaThumb: React.FC<{ file: File; className?: string }> = ({ file, c
       </div>
     );
   }
-  if (file.type.startsWith('image/')) {
+  if (isImageFile(file)) {
     return <img src={url} alt={file.name} className={cls} />;
   }
-  if (file.type.startsWith('video/')) {
+  if (isVideoFile(file)) {
     return <video src={url} className={cls} muted playsInline preload="metadata" />;
   }
   return (
@@ -211,7 +212,7 @@ function makeRecorder(ms: MediaStream): MediaRecorder {
 function probeVideoDuration(src: Blob): Promise<number | undefined> {
   return new Promise((resolve) => {
     try {
-      if (!src.type || !src.type.startsWith('video/')) { resolve(undefined); return; }
+      if (!isVideoFile(src)) { resolve(undefined); return; }
       const url = URL.createObjectURL(src);
       const el = document.createElement('video');
       let settled = false;
@@ -325,7 +326,7 @@ const CreatePage = () => {
   const uploadPendingThumb = async (file: File | null): Promise<string> => {
     if (!file) return '';
     try {
-      const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+      const up = isImageFile(file) ? await compressImage(file) : file;
       const { data, error } = await api.uploadFile(up, 'equyvo/thumbnails');
       if (error || !data?.secureUrl) throw new Error(error || 'Thumbnail upload failed');
       return data.secureUrl;
@@ -432,7 +433,7 @@ const CreatePage = () => {
       showError('Upload target could not be identified. Please try again.');
       return;
     }
-    if (!file.type.startsWith('image/')) {
+    if (!isImageFile(file)) {
       showError('Please select an image file');
       return;
     }
@@ -982,7 +983,7 @@ const CreatePage = () => {
     hint?: string,
   ): Promise<UploadResult | null> => {
     try {
-      const isVideo = !!raw.type?.startsWith?.('video/');
+      const isVideo = isVideoFile(raw);
       const duration = isVideo ? (await probeVideoDuration(raw)) : undefined;
       const onProgress = (p: UploadProgress) => {
         if (slot.count > 1) {
@@ -1218,7 +1219,7 @@ const CreatePage = () => {
       case 'story':
         if (safeFiles.length > 0) {
           const validFiles = safeFiles.filter(file => {
-            const isValidType = file.type.startsWith('image/') || file.type.startsWith('video/');
+            const isValidType = isImageFile(file) || isVideoFile(file);
             if (!isValidType) {
               showError('Please select only images or videos');
               return false;
@@ -1235,8 +1236,8 @@ const CreatePage = () => {
         break;
 
       case 'thought':
-        if (file.type.startsWith('video/') || file.type.startsWith('image/')) {
-          if (file.type.startsWith('video/')) {
+        if (isVideoFile(file) || isImageFile(file)) {
+          if (isVideoFile(file)) {
             // Check video duration (helper returns { valid, error }).
             const durationCheck = await validateVideoDuration(file, planCaps?.maxVideoSec || 0);
             const validDuration = typeof durationCheck === 'boolean' ? durationCheck : durationCheck.valid;
@@ -1265,9 +1266,9 @@ const CreatePage = () => {
 
 
       case 'photo':
-        if (file.type.startsWith('image/')) {
+        if (isImageFile(file)) {
           const validPhotos = safeFiles.filter(file => {
-            const isValidType = file.type.startsWith('image/');
+            const isValidType = isImageFile(file);
             if (!isValidType) {
               showError('Please select only images');
               return false;
@@ -1286,9 +1287,9 @@ const CreatePage = () => {
         break;
 
       case 'video':
-        if (file.type.startsWith('video/')) {
+        if (isVideoFile(file)) {
           const validVideos = safeFiles.filter(file => {
-            const isValidType = file.type.startsWith('video/');
+            const isValidType = isVideoFile(file);
             if (!isValidType) {
               showError('Please select only videos');
               return false;
@@ -1311,7 +1312,7 @@ const CreatePage = () => {
           const validFiles = safeFiles.filter(file => {
             // Moments are the short-VIDEO surface. Photos belong in Photos —
             // accepting images here was how photos ended up in the video feed.
-            const isValidType = file.type.startsWith('video/');
+            const isValidType = isVideoFile(file);
             if (!isValidType) {
               showError('Moments are video-only. To share a photo, use the Photos tab.');
               return false;
@@ -1393,7 +1394,7 @@ const CreatePage = () => {
             const file = storyFiles[i];
             const capErr = checkPlanCap(file, 'Story');
             if (capErr) { setUploadProgress(null); showError(capErr); continue; }
-            const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+            const up = isImageFile(file) ? await compressImage(file) : file;
             const result = await runUpload(up, 'equyvo/stories', { index: i, count: storyFiles.length });
             storyResults.push({ file, result });
           }
@@ -1412,15 +1413,15 @@ const CreatePage = () => {
           // The custom cover is uploaded only now that its media exists — and
           // it is a video-only concept: photo stories are their own preview
           // (a separate cover file demotes the original image on write).
-          const hasVideoStory = storySuccesses.some(s => s.file.type.startsWith('video/'));
+          const hasVideoStory = storySuccesses.some(s => isVideoFile(s.file));
           const storyCustomThumb = hasVideoStory ? await uploadPendingThumb(storyThumbFile) : '';
           const newUploadedStories: UploadedStory[] = storySuccesses.map(({ file, result }, index) => ({
             id: Date.now().toString() + index,
-            type: file.type.startsWith('image/') ? 'image' : 'video',
+            type: isImageFile(file) ? 'image' : 'video',
             fileName: file.name,
             fileSize: file.size,
-            duration: file.type.startsWith('video/') ? '0:15' : undefined,
-            thumbnail: (file.type.startsWith('video/') ? storyCustomThumb : '') || getThumbnailFromUpload(result),
+            duration: isVideoFile(file) ? '0:15' : undefined,
+            thumbnail: (isVideoFile(file) ? storyCustomThumb : '') || getThumbnailFromUpload(result),
             publicId: result?.publicId || '',
             resourceType: result?.resourceType || '',
             r2Key: result?.r2Key || '',
@@ -1638,7 +1639,7 @@ const CreatePage = () => {
         let thoughtThumbnail = getThumbnailFromUpload(thoughtUploadResult);
         // The thumbnail is uploaded only when there is real thought media:
         // a cover can never be posted without its photo/video.
-        const thoughtMediaType = thoughtVideo?.type.startsWith('image/') ? 'image' : thoughtVideo?.type.startsWith('video/') ? 'video' : undefined;
+        const thoughtMediaType = isImageFile(thoughtVideo) ? 'image' : isVideoFile(thoughtVideo) ? 'video' : undefined;
         const thoughtSecureUrl = thoughtUploadResult?.secureUrl || '';
         if (thoughtVideo && !thoughtSecureUrl) {
           setIsUploading(false);
@@ -1649,11 +1650,11 @@ const CreatePage = () => {
         // A custom cover is a video-only concept: a photo IS its own preview,
         // and uploading a separate thumb file demotes the original image on
         // write (the original used to vanish while the cover survived).
-        const thoughtCustomThumb = await uploadPendingThumb(thoughtVideo?.type.startsWith('video/') ? thoughtThumbFile : null);
+        const thoughtCustomThumb = await uploadPendingThumb(isVideoFile(thoughtVideo) ? thoughtThumbFile : null);
         if (thoughtCustomThumb) thoughtThumbnail = thoughtCustomThumb;
         // Videos without a server poster get one captured client-side so the
         // Thoughts feed still shows a preview (never a blank card).
-        if (thoughtVideo?.type.startsWith('video/') && !thoughtThumbnail) {
+        if (isVideoFile(thoughtVideo) && !thoughtThumbnail) {
           try {
             const poster = await captureVideoPoster(thoughtVideo);
             if (poster) thoughtThumbnail = poster;
@@ -1682,7 +1683,7 @@ const CreatePage = () => {
         // Preserve the playable URL + ThoughtsPage media array. Without this
         // the thought text saved but its photo/video never rendered.
         const thoughtMediaArray = thoughtSecureUrl && thoughtMediaType
-          ? [{ type: thoughtMediaType === 'video' ? 'video' : thoughtVideo?.type === 'image/gif' ? 'gif' : 'photo', url: thoughtSecureUrl, thumbnail: thoughtThumbnail || thoughtSecureUrl }]
+          ? [{ type: thoughtMediaType === 'video' ? 'video' : inferMimeType(thoughtVideo) === 'image/gif' ? 'gif' : 'photo', url: thoughtSecureUrl, thumbnail: thoughtThumbnail || thoughtSecureUrl }]
           : undefined;
         const persistErr = await persistContent({
           id: newUploadedThought.id,
@@ -1771,7 +1772,7 @@ const CreatePage = () => {
             const file = photoFiles[i];
             const capErr = checkPlanCap(file, 'Photo');
             if (capErr) { setUploadProgress(null); showError(capErr); continue; }
-            const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+            const up = isImageFile(file) ? await compressImage(file) : file;
             const result = await runUpload(up, 'equyvo/photos', { index: i, count: photoFiles.length });
             uploadedPhotoResults.push({ file, result });
           }
@@ -1791,10 +1792,10 @@ const CreatePage = () => {
             id: Date.now().toString() + index,
             fileName: file.name,
             fileSize: file.size,
-            thumbnail: getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
+            thumbnail: getThumbnailFromUpload(result) || (result?.secureUrl && isImageFile(file) ? result.secureUrl : ''),
             caption: photoCaption,
-            mediaType: file.type.startsWith('video/') ? 'video' : 'image',
-            videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
+            mediaType: isVideoFile(file) ? 'video' : 'image',
+            videoUrl: isVideoFile(file) ? result?.secureUrl || '' : '',
             duration: result?.duration,
             publicId: result?.publicId || '',
             resourceType: result?.resourceType || '',
@@ -2127,14 +2128,14 @@ const CreatePage = () => {
             const file = momentFiles[i];
             const capErr = checkPlanCap(file, 'Moment');
             if (capErr) { setUploadProgress(null); showError(capErr); continue; }
-            const durationSec = file.type.startsWith('video/') ? await probeVideoDuration(file) : undefined;
+            const durationSec = isVideoFile(file) ? await probeVideoDuration(file) : undefined;
             const maxSec = planCaps?.maxVideoSec || 0;
             if (durationSec && maxSec && durationSec > maxSec) {
               setUploadProgress(null);
               showError(`Moment video is ${Math.floor(durationSec / 60)} minutes long — the ${planCaps!.planLabel} plan allows up to ${Math.floor(maxSec / 60)} minutes. Upgrade for longer uploads.`);
               continue;
             }
-            const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+            const up = isImageFile(file) ? await compressImage(file) : file;
             const result = await runUpload(up, 'equyvo/moments', { index: i, count: momentFiles.length });
             uploadedResults.push({ file, result, durationSec });
           }
@@ -2154,7 +2155,7 @@ const CreatePage = () => {
           // moments only (uploaded only now that its media exists). Photos are
           // their own preview — a separate cover file demotes the original
           // image on write.
-          const hasVideoMoment = momentSuccesses.some(s => s.file.type.startsWith('video/'));
+          const hasVideoMoment = momentSuccesses.some(s => isVideoFile(s.file));
           const momentCustomThumb = hasVideoMoment ? await uploadPendingThumb(momentThumbFile) : '';
 
           // Posters for video moments + full URLs for photo moments.
@@ -2162,7 +2163,7 @@ const CreatePage = () => {
             momentSuccesses.map(async ({ file, result }) => {
               const t = getThumbnailFromUpload(result);
               if (t) return t;
-              if (file.type.startsWith('video/')) {
+              if (isVideoFile(file)) {
                 try {
                   const poster = await captureVideoPoster(file);
                   return poster || '';
@@ -2175,9 +2176,9 @@ const CreatePage = () => {
             id: Date.now().toString() + index,
             fileName: file.name,
             fileSize: file.size,
-            thumbnail: (file.type.startsWith('video/') ? momentCustomThumb : '') || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && file.type.startsWith('image/') ? result.secureUrl : ''),
-            mediaType: file.type.startsWith('image/') ? 'image' : 'video',
-            videoUrl: file.type.startsWith('video/') ? result?.secureUrl || '' : '',
+            thumbnail: (isVideoFile(file) ? momentCustomThumb : '') || momentPosters[index] || getThumbnailFromUpload(result) || (result?.secureUrl && isImageFile(file) ? result.secureUrl : ''),
+            mediaType: isImageFile(file) ? 'image' : 'video',
+            videoUrl: isVideoFile(file) ? result?.secureUrl || '' : '',
             publicId: result?.publicId || '',
             resourceType: result?.resourceType || '',
             r2Key: result?.r2Key || '',
@@ -2651,8 +2652,8 @@ const CreatePage = () => {
 
   /** Send a captured file into the composer the user chose in the camera tab. */
   const routeCameraFile = (file: File) => {
-    const isImage = file.type.startsWith('image/');
-    const isVideo = file.type.startsWith('video/');
+    const isImage = isImageFile(file);
+    const isVideo = isVideoFile(file);
     let dest = cameraDest;
     if (isVideo && dest === 'photo') dest = 'video';
     if (isImage && dest === 'video') dest = 'photo';
@@ -2963,7 +2964,7 @@ const CreatePage = () => {
         }
         return;
       }
-      const up = file.type.startsWith('image/') ? await compressImage(file) : file;
+      const up = isImageFile(file) ? await compressImage(file) : file;
       const { data, error } = await api.uploadFile(up, 'equyvo/thumbnails');
       if (error || !data?.secureUrl) throw new Error(error || 'Thumbnail upload failed');
       const url = data.secureUrl;
@@ -4157,7 +4158,7 @@ const CreatePage = () => {
                         <div className="min-w-0">
                           <p className="text-sm font-medium truncate max-w-[220px]" title={file.name}>{file.name}</p>
                           <p className="text-xs text-muted-foreground">
-                            {file.type.startsWith('image/') ? 'Image' : 'Video'} • {(file.size / (1024 * 1024)).toFixed(1)} MB
+                            {isImageFile(file) ? 'Image' : 'Video'} • {(file.size / (1024 * 1024)).toFixed(1)} MB
                           </p>
                         </div>
                       </div>
@@ -4902,7 +4903,7 @@ const CreatePage = () => {
                       const file = e.target.files?.[0];
                       e.target.value = '';
                       if (!file) return;
-                      if (!file.type.startsWith('image/')) {
+                      if (!isImageFile(file)) {
                         showError('Please select an image file');
                         return;
                       }
@@ -5043,7 +5044,7 @@ const CreatePage = () => {
                         <div className="min-w-0">
                           <p className="font-medium truncate max-w-[200px]" title={file.name}>{file.name}</p>
                           <p className="text-sm text-muted-foreground">
-                            {(file.size / (1024 * 1024)).toFixed(1)} MB • {file.type.startsWith('image/') ? 'Photo' : 'Video'}
+                            {(file.size / (1024 * 1024)).toFixed(1)} MB • {isImageFile(file) ? 'Photo' : 'Video'}
                           </p>
                         </div>
                       </div>

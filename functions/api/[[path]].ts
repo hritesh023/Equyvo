@@ -2967,8 +2967,40 @@ const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
 const UPLOAD_PART_SIZE = 8 * 1024 * 1024;
 const SINGLE_UPLOAD_MAX_BYTES = UPLOAD_PART_SIZE;
 const MAX_MULTIPART_PARTS = 10000;
+const EXT_MIME_SERVER = {
+  jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', gif: 'image/gif',
+  webp: 'image/webp', avif: 'image/avif', bmp: 'image/bmp', svg: 'image/svg+xml',
+  heic: 'image/heic', heif: 'image/heif', tif: 'image/tiff', tiff: 'image/tiff',
+  mp4: 'video/mp4', m4v: 'video/mp4', mov: 'video/quicktime', webm: 'video/webm',
+  mkv: 'video/x-matroska', avi: 'video/x-msvideo', ogv: 'video/ogg',
+  mp3: 'audio/mpeg', wav: 'audio/wav', m4a: 'audio/mp4', aac: 'audio/aac',
+  ogg: 'audio/ogg', oga: 'audio/ogg', flac: 'audio/flac', opus: 'audio/opus',
+};
+function inferMimeTypeServer(fileOrType, name) {
+  let t = '';
+  let n = '';
+  if (fileOrType && typeof fileOrType === 'object') {
+    t = String(fileOrType.type || '');
+    n = String(fileOrType.name || name || '');
+  } else {
+    t = String(fileOrType || '');
+    n = String(name || '');
+  }
+  t = t.trim();
+  if (t && t.toLowerCase() !== 'application/octet-stream') return t;
+  const dot = n.lastIndexOf('.');
+  if (dot >= 0) {
+    const ext = n.slice(dot + 1).toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (ext && EXT_MIME_SERVER[ext]) return EXT_MIME_SERVER[ext];
+  }
+  return t || 'application/octet-stream';
+}
 function mimeAllowed(mime) {
-  return typeof mime === 'string' && ALLOWED_MIME_PREFIXES.some((p) => mime.startsWith(p));
+  const t = String(mime || '').trim();
+  if (!t) return false;
+  // Accept inferred types too: treat empty/generic as needing name-based
+  // inference handled by callers; here just prefix check.
+  return ALLOWED_MIME_PREFIXES.some((p) => t.startsWith(p));
 }
 
 // =============== R2 media warehouse (zero egress) ==========================
@@ -5751,7 +5783,7 @@ export const onRequest = async (context) => {
       let payload = {};
       try { payload = await readJson(request); } catch { payload = {}; }
       const declaredBytes = Math.max(0, Math.round(Number(payload.size) || 0));
-      const contentType = String(payload.type || '').slice(0, 120);
+      const contentType = inferMimeTypeServer(payload.type, payload.name).slice(0, 120);
       const folder = String(payload.folder || 'equyvo/uploads').replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
       if (!mimeAllowed(contentType)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
       if (declaredBytes <= 0) return json({ error: 'Empty file' }, 400, cors);
@@ -6001,7 +6033,8 @@ export const onRequest = async (context) => {
         .replace(/[^a-zA-Z0-9/_-]/g, '').slice(0, 120);
 
       if (!file || typeof file === 'string') return json({ error: 'No file provided' }, 400, cors);
-      if (!mimeAllowed(file.type)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
+      const fileMime = inferMimeTypeServer(file, file.name);
+      if (!mimeAllowed(fileMime)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
 
       // Per-plan size cap wins over the global MAX_UPLOAD_MB env.
       const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
@@ -6055,7 +6088,7 @@ export const onRequest = async (context) => {
         try {
           await env.EQUYVO_R2.put(r2Key, bytes, {
             httpMetadata: {
-              contentType: file.type || 'application/octet-stream',
+              contentType: fileMime || 'application/octet-stream',
               cacheControl: 'public, max-age=31536000, immutable',
             },
             customMetadata: { uploader: String(actor.id).slice(0, 128), sha256: hash, encoding: 'none' },
@@ -6073,7 +6106,7 @@ export const onRequest = async (context) => {
       if (cloudConfigured) {
         const cloudForm = new FormData();
         // Re-wrap bytes so the upstream upload works even after hashing.
-        const upFile = bytes ? new File([bytes], file.name || 'upload', { type: file.type }) : file;
+        const upFile = bytes ? new File([bytes], file.name || 'upload', { type: fileMime }) : file;
         cloudForm.append('file', upFile);
         cloudForm.append('upload_preset', uploadPreset);
         cloudForm.append('folder', folder);
@@ -6095,7 +6128,7 @@ export const onRequest = async (context) => {
 
       const resourceType = result?.resource_type
         // Audio is filed under the video resource type on Cloudinary.
-        || (String(file.type).startsWith('video/') || String(file.type).startsWith('audio/') ? 'video' : 'image');
+        || (fileMime.startsWith('video/') || fileMime.startsWith('audio/') ? 'video' : 'image');
       const variants = result ? cloudinaryVariants(result.secure_url, result.resource_type, quota.quality) : null;
       const r2Url = r2Key ? r2DeliveryUrl(request, env, r2Key) : null;
       const payload = {

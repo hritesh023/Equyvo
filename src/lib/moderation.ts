@@ -12,6 +12,8 @@
 // blocks (verdict !== 'allow') are hard blocks here.
 // ---------------------------------------------------------------------------
 
+import { inferMimeType } from './mime';
+
 export type ScreenVerdict = 'allow' | 'review' | 'block';
 
 export interface ScreenResult {
@@ -223,8 +225,9 @@ export async function screenMedia(
     };
   }
 
-  const isImage = file.type.startsWith('image/') && !file.type.includes('gif');
-  const isVideo = file.type.startsWith('video/');
+  const inferred = inferMimeType(file as any);
+  const isImage = inferred.startsWith('image/') && !inferred.includes('gif');
+  const isVideo = inferred.startsWith('video/');
   const samples: string[] = [];
   if (isImage) {
     const s = await sampleImage(file);

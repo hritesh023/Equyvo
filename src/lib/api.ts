@@ -3,6 +3,7 @@
 // In production, same origin (Pages serves both frontend and functions)
 
 import { normalizeContentItem, normalizeContentList } from './media';
+import { inferMimeType } from './mime';
 
 function resolveApiBase(): string {
   try {
@@ -286,7 +287,7 @@ async function uploadChunked(
   meta: { duration?: number } | undefined,
   onProgress: (loaded: number, phase: UploadPhase) => void,
 ): Promise<{ data?: UploadResult; error?: string }> {
-  const type = (payload as File).type || 'application/octet-stream';
+  const type = inferMimeType(payload as any) || 'application/octet-stream';
   const total = payload.size;
   const init = await request<{ data?: { chunked: boolean; uploadId?: string; partSize?: number; r2Key?: string | null }; error?: string }>(
     '/upload/init',
