@@ -4286,13 +4286,15 @@ export const onRequest = async (context) => {
         } catch { /* fail-open */ }
       }
       if (verdict === 'allow' && samples.length > 0) {
+        let confirmed = false;
         try {
           const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ images: samples, task: 'moderate', source: 'equyvo-upload-gate' }),
-          }, 4000);
+          }, 5000);
           if (data && typeof data === 'object') {
+            confirmed = true;
             if (data.safe === false || data.block === true) verdict = 'block';
             else if (data.review === true || data.quarantine === true) verdict = 'review';
             else {
@@ -4302,7 +4304,11 @@ export const onRequest = async (context) => {
             }
             if (!category && verdict !== 'allow') category = /child|csam|minor/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
           }
-        } catch { /* vision is best-effort; publish-time gate still applies */ }
+        } catch { /* fall through to fail-closed */ }
+        if (verdict === 'allow' && !confirmed) {
+          verdict = 'review';
+          category = category || 'adult';
+        }
       }
       if (verdict !== 'allow' && !category) category = 'unspecified';
       const message = verdict === 'block'
