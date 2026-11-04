@@ -4323,7 +4323,7 @@ export const onRequest = async (context) => {
         else if (brain === 'allow' && verdict === 'review') { verdict = 'allow'; }
         else if (brain === 'review' && verdict === 'allow') { verdict = 'review'; }
       } catch { /* fail-open */ }
-      if (verdict === 'allow' && samples.length > 0) {
+      if (verdict !== 'block' && samples.length > 0) {
         let confirmed = false;
         try {
           const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
@@ -4353,6 +4353,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
               // explicitly safe
               if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
               else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = (benign || !adultish) ? 'allow' : 'review';
+               else verdict = 'allow';
             }
             if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';
           }
