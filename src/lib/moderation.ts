@@ -266,7 +266,10 @@ export async function screenMedia(
     }
   } catch { /* best-effort */ }
 
-  const isImage = inferred.startsWith('image/') && !inferred.includes('gif');
+  // GIFs are animated images: screen them like any other image (first frame
+  // + skin-tone guard + server-side vision). Previously GIFs were skipped,
+  // leaving a hole for prohibited animated content.
+  const isImage = inferred.startsWith('image/');
   const isVideo = inferred.startsWith('video/');
   const samples: string[] = [];
   const skinRatios: number[] = [];

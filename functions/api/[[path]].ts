@@ -6092,6 +6092,15 @@ export const onRequest = async (context) => {
 
       if (!file || typeof file === 'string') return json({ error: 'No file provided' }, 400, cors);
       let fileMime = inferMimeTypeServer(file, file.name);
+      // Magic-byte verification: never trust the client-supplied type/name.
+      try {
+        const head = await file.slice(0, 64).arrayBuffer();
+        const detected = detectMimeFromBytes(head);
+        if (detected) {
+          if (!mimeAllowed(detected)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
+          fileMime = detected;
+        }
+      } catch { /* best-effort */ }
       if (!mimeAllowed(fileMime)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
 
       // Per-plan size cap wins over the global MAX_UPLOAD_MB env.
@@ -6736,6 +6745,15 @@ export const onRequest = async (context) => {
       const text = String(clean.text || '').slice(0, 2000);
       const type = clean.type === 'image' || clean.type === 'file' || clean.type === 'audio' ? clean.type : 'text';
       if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
+      // Content safety: block prohibited text in chat too.
+      if (text.trim()) {
+        try {
+          const verdict = await moderateContent(env, { text });
+          if (verdict !== 'allow') return json({ error: 'Message violates community guidelines.', code: 'CONTENT_BLOCKED' }, 400, cors);
+        } catch (e) {
+          return json({ error: (e && e.message) || 'Message violates community guidelines.', code: 'CONTENT_BLOCKED' }, (e && e.status) || 400, cors);
+        }
+      }
       const clientId = String(clean.id || '').slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '');
       const msg = {
         id: clientId || generateId(), from: actor.id, to: peer, text,
