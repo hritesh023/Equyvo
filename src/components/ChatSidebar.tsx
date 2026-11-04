@@ -166,8 +166,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      setLoading(true);
+    const syncSocial = async () => {
       try {
         const [f, g] = await Promise.all([getFollowers(), getFollowing()]);
         if (cancelled) return;
@@ -178,20 +177,30 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         });
         syncThreadsFromSocial(f.list.map(toPeer), g.list.map(toPeer));
         refreshThreads();
-      } finally {
-        if (!cancelled) setLoading(false);
+        if (activeId) refreshMsgs(activeId);
+      } catch {
+        /* ignore */
       }
+    };
+    (async () => {
+      setLoading(true);
+      await syncSocial();
+      if (!cancelled) setLoading(false);
     })();
     const onUpdate = () => {
       refreshThreads();
       if (activeId) refreshMsgs(activeId);
     };
+    const onFollowChanged = () => { void syncSocial(); };
+    const onVisible = () => { if (document.visibilityState === 'visible') void syncSocial(); };
     window.addEventListener('chatUpdated', onUpdate);
-    window.addEventListener('followChanged', onUpdate);
+    window.addEventListener('followChanged', onFollowChanged);
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
       window.removeEventListener('chatUpdated', onUpdate);
-      window.removeEventListener('followChanged', onUpdate);
+      window.removeEventListener('followChanged', onFollowChanged);
+      document.removeEventListener('visibilitychange', onVisible);
     };
      
   }, [activeId]);

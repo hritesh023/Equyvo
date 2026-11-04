@@ -234,6 +234,19 @@ export function syncThreadsFromSocial(
   followers: { id: string; name: string; avatar?: string }[],
   following: { id: string; name: string; avatar?: string }[],
 ): ChatThread[] {
+  // Prune threads for peers no longer in the follow graph (unfollowed or
+  // removed follower). Keep messages keyed by peer id so a re-follow restores
+  // history. Never prune when both lists are empty (likely a fetch failure).
+  const validPeerIds = new Set([
+    ...followers.map((f) => String(f.id).toLowerCase()),
+    ...following.map((f) => String(f.id).toLowerCase()),
+  ]);
+  if (validPeerIds.size > 0) {
+    const pruned = readThreads().filter((t) =>
+      validPeerIds.has(String(t.peerId || t.id).toLowerCase()),
+    );
+    writeThreads(pruned);
+  }
   const followerIds = new Set(followers.map((f) => String(f.id).toLowerCase()));
   const followingIds = new Set(following.map((f) => String(f.id).toLowerCase()));
   for (const f of followers) {
