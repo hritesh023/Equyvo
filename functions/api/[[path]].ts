@@ -1263,7 +1263,8 @@ const SAFETY_BLOCK_PATTERNS = [
   /\b(cp|csam|child\s?porn)\b/i,
   /\b(bestiality|zoophilia)\b/i,
   /\b(rape|gangbang|forced\s?sex|non[\s-]?consensual)\b/i,
-  /\b(terror|terrorism|terrorist|isis|al[- ]?qaeda|bomb|bombing|explosive|suicide (bomber|attack)|mass (shooting|shooter)|genocide)\b/i,
+  /\b(terrorism|terrorist|isis|al[- ]?qaeda|suicide (bomber|attack)|mass (shooting|shooter)|genocide)\b/i,
+  /\b(bomb (threat|attack|making)|explosive (device|attack))\b/i,
   /\b(how to (kill|murder|stab|shoot|behead|bomb|make a bomb|build a bomb))\b/i,
   /\b(how to (commit suicide|kill myself|self[- ]?harm|cut (myself|yourself)|end (my|your) life|overdose))\b/i,
   /\b(suicide (method|tutorial|guide|tips|instructions)|self[- ]?harm (tips|guide|how to))\b/i,
@@ -1279,7 +1280,7 @@ const SAFETY_BLOCK_PATTERNS = [
 const SAFETY_REVIEW_PATTERNS = [
   /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic)\b/i,
   /\b(behead|gore|dismember|mutilat|decapitat)\b/i,
-  /\b(weapon|gun|firearm|rifle|bomb|explosive|grenade)\b/i,
+  /\b(gun (violence|attack|threat)|armed (robbery|attack)|weapon (attack|threat)|bomb threat|explosive (device|attack))\b/i,
   /\b(suicide|self[- ]?harm|self[- ]?injury|cutting (myself|yourself)|overdose|hang myself|end (my|your) life)\b/i,
   /\b(kill myself|suicide|self[\s-]?harm|cutting myself)\b/i,
   /\b(fuck (you|off)|slut|whore|retard|kike|chink|fag(got)?)\b/i,
@@ -1327,7 +1328,7 @@ async function brainSafetyCheck(env, text) {
       // heuristics flagged a review keyword (reduces false positives).
       if (data.safe === true || data.safe === 1 || data.safe === 'true' || data.verdict === 'allow' || data.verdict === 'safe') return 'allow';
       // Benign-context categories override a review verdict.
-      if (Array.isArray(data.categories) && data.categories.some((c) => /cooking|food|recipe|religious|education|sport|news|science/i.test(String(c)))) return 'allow';
+      if (Array.isArray(data.categories) && data.categories.some((c) => /cooking|food|recipe|religious|education|sport|news|science|comedy|humor|entertainment|music|dance|travel|nature|family/i.test(String(c)))) return 'allow';
     }
   } catch { /* fail-open */ }
   return null;
@@ -4303,8 +4304,8 @@ export const onRequest = async (context) => {
         const hints = (payload as any).clientHints || {};
         const mv = Number(hints.maxViolence || 0);
         const ms = Number(hints.maxSkin || 0);
-        if (Number.isFinite(mv) && mv >= 0.35) { verdict = 'block'; category = 'violent'; }
-        else if (Number.isFinite(ms) && ms >= 0.8) { verdict = 'block'; category = 'adult'; }
+        if (Number.isFinite(mv) && mv >= 0.6) { verdict = 'block'; category = 'violent'; }
+        else if (Number.isFinite(ms) && ms >= 0.9) { verdict = 'block'; category = 'adult'; }
       } catch { /* ignore */ }
       // Brain check runs regardless of local verdict so clean content that
       // tripped a keyword can be downgraded to allow.
@@ -4320,29 +4321,30 @@ export const onRequest = async (context) => {
           const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ images: samples, task: 'moderate', prompt: 'Classify each image for safety for a public social app. BLOCK only if it clearly contains: child exploitation/CSAM, non-consensual sexual content, explicit nudity or sexual acts, graphic gore/blood used to harm, real-world violence or weapons used to harm, terrorism/extremism, self-harm or suicide. DO NOT block: ordinary cooking/food preparation (knives, meat, fire are fine), religious or cultural events and clothing, educational or medical content, sports, news, art, or everyday scenes. When in doubt between "cooking/religious/educational" and unsafe, mark safe:true. Return JSON: {"safe":true|false,"review":bool,"block":bool,"categories":[...]} where safe:true only for clearly safe content.', source: 'equyvo-upload-gate' }),
+            body: JSON.stringify({ images: samples, task: 'moderate', prompt: 'Classify each image for safety for a public social app. BLOCK only if it clearly contains: child exploitation/CSAM, non-consensual sexual content, explicit nudity or sexual acts, graphic gore/blood used to harm, real-world violence or weapons used to harm, terrorism/extremism, self-harm or suicide. DO NOT block: ordinary cooking/food preparation (knives, meat, fire are fine), religious or cultural events and clothing, educational or medical content, sports, news, art, comedy/entertainment/humor, music, dance, travel, nature, family/vlog, or everyday scenes. When in doubt between any benign context (cooking/religious/educational/comedy/entertainment) and unsafe, mark safe:true. Return JSON: {"safe":true|false,"review":bool,"block":bool,"categories":[...]} where safe:true for clearly safe or benign content.', source: 'equyvo-upload-gate' }),
           }, 8000);
           if (data && typeof data === 'object') {
             confirmed = true;
             const explicitlySafe = (data.safe === true || data.safe === 1 || data.safe === 'true');
             const cats = (data.categories || data.labels || []);
             const catStr = Array.isArray(cats) ? cats.join(' ').toLowerCase() : String(cats).toLowerCase();
-            const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday/.test(catStr);
+            const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog/.test(catStr);
+const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
             const severe = /child|csam|minor|terror|non-?consensual|assault|self[- ]?harm|suicide/.test(catStr);
             if (data.safe === false || data.block === true) verdict = 'block';
             else if (severe) verdict = 'block';
             else if (data.review === true || data.quarantine === true) {
               // Downgrade review to allow when context is clearly benign.
-              verdict = benign ? 'allow' : 'review';
+              verdict = (benign || !adultish) ? 'allow' : 'review';
             }
             else if (!explicitlySafe) {
               // Ambiguous: allow if benign context, else review (never hard-block from ambiguity).
-              verdict = benign ? 'allow' : 'review';
+              verdict = (benign || !adultish) ? 'allow' : 'review';
             }
             else {
               // explicitly safe
               if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = benign ? 'allow' : 'review';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = (benign || !adultish) ? 'allow' : 'review';
             }
             if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';
           }

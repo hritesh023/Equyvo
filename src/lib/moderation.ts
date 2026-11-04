@@ -40,7 +40,7 @@ export class ContentBlockedError extends Error {
 const NAME_BLOCK_PATTERNS: RegExp[] = [
   /(\b|_)(porn|xxx|nude|naked|nsfw|18\+|adult|sex(tape)?|erotic|hentai|onlyfans)\b/i,
   /(\b|_)csam(\b|_)/i,
-  /\b(rape|bestiality|gore|behead|terror|terrorism|terrorist|bomb|bombing|explosion|massacre|shooting|weapon|gunfire|bloodshed|suicide|self[- ]?harm|self[- ]?injury)\b/i,
+  /\b(rape|bestiality|gore|behead|terror|terrorism|terrorist|suicide|self[- ]?harm|self[- ]?injury)\b/i,
   /(\.exe|\.apk|\.bat|\.msi|\.scr|\.js|\.html)$/i,
 ];
 
@@ -327,8 +327,12 @@ export async function screenMedia(
   // Raised thresholds: nudity is usually >0.8 skin coverage; ordinary crowds,
   // religious/cultural events and outdoor scenes can hit 0.5-0.7. Only block
   // when skin dominates the frame.
-  const skinBlockThreshold = isVideo ? 0.8 : 0.7;
-  if (maxSkin >= skinBlockThreshold) {
+  // Only treat as a hard block when skin coverage is extreme. Mid-range
+  // values are passed to the server-side eye (with a hint) instead of
+  // blocking outright, so legitimate skin-heavy footage (cooking, sports,
+  // religious/cultural events) is not refused on a heuristic alone.
+  const skinHardBlock = isVideo ? 0.9 : 0.85;
+  if (maxSkin >= skinHardBlock) {
     return {
       verdict: 'block',
       category: 'adult',
@@ -342,7 +346,9 @@ export async function screenMedia(
   // Raised threshold: ordinary cooking (fire, red meat/tomatoes) and sports
   // can trigger the red/fire heuristic at ~0.1-0.25. Only block when violence
   // colors dominate a large share of the frame.
-  if (maxViolence >= 0.35) {
+  // Hard block only when violence colors dominate most of the frame. Mid-range
+  // values are forwarded as a hint for the server-side eye.
+  if (maxViolence >= 0.6) {
     return {
       verdict: 'block',
       category: 'violent',
