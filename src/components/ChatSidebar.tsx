@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2 } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser } from 'lucide-react';
 import { showError } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
 import api from '@/lib/api';
@@ -18,7 +18,7 @@ import { getFollowers, getFollowing, type SocialProfile } from '@/lib/social';
 import {
   listThreads, listMessages, ensureThread, syncThreadsFromSocial,
   sendChatMessage, markThreadSeen, pullThreadMessages, deleteChatMessage,
-  retryChatMessage,
+  retryChatMessage, deleteThread, clearThread,
   type ChatThread, type ChatMessage,
 } from '@/lib/chat';
 
@@ -83,6 +83,27 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [menuMsgId, setMenuMsgId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const chatLongPressRef = useRef<{ timer: number | null; triggered: boolean }>({ timer: null, triggered: false });
+
+  const startChatLongPress = (id: string) => {
+    if (chatLongPressRef.current.timer) window.clearTimeout(chatLongPressRef.current.timer);
+    chatLongPressRef.current.triggered = false;
+    chatLongPressRef.current.timer = window.setTimeout(() => {
+      chatLongPressRef.current.triggered = true;
+      const ok = window.confirm('Delete this chat?');
+      if (ok) {
+        deleteThread(id);
+        refreshThreads();
+        if (activeId === id) setActiveId(null);
+      }
+    }, 500);
+  };
+  const cancelChatLongPress = () => {
+    if (chatLongPressRef.current.timer) {
+      window.clearTimeout(chatLongPressRef.current.timer);
+      chatLongPressRef.current.timer = null;
+    }
+  };
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const stickToBottomRef = useRef(true);
 
@@ -543,7 +564,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   tabIndex={0}
                   aria-label={`Open chat with ${contact.peerName}${contact.unread > 0 ? `, ${contact.unread} unread` : ''}`}
                   className="flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => setActiveId(contact.id)}
+                  onClick={() => {
+                    if (chatLongPressRef.current.triggered) {
+                      chatLongPressRef.current.triggered = false;
+                      return;
+                    }
+                    setActiveId(contact.id);
+                  }}
+                  onTouchStart={() => startChatLongPress(contact.id)}
+                  onTouchEnd={cancelChatLongPress}
+                  onTouchMove={cancelChatLongPress}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    const ok = window.confirm('Delete this chat?');
+                    if (ok) {
+                      deleteThread(contact.id);
+                      refreshThreads();
+                      if (activeId === contact.id) setActiveId(null);
+                    }
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
@@ -638,6 +677,23 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             </button>
             {/* Background selector reachable even while the chat is open
                 (the desktop sidebar header sits under the chat panel overlay). */}
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              aria-label="Clear chat"
+              title="Clear chat"
+              onClick={() => {
+                if (!activeChat) return;
+                const ok = window.confirm('Clear all messages in this chat?');
+                if (!ok) return;
+                clearThread(activeChat.id);
+                refreshMsgs(activeChat.id);
+                refreshThreads();
+              }}
+            >
+              <Eraser className="w-4 h-4" />
+            </Button>
             <ChatThemeSelector>
               <Button
                 variant="ghost"

@@ -500,6 +500,42 @@ export async function deleteChatMessage(threadId: string, messageId: string, for
   emitChatUpdated(threadId);
 }
 
+/** Remove a thread entirely (chat list + all its messages). */
+export function deleteThread(threadId: string): void {
+  if (!threadId) return;
+  try {
+    const threads = readThreads().filter((t) => t.id !== threadId);
+    writeThreads(threads);
+    const all = readMessages();
+    if (all[threadId]) {
+      delete all[threadId];
+      writeMessages(all);
+    }
+    emitChatUpdated(threadId);
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Clear all messages in a thread but keep the thread itself. */
+export function clearThread(threadId: string): void {
+  if (!threadId) return;
+  try {
+    const all = readMessages();
+    all[threadId] = [];
+    writeMessages(all);
+    const threads = readThreads();
+    const ix = threads.findIndex((t) => t.id === threadId);
+    if (ix >= 0) {
+      threads[ix] = { ...threads[ix], lastMessage: '', unread: 0, timestamp: nowTime() };
+      writeThreads(threads);
+    }
+    emitChatUpdated(threadId);
+  } catch {
+    /* ignore */
+  }
+}
+
 export function threadsByRelation(relation: 'followers' | 'following'): ChatThread[] {
   const all = readThreads();
   if (relation === 'followers') {
