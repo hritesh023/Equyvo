@@ -40,11 +40,11 @@ export class ContentBlockedError extends Error {
 const NAME_BLOCK_PATTERNS: RegExp[] = [
   /(\b|_)(porn|xxx|nude|naked|nsfw|18\+|adult|sex(tape)?|erotic|hentai|onlyfans)\b/i,
   /(\b|_)csam(\b|_)/i,
-  /\b(rape|bestiality|gore|behead)[^a-z]/i,
+  /\b(rape|bestiality|gore|behead|terror|terrorism|terrorist|bomb|bombing|explosion|massacre|shooting|weapon|gunfire|bloodshed)\b/i,
   /(\.exe|\.apk|\.bat|\.msi|\.scr|\.js|\.html)$/i,
 ];
 
-const MAX_SAMPLES = 3;
+const MAX_SAMPLES = 5;
 const SAMPLE_LONG_EDGE = 640;
 const SAMPLE_QUALITY = 0.72;
 const SAMPLE_TIMEOUT_MS = 9000;
@@ -180,7 +180,7 @@ async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number
       signal.addEventListener('abort', () => reject(new Error('timeout')));
     }), SAMPLE_TIMEOUT_MS);
     if (!dur || !isFinite(dur)) return out;
-    const fractions = [0.12, 0.45, 0.75];
+    const fractions = [0.05, 0.2, 0.4, 0.65, 0.85];
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return out;
@@ -280,12 +280,9 @@ export async function screenMedia(
     for (const s of await sampleVideo(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); }
   }
 
-  // Fail-closed for images: an image that cannot be decoded cannot be
-  // verified, so it is refused. For video we degrade gracefully (allow the
-  // upload when sampling fails) because container/codec quirks and slow
-  // devices otherwise block perfectly legitimate clips; the filename and
-  // caption are still screened and publish-time moderation still applies.
-  if (isImage && samples.length === 0) {
+  // Fail-closed: any media that cannot be sampled cannot be verified as safe,
+  // so it is refused (no verification = no upload).
+  if ((isImage || isVideo) && samples.length === 0) {
     return {
       verdict: 'block',
       category: 'adult',

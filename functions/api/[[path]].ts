@@ -1263,6 +1263,8 @@ const SAFETY_BLOCK_PATTERNS = [
   /\b(cp|csam|child\s?porn)\b/i,
   /\b(bestiality|zoophilia)\b/i,
   /\b(rape|gangbang|forced\s?sex|non[\s-]?consensual)\b/i,
+  /\b(terror|terrorism|terrorist|isis|al[- ]?qaeda|bomb|bombing|explosive|suicide (bomber|attack)|mass (shooting|shooter)|genocide)\b/i,
+  /\b(how to (kill|murder|stab|shoot|behead|bomb|make a bomb|build a bomb))\b/i,
   /\b(how to (make|build).{0,30}(bomb|explosive|bioweapon|chemical weapon|nuke|dirty bomb))\b/i,
   /\b(join (isis|al-?qaeda|terror))\b/i,
   /\b(i will kill you|i['’]m going to kill (you|them)|kill all (muslims|christians|jews|hindus|whites|blacks))\b/i,
@@ -1273,7 +1275,7 @@ const SAFETY_BLOCK_PATTERNS = [
 // Matched content is quarantined (owner-only) pending automated re-check.
 const SAFETY_REVIEW_PATTERNS = [
   /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic)\b/i,
-  /\b(behead|gore|dismember|mutilat)\b/i,
+  /\b(behead|gore|dismember|mutilat|blood|weapon|gun|knife|attack|explosion|violence|violent|fight)\b/i,
   /\b(kill myself|suicide|self[\s-]?harm|cutting myself)\b/i,
   /\b(fuck (you|off)|slut|whore|retard|kike|chink|fag(got)?)\b/i,
   /\b(send money|wire transfer|gift card|crypto (doubling|giveaway)|you (have )?won (a|₹|\$))\b/i,
@@ -1834,12 +1836,12 @@ const GB = 1024 * 1024 * 1024;
 // recordings): the FILE-SIZE/LENGTH gates scale with the plan, storage
 // quota stays the primary limit. Upgrades buy storage + even bigger caps.
 const PLAN_CATALOG = {
-  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 50,   maxVideoSec: 300,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
-  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 100,  maxVideoSec: 1800,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
-  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 250,  maxVideoSec: 3600,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 500,  maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 1024, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
-  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 2048, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true, superchat: true, liveMoments: true },
+  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 300,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
+  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 1800,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
+  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 3600,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
+  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true, superchat: true, liveMoments: true },
 };
 const DEFAULT_PLAN_ID = 'eq_free';
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
@@ -4269,10 +4271,10 @@ export const onRequest = async (context) => {
       const filename = String((payload as any).filename || '').slice(0, 200);
       const caption = String((payload as any).caption || '').slice(0, 600);
       let samples = Array.isArray((payload as any).samples) ? (payload as any).samples : [];
-      // Hard caps: at most 4 samples, each clipped, never logged.
+      // Hard caps: at most 6 samples, each clipped, never logged.
       samples = samples
         .filter((s) => typeof s === 'string' && /^data:image\/(jpe?g|png);base64,/.test(s.slice(0, 40)))
-        .slice(0, 4)
+        .slice(0, 6)
         .map((s) => s.slice(0, 260000));
       const text = [filename, caption].filter(Boolean).join('\n');
       const local = moderateTextLocal(text);
@@ -4299,25 +4301,17 @@ export const onRequest = async (context) => {
             else if (data.review === true || data.quarantine === true) verdict = 'review';
             else {
               const cats = (data.categories || data.labels || []);
-              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence/i.test(String(c)))) { verdict = 'review'; category = /child|minor/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
+              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion/i.test(String(c)))) verdict = 'block';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence|blood|fight|attack|weapon/i.test(String(c)))) { verdict = 'review'; category = /child|minor/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
             }
             if (!category && verdict !== 'allow') category = /child|csam|minor/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
           }
         } catch { /* fall through to fail-closed */ }
-        // Fail-open on vision-infra failure: a transient AI outage must not
-        // block legitimate uploads. Local heuristics + filename/text checks
-        // above still apply; publish-time moderation runs again later.
-        if (verdict === 'allow' && !confirmed && samples.length === 0) {
-          // No samples to inspect -> nothing more to do.
-        }
-        // Keep fail-closed only when samples were actually sent but the eye
-        // never confirmed them AND local heuristics were clean: previously
-        // this blocked all clean media on any AI hiccup. Relax to fail-open
-        // to avoid false positives on legitimate content.
+        // Fail-closed: if media was sampled but the safety eye never
+        // confirmed it, treat as review (blocked from public upload).
         if (verdict === 'allow' && !confirmed && samples.length > 0) {
-          // Do not escalate; allow. (Security tradeoff accepted to prevent
-          // blocking legitimate uploads due to AI availability.)
+          verdict = 'review';
+          category = category || 'adult';
         }
       }
       if (verdict !== 'allow' && !category) category = 'unspecified';
