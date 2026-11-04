@@ -1273,6 +1273,7 @@ const SAFETY_BLOCK_PATTERNS = [
   /\b(join (isis|al-?qaeda|terror))\b/i,
   /\b(i will kill you|i['’]m going to kill (you|them)|kill all (muslims|christians|jews|hindus|whites|blacks))\b/i,
   /\b(sell (drugs|cocaine|heroin|meth)|buy (cocaine|heroin|meth))\b/i,
+  /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic|hardcore|blowjob|handjob|cumshot)\b/i,
 ];
 
 // Review patterns: adult/sexual, graphic gore, self-harm, hate, scams.
@@ -4312,8 +4313,8 @@ export const onRequest = async (context) => {
         const hints = (payload as any).clientHints || {};
         const mv = Number(hints.maxViolence || 0);
         const ms = Number(hints.maxSkin || 0);
-        if (Number.isFinite(mv) && mv >= 0.6) { verdict = 'block'; category = 'violent'; }
-        else if (Number.isFinite(ms) && ms >= 0.9) { verdict = 'block'; category = 'adult'; }
+        if (Number.isFinite(mv) && mv >= 0.4) { verdict = 'block'; category = 'violent'; }
+        else if (Number.isFinite(ms) && ms >= 0.7) { verdict = 'block'; category = 'adult'; }
       } catch { /* ignore */ }
       // Brain check runs regardless of local verdict so clean content that
       // tripped a keyword can be downgraded to allow.
@@ -4343,16 +4344,16 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
             else if (severe) verdict = 'block';
             else if (data.review === true || data.quarantine === true) {
               // Downgrade review to allow when context is clearly benign.
-              verdict = (benign || !adultish) ? 'allow' : 'review';
+              verdict = (benign || !adultish) ? 'allow' : 'block';
             }
             else if (!explicitlySafe) {
               // Ambiguous: allow if benign context, else review (never hard-block from ambiguity).
-              verdict = (benign || !adultish) ? 'allow' : 'review';
+              verdict = (benign || !adultish) ? 'allow' : 'block';
             }
             else {
               // explicitly safe
               if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = (benign || !adultish) ? 'allow' : 'review';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = (benign || !adultish) ? 'allow' : 'block';
                else verdict = 'allow';
             }
             if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';
