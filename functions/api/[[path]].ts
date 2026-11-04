@@ -1278,7 +1278,8 @@ const SAFETY_BLOCK_PATTERNS = [
 // Matched content is quarantined (owner-only) pending automated re-check.
 const SAFETY_REVIEW_PATTERNS = [
   /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic)\b/i,
-  /\b(behead|gore|dismember|mutilat|blood|weapon|gun|knife|attack|explosion|violence|violent|fight)\b/i,
+  /\b(behead|gore|dismember|mutilat|decapitat)\b/i,
+  /\b(weapon|gun|firearm|rifle|bomb|explosive|grenade)\b/i,
   /\b(suicide|self[- ]?harm|self[- ]?injury|cutting (myself|yourself)|overdose|hang myself|end (my|your) life)\b/i,
   /\b(kill myself|suicide|self[\s-]?harm|cutting myself)\b/i,
   /\b(fuck (you|off)|slut|whore|retard|kike|chink|fag(got)?)\b/i,
@@ -1297,8 +1298,10 @@ function moderateTextLocal(text) {
     re.lastIndex = 0;
     if (re.test(s)) hits++;
   }
-  if (hits >= 2) return { verdict: 'block', reason: 'blocked' };
-  if (hits === 1) return { verdict: 'review', reason: 'review' };
+  // Review keywords never hard-block on their own: at most they quarantine
+  // (owner-only) pending the brain/vision checks. Hard blocks come only from
+  // SAFETY_BLOCK_PATTERNS above.
+  if (hits >= 1) return { verdict: 'review', reason: 'review' };
   return { verdict: 'allow' };
 }
 
@@ -1320,6 +1323,11 @@ async function brainSafetyCheck(env, text) {
       if (data.safe === false || data.block === true) return 'block';
       if (data.review === true || data.quarantine === true) return 'review';
       if (Array.isArray(data.categories) && data.categories.some((c) => /child|csam|terror|non-consensual|assault|self[- ]?harm|suicide|weapon|bomb/i.test(String(c)))) return 'block';
+      // Explicit safe verdict lets clean content through even if local
+      // heuristics flagged a review keyword (reduces false positives).
+      if (data.safe === true || data.safe === 1 || data.safe === 'true' || data.verdict === 'allow' || data.verdict === 'safe') return 'allow';
+      // Benign-context categories override a review verdict.
+      if (Array.isArray(data.categories) && data.categories.some((c) => /cooking|food|recipe|religious|education|sport|news|science/i.test(String(c)))) return 'allow';
     }
   } catch { /* fail-open */ }
   return null;
@@ -1335,7 +1343,8 @@ async function moderateContent(env, fields) {
     e.status = 400; e.code = 'CONTENT_BLOCKED';
     throw e;
   }
-  if (local.verdict === 'review') return 'review';
+  // Run the brain even on local review hits so clean content (cooking,
+  // religious, educational) that tripped a keyword can be downgraded to allow.
   try {
     const brain = await brainSafetyCheck(env, text);
     if (brain === 'block') {
@@ -1343,10 +1352,13 @@ async function moderateContent(env, fields) {
       e.status = 400; e.code = 'CONTENT_BLOCKED';
       throw e;
     }
+    if (brain === 'allow') return 'allow';
     if (brain === 'review') return 'review';
   } catch (e) {
     if (e && e.code === 'CONTENT_BLOCKED') throw e;
   }
+  // If local review and brain unavailable/neutral, keep review (quarantine).
+  if (local.verdict === 'review') return 'review';
   return 'allow';
 }
 
@@ -4285,49 +4297,57 @@ export const onRequest = async (context) => {
       let verdict = local.verdict;
       let category = '';
       // Client-side visual heuristics (skin + violence color) are treated as
-      // authoritative hints when the server eye is unavailable.
+      // authoritative hints when the server eye is unavailable. Thresholds
+      // aligned with the relaxed client values.
       try {
         const hints = (payload as any).clientHints || {};
         const mv = Number(hints.maxViolence || 0);
         const ms = Number(hints.maxSkin || 0);
-        if (Number.isFinite(mv) && mv >= 0.18) { verdict = 'block'; category = 'violent'; }
-        else if (Number.isFinite(ms) && ms >= 0.65) { verdict = 'block'; category = 'adult'; }
+        if (Number.isFinite(mv) && mv >= 0.35) { verdict = 'block'; category = 'violent'; }
+        else if (Number.isFinite(ms) && ms >= 0.8) { verdict = 'block'; category = 'adult'; }
       } catch { /* ignore */ }
-      if (verdict === 'allow') {
-        try {
-          const brain = await brainSafetyCheck(env, text);
-          if (brain === 'block') verdict = 'block';
-          else if (brain === 'review') verdict = 'review';
-        } catch { /* fail-open */ }
-      }
+      // Brain check runs regardless of local verdict so clean content that
+      // tripped a keyword can be downgraded to allow.
+      try {
+        const brain = await brainSafetyCheck(env, text);
+        if (brain === 'block') { verdict = 'block'; }
+        else if (brain === 'allow' && verdict === 'review') { verdict = 'allow'; }
+        else if (brain === 'review' && verdict === 'allow') { verdict = 'review'; }
+      } catch { /* fail-open */ }
       if (verdict === 'allow' && samples.length > 0) {
         let confirmed = false;
         try {
           const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ images: samples, task: 'moderate', prompt: 'Classify each image for safety. Block if it contains terrorism, violence, gore, weapons, blood, self-harm, suicide, nudity, sexual content, child exploitation, or any content users should not watch. Return safe:true only if clearly safe.', source: 'equyvo-upload-gate' }),
+            body: JSON.stringify({ images: samples, task: 'moderate', prompt: 'Classify each image for safety for a public social app. BLOCK only if it clearly contains: child exploitation/CSAM, non-consensual sexual content, explicit nudity or sexual acts, graphic gore/blood used to harm, real-world violence or weapons used to harm, terrorism/extremism, self-harm or suicide. DO NOT block: ordinary cooking/food preparation (knives, meat, fire are fine), religious or cultural events and clothing, educational or medical content, sports, news, art, or everyday scenes. When in doubt between "cooking/religious/educational" and unsafe, mark safe:true. Return JSON: {"safe":true|false,"review":bool,"block":bool,"categories":[...]} where safe:true only for clearly safe content.', source: 'equyvo-upload-gate' }),
           }, 8000);
           if (data && typeof data === 'object') {
             confirmed = true;
-            // Strict: only an explicit safe===true (or safe===1) verdict lets
-            // content through. Anything ambiguous/missing is treated as review.
             const explicitlySafe = (data.safe === true || data.safe === 1 || data.safe === 'true');
+            const cats = (data.categories || data.labels || []);
+            const catStr = Array.isArray(cats) ? cats.join(' ').toLowerCase() : String(cats).toLowerCase();
+            const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday/.test(catStr);
+            const severe = /child|csam|minor|terror|non-?consensual|assault|self[- ]?harm|suicide/.test(catStr);
             if (data.safe === false || data.block === true) verdict = 'block';
-            else if (data.review === true || data.quarantine === true) verdict = 'review';
-            else if (!explicitlySafe) verdict = 'review';
-            else {
-              const cats = (data.categories || data.labels || []);
-              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|violence|blood|fight|attack|weapon|self[- ]?harm|suicide/i.test(String(c)))) { verdict = 'review'; category = /child|minor|self[- ]?harm|suicide/i.test(cats.join(' ')) ? 'exploitative' : 'adult'; }
+            else if (severe) verdict = 'block';
+            else if (data.review === true || data.quarantine === true) {
+              // Downgrade review to allow when context is clearly benign.
+              verdict = benign ? 'allow' : 'review';
             }
-            if (!category && verdict !== 'allow') category = /child|csam|minor|terror|self[- ]?harm|suicide/i.test(JSON.stringify(data)) ? 'exploitative' : 'adult';
+            else if (!explicitlySafe) {
+              // Ambiguous: allow if benign context, else review (never hard-block from ambiguity).
+              verdict = benign ? 'allow' : 'review';
+            }
+            else {
+              // explicitly safe
+              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = benign ? 'allow' : 'review';
+            }
+            if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';
           }
-        } catch { /* fall through to fail-closed */ }
-        // AI vision is best-effort (endpoint may be unavailable). Fail-open
-        // on infra failure so legitimate uploads aren't blocked; client-side
-        // + filename/text heuristics still apply. Strict gating only when the
-        // eye actually responds.
+        } catch { /* fall through to fail-open */ }
+        // AI vision is best-effort. Fail-open on infra failure.
         if (verdict === 'allow' && !confirmed && samples.length > 0) {
           // no-op: allow
         }

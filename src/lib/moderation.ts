@@ -310,15 +310,13 @@ export async function screenMedia(
     for (const s of await sampleVideo(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); violenceRatios.push(s.violenceRatio); }
   }
 
-  // Fail-closed: any media that cannot be sampled cannot be verified as safe,
-  // so it is refused (no verification = no upload).
+  // Sampling is best-effort. If the browser cannot decode the media (unusual
+  // codec/container, very large file, memory pressure) we do NOT hard-block:
+  // filename + MIME + text checks above still apply, and the server re-runs
+  // the full safety stack at publish time. Hard-blocking here caused legitimate
+  // cooking/religious/educational uploads to be refused for decode hiccups.
   if ((isImage || isVideo) && samples.length === 0) {
-    return {
-      verdict: 'block',
-      category: 'adult',
-      message: 'This content could not be verified as safe and was not added.',
-      checked: true,
-    };
+    return { verdict: 'allow', checked: false };
   }
   // Heuristic nudity guard: a HIGH skin-tone ratio indicates likely 18+
   // content. Thresholds are deliberately conservative to avoid false
@@ -326,7 +324,10 @@ export async function screenMedia(
   // outdoor scenes) while still catching overt nudity. Videos need a higher
   // bar because a single skin-heavy frame is common in legitimate footage.
   const maxSkin = skinRatios.length ? Math.max(...skinRatios) : 0;
-  const skinBlockThreshold = isVideo ? 0.65 : 0.5;
+  // Raised thresholds: nudity is usually >0.8 skin coverage; ordinary crowds,
+  // religious/cultural events and outdoor scenes can hit 0.5-0.7. Only block
+  // when skin dominates the frame.
+  const skinBlockThreshold = isVideo ? 0.8 : 0.7;
   if (maxSkin >= skinBlockThreshold) {
     return {
       verdict: 'block',
@@ -338,7 +339,10 @@ export async function screenMedia(
   // Violence/terrorism heuristic: concentrated red/fire regions indicate
   // blood, explosions or weapons. Block such content outright.
   const maxViolence = violenceRatios.length ? Math.max(...violenceRatios) : 0;
-  if (maxViolence >= 0.18) {
+  // Raised threshold: ordinary cooking (fire, red meat/tomatoes) and sports
+  // can trigger the red/fire heuristic at ~0.1-0.25. Only block when violence
+  // colors dominate a large share of the frame.
+  if (maxViolence >= 0.35) {
     return {
       verdict: 'block',
       category: 'violent',
