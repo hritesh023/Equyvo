@@ -1192,6 +1192,7 @@ const CreatePage = () => {
     // problems fail open (publish-time moderation still quarantines).
     let safeFiles: File[] = Array.from(files);
     setSafetyChecking(true);
+    setAppBusy(true);
     try {
       const results = await Promise.all(safeFiles.map(async (f) => ({
         f,
@@ -1210,6 +1211,7 @@ const CreatePage = () => {
       safeFiles = Array.from(files);
     } finally {
       setSafetyChecking(false);
+      setAppBusy(false);
     }
     if (safeFiles.length === 0) return;
 
@@ -4898,7 +4900,7 @@ const CreatePage = () => {
                     id="live-thumbnail-upload"
                     type="file"
                     accept="image/*"
-                    className="hidden"
+                    className="sr-only"
                     onChange={(e) => {
                       const file = e.target.files?.[0];
                       e.target.value = '';
@@ -5344,7 +5346,7 @@ const CreatePage = () => {
         id="custom-thumb-upload"
         type="file"
         accept="image/*"
-        className="hidden"
+        className="sr-only"
         onChange={handleCustomThumbPicked}
       />
       {thumbCrop && (
