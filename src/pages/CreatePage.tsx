@@ -1600,6 +1600,8 @@ const CreatePage = () => {
         setTextStoryContent('');
         setTextStoryBackground('#000000');
         setTextStoryColor('#FFFFFF');
+        setTextStoryChatWithAudience(false);
+        setTextStoryChatPrompt('Chat with your creator');
         setShowScheduleModal(false);
         setScheduleDateTime('');
         break;
@@ -1612,6 +1614,8 @@ const CreatePage = () => {
         };
         setDraftPosts(prev => [...prev, newDraftTextStory]);
         showSuccess('Text story saved as draft!');
+        setTextStoryChatWithAudience(false);
+        setTextStoryChatPrompt('Chat with your creator');
         break;
     }
     } finally {
