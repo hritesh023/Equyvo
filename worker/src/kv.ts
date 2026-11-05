@@ -49,12 +49,12 @@ export { KEYS };
 // --- Monetization: server-side plan catalog (source of truth) ---
 const GB = 1024 * 1024 * 1024;
 export const PLAN_CATALOG: Record<string, { id: string; label: string; priceInr: number | null; storageBytes: number; maxUploadMB: number; maxVideoSec: number; monthlyUploads: number; quality: string; ads: boolean | string; creator?: boolean; business?: boolean; verified?: boolean }> = {
-  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 300,   monthlyUploads: 100,   quality: 'auto-low',  ads: true },
-  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 1800,  monthlyUploads: 500,   quality: 'auto-good', ads: 'light' },
-  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 3600,  monthlyUploads: 2000,  quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 7200,  monthlyUploads: 5000,  quality: 'auto-best', ads: false, creator: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original',  ads: false, creator: true, verified: true },
-  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original',  ads: false, creator: true, business: true },
+  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 100,   quality: 'auto-low',  ads: true },
+  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 0,  monthlyUploads: 500,   quality: 'auto-good', ads: 'light' },
+  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 0,  monthlyUploads: 2000,  quality: 'auto-best', ads: false },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 0,  monthlyUploads: 5000,  quality: 'auto-best', ads: false, creator: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 0, monthlyUploads: 20000, quality: 'original',  ads: false, creator: true, verified: true },
+  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 0, monthlyUploads: 50000, quality: 'original',  ads: false, creator: true, business: true },
 };
 export const DEFAULT_PLAN_ID = 'eq_free';
 export const PLATFORM_FEE_BPS = 1500;

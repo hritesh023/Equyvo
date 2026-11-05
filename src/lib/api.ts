@@ -349,13 +349,20 @@ async function uploadChunked(
       onProgress(uploaded, 'uploading');
     }
     onProgress(total, 'finalizing');
-    const comp = await request<{ data?: UploadResult; error?: string }>('/upload/complete', {
-      method: 'POST',
-      body: JSON.stringify({ uploadId, duration: meta?.duration }),
-    });
-    if (comp.error) throwUploadError(comp.error);
+    let comp: { data?: UploadResult; error?: string } | null = null;
+    let lastErr: string | null = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
+      comp = await request<{ data?: UploadResult; error?: string }>('/upload/complete', {
+        method: 'POST',
+        body: JSON.stringify({ uploadId, duration: meta?.duration }),
+      });
+      if (!comp.error && comp.data) { lastErr = null; break; }
+      lastErr = comp.error || 'Upload finished without a result';
+    }
+    if (lastErr) throwUploadError(lastErr);
     onProgress(total, 'done');
-    if (!comp.data) throwUploadError('Upload finished without a result');
+    if (!comp || !comp.data) throwUploadError('Upload finished without a result');
     return comp;
   } catch (fatal) {
     try { void request('/upload/abort', { method: 'POST', body: JSON.stringify({ uploadId }) }); } catch { /* best effort */ }

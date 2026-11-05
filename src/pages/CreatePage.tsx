@@ -1013,20 +1013,22 @@ const CreatePage = () => {
           : { phase: 'done', pct: 100 });
         return data || null;
       };
-      try {
-        return await doUpload();
-      } catch (err) {
-        // One automatic retry for transient network/server hiccups.
+      let lastErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          await new Promise((r) => setTimeout(r, 800));
-          return await doUpload();
-        } catch (err2) {
-          setUploadProgress(null);
-          if (!hint) showError(err2 instanceof Error ? err2.message : 'Upload failed');
-          else showError(`${hint}: ${err2 instanceof Error ? err2.message : 'upload failed'}`);
-          return null;
+          if (attempt > 0) await new Promise((r) => setTimeout(r, 600 * attempt));
+          const res = await doUpload();
+          return res;
+        } catch (err) {
+          lastErr = err;
+          // Keep retrying transient failures; surface the last error only after all attempts.
         }
       }
+      setUploadProgress(null);
+      const msg = lastErr instanceof Error ? lastErr.message : 'Upload failed';
+      if (!hint) showError(msg);
+      else showError(`${hint}: ${msg}`);
+      return null;
   } catch (e) { /* outer safety */ }
   };
 
@@ -3205,7 +3207,7 @@ const CreatePage = () => {
   };
 
   return (
-    <div className="space-y-4 md:space-y-6 w-full px-4 sm:px-6 lg:px-8 pb-20 md:pb-6 lg:pb-8">
+    <div className="space-y-4 md:space-y-6 w-full px-4 sm:px-6 lg:px-8 pb-8 md:pb-6 lg:pb-8">
       <h1 className="text-lg md:text-2xl lg:text-3xl font-bold">Create New Content</h1>
 
       {/* Content Management Toggle */}

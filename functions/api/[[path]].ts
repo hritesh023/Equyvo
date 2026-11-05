@@ -1861,12 +1861,12 @@ const GB = 1024 * 1024 * 1024;
 // recordings): the FILE-SIZE/LENGTH gates scale with the plan, storage
 // quota stays the primary limit. Upgrades buy storage + even bigger caps.
 const PLAN_CATALOG = {
-  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 300,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
-  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 1800,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
-  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 3600,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 7200,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 14400, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
-  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 14400, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true, superchat: true, liveMoments: true },
+  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
+  eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 0,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
+  eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 0,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 0,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 0, monthlyUploads: 20000, quality: 'original', ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
+  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 0, monthlyUploads: 50000, quality: 'original', ads: false, creator: true, business: true, superchat: true, liveMoments: true },
 };
 const DEFAULT_PLAN_ID = 'eq_free';
 const PLAN_IDS = new Set(Object.keys(PLAN_CATALOG));
@@ -3382,7 +3382,7 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   const hasVideo = String(clean.mediaType || '').toLowerCase() === 'video' ||
     String(clean.type || '').toLowerCase() === 'video' ||
     itemHasPlayableVideo(clean);
-  if (hasVideo && Number.isFinite(declaredDuration) && declaredDuration > quota.maxVideoSec) {
+  if (quota.maxVideoSec > 0 && hasVideo && Number.isFinite(declaredDuration) && declaredDuration > quota.maxVideoSec) {
     return json({ error: `Video is longer than the ${quota.label} plan allows. Upgrade for longer uploads.`, code: 'QUOTA_VIDEO_LENGTH', planId }, 413, cors);
   }
   // Ownership is authoritative server-side: the verified caller owns the
@@ -6052,10 +6052,19 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         return json({ error: `Monthly upload limit reached for ${quota.label}. Upgrades reset limits.`, code: 'QUOTA_MONTHLY', planId: livePlan }, 402, cors);
       }
       let obj = null;
-      try {
-        const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
-        obj = await mpu.completeMultipartUpload(partEntries.map((p) => ({ partNumber: p.i, etag: p.etag })));
-      } catch (e) {
+      let finalizeErr: unknown = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
+          obj = await mpu.completeMultipartUpload(partEntries.map((p) => ({ partNumber: p.i, etag: p.etag })));
+          finalizeErr = null;
+          break;
+        } catch (e) {
+          finalizeErr = e;
+          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+        }
+      }
+      if (finalizeErr || !obj) {
         return json({ error: 'Could not finalize upload. Please retry.', code: 'UPLOAD_COMPLETE_FAILED' }, 502, cors);
       }
       try { await kv.delete('upl:' + uploadId); } catch {}
