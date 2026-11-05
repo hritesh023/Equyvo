@@ -116,7 +116,7 @@ const LocalMediaThumb: React.FC<{ file: File; className?: string }> = ({ file, c
     return <img src={url} alt={file.name} className={cls} />;
   }
   if (isVideoFile(file)) {
-    return <video src={url} className={cls} muted playsInline preload="metadata" />;
+    return <video src={`${url}#t=0.1`} className={cls} muted playsInline preload="metadata" />;
   }
   return (
     <div className="flex h-14 w-14 items-center justify-center rounded-lg border bg-muted">
