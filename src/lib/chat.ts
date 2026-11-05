@@ -20,7 +20,7 @@ export interface ChatMessage {
   status?: ChatStatus;
   timestamp: string;
   createdAt: number;
-  type?: 'text' | 'image' | 'file' | 'audio';
+  type?: 'text' | 'image' | 'file' | 'audio' | 'video' | 'gif';
   fileUrl?: string;
   fileName?: string;
   /** Voice notes: length in seconds (sender-computed, server echoed). */
@@ -316,7 +316,7 @@ function patchMessage(threadId: string, id: string, patch: Partial<ChatMessage>)
 export async function sendChatMessage(
   threadId: string,
   text: string,
-  attach?: { fileUrl: string; fileName: string; type: 'image' | 'file' | 'audio' | 'video' | 'gif'; durationSec?: number; replyTo?: string },
+  attach?: { fileUrl: string; fileName: string; type: 'text' | 'image' | 'file' | 'audio' | 'video' | 'gif'; durationSec?: number; replyTo?: string },
 ): Promise<ChatMessage | null> {
   const clean = String(text || '').trim();
   if ((!clean && !attach) || !threadId) return null;

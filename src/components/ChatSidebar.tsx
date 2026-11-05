@@ -284,14 +284,14 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     const threadId = activeChat.id;
     const textToSend = message.trim();
     const fileToSend = attachedFile;
+    let attach: { fileUrl: string; fileName: string; type: 'text' | 'image' | 'file' | 'audio' | 'video' | 'gif'; replyTo?: string } | undefined;
     setSending(true);
     try {
-      let attach: { fileUrl: string; fileName: string; type: 'image' | 'file' | 'audio' | 'video' | 'gif'; replyTo?: string } | undefined;
       if (fileToSend) {
         const up = await api.uploadFile(fileToSend, 'equyvo/chat/attachments');
         if (up.error || !up?.data?.secureUrl) throw new Error('attachment-upload-failed');
         const mime = String(fileToSend.type || '').toLowerCase();
-        const type: 'image' | 'file' | 'audio' | 'video' | 'gif' =
+        const type: 'text' | 'image' | 'file' | 'audio' | 'video' | 'gif' =
           mime === 'image/gif' ? 'gif'
             : mime.startsWith('image/') ? 'image'
             : mime.startsWith('video/') ? 'video'
