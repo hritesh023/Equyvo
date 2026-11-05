@@ -987,7 +987,8 @@ const CreatePage = () => {
   ): Promise<UploadResult | null> => {
     try {
       const isVideo = isVideoFile(raw);
-      const duration = isVideo ? (await probeVideoDuration(raw)) : undefined;
+      let duration: number | undefined;
+      try { duration = isVideo ? (await probeVideoDuration(raw)) : undefined; } catch { duration = undefined; }
       const onProgress = (p: UploadProgress) => {
         if (slot.count > 1) {
           // Batch: reserves slot.index/count → (slot.index+1)/count of the bar.
@@ -1004,18 +1005,29 @@ const CreatePage = () => {
           });
         }
       };
-      const { data, error } = await api.uploadFile(raw, folder, onProgress, { duration });
-      if (error) throw new Error(error);
-      setUploadProgress(slot.count > 1
-        ? { phase: 'uploading', pct: Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100))) }
-        : { phase: 'done', pct: 100 });
-      return data || null;
-    } catch (err) {
-      setUploadProgress(null);
-      if (!hint) showError(err instanceof Error ? err.message : 'Upload failed');
-      else showError(`${hint}: ${err instanceof Error ? err.message : 'upload failed'}`);
-      return null;
-    }
+      const doUpload = async () => {
+        const { data, error } = await api.uploadFile(raw, folder, onProgress, { duration });
+        if (error) throw new Error(error);
+        setUploadProgress(slot.count > 1
+          ? { phase: 'uploading', pct: Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100))) }
+          : { phase: 'done', pct: 100 });
+        return data || null;
+      };
+      try {
+        return await doUpload();
+      } catch (err) {
+        // One automatic retry for transient network/server hiccups.
+        try {
+          await new Promise((r) => setTimeout(r, 800));
+          return await doUpload();
+        } catch (err2) {
+          setUploadProgress(null);
+          if (!hint) showError(err2 instanceof Error ? err2.message : 'Upload failed');
+          else showError(`${hint}: ${err2 instanceof Error ? err2.message : 'upload failed'}`);
+          return null;
+        }
+      }
+  } catch (e) { /* outer safety */ }
   };
 
   // Shared helper: persist content to API, index for search, update localStorage, notify other pages

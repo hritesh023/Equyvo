@@ -110,7 +110,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     return () => {
       window.dispatchEvent(new CustomEvent('fullscreenViewerClosed'));
     };
-  }, []);  const [isMuted, setIsMuted] = useState(false); // Start unmuted in fullscreen mode
+  }, []);  const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
   const [volume, setVolume] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -158,12 +158,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const resolvedContentType = actualContent?.contentType || resolvedType;
   
   // Enhanced video type detection using all available type indicators
-  const videoTypeValues = new Set(['video', 'moment', 'live', 'story']);
+  const videoTypeValues = new Set(['video', 'live', 'story']);
+  // A 'moment' is only a video when it actually carries a playable video URL.
+  // Photo/GIF moments must NOT be forced into the <video> branch (a <video>
+  // cannot decode a GIF/image and would render blank while the seek bar ticks).
+  const isMomentVideo = (resolvedType === 'moment' || actualContent?.type === 'moment' || actualContent?.contentType === 'moment')
+    && (actualContent?.mediaType === 'video' || Boolean(actualContent?.videoUrl));
   const isVideoType = videoTypeValues.has(resolvedType) ||
                        videoTypeValues.has(actualContent?.type || '') ||
                        videoTypeValues.has(actualContent?.contentType || '') ||
                         actualContent?.mediaType === 'video' ||
-                        Boolean(actualContent?.videoUrl);
+                        Boolean(actualContent?.videoUrl) ||
+                        isMomentVideo;
   const isAudioType = resolvedType === 'audio' ||
                       actualContent?.type === 'audio' ||
                       actualContent?.mediaType === 'audio' ||
@@ -1232,7 +1238,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               autoPlay
               playsInline
               controls={false}
-              muted={false}
+              muted={isMuted}
               loop={isPortraitMoment || isStory}
               preload="metadata"
               onPlay={() => setIsPlaying(true)}
