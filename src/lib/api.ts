@@ -66,6 +66,11 @@ let lastPaywallRedirect = 0;
  * Returns true when the error was a paywall.
  */
 export function handlePaywall(status: number, body: unknown): boolean {
+  // While an upload is in flight, never auto-redirect to /pricing — that would
+  // abort the batch mid-transfer. Surface the limit as a toast instead.
+  try {
+    if ((window as any).__equyvoUploading) return false;
+  } catch { /* ignore */ }
   if (status !== 402 && !isPaywallBody(body)) return false;
   try {
     window.dispatchEvent(new CustomEvent('equyvo:paywall', { detail: { status, body } }));

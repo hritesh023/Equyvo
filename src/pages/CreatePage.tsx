@@ -497,6 +497,9 @@ const CreatePage = () => {
   const [showContentManagement, setShowContentManagement] = useState(false);
   const [activeManagementTab, setActiveManagementTab] = useState<'all' | 'videos' | 'stories' | 'thoughts' | 'photos' | 'moments' | 'text-stories'>('all');
   const [isUploading, setIsUploading] = useState(false);
+  useEffect(() => {
+    try { (window as any).__equyvoUploading = isUploading; } catch { /* ignore */ }
+  }, [isUploading]);
   // Hardware/system-back busy guard: while an upload runs, a stray back press
   // can never silently leave the page and lose progress — the coordinator
   // shows "press back again"; a deliberate second press still lets them go.

@@ -1915,6 +1915,7 @@ function planEntitlements(planId) {
 const PLATFORM_FEE_BPS = 1500; // 15% (Creator tier platform fee per spec)
 
 const DEFAULT_ALLOWED_ORIGINS = [
+  'http://localhost',
   'http://localhost:3000',
   'http://localhost:5173',
   'https://localhost',
