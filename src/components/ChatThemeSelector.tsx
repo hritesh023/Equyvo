@@ -177,6 +177,8 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
     setDraftImage(dataUrl);
     setDraftType('image');
     setTab('image');
+    // Show the picked file immediately, before any backend upload.
+    setChatTheme({ type: 'image', value: dataUrl, opacity });
     let value = dataUrl;
     setUploading(true);
     try {

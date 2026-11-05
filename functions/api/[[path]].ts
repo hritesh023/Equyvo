@@ -1415,9 +1415,11 @@ function normChatMsg(m) {
     from: String(m.from || ''),
     to: String(m.to || ''),
     text: String(m.text || ''),
-    type: m.type === 'image' || m.type === 'file' ? m.type : 'text',
+    type: ['image', 'file', 'audio', 'video', 'gif'].includes(String(m.type || '')) ? String(m.type) : 'text',
     fileUrl: String(m.fileUrl || ''),
     fileName: String(m.fileName || ''),
+    durationSec: Number.isFinite(Number(m.durationSec)) ? Number(m.durationSec) : undefined,
+    replyTo: m.replyTo ? String(m.replyTo).slice(0, 64) : undefined,
     status: m.status === 'seen' || m.status === 'delivered' ? m.status : 'sent',
     createdAt: m.createdAt || new Date().toISOString(),
     deletedForEveryone: m.deletedForEveryone === true,
@@ -6797,7 +6799,8 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
       const clean = sanitizeBody(raw);
       const text = String(clean.text || '').slice(0, 2000);
-      const type = clean.type === 'image' || clean.type === 'file' || clean.type === 'audio' ? clean.type : 'text';
+      const allowedTypes = ['text', 'image', 'file', 'audio', 'video', 'gif'];
+      const type = allowedTypes.includes(String(clean.type || '')) ? String(clean.type) : (clean.fileUrl ? 'file' : 'text');
       if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
       // Content safety: block prohibited text in chat too.
       if (text.trim()) {
@@ -6815,6 +6818,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         fileName: String(clean.fileName || '').slice(0, 200),
         // Voice notes: recording length in seconds (display-only metadata).
         durationSec: Math.min(600, Math.max(0, Math.round(Number(clean.durationSec) || 0))),
+        replyTo: clean.replyTo ? String(clean.replyTo).slice(0, 64) : undefined,
         status: 'sent', createdAt: new Date().toISOString(),
       };
       // Event-sourced store: per-message key + per-sender index append. Two
@@ -6889,6 +6893,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
         type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
         durationSec: Number(m.durationSec) || 0,
+        replyTo: m.replyTo || undefined,
         deletedForEveryone: !!m.deletedForEveryone,
         deletedFor: Array.isArray(m.deletedFor) ? m.deletedFor : [],
       }));

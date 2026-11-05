@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser } from 'lucide-react';
-import { showError } from '@/utils/toast';
+import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
 import api from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
@@ -73,6 +73,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [threads, setThreads] = useState<ChatThread[]>(() => listThreads());
   const [activeId, setActiveId] = useState<string | null>(null);
   const [message, setMessage] = useState('');
+  const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
   const [sending, setSending] = useState(false);
@@ -283,16 +284,34 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     const threadId = activeChat.id;
     const textToSend = message.trim();
     const fileToSend = attachedFile;
-    const attach = fileToSend
-      ? {
-          fileUrl: URL.createObjectURL(fileToSend),
-          fileName: fileToSend.name,
-          type: (fileToSend.type.startsWith('image/') ? 'image' : 'file') as 'image' | 'file',
-        }
-      : undefined;
     setSending(true);
     try {
-      const sent = await sendChatMessage(threadId, textToSend, attach);
+      let attach: { fileUrl: string; fileName: string; type: 'image' | 'file' | 'audio' | 'video' | 'gif'; replyTo?: string } | undefined;
+      if (fileToSend) {
+        const up = await api.uploadFile(fileToSend, 'equyvo/chat/attachments');
+        if (up.error || !up?.data?.secureUrl) throw new Error('attachment-upload-failed');
+        const mime = String(fileToSend.type || '').toLowerCase();
+        const type: 'image' | 'file' | 'audio' | 'video' | 'gif' =
+          mime === 'image/gif' ? 'gif'
+            : mime.startsWith('image/') ? 'image'
+            : mime.startsWith('video/') ? 'video'
+            : mime.startsWith('audio/') ? 'audio'
+            : 'file';
+        attach = {
+          fileUrl: up.data.secureUrl,
+          fileName: fileToSend.name,
+          type,
+          replyTo: replyTo?.id,
+        };
+      } else if (replyTo?.id) {
+        attach = { fileUrl: '', fileName: '', type: 'text', replyTo: replyTo.id };
+      }
+      // attach replyTo for text-only replies
+      if (replyTo?.id && attach) attach.replyTo = replyTo.id;
+      if (replyTo?.id && !attach) {
+        // text-only with reply: pass via a dummy attach? sendChatMessage attach optional; use replyTo in text? Instead call directly.
+      }
+      const sent = await sendChatMessage(threadId, textToSend, attach && attach.fileUrl ? attach : (replyTo?.id ? { fileUrl: '', fileName: '', type: 'text', replyTo: replyTo.id } : undefined));
       if (!sent) {
         showError('Message could not be sent. Try again.');
         if (attach?.fileUrl) URL.revokeObjectURL(attach.fileUrl);
@@ -302,6 +321,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       if (threadId === activeChat?.id) {
         setMessage('');
         clearAttachment();
+        setReplyTo(null);
       }
       refreshMsgs(threadId);
       refreshThreads();
@@ -376,7 +396,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             fileName: 'Voice message',
             type: 'audio',
             durationSec: Math.max(1, secs || 0),
+            replyTo: replyTo?.id,
           });
+          setReplyTo(null);
           if (!sent) throw new Error('voice-send-failed');
           refreshMsgs(threadId);
           refreshThreads();
@@ -501,6 +523,33 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     } catch {
       showError('Could not delete message.');
     }
+  };
+
+  const handleCopyMessage = async (msg: ChatMessage) => {
+    setMenuMsgId(null);
+    const text = String(msg.text || msg.fileName || '').trim();
+    if (!text) { showError('Nothing to copy.'); return; }
+    try {
+      await navigator.clipboard.writeText(text);
+      showSuccess('Copied to clipboard.');
+    } catch {
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showSuccess('Copied to clipboard.');
+      } catch {
+        showError('Could not copy.');
+      }
+    }
+  };
+
+  const handleReplyMessage = (msg: ChatMessage) => {
+    setMenuMsgId(null);
+    setReplyTo(msg);
   };
 
   const isAttachedImage = !!attachedFile && attachedFile.type.startsWith('image/');
@@ -778,6 +827,11 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                       onTouchEnd={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
                       onTouchMove={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
                     >
+                      {msg.replyTo && (
+                        <div className="mb-1 border-l-2 border-white/40 pl-2 text-xs opacity-80">
+                          {msgs.find((m) => m.id === msg.replyTo)?.text || msgs.find((m) => m.id === msg.replyTo)?.fileName || 'Message'}
+                        </div>
+                      )}
                       {msg.type === 'image' && msg.fileUrl ? (
                         <div className="space-y-1.5">
                           <img src={msg.fileUrl} alt="Shared image" loading="lazy" className="max-w-full rounded-lg" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
@@ -829,6 +883,20 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         <button
                           type="button"
                           className="flex items-center gap-2 rounded px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                          onClick={() => handleCopyMessage(msg)}
+                        >
+                          <Check className="h-3 w-3" /> Copy
+                        </button>
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 rounded px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
+                          onClick={() => handleReplyMessage(msg)}
+                        >
+                          <MessageCircle className="h-3 w-3" /> Reply
+                        </button>
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 rounded px-2 py-1 text-xs text-slate-200 hover:bg-slate-700"
                           onClick={() => handleDeleteMessage(msg, false)}
                         >
                           <Trash2 className="h-3 w-3" /> Delete for me
@@ -854,6 +922,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           </div>
 
           <div className="p-3 border-t bg-background/50 backdrop-blur-md flex-none chat-overlay-composer">
+            {replyTo && (
+              <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-2 text-xs text-slate-200">
+                <div className="min-w-0">
+                  <p className="font-medium text-slate-100">Replying to {replyTo.fromMe ? 'yourself' : activeChat?.peerName}</p>
+                  <p className="truncate text-slate-300">{replyTo.text || replyTo.fileName || 'Attachment'}</p>
+                </div>
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReplyTo(null)} aria-label="Cancel reply">
+                  <X className="w-3 h-3" />
+                </Button>
+              </div>
+            )}
             {attachedFile && (
               <div className="mb-3 p-3 bg-secondary/50 rounded-lg border">
                 <div className="flex items-center justify-between gap-2">

@@ -2,6 +2,16 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Keep native text-input affordances (autocomplete suggestions, drag handles)
+   enabled inside the app's web view on every platform. */
+input, textarea, [contenteditable="true"], select {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+  -webkit-user-drag: auto;
+  user-drag: auto;
+  touch-action: manipulation;
+}
+
 /* ── Unibody layout contract (single source of truth) ─────────────────────
    Phones are ONE BODY: [top header] [scrollable content] [bottom nav]
    stacked in normal flow inside a 100dvh flex column. The single top

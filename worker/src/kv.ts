@@ -2057,6 +2057,7 @@ function chatPairKey(a: string, b: string): string {
 export interface ChatRecord {
   id: string; from: string; to: string; text: string;
   type: string; fileUrl: string; fileName: string;
+  durationSec?: number; replyTo?: string;
   status: string; createdAt: string;
 }
 

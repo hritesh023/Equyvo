@@ -266,8 +266,8 @@ const Navbar = ({ user, onSignOut }: NavbarProps) => {
       {/* Mobile Search — full-screen overlay so suggestions never clip */}
       {isMobile && (
         <Dialog open={mobileSearchOpen} onOpenChange={setMobileSearchOpen}>
-          <DialogContent className="fixed inset-0 w-full h-full max-w-none translate-x-0 translate-y-0 sm:inset-auto sm:left-1/2 sm:top-1/2 sm:-translate-x-1/2 sm:-translate-y-1/2 sm:w-[95vw] sm:max-w-md sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-lg bg-background/95 backdrop-blur-lg border-border/50 overflow-y-auto eq-safe-top" aria-describedby={undefined}>
-            <DialogHeader>
+          <DialogContent className="fixed inset-0 w-full h-full max-w-none translate-x-0 translate-y-0 rounded-none bg-background/95 backdrop-blur-lg border-0 overflow-y-auto eq-safe-top" aria-describedby={undefined}>
+            <DialogHeader className="pt-10">
               <DialogTitle>Search Equyvo</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">

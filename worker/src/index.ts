@@ -757,12 +757,15 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       const raw = await request.json() as any;
       const clean = sanitizeBody(raw);
       const text = String(clean.text || '').slice(0, 2000);
-      const type = clean.type === 'image' || clean.type === 'file' ? clean.type : 'text';
+      const allowedTypes = ['text', 'image', 'file', 'audio', 'video', 'gif'];
+      const type = allowedTypes.includes(String(clean.type || '')) ? String(clean.type) : (clean.fileUrl ? 'file' : 'text');
       if (!text && !clean.fileUrl) return respondError('Empty message', 400);
       const msg = {
         id: generateId(), from: (actor as any).id, to: peer, text,
         type, fileUrl: String(clean.fileUrl || '').slice(0, 2000),
         fileName: String(clean.fileName || '').slice(0, 200),
+        durationSec: Number.isFinite(Number(clean.durationSec)) ? Number(clean.durationSec) : undefined,
+        replyTo: clean.replyTo ? String(clean.replyTo).slice(0, 64) : undefined,
         status: 'sent', createdAt: new Date().toISOString(),
       };
       const all = await readChatMessages(env, (actor as any).id, peer, 300);
@@ -799,6 +802,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
         createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
         type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
+        durationSec: m.durationSec, replyTo: m.replyTo,
       }));
       return respond({ data: { messages: out }, error: null });
     }

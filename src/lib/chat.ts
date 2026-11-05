@@ -25,6 +25,7 @@ export interface ChatMessage {
   fileName?: string;
   /** Voice notes: length in seconds (sender-computed, server echoed). */
   durationSec?: number;
+  replyTo?: string;
   deletedForEveryone?: boolean;
   deletedFor?: string[];
   e2e?: boolean;
@@ -315,7 +316,7 @@ function patchMessage(threadId: string, id: string, patch: Partial<ChatMessage>)
 export async function sendChatMessage(
   threadId: string,
   text: string,
-  attach?: { fileUrl: string; fileName: string; type: 'image' | 'file' | 'audio'; durationSec?: number },
+  attach?: { fileUrl: string; fileName: string; type: 'image' | 'file' | 'audio' | 'video' | 'gif'; durationSec?: number; replyTo?: string },
 ): Promise<ChatMessage | null> {
   const clean = String(text || '').trim();
   if ((!clean && !attach) || !threadId) return null;
@@ -333,6 +334,7 @@ export async function sendChatMessage(
     fileUrl: attach?.fileUrl,
     fileName: attach?.fileName,
     durationSec: attach?.durationSec,
+    replyTo: attach?.replyTo,
     e2e: !!clean,
   };
   appendMessage(msg);
@@ -348,6 +350,7 @@ export async function sendChatMessage(
       fileUrl: attach?.fileUrl,
       fileName: attach?.fileName,
       durationSec: attach?.durationSec,
+      replyTo: attach?.replyTo,
     });
     serverOk = !res.error;
     if (res?.data?.id) serverId = String(res.data.id);
@@ -395,6 +398,7 @@ export async function retryChatMessage(threadId: string, messageId: string): Pro
       fileUrl: m.fileUrl,
       fileName: m.fileName,
       durationSec: m.durationSec,
+      replyTo: m.replyTo,
     });
     if (res.error) {
       patchMessage(threadId, messageId, { status: 'failed' });
