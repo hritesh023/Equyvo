@@ -207,6 +207,8 @@ try {
     input.setAttribute('autocorrect', 'on');
     if (!input.getAttribute('autocapitalize')) input.setAttribute('autocapitalize', 'sentences');
     input.setAttribute('spellcheck', 'true');
+    if (!input.getAttribute('enterkeyhint')) input.setAttribute('enterkeyhint', 'enter');
+    if (!input.getAttribute('inputmode') && input.type === 'text') input.setAttribute('inputmode', 'text');
     input.style.webkitUserSelect = 'text';
     input.style.userSelect = 'text';
   });

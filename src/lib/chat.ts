@@ -41,6 +41,8 @@ export interface ChatThread {
   lastMessage: string;
   timestamp: string;
   unread: number;
+  /** Epoch ms after which pulled messages are hidden (Clear chat). */
+  clearedAt?: number;
 }
 
 const THREADS_KEY = 'equyvo_chat_v2_threads';
@@ -198,7 +200,11 @@ export function listThreads(): ChatThread[] {
 
 export function listMessages(threadId: string): ChatMessage[] {
   const all = readMessages();
-  return all[threadId] || [];
+  const msgs = all[threadId] || [];
+  const thread = readThreads().find((t) => t.id === threadId);
+  const clearedAt = Number(thread?.clearedAt || 0);
+  if (!clearedAt) return msgs;
+  return msgs.filter((m) => Number(m?.createdAt || 0) > clearedAt);
 }
 
 /** Ensure a thread exists for a social peer (idempotent). */
@@ -481,10 +487,15 @@ export async function pullThreadMessages(threadId: string): Promise<ChatMessage[
         byId.set(String(s.id), m);
       }
     }
-    // Drop messages deleted for the current user.
+    // Drop messages deleted for the current user, and messages cleared locally.
     const me = getStoredUser();
     const myId = me ? String(me.id || me.email || '') : '';
-    const filtered = [...byId.values()].filter((m) => !(Array.isArray(m.deletedFor) && myId && m.deletedFor.includes(myId)));
+    const thread = readThreads().find((t) => t.id === threadId);
+    const clearedAt = Number(thread?.clearedAt || 0);
+    const filtered = [...byId.values()].filter((m) =>
+      !(Array.isArray(m.deletedFor) && myId && m.deletedFor.includes(myId)) &&
+      (!clearedAt || Number(m?.createdAt || 0) > clearedAt),
+    );
     const merged = filtered.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).slice(-300);
     all[threadId] = merged;
     writeMessages(all);
@@ -538,14 +549,18 @@ export function deleteThread(threadId: string): void {
 export function clearThread(threadId: string): void {
   if (!threadId) return;
   try {
+    const clearedAt = Date.now();
     const all = readMessages();
     all[threadId] = [];
     writeMessages(all);
     const threads = readThreads();
     const ix = threads.findIndex((t) => t.id === threadId);
     if (ix >= 0) {
-      threads[ix] = { ...threads[ix], lastMessage: '', unread: 0, timestamp: nowTime() };
+      threads[ix] = { ...threads[ix], lastMessage: '', unread: 0, timestamp: nowTime(), clearedAt };
       writeThreads(threads);
+    } else {
+      // Persist clearedAt even if the thread row is recreated later.
+      try { localStorage.setItem('equyvo_chat_cleared_' + threadId, String(clearedAt)); } catch { /* ignore */ }
     }
     emitChatUpdated(threadId);
   } catch {

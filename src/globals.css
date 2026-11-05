@@ -12,6 +12,18 @@ input, textarea, [contenteditable="true"], select {
   touch-action: manipulation;
 }
 
+/* Swipe page transitions between top-level tabs. */
+.slide-in-right { animation: equyvo-slide-in-right 260ms ease-out; }
+.slide-in-left { animation: equyvo-slide-in-left 260ms ease-out; }
+@keyframes equyvo-slide-in-right {
+  from { transform: translateX(28%); opacity: 0.55; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes equyvo-slide-in-left {
+  from { transform: translateX(-28%); opacity: 0.55; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
 /* ── Unibody layout contract (single source of truth) ─────────────────────
    Phones are ONE BODY: [top header] [scrollable content] [bottom nav]
    stacked in normal flow inside a 100dvh flex column. The single top

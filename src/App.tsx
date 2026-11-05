@@ -57,6 +57,8 @@ const SharedPostRedirect = () => {
   return <Navigate to={`/app/home?post=${encodeURIComponent(postId || '')}`} replace />;
 };
 
+const MAIN_TABS = ['/app/home', '/app/discover', '/app/create', '/app/moments', '/app/thoughts', '/app/profile'];
+
 const AppContent = () => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -114,9 +116,48 @@ const AppContent = () => {
   // Scroll to top when route changes (the unibody shell scrolls inside the
   // <main> column on phones; the window scrolls on desktop).
   const mainRef = useRef<HTMLElement | null>(null);
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const [slideClass, setSlideClass] = useState('');
+  const lastTabIdxRef = useRef(-1);
+
+  // Swipe between top-level tabs (mobile-style horizontal paging).
+  const handleMainTouchStart = (e: React.TouchEvent) => {
+    const t = e.touches?.[0];
+    if (!t) return;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+  };
+  const handleMainTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+    if (idx < 0) return;
+    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+    if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) return;
+    navigate(MAIN_TABS[nextIdx]);
+  };
   useEffect(() => {
     window.scrollTo(0, 0);
     if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [location.pathname]);
+
+  // Animate tab switches for swipe navigation.
+  useEffect(() => {
+    const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+    if (idx < 0) return;
+    const prev = lastTabIdxRef.current;
+    if (prev >= 0 && prev !== idx) {
+      setSlideClass(idx > prev ? 'slide-in-left' : 'slide-in-right');
+      const timer = window.setTimeout(() => setSlideClass(''), 280);
+      lastTabIdxRef.current = idx;
+      return () => window.clearTimeout(timer);
+    }
+    lastTabIdxRef.current = idx;
   }, [location.pathname]);
 
   useEffect(() => {
@@ -252,12 +293,12 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`}>
+        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
             next navigation instead of a full-app "reload" wall. */}
         <ErrorBoundary>
-         <div className="equyvo-zoom-surface" data-equyvo-zoom-surface="true">
+         <div className={`equyvo-zoom-surface ${slideClass}`} data-equyvo-zoom-surface="true">
          <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />

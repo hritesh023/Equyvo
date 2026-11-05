@@ -3415,7 +3415,8 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   let visibility = 'public';
   try {
     const authorProfile = await getStoredProfile(env, actor.id);
-    const fallback = authorProfile && authorProfile.isPrivate === true ? 'followers' : 'public';
+    // Uploads default to "Everyone" unless the user explicitly chose otherwise.
+    const fallback = 'public';
     visibility = normalizeVisibility(clean.visibility || clean.audience || (clean.isPrivate === true ? 'private' : ''), fallback);
   } catch { visibility = normalizeVisibility(clean.visibility || clean.audience || 'public'); }
   // Content safety (server-only): illegal / child-unsafe content is rejected

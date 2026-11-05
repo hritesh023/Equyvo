@@ -553,19 +553,10 @@ const CreatePage = () => {
   // enforces it for every account on every device.
   const [contentVisibility, setContentVisibilityState] = useState<'public' | 'followers' | 'private'>('public');
 
-  // Default the selector from the account type (private accounts default to
-  // followers-only), so uploads respect the signup/settings choice.
+  // Uploads are public ("Everyone") by default on every account, so a fresh
+  // create session never silently defaults to a restricted audience.
   useEffect(() => {
-    try {
-      const stored = localStorage.getItem('equyvo_cognito_user');
-      const id = stored ? (JSON.parse(stored)?.id || '') : '';
-      if (!id) return;
-      api.getProfile(id).then(({ data, error }) => {
-        if (!error && data && (data as any).isPrivate === true) {
-          setContentVisibilityState('followers');
-        }
-      }).catch(() => {});
-    } catch { /* ignore */ }
+    setContentVisibilityState('public');
   }, []);
 
   // Leaving the composer (navigation, refresh, app background kill) must end
