@@ -171,7 +171,7 @@ const AuthPage = ({ onAuthSuccess }: AuthPageProps) => {
   return (
     <Card className="w-full max-w-md border-border/50 bg-card/50 backdrop-blur-xl mx-auto">
       <CardHeader className="text-center space-y-1">
-        <div className="mx-auto mb-2 w-16 h-16 rounded-2xl bg-white dark:bg-gradient-to-br dark:from-pink-500 dark:to-purple-600 flex items-center justify-center overflow-hidden border border-border/30">
+        <div className="mx-auto mb-2 w-16 h-16 rounded-2xl bg-white dark:bg-background flex items-center justify-center overflow-hidden border border-border/30">
           <img src="/Equyvo_logo_light.png" alt="Equyvo" className="block dark:hidden w-full h-full object-cover" />
           <AppLogo alt="Equyvo" className="hidden dark:block w-full h-full object-cover" />
         </div>
