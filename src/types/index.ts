@@ -121,4 +121,6 @@ export interface Story {
   videoUrl?: string;
   mediaType?: string;
   likes?: number;
+  chatWithAudience?: boolean;
+  chatPrompt?: string;
 }

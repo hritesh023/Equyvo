@@ -22,6 +22,8 @@ import { deleteContent } from '@/utils/delete';
 import { hideFromMyView, storyImageOf, storyVideoOf } from '@/lib/feed-store';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { shareItem } from '@/utils/share';
+import api from '@/lib/api';
+import { getStoredUser } from '@/lib/auth';
 import type { Story } from '@/types';
 
 interface StoryViewerProps {
@@ -47,6 +49,9 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const { isGloballyMuted, setGlobalMute } = useAudio();
   const [progress, setProgress] = useState(0);
   const [comment, setComment] = useState('');
+  const [chatOpen, setChatOpen] = useState(false);
+  const [chatMsg, setChatMsg] = useState('');
+  const [chatSending, setChatSending] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [volume, setVolume] = useState(0.5);
   const [isLoading, setIsLoading] = useState(false);
@@ -60,6 +65,11 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const audioRef = useRef<HTMLAudioElement>(null);
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
+
+  useEffect(() => {
+    setChatOpen(false);
+    setChatMsg('');
+  }, [currentIndex, currentStory?.id]);
 
   // Story likes (persisted per account on this device; the server story
   // endpoint has no like field, so counts are local + any server value).
@@ -438,6 +448,34 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   };
 
+  const chatEnabled = !!currentStory?.chatWithAudience && !isOwnStory;
+  const chatPrompt = (currentStory?.chatPrompt as string) || 'Chat with your creator';
+
+  const handleSendChatAudience = async () => {
+    const msg = chatMsg.trim();
+    if (!msg || !currentStory) return;
+    const creatorId = String(currentStory.userId || (currentStory as any).creatorId || '');
+    if (!creatorId) { showError('Creator unavailable'); return; }
+    setChatSending(true);
+    try {
+      const user = getStoredUser();
+      const { error } = await api.storyChat({
+        creatorId,
+        storyId: currentStory.id,
+        message: msg,
+        audienceName: user?.username || user?.email || 'Someone',
+      });
+      if (error) { showError('Failed to send message'); return; }
+      showSuccess('Message sent to creator');
+      setChatMsg('');
+      setChatOpen(false);
+    } catch {
+      showError('Failed to send message');
+    } finally {
+      setChatSending(false);
+    }
+  };
+
   if (!currentStory) return null;
 
   // Server items may carry the playable URL as videoUrl/media (not `video`)
@@ -764,6 +802,39 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           }}
           className="absolute right-0 top-24 bottom-24 w-[28%] cursor-pointer z-[5] max-md:top-20 max-md:bottom-20"
         />
+
+        {chatEnabled && (
+          <div className="absolute bottom-24 left-4 right-4 z-20" onClick={(e) => e.stopPropagation()}>
+            {!chatOpen ? (
+              <button
+                type="button"
+                onClick={() => setChatOpen(true)}
+                className="w-full rounded-full bg-white/15 backdrop-blur-md border border-white/25 px-4 py-2 text-left text-sm text-white hover:bg-white/25 transition"
+              >
+                {chatPrompt}
+              </button>
+            ) : (
+              <div className="flex items-center gap-2 rounded-full bg-black/60 backdrop-blur-md border border-white/20 px-3 py-1.5">
+                <Input
+                  value={chatMsg}
+                  onChange={(e) => setChatMsg(e.target.value)}
+                  placeholder={chatPrompt}
+                  className="flex-1 bg-transparent border-0 text-white placeholder-white/60 focus:ring-0"
+                  onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleSendChatAudience(); } }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <Button
+                  size="icon"
+                  className="h-8 w-8 rounded-full bg-blue-500 hover:bg-blue-600"
+                  disabled={!chatMsg.trim() || chatSending}
+                  onClick={(e) => { e.stopPropagation(); handleSendChatAudience(); }}
+                >
+                  <Send className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-black/70 backdrop-blur-lg p-4 border-t border-white/10 eq-safe-bottom" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center gap-3">

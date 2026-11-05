@@ -7018,6 +7018,41 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { threads: threads.slice(0, 300) }, error: null }, 200, cors);
     }
 
+    // ── STORY CHAT WITH AUDIENCE ───────────────────────────────────────────
+    // Audience member sends a message to a creator's story; creator gets a
+    // notification (kind 'chat') and can reply into their next story.
+    if (path === '/api/story-chat' && method === 'POST') {
+      const actor = await getActor(request, env, null);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let raw; try { raw = await readJson(request); } catch { raw = {}; }
+      const creatorId = String(raw?.creatorId || raw?.to || '').trim();
+      const storyId = String(raw?.storyId || '').trim().slice(0, 128);
+      const message = String(raw?.message || '').trim().slice(0, 500);
+      if (!creatorId || !message) return json({ error: 'creatorId and message required' }, 400, cors);
+      let audienceName = String(raw?.audienceName || '').trim();
+      if (!audienceName) {
+        try {
+          const p = await profileWithFallback(env, actor.id);
+          audienceName = p && (p.name || p.username) ? String(p.name || p.username) : actor.username || 'Someone';
+        } catch { audienceName = actor.username || 'Someone'; }
+      }
+      if (isEmailLike(audienceName)) audienceName = 'Someone';
+      try {
+        await pushUserNotification(env, creatorId, {
+          kind: 'chat',
+          title: 'Chat with audience',
+          body: audienceName + ': ' + message,
+          actorId: actor.id,
+          actorName: audienceName,
+          storyId,
+          question: message,
+          link: '/app/create?chatReply=1',
+        });
+      } catch { /* ignore */ }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
     // ── NOTIFICATIONS ──────────────────────────────────────────────────────
     // GET /api/notifications — pending follow requests (as items) + stored
     // per-user items (accepts, chat nudges, uploads, live). Bounded ≤100.

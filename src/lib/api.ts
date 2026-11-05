@@ -424,6 +424,12 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  storyChat: (data: any) =>
+    request<{ data: any; error: null }>('/story-chat', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
   // Moments
   getMoments: async (limit = 20) => {
     const res = await request<{ data: any[]; error: null }>(`/moments?limit=${limit}`);

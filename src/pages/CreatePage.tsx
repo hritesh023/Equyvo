@@ -262,6 +262,8 @@ const CreatePage = () => {
   const [textStoryContent, setTextStoryContent] = useState('');
   const [textStoryBackground, setTextStoryBackground] = useState('#000000');
   const [textStoryColor, setTextStoryColor] = useState('#FFFFFF');
+  const [textStoryChatWithAudience, setTextStoryChatWithAudience] = useState(false);
+  const [textStoryChatPrompt, setTextStoryChatPrompt] = useState('Chat with your creator');
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [videoFiles, setVideoFiles] = useState<File[]>([]);
   const [photoCaption, setPhotoCaption] = useState('');
@@ -937,6 +939,8 @@ const CreatePage = () => {
     comments: number;
     shares: number;
     expiresAt: Date;
+    chatWithAudience?: boolean;
+    chatPrompt?: string;
   }
 
   function getThumbnailFromUpload(result: { secureUrl: string; resourceType: string; variants?: { thumbnail?: string } | null } | null | undefined): string {
@@ -1557,11 +1561,13 @@ const CreatePage = () => {
           likes: 0,
           comments: 0,
           shares: 0,
-          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) // 24 hours from now
+          expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
+            chatWithAudience: contentVisibility !== 'private' ? textStoryChatWithAudience : false,
+            chatPrompt: contentVisibility !== 'private' && textStoryChatWithAudience ? (textStoryChatPrompt.trim() || 'Chat with your creator') : undefined,
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
-        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '' });
+        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt });
         setIsUploading(false);
         if (textStoryErr) {
           showError('Saved locally but feed sync failed: ' + textStoryErr);
@@ -1571,6 +1577,8 @@ const CreatePage = () => {
         setTextStoryContent('');
         setTextStoryBackground('#000000');
         setTextStoryColor('#FFFFFF');
+        setTextStoryChatWithAudience(false);
+        setTextStoryChatPrompt('Chat with your creator');
         
         // Emit event to notify HomePage that user has uploaded stories
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: [newUploadedTextStory] }));
@@ -4393,6 +4401,32 @@ const CreatePage = () => {
                   ))}
                 </div>
               </div>
+
+              {/* Chat with audience (only for Everyone / Followers) */}
+              {contentVisibility !== 'private' && (
+                <div className="rounded-lg border border-border p-3 space-y-2">
+                  <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={textStoryChatWithAudience}
+                      onChange={(e) => setTextStoryChatWithAudience(e.target.checked)}
+                      className="h-4 w-4"
+                    />
+                    Chat with audience
+                  </label>
+                  <p className="text-xs text-muted-foreground">
+                    Adds a chat box to your story for 24 hours so viewers can message you.
+                  </p>
+                  {textStoryChatWithAudience && (
+                    <Input
+                      value={textStoryChatPrompt}
+                      onChange={(e) => setTextStoryChatPrompt(e.target.value)}
+                      placeholder="Chat with your creator"
+                      maxLength={60}
+                    />
+                  )}
+                </div>
+              )}
 
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">

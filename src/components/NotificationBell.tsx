@@ -1,7 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Bell, Check, X, Trash2 } from 'lucide-react';
+import { Bell, Check, X, Trash2, Send, MessageCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import api from '@/lib/api';
+import { getStoredUser } from '@/lib/auth';
 import {
   listNotifications,
   unreadCount,
@@ -15,6 +18,7 @@ import {
 } from '@/lib/notifications';
 import { useBackOverlay } from '@/lib/back-navigation';
 import { useNavigate } from 'react-router-dom';
+import { showSuccess, showError } from '@/utils/toast';
 import { navigateToProfile } from '@/utils/profile-navigation';
 
 const kindLabel: Record<AppNotification['kind'], string> = {
@@ -43,6 +47,8 @@ export function NotificationBell() {
   const [items, setItems] = useState<AppNotification[]>(() => listNotifications());
   const [count, setCount] = useState(() => unreadCount());
   const [busy, setBusy] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState<Record<string, string>>({});
+  const [replyBusy, setReplyBusy] = useState<string | null>(null);
 
   const refresh = () => {
     setItems(listNotifications());
@@ -98,9 +104,60 @@ export function NotificationBell() {
     }
   };
 
+  const handleReplyChat = async (n: AppNotification) => {
+    const reply = (replyText[n.id] || '').trim();
+    if (!reply) return;
+    setReplyBusy(n.id);
+    try {
+      const user = getStoredUser();
+      const question = n.question || n.body;
+      const storyContent = `Q: ${question}\nA: ${reply}`;
+      const id = `${Date.now()}`;
+      const authorName = user?.username || user?.email || 'Creator';
+      const { error } = await api.createStory({
+        id,
+        type: 'text-story',
+        content: storyContent,
+        userId: user?.id,
+        user: authorName,
+        visibility: 'public',
+        createdAt: new Date().toISOString(),
+        chatWithAudience: false,
+      });
+      if (error) { showError('Failed to post reply'); return; }
+      try {
+        await api.indexContent({
+          id,
+          title: storyContent.slice(0, 60),
+          description: storyContent.slice(0, 120),
+          type: 'story',
+          creator: authorName,
+          views: '0',
+          thumbnail: '',
+          imageUrl: '',
+          category: 'general',
+          tags: [],
+        });
+      } catch { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('storyUploaded', { detail: [{ id, content: storyContent, type: 'text-story', backgroundColor: '#000000', textColor: '#FFFFFF', uploadDate: new Date(), isPrivate: false, views: 0, likes: 0, comments: 0, shares: 0, expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000) }] }));
+      markRead(n.id);
+      refresh();
+      setReplyText((prev) => ({ ...prev, [n.id]: '' }));
+      showSuccess('Reply posted to your story');
+    } catch {
+      showError('Failed to post reply');
+    } finally {
+      setReplyBusy(null);
+    }
+  };
+
   // Tapping a notification opens the person it is about — never the viewer's
   // own profile. Accept/Decline buttons stop propagation so they stay actions.
   const handleOpenNotification = (n: AppNotification) => {
+    if (n.kind === 'chat') {
+      if (!n.read) { markRead(n.id); refresh(); }
+      return;
+    }
     if (!n.read) { markRead(n.id); refresh(); }
     if (n.actorId) {
       setOpen(false);
@@ -125,27 +182,25 @@ export function NotificationBell() {
       </Button>
 
       {open && typeof document !== 'undefined' && createPortal(
-        <div className="fixed inset-0 z-[9999] pointer-events-none sm:flex sm:items-start sm:justify-end">
-          {/* Backdrop (mobile: dims the content area only; desktop: light veil) */}
+        <div className="fixed inset-0 z-[9999]">
+          {/* Backdrop covers the whole screen so taps cannot reach the app
+              underneath (including the search icon) while notifications are open. */}
           <button
             type="button"
             aria-label="Close notifications"
-            className="pointer-events-auto fixed left-0 right-0 nav-top-safe nav-bottom-safe bg-black/45 sm:inset-0 sm:bg-black/10"
+            className="absolute inset-0 bg-black/50"
             onClick={() => setOpen(false)}
           />
-          {/* Panel: sits INSIDE the app layout on mobile (below the top bar,
-              above the bottom nav, clear of the OS status bar) so the native
-              notification/battery bar can never cover the close button.
-              Desktop: anchored card near the bell. */}
+          {/* Panel: full-screen on mobile with the top region left for the OS
+              status bar (safe-area inset). Desktop: anchored card near bell. */}
           <section
             role="dialog"
             aria-modal="true"
             aria-label="Notifications"
-            style={{ top: 'var(--equyvo-bar-top, 48px)' }}
             className="
-              pointer-events-auto fixed left-0 right-0 flex flex-col bg-background text-foreground shadow-2xl
-              nav-top-safe nav-bottom-safe sm:mt-0
-              sm:right-4 sm:bottom-auto sm:left-auto sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border
+              pointer-events-auto absolute inset-0 flex flex-col bg-background text-foreground shadow-2xl
+              pt-[env(safe-area-inset-top,0px)] sm:pt-0
+              sm:inset-auto sm:right-4 sm:top-[var(--equyvo-bar-top,48px)] sm:bottom-auto sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border
             "
           >
             <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2">
@@ -202,6 +257,27 @@ export function NotificationBell() {
                       <Button size="sm" variant="outline" className="h-7 flex-1 text-xs" disabled={busy === n.id} onClick={(e) => { e.stopPropagation(); handleDecline(n); }}>
                         <X className="mr-1 h-3 w-3" /> Decline
                       </Button>
+                    </div>
+                  )}
+                  {n.kind === 'chat' && (
+                    <div className="mt-2 space-y-2" onClick={(e) => e.stopPropagation()}>
+                      <p className="text-xs text-muted-foreground">Reply to send to your next story:</p>
+                      <div className="flex gap-2">
+                        <Input
+                          value={replyText[n.id] || ''}
+                          onChange={(e) => setReplyText((prev) => ({ ...prev, [n.id]: e.target.value }))}
+                          placeholder="Your reply…"
+                          className="h-7 text-xs"
+                        />
+                        <Button
+                          size="sm"
+                          className="h-7 px-2"
+                          disabled={replyBusy === n.id || !(replyText[n.id] || '').trim()}
+                          onClick={() => handleReplyChat(n)}
+                        >
+                          <Send className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   )}
                 </div>

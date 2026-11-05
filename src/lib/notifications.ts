@@ -28,6 +28,8 @@ export interface AppNotification {
   actorId?: string;
   actorName?: string;
   link?: string;
+  storyId?: string;
+  question?: string;
 }
 
 const KEY = 'equyvo_notifications_v1';
