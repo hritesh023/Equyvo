@@ -4,6 +4,7 @@ import { Share2 } from 'lucide-react';
 import { showError } from '@/utils/toast';
 import { sharePost } from '@/utils/share';
 import { Post } from '@/types';
+import InAppShareSheet, { ShareSheetPayload } from '@/components/InAppShareSheet';
 
 interface ShareButtonProps {
   post: Post;
@@ -24,6 +25,7 @@ const ShareButton: React.FC<ShareButtonProps> = ({
   onShare
 }) => {
   const [isSharing, setIsSharing] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const sizeClasses = {
     sm: 'h-6 px-2 text-xs',
     md: 'h-8 px-3 text-sm',
@@ -36,15 +38,24 @@ const ShareButton: React.FC<ShareButtonProps> = ({
     lg: 'h-5 w-5'
   };
 
+  const payload: ShareSheetPayload = {
+    id: post.id,
+    user: post.user || 'creator',
+    content: post.content || 'Check out this post!',
+    image: post.media || post.image,
+  };
+
   const handleShare = async () => {
     if (isSharing) return;
-    setIsSharing(true);
-    try {
-      if (onShare) {
-        // Feed pages pass this callback so they can adopt the authoritative
-        // server count. Do not also open a second share sheet here.
-        await onShare();
-      } else {
+    // Open the in-app share sheet (followers/following + OS share).
+    setSheetOpen(true);
+  };
+
+  const handleShared = async () => {
+    if (onShare) {
+      try { await onShare(); } catch { /* ignore */ }
+    } else {
+      try {
         const result = await sharePost({
           id: post.id,
           user: post.user || 'creator',
@@ -53,30 +64,29 @@ const ShareButton: React.FC<ShareButtonProps> = ({
         });
         if (!result.success && !result.cancelled) {
           showError(result.error || 'Failed to share post');
-        } else if (result.success && result.recorded === false) {
-          showError(result.error || 'The share count could not be saved');
         }
+      } catch {
+        showError('Failed to share post');
       }
-    } catch {
-      showError('Failed to share post');
-    } finally {
-      setIsSharing(false);
     }
   };
 
   return (
-    <Button
-      variant="ghost"
-      className={`${sizeClasses[size]} text-muted-foreground hover:text-foreground ${className}`}
-      onClick={handleShare}
-      disabled={isSharing}
-      aria-label="Share post"
-    >
-      <Share2 className={iconSizes[size]} />
-      {showCount && (
-        <span className="ml-1">{Number(sharesCount) || 0}</span>
-      )}
-    </Button>
+    <>
+      <Button
+        variant="ghost"
+        className={`${sizeClasses[size]} text-muted-foreground hover:text-foreground ${className}`}
+        onClick={handleShare}
+        disabled={isSharing}
+        aria-label="Share post"
+      >
+        <Share2 className={iconSizes[size]} />
+        {showCount && (
+          <span className="ml-1">{Number(sharesCount) || 0}</span>
+        )}
+      </Button>
+      <InAppShareSheet open={sheetOpen} onClose={() => setSheetOpen(false)} payload={payload} onShared={handleShared} />
+    </>
   );
 };
 

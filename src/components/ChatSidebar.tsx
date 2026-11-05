@@ -15,6 +15,7 @@ import { useChatTheme } from '@/contexts/ChatThemeContext';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
 import { getFollowers, getFollowing, type SocialProfile } from '@/lib/social';
+import { pickDisplayName, nameFromEmail } from '@/lib/identity';
 import {
   listThreads, listMessages, ensureThread, syncThreadsFromSocial,
   sendChatMessage, markThreadSeen, pullThreadMessages, deleteChatMessage,
@@ -171,11 +172,14 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       try {
         const [f, g] = await Promise.all([getFollowers(), getFollowing()]);
         if (cancelled) return;
-        const toPeer = (p: SocialProfile) => ({
-          id: p.id,
-          name: p.name || p.username || p.id,
-          avatar: p.avatar,
-        });
+        const toPeer = (p: SocialProfile) => {
+          const resolved = pickDisplayName(p.name, p.username) || nameFromEmail(p.id) || String(p.id || '').trim();
+          return {
+            id: p.id,
+            name: resolved || String(p.id || '').trim(),
+            avatar: p.avatar,
+          };
+        };
         syncThreadsFromSocial(f.list.map(toPeer), g.list.map(toPeer));
         refreshThreads();
         if (activeId) refreshMsgs(activeId);
@@ -225,7 +229,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           if (pollCount % 2 === 0) refreshThreads();
         })
         .catch(() => {});
-    }, 5000);
+    }, 2000);
     return () => window.clearInterval(t);
      
   }, [activeId]);

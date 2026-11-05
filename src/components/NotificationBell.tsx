@@ -199,7 +199,7 @@ export function NotificationBell() {
             aria-label="Notifications"
             className="
               pointer-events-auto absolute inset-0 flex flex-col bg-background text-foreground shadow-2xl
-              pt-[env(safe-area-inset-top,0px)] sm:pt-0
+              pt-[max(2.5rem,env(safe-area-inset-top,0px))] sm:pt-0
               sm:inset-auto sm:right-4 sm:top-[var(--equyvo-bar-top,48px)] sm:bottom-auto sm:h-auto sm:max-h-[80vh] sm:w-[380px] sm:rounded-xl sm:border sm:border-border
             "
           >

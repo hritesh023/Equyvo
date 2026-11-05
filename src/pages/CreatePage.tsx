@@ -1011,7 +1011,7 @@ const CreatePage = () => {
       let lastErr: unknown = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          if (attempt > 0) await new Promise((r) => setTimeout(r, 600 * attempt));
+          if (attempt > 0) await new Promise((r) => setTimeout(r, 300 * attempt));
           const res = await doUpload();
           return res;
         } catch (err) {

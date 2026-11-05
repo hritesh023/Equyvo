@@ -341,7 +341,7 @@ async function uploadChunked(
         } catch (e) {
           if (e instanceof Error && (e as Error & { code?: string }).code === 'UPLOAD_SESSION_GONE') throw e;
           lastErr = e instanceof Error ? e.message : 'Chunk upload failed';
-          await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+          await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
         }
       }
       if (lastErr) throwUploadError(lastErr);
@@ -352,7 +352,7 @@ async function uploadChunked(
     let comp: { data?: UploadResult; error?: string } | null = null;
     let lastErr: string | null = null;
     for (let attempt = 0; attempt < 3; attempt++) {
-      if (attempt > 0) await new Promise((r) => setTimeout(r, 800 * attempt));
+      if (attempt > 0) await new Promise((r) => setTimeout(r, 400 * attempt));
       comp = await request<{ data?: UploadResult; error?: string }>('/upload/complete', {
         method: 'POST',
         body: JSON.stringify({ uploadId, duration: meta?.duration }),
