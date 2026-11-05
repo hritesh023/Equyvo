@@ -119,14 +119,6 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       showError('File must be smaller than 5MB.');
       return;
     }
-    try {
-      const r = await screenMedia(file, { kind: 'chat-theme' });
-      if (r.verdict !== 'allow') {
-        setFileError(r.message || 'This image is not allowed on Equyvo.');
-        showError(r.message || 'This image is not allowed on Equyvo.');
-        return;
-      }
-    } catch { /* fail-open handled by screenMedia */ }
     // Selecting a file immediately switches to the Image theme so the
     // upcoming upload can never be mistaken for (or lost to) a color theme.
     setTab('image');
@@ -142,6 +134,15 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         setFileError('That file is not a readable image.');
         return;
       }
+      // Screen in the background; if it blocks, drop the picked file.
+      void screenMedia(file, { kind: 'chat-theme' }).then((r) => {
+        if (r.verdict !== 'allow') {
+          setCropSrc(null);
+          setIsOpen(true);
+          setFileError(r.message || 'This image is not allowed on Equyvo.');
+          showError(r.message || 'This image is not allowed on Equyvo.');
+        }
+      }).catch(() => { /* fail-open */ });
       // Close the selector while the crop/adjust editor is open. An open
       // Radix dialog applies a body-wide pointer-events lock, which would
       // leave the cropper's buttons visible but unclickable — the exact
