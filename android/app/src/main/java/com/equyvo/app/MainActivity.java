@@ -41,6 +41,8 @@ public class MainActivity extends BridgeActivity {
     private static final int MAX_RETRIES = 12;
 
     private String lastInsetsPayload = "";
+    private volatile boolean fullscreenActive = false;
+    private volatile boolean inPipMode = false;
     private int pendingTop = 0;
     private int pendingBottom = 0;
     private int pendingRetry = 0;
@@ -166,13 +168,69 @@ public class MainActivity extends BridgeActivity {
             runOnUiThread(() -> {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     try {
-                        PictureInPictureParams params = new PictureInPictureParams.Builder()
-                                .setAspectRatio(new Rational(16, 9))
-                                .build();
-                        enterPictureInPictureMode(params);
+                        PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                                .setAspectRatio(new Rational(16, 9));
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                            try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
+                        }
+                        enterPictureInPictureMode(b.build());
+                        inPipMode = true;
                     } catch (Throwable ignored) {}
                 }
             });
+        }
+
+        @android.webkit.JavascriptInterface
+        public void exit() {
+            runOnUiThread(() -> {
+                try { moveTaskToBack(false); } catch (Throwable ignored) {}
+            });
+        }
+
+        @android.webkit.JavascriptInterface
+        public void setFullscreenActive(boolean active) {
+            fullscreenActive = active;
+        }
+
+        @android.webkit.JavascriptInterface
+        public boolean isInPip() {
+            return inPipMode;
+        }
+    }
+
+    @Override
+    public void onUserLeaveHint() {
+        super.onUserLeaveHint();
+        // Auto-enter system PiP when the user leaves the app while a fullscreen
+        // viewer is active, so the mini window persists outside the app and
+        // stays in the recent-apps list (standard Android PiP behaviour).
+        try {
+            if (fullscreenActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode()) {
+                PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                        .setAspectRatio(new Rational(16, 9));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
+                }
+                enterPictureInPictureMode(b.build());
+                inPipMode = true;
+            }
+        } catch (Throwable ignored) {}
+    }
+
+    @Override
+    public void onPictureInPictureModeChanged(boolean isInPictureInPictureMode, android.content.res.Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig);
+        inPipMode = isInPictureInPictureMode;
+        try {
+            if (bridge != null && bridge.getWebView() != null) {
+                String js = "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:" + isInPictureInPictureMode + "}}));";
+                bridge.getWebView().evaluateJavascript(js, null);
+            }
+        } catch (Throwable ignored) {}
+        // When the system PiP window is dismissed (close button / drag-to-close /
+        // removed from recents) the activity finishes; make sure state is clean.
+        if (!isInPictureInPictureMode && isFinishing()) {
+            fullscreenActive = false;
         }
     }
 

@@ -107,8 +107,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // plays (no overlays, no interruptions).
   useEffect(() => {
     window.dispatchEvent(new CustomEvent('fullscreenViewerOpened'));
+    try { (window as any).AndroidPiP?.setFullscreenActive?.(true); } catch { /* ignore */ }
     return () => {
       window.dispatchEvent(new CustomEvent('fullscreenViewerClosed'));
+      try { (window as any).AndroidPiP?.setFullscreenActive?.(false); } catch { /* ignore */ }
     };
   }, []);  const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
   const [volume, setVolume] = useState(1);

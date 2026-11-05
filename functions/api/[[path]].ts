@@ -1322,9 +1322,14 @@ async function brainSafetyCheck(env, text) {
       body: JSON.stringify({ text: s, source: 'equyvo-safety' }),
     }, 2200);
     if (data && typeof data === 'object') {
+      const cats = Array.isArray(data.categories) ? data.categories.map((c) => String(c).toLowerCase()) : [];
+      const catStr = cats.join(' ');
+      const adultish = /adult|nudity|porn|explicit|sexual|nsfw|gore|graphic/.test(catStr);
+      const severe = /child|csam|minor|terror|non-consensual|assault|self[- ]?harm|suicide|weapon|bomb/.test(catStr);
       if (data.safe === false || data.block === true) return 'block';
+      if (severe) return 'block';
+      if (adultish) return 'block';
       if (data.review === true || data.quarantine === true) return 'review';
-      if (Array.isArray(data.categories) && data.categories.some((c) => /child|csam|terror|non-consensual|assault|self[- ]?harm|suicide|weapon|bomb/i.test(String(c)))) return 'block';
       // Explicit safe verdict lets clean content through even if local
       // heuristics flagged a review keyword (reduces false positives).
       if (data.safe === true || data.safe === 1 || data.safe === 'true' || data.verdict === 'allow' || data.verdict === 'safe') return 'allow';
@@ -4317,7 +4322,7 @@ export const onRequest = async (context) => {
         const mv = Number(hints.maxViolence || 0);
         const ms = Number(hints.maxSkin || 0);
         if (Number.isFinite(mv) && mv >= 0.4) { verdict = 'block'; category = 'violent'; }
-        else if (Number.isFinite(ms) && ms >= 0.7) { verdict = 'block'; category = 'adult'; }
+        else if (Number.isFinite(ms) && ms >= 0.85) { verdict = 'block'; category = 'adult'; }
       } catch { /* ignore */ }
       // Brain check runs regardless of local verdict so clean content that
       // tripped a keyword can be downgraded to allow.
@@ -4345,18 +4350,20 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
             const severe = /child|csam|minor|terror|non-?consensual|assault|self[- ]?harm|suicide/.test(catStr);
             if (data.safe === false || data.block === true) verdict = 'block';
             else if (severe) verdict = 'block';
+            else if (adultish) verdict = 'block';
             else if (data.review === true || data.quarantine === true) {
-              // Downgrade review to allow when context is clearly benign.
-              verdict = (benign || !adultish) ? 'allow' : 'block';
+              // Allow only clearly benign review items; otherwise block.
+              verdict = benign ? 'allow' : 'block';
             }
             else if (!explicitlySafe) {
-              // Ambiguous: allow if benign context, else review (never hard-block from ambiguity).
-              verdict = (benign || !adultish) ? 'allow' : 'block';
+              // Ambiguous: allow if benign context, else block (never let
+              // potentially unsafe content through on ambiguity).
+              verdict = (benign && !adultish) ? 'allow' : 'block';
             }
             else {
               // explicitly safe
               if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore/i.test(String(c)))) verdict = (benign || !adultish) ? 'allow' : 'block';
+              else if (Array.isArray(cats) && cats.some((c) => /adult|nudity|porn|graphic|gore|explicit|sexual/i.test(String(c)))) verdict = 'block';
                else verdict = 'allow';
             }
             if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';

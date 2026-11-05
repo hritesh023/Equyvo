@@ -233,6 +233,9 @@ let bannerWanted = false;
 let bannerFailures = 0;
 let bannerRetryTimer: ReturnType<typeof setTimeout> | null = null;
 let bannerVisibilityHooked = false;
+let bannerOverlapHooked = false;
+let overlapCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let overlapRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
 
 const BANNER_RETRY_BASE_MS = 30_000; // first retry after 30s
 const BANNER_RETRY_MAX_MS = 5 * 60_000; // never retry sooner than every 5 min
@@ -254,6 +257,7 @@ export function setBannerWanted(wanted: boolean): void {
     bannerRetryTimer = null;
   }
   hookBannerVisibility();
+  hookBannerOverlap();
   // Taps/scrolls nudge a no-fill banner back to life once backoff allows —
   // "the banner is there whenever the user is active".
   hookInteractions();
@@ -298,6 +302,93 @@ function hookBannerVisibility(): void {
       void showFeedBanner();
     }
   });
+}
+
+/** Estimate the native banner's vertical band in the viewport. */
+function bannerBand(): { top: number; bottom: number } | null {
+  try {
+    const narrow = typeof window !== 'undefined' && window.innerWidth < 768;
+    let lift = narrow ? 70 : 0;
+    try {
+      if (narrow && typeof document !== 'undefined') {
+        const v = getComputedStyle(document.documentElement)
+          .getPropertyValue('--equyvo-bar-bottom')
+          .trim();
+        const n = parseFloat(v);
+        if (Number.isFinite(n) && n > 0) lift = Math.round(n + 8);
+      }
+    } catch { /* keep fallback */ }
+    const bannerH = 72; // adaptive banner max height (dp)
+    const top = window.innerHeight - lift - bannerH;
+    const bottom = window.innerHeight - lift;
+    return { top, bottom };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Detect whether any action button currently intersects the native banner's
+ * band. Used to hide the banner the instant it would cover an action button,
+ * while keeping it (and its revenue) on screens where it doesn't overlap.
+ */
+export function isBannerOverlappingActions(): boolean {
+  try {
+    const band = bannerBand();
+    if (!band) return false;
+    const els = document.querySelectorAll(
+      'button, [role="button"], .action-btn, .fab, [data-action="true"]',
+    );
+    for (let i = 0; i < els.length; i++) {
+      const r = (els[i] as HTMLElement).getBoundingClientRect();
+      if (!r || r.width === 0 || r.height === 0) continue;
+      if (r.right <= 0 || r.left >= window.innerWidth) continue;
+      if (r.bottom <= band.top || r.top >= band.bottom) continue;
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function evaluateBannerOverlap(): void {
+  try {
+    if (!bannerWanted) return;
+    if (bannerState !== 'shown') return;
+    if (isBannerOverlappingActions()) {
+      if (!overlapCheckTimer) {
+        overlapCheckTimer = setTimeout(() => {
+          overlapCheckTimer = null;
+          if (bannerWanted && bannerState === 'shown' && isBannerOverlappingActions()) {
+            void hideFeedBanner();
+            // Recover as soon as the conflicting button scrolls away.
+            if (overlapRecoveryTimer) clearTimeout(overlapRecoveryTimer);
+            overlapRecoveryTimer = setTimeout(() => {
+              overlapRecoveryTimer = null;
+              if (bannerWanted && !isBannerOverlappingActions()) void showFeedBanner();
+            }, 400);
+          }
+        }, 150);
+      }
+    } else {
+      if (overlapCheckTimer) { clearTimeout(overlapCheckTimer); overlapCheckTimer = null; }
+    }
+  } catch { /* ignore */ }
+}
+
+function hookBannerOverlap(): void {
+  if (bannerOverlapHooked || typeof window === 'undefined') return;
+  bannerOverlapHooked = true;
+  const opts: AddEventListenerOptions = { passive: true };
+  ['scroll', 'resize', 'pointerdown', 'touchmove'].forEach((evt) => {
+    window.addEventListener(evt, () => {
+      if (overlapRecoveryTimer) { /* keep */ }
+      evaluateBannerOverlap();
+    }, opts);
+  });
+  // periodic safety net (covers animated layouts)
+  setInterval(evaluateBannerOverlap, 600);
 }
 
 /** True when a banner unit is available to request (test unit in dev). */
@@ -346,6 +437,8 @@ export async function showFeedBanner(): Promise<boolean> {
     if (!isDevEnvironment() && !isBannerConfigured()) return false;
     hookBannerVisibility();
     if (keyboardOpen) return false; // never rain above the IME
+    hookBannerOverlap();
+    if (isBannerOverlappingActions()) return false; // don't cover action buttons
     const { plugin } = await loadPlugin();
     if (!plugin?.showBanner) return false;
     await initializeAds();

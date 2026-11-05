@@ -341,7 +341,7 @@ export async function screenMedia(
   // values are passed to the server-side eye (with a hint) instead of
   // blocking outright, so legitimate skin-heavy footage (cooking, sports,
   // religious/cultural events) is not refused on a heuristic alone.
-  const skinHardBlock = isVideo ? 0.75 : 0.7;
+  const skinHardBlock = isVideo ? 0.9 : 0.85;
   if (maxSkin >= skinHardBlock) {
     return {
       verdict: 'block',
