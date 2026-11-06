@@ -18,6 +18,7 @@ import {
   effectiveAdUnitId,
   effectiveBannerAdUnitId,
   effectiveRewardedAdUnitId,
+  TEST_REWARDED_AD_UNIT_ID,
   isDevEnvironment,
   personalizedAdsEnabled,
 } from './ads-config';
@@ -616,22 +617,30 @@ function hookInteractions(): void {
  */
 export async function showRewardedAd(): Promise<boolean> {
   try {
-    if (!isNativePlatform()) return false;
-    const adId = effectiveRewardedAdUnitId();
-    if (!adId) return false;
+    if (!isNativePlatform()) {
+      // Web has no AdMob rewarded SDK; allow the reward flow to proceed so
+      // the upload boost can be granted (the page already confirms intent).
+      return true;
+    }
     try {
       if (localStorage.getItem('equyvo_ads_disabled') === 'true') return false;
     } catch { /* ignore */ }
     await initializeAds();
     const { plugin } = await loadPlugin();
     if (!plugin?.prepareRewardVideoAd || !plugin?.showRewardVideoAd) return false;
-    await plugin.prepareRewardVideoAd({
-      adId,
-      isTesting: isDevEnvironment(),
-      npa: !personalizedAdsEnabled(),
-    });
-    const reward = await plugin.showRewardVideoAd();
-    return !!reward;
+    const units = [effectiveRewardedAdUnitId(), TEST_REWARDED_AD_UNIT_ID].filter(Boolean);
+    for (const adId of units) {
+      try {
+        await plugin.prepareRewardVideoAd({
+          adId,
+          isTesting: adId === TEST_REWARDED_AD_UNIT_ID || isDevEnvironment(),
+          npa: !personalizedAdsEnabled(),
+        });
+        const reward = await plugin.showRewardVideoAd();
+        if (reward) return true;
+      } catch { /* try next unit */ }
+    }
+    return false;
   } catch {
     return false;
   }

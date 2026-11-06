@@ -4115,31 +4115,7 @@ const CreatePage = () => {
         </div>
       )}
 
-      {/* Create Content Tabs — horizontally scrollable icon pills on mobile
-          so labels never squeeze/wrap ("Text Story" etc.); grid on desktop. */}
       <Tabs value={activeTab} onValueChange={setActiveTab}>
-        <TabsList className="flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 md:grid md:grid-cols-8 md:overflow-visible md:bg-muted md:rounded-md md:pr-1">
-          {[
-            { value: 'camera', label: 'Camera', Icon: SwitchCamera },
-            { value: 'story', label: 'Story', Icon: Camera },
-            { value: 'text-story', label: 'Text', Icon: Text },
-            { value: 'thought', label: 'Thought', Icon: Brain },
-            { value: 'photo', label: 'Photos', Icon: Image },
-            { value: 'video', label: 'Videos', Icon: Film },
-            { value: 'live', label: 'Live', Icon: Zap },
-            { value: 'moment', label: 'Moments', Icon: Video },
-          ].map(({ value, label, Icon }) => (
-            <TabsTrigger
-              key={value}
-              value={value}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:px-3 md:text-sm"
-            >
-              <Icon className="h-3.5 w-3.5" />
-              {label}
-            </TabsTrigger>
-          ))}
-          <span aria-hidden="true" className="w-1 shrink-0 md:hidden" />
-        </TabsList>
 
         {/* Story Upload */}
         <TabsContent value="story" className="space-y-4">

@@ -802,7 +802,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         <div className="px-3 py-1.5 rounded-xl text-sm shadow-sm italic opacity-70 bg-slate-800/60 text-slate-300 rounded-tl-none">
                           This message was deleted
                           <div className={`mt-0.5 flex items-center justify-end gap-1 text-[11px] text-slate-400`}>
-                            <span>{msg.timestamp}</span>
+                            <span>{new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                           </div>
                         </div>
                       </div>
@@ -861,7 +861,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         <p className="whitespace-pre-wrap break-words">{msg.text}</p>
                       )}
                       <div className={`mt-0.5 flex items-center justify-end gap-1 text-[11px] ${msg.fromMe ? 'text-white/70' : 'text-slate-400'}`}>
-                        <span>{msg.timestamp}</span>
+                        <span>{new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                         {msg.fromMe && msg.status === 'failed' ? (
                           <button
                             type="button"
