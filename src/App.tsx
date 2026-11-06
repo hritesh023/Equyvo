@@ -33,9 +33,7 @@ import { useNavMode } from './hooks/use-nav-mode';
 import { initializeAds } from './lib/admob-service';
 import { useAdPlan } from './hooks/use-ad-plan';
 import { useFeedBanner } from './hooks/use-feed-banner';
-import { useInterstitialTrigger } from './hooks/use-interstitial';
 import AdBanner from './components/ads/AdBanner';
-import WebInterstitialAd from './components/ads/WebInterstitialAd';
 import { initBackNavigation, setGoBack, trackNavigation } from './lib/back-navigation';
 
 function extractTokenFromUrl(): string | null {
@@ -90,8 +88,6 @@ const AppContent = () => {
   // Adaptive feed banner (Free tier, feed routes only — never on video).
   const adPlan = useAdPlan();
   useFeedBanner({ pathname: location.pathname, plan: adPlan });
-  // Interstitials only at natural content-session ends (never mid-watch).
-  useInterstitialTrigger({ pathname: location.pathname, plan: adPlan });
 
   // Set sidebar initial state based on device
   useEffect(() => {
@@ -334,7 +330,6 @@ const AppContent = () => {
       {/* Web banner ad: in-flow above the bottom nav, every non-auth page,
           free plan only. Native uses the AdMob overlay instead. */}
       <AdBanner pathname={location.pathname} />
-      <WebInterstitialAd pathname={location.pathname} />
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
       {shouldShowNavbar && !chatOpen && <MobileBottomNav />}

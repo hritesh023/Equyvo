@@ -2818,6 +2818,15 @@ function planQuota(planId) {
   return PLAN_CATALOG[planId] || PLAN_CATALOG[DEFAULT_PLAN_ID];
 }
 
+async function getRewardedUploadBoost(env, userId) {
+  try {
+    const raw = await env.EQUYVO_KV.get('rewarded:uploadBoost:' + String(userId || ''));
+    if (!raw) return 0;
+    const v = parseInt(raw, 10);
+    return Number.isFinite(v) && v > 0 ? v : 0;
+  } catch { return 0; }
+}
+
 function bearerFrom(request) {
   const auth = request.headers.get('Authorization') || '';
   return auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
@@ -3980,7 +3989,13 @@ export const onRequest = async (context) => {
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
       const { planId, source } = await resolvePlan(env, actor, bearerFrom(request));
-      const quota = planQuota(planId);
+      let quota = { ...planQuota(planId) };
+      try {
+        if (planId === 'eq_free') {
+          const boost = await getRewardedUploadBoost(env, actor.id);
+          if (boost && boost > quota.maxUploadMB) quota.maxUploadMB = boost;
+        }
+      } catch { /* ignore */ }
       const usage = await getUsage(env, actor.id);
       const ai = await getAiCredits(env, actor.id, aiCreditsForPlan(planId));
       return json({ data: {
@@ -3993,6 +4008,24 @@ export const onRequest = async (context) => {
         entitlements: planEntitlements(planId),
         aiCredits: { used: ai.used, quota: ai.quota, remaining: Math.max(0, ai.quota - ai.used), month: ai.month },
       }, error: null }, 200, cors);
+
+    // REWARDED UPLOAD BOOST: watch one ad -> 500MB upload limit for 24h (free plan).
+    if (path === '/api/rewards/upload-boost' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      try {
+        await env.EQUYVO_KV.put('rewarded:uploadBoost:' + String(actor.id), '500', { expirationTtl: 86400 });
+      } catch { /* ignore */ }
+      return json({ data: { maxUploadMB: 500, expiresInSeconds: 86400 }, error: null }, 200, cors);
+    }
+    if (path === '/api/rewards/upload-boost' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const boost = await getRewardedUploadBoost(env, actor.id);
+      return json({ data: { active: boost > 0, maxUploadMB: boost || 0 }, error: null }, 200, cors);
+    }
 
     // AI credits: consume monthly credits (Premium/Creator/Creator Pro).
     if (path === '/api/ai/credits/consume' && method === 'POST') {
@@ -5889,7 +5922,13 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       if (!env.EQUYVO_R2) return json({ error: 'Media warehouse not configured' }, 503, cors);
       const bearer = bearerFrom(request);
       const { planId } = await resolvePlan(env, actor, bearer);
-      const quota = planQuota(planId);
+      let quota = { ...planQuota(planId) };
+      try {
+        if (planId === 'eq_free') {
+          const boost = await getRewardedUploadBoost(env, actor.id);
+          if (boost && boost > quota.maxUploadMB) quota.maxUploadMB = boost;
+        }
+      } catch { /* ignore */ }
       const rl = await rateLimit(kv, 'upload', actor.id, rateLimitFor(planId, 'upload'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       let payload = {};
@@ -6037,7 +6076,13 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         return json({ error: 'Upload size verification failed. Retry the upload.', code: 'UPLOAD_SIZE_MISMATCH' }, 400, cors);
       }
       const { planId: livePlan } = await resolvePlan(env, actor, bearerFrom(request));
-      const quota = planQuota(livePlan);
+      let quota = { ...planQuota(livePlan) };
+      try {
+        if (livePlan === 'eq_free') {
+          const boost = await getRewardedUploadBoost(env, actor.id);
+          if (boost && boost > quota.maxUploadMB) quota.maxUploadMB = boost;
+        }
+      } catch { /* ignore */ }
       const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
       const maxBytes = Math.min(quota.maxUploadMB, envCapMB) * 1024 * 1024;
       if (totalBytes > maxBytes) {
@@ -6141,7 +6186,13 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       if (denied) return denied;
       const bearer = bearerFrom(request);
       const { planId } = await resolvePlan(env, actor, bearer);
-      const quota = planQuota(planId);
+      let quota = { ...planQuota(planId) };
+      try {
+        if (planId === 'eq_free') {
+          const boost = await getRewardedUploadBoost(env, actor.id);
+          if (boost && boost > quota.maxUploadMB) quota.maxUploadMB = boost;
+        }
+      } catch { /* ignore */ }
       const rl = await rateLimit(kv, 'upload', actor.id, rateLimitFor(planId, 'upload'));
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
 

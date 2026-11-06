@@ -1529,19 +1529,20 @@ const CreatePage = () => {
     }
   };
 
-  const handlePostTextStory = async (action: 'post' | 'schedule' | 'draft' = 'post') => {
+  const handlePostTextStory = async (action: 'post' | 'schedule' | 'draft' = 'post', forcedContent?: string, forcedChat?: boolean) => {
     if (publishLockRef.current) {
       showError('A story publish is still running. One at a time, please.');
       return;
     }
-    if (!textStoryContent.trim()) {
+    const storyContent = (forcedContent ?? textStoryContent).trim();
+    if (!storyContent) {
       showError('Please enter some text for your story');
       return;
     }
     publishLockRef.current = true;
     try {
     const textStoryData = {
-      content: textStoryContent,
+      content: storyContent,
       background: textStoryBackground,
       color: textStoryColor
     };
@@ -1552,7 +1553,7 @@ const CreatePage = () => {
         // Add text story to uploaded text stories list with analytics
         const newUploadedTextStory: UploadedTextStory = {
           id: Date.now().toString(),
-          content: textStoryContent,
+          content: storyContent,
           backgroundColor: textStoryBackground,
           textColor: textStoryColor,
           uploadDate: new Date(),
@@ -1562,8 +1563,8 @@ const CreatePage = () => {
           comments: 0,
           shares: 0,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
-            chatWithAudience: contentVisibility !== 'private' ? textStoryChatWithAudience : false,
-            chatPrompt: contentVisibility !== 'private' && textStoryChatWithAudience ? (textStoryChatPrompt.trim() || 'Chat with your creator') : undefined,
+            chatWithAudience: contentVisibility !== 'private' ? (forcedChat ?? textStoryChatWithAudience) : false,
+            chatPrompt: contentVisibility !== 'private' && (forcedChat ?? textStoryChatWithAudience) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
@@ -4428,6 +4429,23 @@ const CreatePage = () => {
                       placeholder="Chat with your creator"
                       maxLength={60}
                     />
+                  )}
+                  {contentVisibility !== 'private' && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      className="w-full"
+                      disabled={isUploading}
+                      onClick={async () => {
+                        const prompt = (textStoryChatPrompt || 'Chat with your creator').trim();
+                        const ok = window.confirm('Post a "Chat with your creator" story? Viewers (except you) can ask questions and you can reply in your next story.');
+                        if (!ok) return;
+                        setTextStoryChatWithAudience(true);
+                        await handlePostTextStory('post', prompt, true);
+                      }}
+                    >
+                      Post "Chat with your creator" story
+                    </Button>
                   )}
                 </div>
               )}

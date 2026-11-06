@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { EQUYVO_PLANS, formatINR } from '@/lib/plans';
 import { priceForCountry, CURRENCY_DISCLAIMER, getUserCountry } from '@/lib/currency';
 import { buyPlan, claimBilling, getBillingStatus } from '@/lib/billing';
+import { showRewardedAd } from '@/lib/admob-service';
 import { getAuthToken, getToken, getStoredUser } from '@/lib/auth';
 import { toast } from 'sonner';
 
@@ -107,6 +108,31 @@ const PricingPage: React.FC = () => {
     } catch { /* ignore */ }
     window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: 'eq_free' } }));
     toast.success('You are on the Free plan.');
+  };
+
+  const [rewardBusy, setRewardBusy] = useState(false);
+  const handleWatchAdRewarded = async () => {
+    if (rewardBusy) return;
+    setRewardBusy(true);
+    try {
+      const cap = (window as any)?.Capacitor;
+      const native = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+      let earned = false;
+      if (native) {
+        earned = await showRewardedAd();
+      } else {
+        earned = window.confirm('Watch a short sponsored ad to unlock 500MB uploads for 24 hours?');
+      }
+      if (!earned) { toast.error('Ad not completed. No reward granted.'); return; }
+      const token = ((): string | null => { try { return localStorage.getItem('equyvo_cognito_token'); } catch { return null; } })();
+      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!r.ok) throw new Error('boost failed');
+      toast.success('500MB upload limit unlocked for 24 hours!');
+    } catch {
+      toast.error('Could not unlock reward. Please try again.');
+    } finally {
+      setRewardBusy(false);
+    }
   };
 
   // ── Guest checkout (the "tap a plan → straight to Razorpay" flow) ──────
@@ -328,6 +354,18 @@ const PricingPage: React.FC = () => {
             </ul>
             <div className="mt-5"><a href="mailto:enterprise@acronous.com?subject=Equyvo%20Business" className="block"><Button variant="outline" className="w-full">Contact us</Button></a></div>
           </div>
+        </div>
+      )}
+      {!loading && activePlan === 'eq_free' && (
+        <div className="mt-6 rounded-2xl border border-pink-500/40 bg-pink-500/5 p-6 text-center">
+          <h3 className="font-bold text-lg">Watch ad to earn rewards</h3>
+          <p className="text-sm text-muted-foreground mt-1">
+            Free plan upload limit is 150MB. Watch one ad to unlock 500MB uploads for 24 hours.
+          </p>
+          <Button className="mt-4" onClick={() => void handleWatchAdRewarded()} disabled={rewardBusy}>
+            {rewardBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+            {rewardBusy ? 'Watching…' : 'Watch ad to earn 500MB for 24h'}
+          </Button>
         </div>
       )}
       <p className="text-center text-xs text-muted-foreground mt-8">UPI · Cards · Netbanking · Wallets · International cards — via Razorpay. Cancel anytime; plan stays till month-end.</p>
