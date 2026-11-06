@@ -4,7 +4,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
-import { Crown, Lock, Sparkles, Users, Key, Store, Megaphone, BarChart3, Wand2 } from 'lucide-react';
+import { Crown, Lock, Sparkles, Users, Key, Store, Megaphone, BarChart3, Wand2, Gift } from 'lucide-react';
+import { showRewardedAd } from '@/lib/admob-service';
 
 const API = '/api';
 
@@ -35,6 +36,24 @@ const SubscriptionFeaturesPage: React.FC = () => {
   const [tab, setTab] = useState('analytics');
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
+  const [rewardBusy, setRewardBusy] = useState(false);
+  const handleWatchAdRewarded = async () => {
+    if (rewardBusy) return;
+    setRewardBusy(true);
+    try {
+      const cap = (window as any)?.Capacitor;
+      const native = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+      let earned = false;
+      if (native) earned = await showRewardedAd();
+      else earned = window.confirm('Watch a short sponsored ad to unlock 500MB uploads for 24 hours?');
+      if (!earned) { toast.error('Ad not completed. No reward granted.'); return; }
+      const token = localStorage.getItem('equyvo_cognito_token');
+      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      if (!r.ok) throw new Error('boost failed');
+      toast.success('500MB upload limit unlocked for 24 hours!');
+    } catch { toast.error('Could not unlock reward. Please try again.'); }
+    finally { setRewardBusy(false); }
+  };
 
   const tabs = [
     { id: 'analytics', label: 'Analytics', icon: BarChart3, ok: !!ent?.analytics || !!ent?.businessProfile },
@@ -82,6 +101,19 @@ const SubscriptionFeaturesPage: React.FC = () => {
         <h1 className="text-2xl font-bold">Subscription features</h1>
         <span className="text-xs text-muted-foreground ml-2">{ent?.planLabel || ent?.planId}</span>
       </div>
+      {(ent?.planId === 'eq_free' || !ent?.planId) && (
+        <Card className="mb-4 border-pink-500/40 bg-pink-500/5">
+          <CardContent className="py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm">
+              <Gift className="h-4 w-4 text-pink-500" />
+              <span>Watch one ad to unlock 500MB uploads for 24 hours (free plan).</span>
+            </div>
+            <Button size="sm" onClick={() => void handleWatchAdRewarded()} disabled={rewardBusy}>
+              {rewardBusy ? 'Watching…' : 'Watch ad to earn 500MB'}
+            </Button>
+          </CardContent>
+        </Card>
+      )}
       {usage?.aiCredits && (
         <Card className="mb-4">
           <CardContent className="py-3 flex items-center justify-between text-sm">

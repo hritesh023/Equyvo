@@ -356,7 +356,7 @@ const PricingPage: React.FC = () => {
           </div>
         </div>
       )}
-      {!loading && activePlan === 'eq_free' && (
+      {!loading && (activePlan === 'eq_free' || !activePlan) && (
         <div className="mt-6 rounded-2xl border border-pink-500/40 bg-pink-500/5 p-6 text-center">
           <h3 className="font-bold text-lg">Watch ad to earn rewards</h3>
           <p className="text-sm text-muted-foreground mt-1">

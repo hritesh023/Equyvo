@@ -513,7 +513,7 @@ const SettingsPage = () => {
   const { t } = useI18n();
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-4xl mx-auto space-y-6 pb-32">
       <div className="flex items-center gap-3 mb-6">
         <h1 className="text-3xl font-bold">{t('nav.settings')}</h1>
       </div>
@@ -784,15 +784,6 @@ const SettingsPage = () => {
           </Button>
 
           <Separator />
-
-          <Button 
-            variant="destructive" 
-            onClick={handleDeleteAccount}
-            className="w-full justify-start"
-          >
-            <Trash2 className="h-4 w-4 mr-2" />
-            Delete Account
-          </Button>
         </CardContent>
       </Card>
 
@@ -809,6 +800,20 @@ const SettingsPage = () => {
           </Button>
         </CardContent>
       </Card>
+
+      <Card>
+        <CardContent className="pt-6">
+          <Button 
+            variant="destructive" 
+            onClick={handleDeleteAccount}
+            className="w-full justify-start"
+          >
+            <Trash2 className="h-4 w-4 mr-2" />
+            Delete Account
+          </Button>
+        </CardContent>
+      </Card>
+
     </div>
   );
 };

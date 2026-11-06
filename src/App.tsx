@@ -130,7 +130,7 @@ const AppContent = () => {
     if (!t) return;
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
-    if (Math.abs(dx) < 70 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    if (Math.abs(dx) < 120 || Math.abs(dx) < Math.abs(dy) * 2.0) return;
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     const nextIdx = dx < 0 ? idx + 1 : idx - 1;
@@ -149,7 +149,7 @@ const AppContent = () => {
     const prev = lastTabIdxRef.current;
     if (prev >= 0 && prev !== idx) {
       setSlideClass(idx > prev ? 'slide-in-left' : 'slide-in-right');
-      const timer = window.setTimeout(() => setSlideClass(''), 280);
+      const timer = window.setTimeout(() => setSlideClass(''), 320);
       lastTabIdxRef.current = idx;
       return () => window.clearTimeout(timer);
     }
