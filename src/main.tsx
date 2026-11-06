@@ -197,24 +197,6 @@ try {
  * healthy boot clears it, re-arming for the next deploy.
  */
 try {
-  // Ensure every text input keeps native keyboard suggestions / drag handles
-  // even when rendered by third-party components that omit the attributes.
-  document.addEventListener('focusin', (event) => {
-    const el = event.target as HTMLElement | null;
-    if (!el || (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA')) return;
-    const input = el as HTMLInputElement;
-    if (!input.getAttribute('autocomplete')) input.setAttribute('autocomplete', 'on');
-    input.setAttribute('autocorrect', 'on');
-    if (!input.getAttribute('autocapitalize')) input.setAttribute('autocapitalize', 'sentences');
-    input.setAttribute('spellcheck', 'true');
-    if (!input.getAttribute('enterkeyhint')) input.setAttribute('enterkeyhint', 'enter');
-    if (!input.getAttribute('inputmode') && input.type === 'text') input.setAttribute('inputmode', 'text');
-    input.style.webkitUserSelect = 'text';
-    input.style.userSelect = 'text';
-  });
-} catch { /* ignore */ }
-
-try {
   if (import.meta.env.PROD) {
     const SELF_HEAL_KEY = "equyvo_bundle_selfheal";
     const alreadyHealed = (() => {
