@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera } from 'lucide-react';
+import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
 import api from '@/lib/api';
@@ -81,6 +82,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   // Image-attachment preview + crop/adjust step (same editor as thumbnails).
   const [attachPreview, setAttachPreview] = useState<string | null>(null);
   const [attachCropSrc, setAttachCropSrc] = useState<string | null>(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [menuMsgId, setMenuMsgId] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -471,12 +473,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     stopRecTracks();
   }, []);
 
-  const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  const attachFile = (file: File) => {
     if (file.size > 10 * 1024 * 1024) {
       showError('Attachment must be smaller than 10MB.');
-      e.target.value = '';
       return;
     }
     if (attachPreview) {
@@ -488,12 +487,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       try {
         const url = URL.createObjectURL(file);
         setAttachPreview(url);
-        // Every image opens the crop/adjust editor (same as thumbnails).
-        // GIFs keep their animation when confirmed untouched; adjusting
-        // one exports a still frame instead (editor explains this inline).
         setAttachCropSrc(url);
       } catch { /* preview is best-effort */ }
     }
+  };
+  const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    attachFile(file);
+    if (e.target) e.target.value = '';
   };
 
   const handleAttachCropComplete = (file: File) => {
@@ -709,7 +711,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           ? 'chat-open-overlay fixed inset-x-0 bottom-0 top-0 z-50 flex flex-col bg-[#0b141a]'
           : 'absolute inset-0 bg-background z-10 flex flex-col'}
         >
-          <div className="p-3 border-b flex items-center gap-3 bg-secondary/30 backdrop-blur-md shrink-0">
+          <div className="p-3 border-b flex items-center gap-3 bg-white/95 dark:bg-secondary/30 backdrop-blur-md shrink-0">
             <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); refreshThreads(); }} aria-label="Back to chat list" title="Back to chat list">
               <ArrowLeft className="w-4 h-4" />
             </Button>
@@ -737,6 +739,16 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 </p>
               </div>
             </button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 shrink-0"
+              aria-label="Open camera"
+              title="Open camera"
+              onClick={() => setCameraOpen(true)}
+            >
+              <Camera className="w-4 h-4" />
+            </Button>
             {/* Background selector reachable even while the chat is open
                 (the desktop sidebar header sits under the chat panel overlay). */}
             <Button
@@ -925,7 +937,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             </div>
           </div>
 
-          <div className="p-3 border-t bg-background/50 backdrop-blur-md flex-none chat-overlay-composer">
+          <div className="p-3 border-t bg-white/95 dark:bg-background/50 backdrop-blur-md flex-none chat-overlay-composer">
             {replyTo && (
               <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-2 text-xs text-slate-200">
                 <div className="min-w-0">
@@ -1077,6 +1089,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         </div>
       )}
     </div>
+    {cameraOpen && (
+      <ChatCamera
+        open={cameraOpen}
+        onClose={() => setCameraOpen(false)}
+        onAttach={(file) => { attachFile(file); setCameraOpen(false); }}
+      />
+    )}
     {/* Image/GIF crop/adjust editor — same tool as thumbnails. Untouched
         GIFs stay animated; adjusting one exports a still frame. */}
     {attachCropSrc && (
