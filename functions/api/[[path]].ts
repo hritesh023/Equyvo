@@ -3353,6 +3353,7 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   const denied = actorResponse(actor, env, cors);
   if (denied) return denied;
   const { planId } = await resolvePlan(env, actor, bearerFrom(request));
+  const quota = planQuota(planId);
   const rl = await rateLimit(kv, kind, actor.id, rateLimitFor(planId, kind));
   if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
 
