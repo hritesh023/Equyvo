@@ -1174,7 +1174,7 @@ const ProfilePage = () => {
       window.removeEventListener('followChanged', refresh as EventListener);
     };
     // openFollowers/openFollowing intentionally re-created with the sheet state.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   }, [targetProfileId, isSelfView, showFollowers, showFollowing, viewerId]);
 
   const handleReport = (postId: string) => {

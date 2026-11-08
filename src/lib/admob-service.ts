@@ -16,7 +16,7 @@ import {
   AD_POLICY,
   admobTestDevices,
   effectiveAdUnitId,
-  effectiveBannerAdUnitId,
+  effectiveInterstitialAdUnitId,
   effectiveRewardedAdUnitId,
   TEST_REWARDED_AD_UNIT_ID,
   isDevEnvironment,
@@ -39,12 +39,10 @@ export interface NativeAdData {
 type AdMobPlugin = {
   initialize?: (opts?: Record<string, unknown>) => Promise<void>;
   requestConsentInfo?: (opts?: Record<string, unknown>) => Promise<unknown>;
-  showBanner?: (opts?: Record<string, unknown>) => Promise<void>;
-  hideBanner?: () => Promise<void>;
-  resumeBanner?: () => Promise<void>;
-  removeBanner?: () => Promise<void>;
   prepareRewardVideoAd?: (opts?: Record<string, unknown>) => Promise<unknown>;
   showRewardVideoAd?: (opts?: Record<string, unknown>) => Promise<unknown>;
+  prepareInterstitial?: (opts?: Record<string, unknown>) => Promise<unknown>;
+  showInterstitial?: (opts?: Record<string, unknown>) => Promise<void>;
   addListener?: (
     event: string,
     cb: (info?: unknown) => void,
@@ -212,401 +210,78 @@ export function housePromoAd(placement: string): NativeAdData {
   };
 }
 
-// ── Adaptive feed banner (the real-earning format) ─────────────────────────
-// The community plugin supports banner/interstitial/rewarded/app-open — but
-// NOT Native Advanced. So: in-feed native-styled slots carry house promos
-// (Premium upsell), while this slim adaptive banner on feed-only screens
-// serves actual Google ads. Never shown on video surfaces.
+// ── Interstitial (full-screen, natural breaks only) ────────────────────────
+// Shown at most once per cooldown window, only for free users, and never
+// while content (video/fullscreen/story) is being watched. The actual show
+// decision + content guards live in useInterstitialAds; this service only
+// handles SDK mechanics and frequency capping.
 
-let bannerState: 'hidden' | 'shown' = 'hidden';
-let bannerAdId: string | null = null;
-let bannerListenersAttached = false;
-// Whether the current screen WANTS a banner (route/plan/takeover decision
-// owned by use-feed-banner). Retries and app-foreground re-shows only ever
-// run while this is true — the banner never reappears on video surfaces,
-// composer/pricing/auth or for paying plans.
-let bannerWanted = false;
-let bannerFailures = 0;
-let bannerRetryTimer: ReturnType<typeof setTimeout> | null = null;
-let bannerVisibilityHooked = false;
-let bannerOverlapHooked = false;
-let overlapCheckTimer: ReturnType<typeof setTimeout> | null = null;
-let overlapRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+let interstitialState: 'idle' | 'prepared' | 'showing' = 'idle';
+let interstitialAdId: string | null = null;
+let lastInterstitialShownAt = 0;
+const INTERSTITIAL_MIN_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes between shows
 
-const BANNER_RETRY_BASE_MS = 30_000; // first retry after 30s
-const BANNER_RETRY_MAX_MS = 5 * 60_000; // never retry sooner than every 5 min
-
-/** Exponential backoff for failed loads (30s → 60s → 120s → 240s → 5min cap). */
-function bannerRetryDelay(): number {
-  const ms = BANNER_RETRY_BASE_MS * Math.pow(2, Math.max(0, bannerFailures - 1));
-  return Math.min(Number.isFinite(ms) ? ms : BANNER_RETRY_MAX_MS, BANNER_RETRY_MAX_MS);
-}
-
-/**
- * Tell the service whether the active screen should show the banner. Called
- * from useFeedBanner on every route/plan change.
- */
-export function setBannerWanted(wanted: boolean): void {
-  bannerWanted = wanted;
-  if (!wanted && bannerRetryTimer) {
-    clearTimeout(bannerRetryTimer);
-    bannerRetryTimer = null;
-  }
-  hookBannerVisibility();
-  hookBannerOverlap();
-  // Taps/scrolls nudge a no-fill banner back to life once backoff allows —
-  // "the banner is there whenever the user is active".
-  hookInteractions();
-}
-
-/**
- * Re-attach the banner after a failed load — with backoff so repeated
- * async no-fill cycles can never spam the user with half-loaded bars.
- * This is what makes the banner reliably come back "every time the user
- * interacts" without ever turning reload spam into an irritation.
- */
-function scheduleBannerRetry(): void {
-  if (bannerRetryTimer || !bannerWanted) return;
-  bannerRetryTimer = setTimeout(() => {
-    bannerRetryTimer = null;
-    if (bannerWanted && bannerState !== 'shown') void showFeedBanner();
-  }, bannerRetryDelay());
-}
-
-/**
- * App lifecycle handling via visibilitychange: hide the banner while the
- * app is backgrounded (impressions shouldn't accumulate in the background),
- * and re-show/resume it the instant the user comes back and interacts.
- */
-function hookBannerVisibility(): void {
-  if (bannerVisibilityHooked || typeof document === 'undefined') return;
-  bannerVisibilityHooked = true;
-  hookKeyboard();
-  document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'hidden') {
-      try {
-        document.body.classList.remove('has-ad-banner');
-      } catch { /* ignore */ }
-      if (bannerRetryTimer) { clearTimeout(bannerRetryTimer); bannerRetryTimer = null; }
-      // Hide without destroying the banner (cheap resume when they return).
-      void hideFeedBanner();
-      return;
-    }
-    if (bannerWanted && !keyboardOpen) {
-      // Visible again while on an allowed screen → the banner comes straight
-      // back (resume if it still exists, fresh request otherwise).
-      void showFeedBanner();
-    }
-  });
-}
-
-/** Estimate the native banner's vertical band in the viewport. */
-function bannerBand(): { top: number; bottom: number } | null {
-  try {
-    const narrow = typeof window !== 'undefined' && window.innerWidth < 768;
-    let lift = narrow ? 70 : 0;
-    try {
-      if (narrow && typeof document !== 'undefined') {
-        const v = getComputedStyle(document.documentElement)
-          .getPropertyValue('--equyvo-bar-bottom')
-          .trim();
-        const n = parseFloat(v);
-        if (Number.isFinite(n) && n > 0) lift = Math.round(n + 8);
-      }
-    } catch { /* keep fallback */ }
-    const bannerH = 72; // adaptive banner max height (dp)
-    const top = window.innerHeight - lift - bannerH;
-    const bottom = window.innerHeight - lift;
-    return { top, bottom };
-  } catch {
-    return null;
-  }
-}
-
-/**
- * Detect whether any action button currently intersects the native banner's
- * band. Used to hide the banner the instant it would cover an action button,
- * while keeping it (and its revenue) on screens where it doesn't overlap.
- */
-export function isBannerOverlappingActions(): boolean {
-  try {
-    const band = bannerBand();
-    if (!band) return false;
-    const els = document.querySelectorAll(
-      'button, [role="button"], .action-btn, .fab, [data-action="true"]',
-    );
-    for (let i = 0; i < els.length; i++) {
-      const r = (els[i] as HTMLElement).getBoundingClientRect();
-      if (!r || r.width === 0 || r.height === 0) continue;
-      if (r.right <= 0 || r.left >= window.innerWidth) continue;
-      if (r.bottom <= band.top || r.top >= band.bottom) continue;
-      return true;
-    }
-    return false;
-  } catch {
-    return false;
-  }
-}
-
-function evaluateBannerOverlap(): void {
-  try {
-    if (!bannerWanted) return;
-    if (bannerState !== 'shown') return;
-    if (isBannerOverlappingActions()) {
-      if (!overlapCheckTimer) {
-        overlapCheckTimer = setTimeout(() => {
-          overlapCheckTimer = null;
-          if (bannerWanted && bannerState === 'shown' && isBannerOverlappingActions()) {
-            void hideFeedBanner();
-            // Recover as soon as the conflicting button scrolls away.
-            if (overlapRecoveryTimer) clearTimeout(overlapRecoveryTimer);
-            overlapRecoveryTimer = setTimeout(() => {
-              overlapRecoveryTimer = null;
-              if (bannerWanted && !isBannerOverlappingActions()) void showFeedBanner();
-            }, 400);
-          }
-        }, 150);
-      }
-    } else {
-      if (overlapCheckTimer) { clearTimeout(overlapCheckTimer); overlapCheckTimer = null; }
-    }
-  } catch { /* ignore */ }
-}
-
-function hookBannerOverlap(): void {
-  if (bannerOverlapHooked || typeof window === 'undefined') return;
-  bannerOverlapHooked = true;
-  const opts: AddEventListenerOptions = { passive: true };
-  ['scroll', 'resize', 'pointerdown', 'touchmove'].forEach((evt) => {
-    window.addEventListener(evt, () => {
-      if (overlapRecoveryTimer) { /* keep */ }
-      evaluateBannerOverlap();
-    }, opts);
-  });
-  // periodic safety net (covers animated layouts)
-  setInterval(evaluateBannerOverlap, 600);
-}
-
-/** True when a banner unit is available to request (test unit in dev). */
-export function isBannerConfigured(): boolean {
-  return effectiveBannerAdUnitId() !== '';
-}
-
-async function attachBannerListeners(
-  plugin: AdMobPlugin,
-): Promise<void> {
-  if (bannerListenersAttached || !plugin.addListener) return;
-  bannerListenersAttached = true;
-  try {
-    await plugin.addListener('bannerAdFailedToLoad', () => {
-      // No fill (common until AdMob approves the unit): collapse the slot
-      // so no blank gap remains — then retry with backoff so the banner
-      // reliably comes back the next time the user is active.
-      bannerFailures += 1;
-      bannerState = 'hidden';
-      try {
-        document.body.classList.remove('has-ad-banner');
-      } catch {
-        /* ignore */
-      }
-      scheduleBannerRetry();
-    });
-    await plugin.addListener('bannerAdLoaded', () => {
-      // Successful fill — reset the backoff chain.
-      bannerFailures = 0;
-    });
-  } catch {
-    /* listeners are best-effort */
-  }
-}
-
-/**
- * Show the adaptive banner (BOTTOM_CENTER, lifted above the bottom nav).
- * Resolves true when a request was issued. No-op on web / when the banner
- * unit is not configured yet.
- */
-export async function showFeedBanner(): Promise<boolean> {
+/** Prepare an interstitial ad (idempotent). */
+export async function prepareInterstitial(): Promise<boolean> {
   try {
     if (!isNativePlatform()) return false;
-    const adId = effectiveBannerAdUnitId();
+    const adId = effectiveInterstitialAdUnitId();
     if (!adId) return false;
-    if (!isDevEnvironment() && !isBannerConfigured()) return false;
-    hookBannerVisibility();
-    if (keyboardOpen) return false; // never rain above the IME
-    hookBannerOverlap();
-    if (isBannerOverlappingActions()) return false; // don't cover action buttons
-    const { plugin } = await loadPlugin();
-    if (!plugin?.showBanner) return false;
+    if (interstitialState === 'prepared' && interstitialAdId === adId) return true;
     await initializeAds();
-    if (bannerState === 'shown' && bannerAdId === adId) {
-      try {
-        await plugin.resumeBanner?.();
-      } catch {
-        /* ignore */
-      }
-      return true;
-    }
-    if (bannerAdId && bannerAdId !== adId) {
-      try {
-        await plugin.removeBanner?.();
-      } catch {
-        /* ignore */
-      }
-      bannerAdId = null;
-    }
-    await attachBannerListeners(plugin);
-    lastBannerAttemptAt = Date.now();
-    const narrow =
-      typeof window !== 'undefined' && window.innerWidth < 768;
-    // Lift above the in-flow bottom nav (+ system nav clearance).
-    let lift = 70;
-    try {
-      if (narrow && typeof document !== 'undefined') {
-        const v = getComputedStyle(document.documentElement)
-          .getPropertyValue('--equyvo-bar-bottom')
-          .trim();
-        const n = parseFloat(v);
-        if (Number.isFinite(n) && n > 0) lift = Math.round(n + 8);
-      }
-    } catch {
-      /* keep fallback */
-    }
-    try {
-      await plugin.showBanner({
-        adId,
-        position: 'BOTTOM_CENTER',
-        adSize: 'ADAPTIVE_BANNER',
-        // Lift above the app bottom nav on phones.
-        margin: narrow ? lift : 0,
-        isTesting: isDevEnvironment(),
-        npa: !personalizedAdsEnabled(),
-      });
-      bannerState = 'shown';
-      bannerAdId = adId;
-      bannerFailures = 0;
-      try {
-        document.body.classList.add('has-ad-banner');
-      } catch {
-        /* ignore */
-      }
-      return true;
-    } catch {
-      bannerState = 'hidden';
-      try {
-        document.body.classList.remove('has-ad-banner');
-      } catch {
-        /* ignore */
-      }
+    const { plugin } = await loadPlugin();
+    if (!plugin?.prepareInterstitial) return false;
+    await plugin.prepareInterstitial({
+      adId,
+      isTesting: isDevEnvironment(),
+      npa: !personalizedAdsEnabled(),
+    });
+    interstitialState = 'prepared';
+    interstitialAdId = adId;
+    return true;
+  } catch {
+    interstitialState = 'idle';
+    interstitialAdId = null;
+    return false;
+  }
+}
+
+/** Show a prepared interstitial if the cooldown allows. */
+export async function showInterstitial(): Promise<boolean> {
+  try {
+    if (!isNativePlatform()) return false;
+    if (Date.now() - lastInterstitialShownAt < INTERSTITIAL_MIN_INTERVAL_MS) {
       return false;
     }
-  } catch {
-    return false;
-  }
-}
-
-/** Hide the banner without destroying it (cheap resume on return). */
-export async function hideFeedBanner(): Promise<void> {
-  try {
-    document.body.classList.remove('has-ad-banner');
-  } catch {
-    /* ignore */
-  }
-  if (bannerState !== 'shown') return;
-  bannerState = 'hidden';
-  try {
+    if (interstitialState !== 'prepared') {
+      const ok = await prepareInterstitial();
+      if (!ok) return false;
+    }
     const { plugin } = await loadPlugin();
-    await plugin?.hideBanner?.();
+    if (!plugin?.showInterstitial) return false;
+    interstitialState = 'showing';
+    try {
+      await plugin.showInterstitial(
+        interstitialAdId ? { adId: interstitialAdId } : undefined,
+      );
+    } catch {
+      interstitialState = 'idle';
+      return false;
+    }
+    lastInterstitialShownAt = Date.now();
+    interstitialState = 'idle';
+    interstitialAdId = null;
+    // Preload the next one for the next natural break.
+    void prepareInterstitial();
+    return true;
   } catch {
-    /* ignore */
-  }
-}
-
-// ── Keyboard co-existence ──────────────────────────────────────────────────
-// A native BOTTOM_CENTER banner rides up above the IME when the user starts
-// typing — exactly where it would cover the input fields. While the
-// keyboard is open the banner goes hidden; bannerWanted is preserved so it
-// returns the moment the IME closes (no blank strip, no lost state).
-// Detection: iOS shrinks the visual viewport BELOW innerHeight; Android's
-// adjustResize shrinks innerHeight itself — so the combined test is
-// "text-field focused AND the window lost real height".
-
-let keyboardOpen = false;
-let keyboardHooked = false;
-
-function isImeVisible(): boolean {
-  try {
-    const el = document.activeElement;
-    const typing =
-      el instanceof HTMLInputElement ||
-      el instanceof HTMLTextAreaElement ||
-      (el as HTMLElement | null)?.isContentEditable === true;
-    if (!typing) return false;
-    const vv = window.visualViewport;
-    const visibleH = vv?.height ?? window.innerHeight;
-    if (window.innerHeight - visibleH > 140) return true; // iOS pattern
-    const screenH = window.screen?.height ?? 0;
-    return screenH > 0 && visibleH < screenH * 0.7; // Android adjustResize
-  } catch {
+    interstitialState = 'idle';
     return false;
   }
 }
 
-function updateKeyboardState(): void {
-  const open = isImeVisible();
-  if (open === keyboardOpen) return;
-  keyboardOpen = open;
-  if (keyboardOpen) {
-    void hideFeedBanner();
-  } else if (bannerWanted) {
-    void showFeedBanner();
-  }
-}
-
-/** IME layout lands a hair AFTER the DOM focus events — scan twice. */
-function scheduleKeyboardScan(): void {
-  setTimeout(updateKeyboardState, 120);
-  setTimeout(updateKeyboardState, 400);
-}
-
-function hookKeyboard(): void {
-  if (keyboardHooked || typeof window === 'undefined') return;
-  keyboardHooked = true;
-  const opts: AddEventListenerOptions = { passive: true };
-  window.addEventListener('focusin', scheduleKeyboardScan, opts);
-  window.addEventListener('focusout', scheduleKeyboardScan, opts);
-  window.addEventListener('resize', scheduleKeyboardScan, opts);
-  const vv = window.visualViewport;
-  if (vv) {
-    vv.addEventListener('resize', scheduleKeyboardScan, opts);
-    vv.addEventListener('scroll', scheduleKeyboardScan, opts);
-  }
-}
-
-// ── Interaction-driven banner recovery ─────────────────────────────────────
-// "The banner is back every time the user interacts" without ever becoming
-// spam: taps/scrolls nudge a hidden banner back only when the backoff
-// window has elapsed — each recovery respects the same exponential delay
-// as the timer path, so fast tapping cannot hammer the request pipeline.
-
-let lastBannerAttemptAt = 0;
-let interactionsHooked = false;
-
-/** User gesture hook: only resumes a banner that WANTS to be visible. */
-function pokeBanner(): void {
-  if (keyboardOpen) return;
-  if (!bannerWanted || bannerState === 'shown') return;
-  const elapsed = Date.now() - lastBannerAttemptAt;
-  if (elapsed < bannerRetryDelay()) return; // same politeness as the timer
-  void showFeedBanner();
-}
-
-function hookInteractions(): void {
-  if (interactionsHooked || typeof document === 'undefined') return;
-  interactionsHooked = true;
-  const opts: AddEventListenerOptions = { passive: true };
-  ['pointerdown', 'touchstart', 'keydown', 'wheel', 'scroll'].forEach((evt) => {
-    document.addEventListener(evt, pokeBanner, opts);
-  });
+export function isInterstitialConfigured(): boolean {
+  return effectiveInterstitialAdUnitId() !== '';
 }
 
 // ── Rewarded (watch-to-earn) ────────────────────────────────────────────────

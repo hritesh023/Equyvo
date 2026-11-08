@@ -1683,27 +1683,6 @@ html.cap-native {
   @apply text-green-400 bg-green-900/20 border-green-800/30;
 }
 
-/*
- * AdMob adaptive banner is a NATIVE view overlaid above the app bottom nav
- * (see admob-service; only on native shells, feed routes, Free tier).
- * Reserve scroll space so the banner NEVER covers content or the nav — at
- * ALL widths: phones get the 70px nav lift (banner strip ≈70–220px tall),
- * tablets/large screens get margin 0 with an ≈90px adaptive banner, so they
- * reserve a smaller strip. Both strips are multiplied by
- * --equyvo-app-zoom-inverse: the banner is a native view OUTSIDE the zoomed
- * web tree, so a zoomed-in layout must not shrink its physical space.
- */
-@media (max-width: 767px) {
-  body.has-ad-banner main {
-    padding-bottom: calc(150px * var(--equyvo-app-zoom-inverse, 1)) !important;
-  }
-}
-
-@media (min-width: 768px) {
-  body.has-ad-banner main {
-    padding-bottom: calc(104px * var(--equyvo-app-zoom-inverse, 1)) !important;
-  }
-}
 
 /* Compact view (Settings toggle) — denser feeds, real effect. */
 .equyvo-compact main .grid {

@@ -13,19 +13,17 @@ export const ADMOB_NATIVE_AD_UNIT_ID =
 // are never generated during development (AdMob policy).
 export const TEST_APP_ID = 'ca-app-pub-3940256099942544~3347511713';
 export const TEST_NATIVE_AD_UNIT_ID = 'ca-app-pub-3940256099942544/2247696110';
-// Google's official banner test unit (used on native dev builds).
-export const TEST_BANNER_AD_UNIT_ID = 'ca-app-pub-3940256099942544/6300978111';
+// Google's official interstitial test unit (used on native dev builds).
+export const TEST_INTERSTITIAL_AD_UNIT_ID = 'ca-app-pub-3940256099942544/1033173712';
 
 /**
- * Banner ad unit for the adaptive feed banner (the format that actually
- * earns: the community Capacitor plugin supports banner/interstitial/
- * rewarded/app-open, but NOT Native Advanced). Defaults to the owner's
- * production banner unit; override with VITE_ADMOB_BANNER_AD_UNIT.
- * Empty = banner stays off.
+ * Interstitial ad unit (full-screen, shown at natural breaks only).
+ * Defaults to the owner's production interstitial unit; override with
+ * VITE_ADMOB_INTERSTITIAL_AD_UNIT.
  */
-export const ADMOB_BANNER_AD_UNIT_ID =
-  import.meta.env.VITE_ADMOB_BANNER_AD_UNIT ||
-  'ca-app-pub-8929153950560106/2244247233';
+export const ADMOB_INTERSTITIAL_AD_UNIT_ID =
+  import.meta.env.VITE_ADMOB_INTERSTITIAL_AD_UNIT ||
+  'ca-app-pub-8929153950560106/6682592215';
 
 /**
  * Rewarded ad unit (watch-to-earn). Used by the "Watch ad to earn rewards"
@@ -165,47 +163,16 @@ export function effectiveAdUnitId(): string {
   return ADMOB_NATIVE_AD_UNIT_ID;
 }
 
-/** Banner unit actually requested (test unit on dev builds). */
-export function effectiveBannerAdUnitId(): string {
-  if (isDevEnvironment()) return TEST_BANNER_AD_UNIT_ID;
-  return ADMOB_BANNER_AD_UNIT_ID;
+/** Interstitial unit actually requested (test unit on dev builds). */
+export function effectiveInterstitialAdUnitId(): string {
+  if (isDevEnvironment()) return TEST_INTERSTITIAL_AD_UNIT_ID;
+  return ADMOB_INTERSTITIAL_AD_UNIT_ID;
 }
 
 /** Rewarded unit actually requested (test unit on dev builds). */
 export function effectiveRewardedAdUnitId(): string {
   if (isDevEnvironment()) return TEST_REWARDED_AD_UNIT_ID;
   return ADMOB_REWARDED_AD_UNIT_ID;
-}
-
-/**
- * Banner policy: Free tier only. Plus skips the banner (ad-light perk, still
- * sees sparse in-feed cards); Premium/Creator see nothing (ad-free).
- * Unknown plan (loading/signed-out) defaults to true — the auth gate keeps
- * signed-out users off banner routes anyway.
- */
-export function shouldShowBanner(plan?: string | null): boolean {
-  if (!ADS_ENABLED) return false;
-  if (typeof localStorage !== 'undefined') {
-    if (localStorage.getItem('equyvo_ads_disabled') === 'true') return false;
-  }
-  if (!plan) return true;
-  if (isAdFreePlan(plan) || isAdLightPlan(plan)) return false;
-  return true;
-}
-
-/**
- * Route policy for the adaptive banner. The product rule is "every page
- * except authentication": the banner is a passive, in-flow native view that
- * never covers content, and fullscreen video/story takeovers still suppress
- * it while open (see use-feed-banner). Auth is intentionally ad-free so the
- * sign-in/sign-up flow is never interrupted.
- */
-export function isBannerRoute(pathname: string): boolean {
-  if (!pathname) return true;
-  if (pathname === '/auth' || pathname.startsWith('/auth/')) return false;
-  // Preview/diagnostic routes should not monetise.
-  if (pathname.startsWith('/__')) return false;
-  return true;
 }
 
 /** Personalized-ads consent flag (GDPR/ePrivacy friendly, default on). */

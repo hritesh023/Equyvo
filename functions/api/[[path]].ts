@@ -3989,7 +3989,7 @@ export const onRequest = async (context) => {
       const denied = actorResponse(actor, env, cors);
       if (denied) return denied;
       const { planId, source } = await resolvePlan(env, actor, bearerFrom(request));
-      let quota = { ...planQuota(planId) };
+      const quota = { ...planQuota(planId) };
       try {
         if (planId === 'eq_free') {
           const boost = await getRewardedUploadBoost(env, actor.id);
@@ -5922,7 +5922,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       if (!env.EQUYVO_R2) return json({ error: 'Media warehouse not configured' }, 503, cors);
       const bearer = bearerFrom(request);
       const { planId } = await resolvePlan(env, actor, bearer);
-      let quota = { ...planQuota(planId) };
+      const quota = { ...planQuota(planId) };
       try {
         if (planId === 'eq_free') {
           const boost = await getRewardedUploadBoost(env, actor.id);
@@ -6076,7 +6076,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         return json({ error: 'Upload size verification failed. Retry the upload.', code: 'UPLOAD_SIZE_MISMATCH' }, 400, cors);
       }
       const { planId: livePlan } = await resolvePlan(env, actor, bearerFrom(request));
-      let quota = { ...planQuota(livePlan) };
+      const quota = { ...planQuota(livePlan) };
       try {
         if (livePlan === 'eq_free') {
           const boost = await getRewardedUploadBoost(env, actor.id);
@@ -6186,7 +6186,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       if (denied) return denied;
       const bearer = bearerFrom(request);
       const { planId } = await resolvePlan(env, actor, bearer);
-      let quota = { ...planQuota(planId) };
+      const quota = { ...planQuota(planId) };
       try {
         if (planId === 'eq_free') {
           const boost = await getRewardedUploadBoost(env, actor.id);
