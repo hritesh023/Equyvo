@@ -4181,6 +4181,21 @@ const CreatePage = () => {
                   placeholder="What's happening in your story?"
                   className="mt-1"
                 />
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) {
+                        const el = document.getElementById('story-caption') as HTMLTextAreaElement | null;
+                        if (el) el.value = (el.value ? el.value + ' ' : '') + '#' + word;
+                      }
+                      e.currentTarget.value = '';
+                    }
+                  }}
+                />
               </div>
 
               {/* Story Cover — separate thumbnail section, like Live */}
@@ -4307,6 +4322,18 @@ const CreatePage = () => {
                 <p className="text-xs text-muted-foreground mt-1">
                   {textStoryContent.length}/200 characters
                 </p>
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) setTextStoryContent((prev) => (prev ? prev + ' ' : '') + '#' + word);
+                      e.currentTarget.value = '';
+                    }
+                  }}
+                />
               </div>
 
               {/* Color Options */}
@@ -4470,6 +4497,18 @@ const CreatePage = () => {
                   value={thoughtContent}
                   onChange={(e) => setThoughtContent(e.target.value)}
                   className="mt-1 min-h-[120px]"
+                />
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) setThoughtContent((prev) => (prev ? prev + ' ' : '') + '#' + word);
+                      e.currentTarget.value = '';
+                    }
+                  }}
                 />
               </div>
 
@@ -4670,6 +4709,18 @@ const CreatePage = () => {
                   onChange={(e) => setPhotoCaption(e.target.value)}
                   className="mt-1"
                 />
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) setPhotoCaption((prev) => (prev ? prev + ' ' : '') + '#' + word);
+                      e.currentTarget.value = '';
+                    }
+                  }}
+                />
               </div>
 
               {/* Action Buttons */}
@@ -4767,6 +4818,18 @@ const CreatePage = () => {
                   value={videoCaption}
                   onChange={(e) => setVideoCaption(e.target.value)}
                   className="mt-1"
+                />
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) setVideoCaption((prev) => (prev ? prev + ' ' : '') + '#' + word);
+                      e.currentTarget.value = '';
+                    }
+                  }}
                 />
               </div>
 
@@ -4885,6 +4948,18 @@ const CreatePage = () => {
                   value={liveDescription}
                   onChange={(e) => setLiveDescription(e.target.value)}
                   className="mt-1"
+                />
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) setLiveDescription((prev) => (prev ? prev + ' ' : '') + '#' + word);
+                      e.currentTarget.value = '';
+                    }
+                  }}
                 />
               </div>
 
@@ -5058,6 +5133,18 @@ const CreatePage = () => {
                   value={momentContent}
                   onChange={(e) => setMomentContent(e.target.value)}
                   className="mt-1"
+                />
+                <Input
+                  placeholder="Add hashtag (type word, press Enter)"
+                  className="mt-1 h-8 text-xs"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ',') {
+                      e.preventDefault();
+                      const word = (e.currentTarget.value || '').trim().replace(/^#/, '');
+                      if (word) setMomentContent((prev) => (prev ? prev + ' ' : '') + '#' + word);
+                      e.currentTarget.value = '';
+                    }
+                  }}
                 />
               </div>
               <div className="border-2 border-dashed border-muted-foreground/25 rounded-lg p-8 text-center">
