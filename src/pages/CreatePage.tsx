@@ -4406,8 +4406,7 @@ const CreatePage = () => {
                       maxLength={60}
                     />
                   )}
-                  {contentVisibility !== 'private' && (
-                    <Button
+                  <Button
                       type="button"
                       variant="secondary"
                       className="w-full"
@@ -4422,7 +4421,6 @@ const CreatePage = () => {
                     >
                       Post "Chat with your creator" story
                     </Button>
-                  )}
                 </div>
               )}
 

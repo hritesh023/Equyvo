@@ -1809,10 +1809,11 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         await env.EQUYVO_KV.get(KEYS.NEXT_ID);
         kv = 'up';
       } catch { kv = 'down'; }
+      const r2 = env.EQUYVO_R2 ? 'bound' : 'unbound';
       if (kv === 'down') {
-        return respond({ status: 'down', kv, version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() }, 503);
+        return respond({ status: 'down', kv, r2, version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() }, 503);
       }
-      return respond({ status: 'ok', kv, version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() });
+      return respond({ status: 'ok', kv, r2, version: env.APP_VERSION || '1.0.0', timestamp: new Date().toISOString() });
     }
 
     // Keep-alive: warms KV + touches the brain so the tunnel/model never idles.

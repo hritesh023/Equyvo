@@ -3788,12 +3788,11 @@ export const onRequest = async (context) => {
 
     // HEALTH (public, versioned for deploy verification; honest KV check)
     if (path === '/api/health' && method === 'GET') {
-      try {
-        await kv.get(KEYS.NEXT_ID);
-        return json({ status: 'ok', kv: 'up', version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, 200, cors);
-      } catch {
-        return json({ status: 'down', kv: 'down', version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, 503, cors);
-      }
+      let kvStatus = 'up';
+      try { await kv.get(KEYS.NEXT_ID); } catch { kvStatus = 'down'; }
+      const r2Status = env.EQUYVO_R2 ? 'bound' : 'unbound';
+      const status = kvStatus === 'up' ? 'ok' : 'down';
+      return json({ status, kv: kvStatus, r2: r2Status, version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, status === 'ok' ? 200 : 503, cors);
     }
 
     if (path === '/api/warmup' && method === 'GET') {
