@@ -8321,6 +8321,82 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     }
 
     return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
+  // ── AI CONTENT SUGGESTIONS (Acronous LLM brain, best-effort) ────────────
+  if (path === '/api/ai/suggest' && method === 'POST') {
+    const actor = await getActor(request, env);
+    const denied = actorResponse(actor, env, cors);
+    if (denied) return denied;
+    const bearer = bearerFrom(request);
+    const { planId } = await resolvePlan(env, actor, bearer);
+    const quota = planQuota(planId);
+    if (!quota.ai_suggestions) {
+      return json({ error: 'AI suggestions are a paid feature. Upgrade to unlock.', code: 'ENTITLEMENT_AI_SUGGESTIONS', planId }, 402, cors);
+    }
+    const rl = await rateLimit(kv, 'ai_suggest', actor.id, rateLimitFor(planId, 'ai'));
+    if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+    let body = {};
+    try { body = await readJson(request); } catch { body = {}; }
+    const kind = String(body.kind || 'caption').slice(0, 24);
+    const text = String(body.text || '').slice(0, 2000);
+    const tone = String(body.tone || 'neutral').slice(0, 24);
+    const brainBase = (env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
+    if (!brainBase) {
+      return json({ data: { suggestions: [], fallback: true }, error: null }, 200, cors);
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    try {
+      const r = await fetch(brainBase + '/v1/suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind, text, tone, user: actor.id }),
+        signal: controller.signal,
+      });
+      clearTimeout(timer);
+      if (!r.ok) return json({ data: { suggestions: [], fallback: true }, error: null }, 200, cors);
+      const out = await r.json().catch(() => ({}));
+      try { await addAiUsage(env, actor.id, 'suggestion', 0, 0, 'ok'); } catch {}
+      return json({ data: { suggestions: out.suggestions || out.data || [], fallback: false }, error: null, planId }, 200, cors);
+    } catch {
+      clearTimeout(timer);
+      return json({ data: { suggestions: [], fallback: true }, error: null }, 200, cors);
+    }
+  }
+
+  // ── ACCOUNT EXPORT (GDPR-style) ─────────────────────────────────────────
+  if (path === '/api/account/export' && method === 'GET') {
+    const actor = await getActor(request, env);
+    const denied = actorResponse(actor, env, cors);
+    if (denied) return denied;
+    const profile = await getStoredProfile(env, actor.id).catch(() => null);
+    const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
+    const mine = [];
+    for (const id of ids.slice(0, 500)) {
+      try {
+        const raw = await kv.get(KEYS.POST(id));
+        if (!raw) continue;
+        const it = JSON.parse(raw);
+        if (it && (it.ownerId === actor.id || it.userId === actor.id)) mine.push(it);
+      } catch {}
+    }
+    return json({ data: { profile, posts: mine, exportedAt: new Date().toISOString() }, error: null }, 200, cors);
+  }
+
+  // ── ACCOUNT DELETION (soft delete) ──────────────────────────────────────
+  if (path === '/api/account' && method === 'DELETE') {
+    const actor = await getActor(request, env);
+    const denied = actorResponse(actor, env, cors);
+    if (denied) return denied;
+    try {
+      const p = await getStoredProfile(env, actor.id);
+      if (p) { p.deleted_at = new Date().toISOString(); p.display_name = 'Deleted user'; await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(p)); }
+    } catch {}
+    try { await kv.put('deleted:' + actor.id, new Date().toISOString(), { expirationTtl: 60 * 60 * 24 * 365 }); } catch {}
+    try { await addAudit(env, actor.id, 'account_deleted', 'user', actor.id, {}); } catch {}
+    return json({ data: { deleted: true }, error: null }, 200, cors);
+  }
+
+  return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
   } catch (err) {
     const status = err && err.status ? err.status : 500;
     return json({ error: (err && err.message) || 'Internal error', requestId }, status, cors);
