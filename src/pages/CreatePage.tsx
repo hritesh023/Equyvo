@@ -5351,7 +5351,7 @@ const CreatePage = () => {
               size="icon"
               variant="ghost"
               onClick={() => setActiveTab('photo')}
-              className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-4 h-10 w-10 rounded-full bg-black/60 text-white hover:bg-black/80"
+              className="absolute top-[calc(env(safe-area-inset-top,0px)+2.5rem)] left-4 h-10 w-10 rounded-full bg-black/60 text-white hover:bg-black/80"
               title="Close camera"
             >
               <X className="h-6 w-6" />
@@ -5361,7 +5361,7 @@ const CreatePage = () => {
                 size="icon"
                 variant="ghost"
                 onClick={() => void toggleCameraTorch()}
-                className={`absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-4 h-10 w-10 rounded-full ${cameraTorch ? 'bg-amber-400/30 text-amber-300' : 'bg-black/60 text-white hover:bg-black/80'}`}
+                className={`absolute top-[calc(env(safe-area-inset-top,0px)+2.5rem)] right-4 h-10 w-10 rounded-full ${cameraTorch ? 'bg-amber-400/30 text-amber-300' : 'bg-black/60 text-white hover:bg-black/80'}`}
                 title={cameraTorch ? 'Flash on' : 'Flash off'}
               >
                 <Zap className="h-6 w-6" />
