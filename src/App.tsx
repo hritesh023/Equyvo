@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
@@ -113,20 +113,25 @@ const AppContent = () => {
   const mainRef = useRef<HTMLElement | null>(null);
   const [navHidden, setNavHidden] = useState(false);
   const lastScrollTopRef = useRef(0);
-  useEffect(() => {
+  const handleMainScroll = useCallback(() => {
     const el = mainRef.current;
     if (!el) return;
-    const onScroll = () => {
-      const st = el.scrollTop;
-      const delta = st - lastScrollTopRef.current;
-      if (st <= 0) setNavHidden(false);
-      else if (delta > 8) setNavHidden(true);
-      else if (delta < -8) setNavHidden(false);
-      lastScrollTopRef.current = st;
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
+    const st = el.scrollTop;
+    const delta = st - lastScrollTopRef.current;
+    if (st <= 0) setNavHidden(false);
+    else if (delta > 6) setNavHidden(true);
+    else if (delta < -6) setNavHidden(false);
+    lastScrollTopRef.current = st;
   }, []);
+  const setMainRef = useCallback((node: HTMLElement | null) => {
+    if (mainRef.current && mainRef.current !== node) {
+      mainRef.current.removeEventListener('scroll', handleMainScroll);
+    }
+    mainRef.current = node;
+    if (node) {
+      node.addEventListener('scroll', handleMainScroll, { passive: true });
+    }
+  }, [handleMainScroll]);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
@@ -308,7 +313,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={mainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
+        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
             next navigation instead of a full-app "reload" wall. */}
