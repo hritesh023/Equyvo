@@ -547,6 +547,8 @@ const CreatePage = () => {
   const [cameraFacing, setCameraFacing] = useState<'environment' | 'user'>('environment');
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraError, setCameraError] = useState('');
+  const [cameraTorch, setCameraTorch] = useState(false);
+  const [cameraTorchSupported, setCameraTorchSupported] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraRecordSecs, setCameraRecordSecs] = useState(0);
   const [cameraDest, setCameraDest] = useState<'story' | 'photo' | 'video' | 'moment'>('story');
@@ -2628,6 +2630,10 @@ const CreatePage = () => {
       });
       cameraStreamRef.current = ms;
       setCameraFacing(facing);
+       const track = ms.getVideoTracks()[0];
+       const caps = (track?.getCapabilities?.() || {}) as { torch?: boolean };
+       setCameraTorchSupported(!!caps.torch);
+       setCameraTorch(false);
       if (cameraVideoRef.current) {
         cameraVideoRef.current.srcObject = ms;
         try { await cameraVideoRef.current.play(); } catch { /* autoplay policy — user gesture will resume */ }
@@ -2644,6 +2650,16 @@ const CreatePage = () => {
 
   const flipCamera = () => {
     void startCamera(cameraFacing === 'environment' ? 'user' : 'environment');
+  };
+  const toggleCameraTorch = async () => {
+    const track = cameraStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    try {
+      await (track as any).applyConstraints({ advanced: [{ torch: !cameraTorch }] });
+      setCameraTorch((v) => !v);
+    } catch {
+      showError('Flash is not available on this camera.');
+    }
   };
 
   const capturePhoto = async (): Promise<File | null> => {
@@ -5316,11 +5332,22 @@ const CreatePage = () => {
               size="icon"
               variant="ghost"
               onClick={() => setActiveTab('photo')}
-              className="absolute top-4 left-4 h-10 w-10 rounded-full bg-black/60 text-white hover:bg-black/80"
+              className="absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] left-4 h-10 w-10 rounded-full bg-black/60 text-white hover:bg-black/80"
               title="Close camera"
             >
               <X className="h-6 w-6" />
             </Button>
+            {cameraTorchSupported && (
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => void toggleCameraTorch()}
+                className={`absolute top-[calc(env(safe-area-inset-top,0px)+1rem)] right-4 h-10 w-10 rounded-full ${cameraTorch ? 'bg-amber-400/30 text-amber-300' : 'bg-black/60 text-white hover:bg-black/80'}`}
+                title={cameraTorch ? 'Flash on' : 'Flash off'}
+              >
+                <Zap className="h-6 w-6" />
+              </Button>
+            )}
             {isCapturing && (
               <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
