@@ -303,11 +303,7 @@ const AppContent = () => {
       <div className={`flex-1 flex flex-col min-h-0 transition-all duration-300 ease-in-out ${
         isSidebarOpen && !isMobile ? 'lg:ml-64' : 'lg:ml-0'
       }`}>
-        {shouldShowNavbar && (
-          <div className={`transition-transform duration-300 ${navHidden ? '-translate-y-full' : 'translate-y-0'}`}>
-            <Navbar user={user} onSignOut={handleSignOut} />
-          </div>
-        )}
+        {shouldShowNavbar && <Navbar user={user} onSignOut={handleSignOut} />}
         {/* Scrollable content column of the unibody: flex-1 so it exactly
             fills the space between the in-flow top bar and bottom nav;
             edge-fill covers curved left/right display edges. Fixed
@@ -353,11 +349,7 @@ const AppContent = () => {
       </main>
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
-      {shouldShowNavbar && !chatOpen && (
-         <div className={`transition-transform duration-300 ${navHidden ? 'translate-y-full' : 'translate-y-0'}`}>
-           <MobileBottomNav />
-         </div>
-       )}
+      {shouldShowNavbar && !chatOpen && !navHidden && <MobileBottomNav />}
       <Toaster />
     </div>
   </div>

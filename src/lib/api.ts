@@ -711,20 +711,24 @@ export const api = {
       try { onProgress?.({ loaded: Math.min(loaded, Math.max(totalCount, 1)), total: Math.max(totalCount, 1), phase }); } catch { /* observer errors never break uploads */ }
     };
     step(0, 1, 'screening');
-    try {
-      const mod = await import('./moderation');
-      const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
-      if (screen.verdict !== 'allow') {
-        throw new mod.ContentBlockedError(
-          screen.message || 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media).',
-          screen.category || 'unspecified',
-        );
+    // Client-side pre-screen only for larger files; small files rely on the
+    // server-side moderation pass to keep uploads fast.
+    if (file.size > 1 * 1024 * 1024) {
+      try {
+        const mod = await import('./moderation');
+        const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
+        if (screen.verdict !== 'allow') {
+          throw new mod.ContentBlockedError(
+            screen.message || 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media).',
+            screen.category || 'unspecified',
+          );
+        }
+      } catch (e) {
+        // Only the deliberate block should stop the upload — anything else
+        // (network hiccup, sampling quirk) fails open and the publish-time
+        // server moderation still applies.
+        if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
       }
-    } catch (e) {
-      // Only the deliberate block should stop the upload — anything else
-      // (network hiccup, sampling quirk) fails open and the publish-time
-      // server moderation still applies.
-      if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
     }
     // Security: detect the real media type from the file's magic bytes so a
     // renamed/disguised file cannot bypass the type gate.
@@ -740,14 +744,18 @@ export const api = {
     }
     step(0, 1, 'processing');
     let payload: File | Blob = file;
-    try {
-      const { compressMedia } = await import('./compress');
-      const compressed = await compressMedia(file);
-      // Compression helps; it must never make the payload bigger.
-      if (compressed && (!compressed.size || compressed.size <= (file.size || compressed.size))) {
-        payload = compressed;
-      }
-    } catch { /* fall back to original on any compression error */ }
+    // Skip heavy client-side compression for small files — it only adds latency
+    // without meaningful size savings below this threshold.
+    if (file.size > 2 * 1024 * 1024) {
+      try {
+        const { compressMedia } = await import('./compress');
+        const compressed = await compressMedia(file);
+        // Compression helps; it must never make the payload bigger.
+        if (compressed && (!compressed.size || compressed.size <= (file.size || compressed.size))) {
+          payload = compressed;
+        }
+      } catch { /* fall back to original on any compression error */ }
+    }
     const total = payload.size;
     if (total <= CHUNK_PART_SIZE) {
       const formData = new FormData();
