@@ -205,10 +205,10 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
   return (
     <div
       className="fixed inset-0 z-[70] flex flex-col bg-black text-white"
-      style={{ paddingTop: 'env(safe-area-inset-top, 0px)' }}
+      style={{ paddingTop: 'calc(env(safe-area-inset-top, 0px) + 12px)' }}
     >
       {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-3 shrink-0">
+      <div className="flex items-center justify-between px-4 py-4 shrink-0">
         <Button
           variant="ghost"
           size="icon"
@@ -262,110 +262,105 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
         )}
       </div>
 
-      {/* Mode + controls */}
-      <div className="shrink-0 bg-black/80 backdrop-blur-md px-4 py-4" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
-        {/* mode dropdown */}
-        <div className="flex items-center justify-center gap-2 mb-3">
-          <button
-            type="button"
-            onClick={() => setMode('photo')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium ${mode === 'photo' ? 'bg-white text-black' : 'bg-white/10 text-white'}`}
-            aria-pressed={mode === 'photo'}
-          >
-            <ImageIcon className="inline w-4 h-4 mr-1" /> Photo
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode('video')}
-            className={`px-4 py-1.5 rounded-full text-sm font-medium ${mode === 'video' ? 'bg-white text-black' : 'bg-white/10 text-white'}`}
-            aria-pressed={mode === 'video'}
-          >
-            <Video className="inline w-4 h-4 mr-1" /> Video
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          {/* Left: shutter */}
-          <div className="flex flex-col items-center gap-1">
-            <button
-              type="button"
-              onClick={() => {
-                if (mode === 'photo') capturePhoto();
-                else if (recording) stopVideoRecording();
-                else startVideoRecording();
-              }}
-              disabled={!!error}
-              aria-label={mode === 'photo' ? 'Take photo' : recording ? 'Stop recording' : 'Start recording'}
-              className={`h-16 w-16 rounded-full border-4 ${recording ? 'border-red-500 bg-red-600' : 'border-white bg-white/20'} flex items-center justify-center active:scale-95 transition`}
-            >
-              {mode === 'photo' ? (
-                <Camera className="w-7 h-7" />
-              ) : recording ? (
-                <span className="h-6 w-6 rounded-sm bg-white" />
-              ) : (
-                <Video className="w-7 h-7" />
-              )}
-            </button>
-            <span className="text-[10px] opacity-70">{mode === 'photo' ? 'Shutter' : recording ? 'Stop' : 'Record'}</span>
-          </div>
-
-          {/* Center: circular recent files */}
-          <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+      {/* Recent files strip (circular previews) */}
+      {recent.length > 0 && (
+        <div className="shrink-0 bg-black/80 px-4 py-2">
+          <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+            {recent.map((item, i) => (
               <button
+                key={i}
                 type="button"
-                onClick={() => fileInputRef.current?.click()}
-                className="shrink-0 h-14 w-14 rounded-full border-2 border-dashed border-white/40 flex items-center justify-center bg-white/10 hover:bg-white/20"
-                aria-label="Pick recent files from storage"
-                title="Pick from local storage"
+                onClick={() => attachRecent(item)}
+                className="shrink-0 h-14 w-14 rounded-full overflow-hidden border-2 border-white/30 bg-white/10"
+                aria-label={`Select ${item.file.name}`}
+                title={item.file.name}
               >
-                <Plus className="w-5 h-5" />
+                {item.file.type.startsWith('image/') ? (
+                  <img src={item.url} alt={item.file.name} className="h-full w-full object-cover" />
+                ) : item.file.type.startsWith('video/') ? (
+                  <video src={item.url} className="h-full w-full object-cover" muted />
+                ) : (
+                  <span className="flex h-full w-full items-center justify-center text-[10px] px-1 text-center break-all">{item.file.name.slice(0, 8)}</span>
+                )}
               </button>
-              {recent.map((item, i) => (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => attachRecent(item)}
-                  className="shrink-0 h-14 w-14 rounded-full overflow-hidden border-2 border-white/30 bg-white/10"
-                  aria-label={`Select ${item.file.name}`}
-                  title={item.file.name}
-                >
-                  {item.file.type.startsWith('image/') ? (
-                    <img src={item.url} alt={item.file.name} className="h-full w-full object-cover" />
-                  ) : item.file.type.startsWith('video/') ? (
-                    <video src={item.url} className="h-full w-full object-cover" muted />
-                  ) : (
-                    <span className="flex h-full w-full items-center justify-center text-[10px] px-1 text-center break-all">{item.file.name.slice(0, 8)}</span>
-                  )}
-                </button>
-              ))}
-            </div>
-            <input
-              ref={fileInputRef}
-              type="file"
-              multiple
-              accept="image/*,video/*,.pdf,.doc,.docx,.txt"
-              onChange={handleRecentPick}
-              className="sr-only"
-              aria-label="Pick recent files"
-            />
-          </div>
-
-          {/* Right: rotate + dropdown-ish mode indicator */}
-          <div className="flex flex-col items-center gap-1">
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-12 w-12 rounded-full bg-white/10 text-white hover:bg-white/20"
-              onClick={rotateCamera}
-              aria-label="Rotate camera"
-              title="Rotate camera"
-            >
-              <RotateCcw className="w-5 h-5" />
-            </Button>
-            <span className="text-[10px] opacity-70">Rotate</span>
+            ))}
           </div>
         </div>
+      )}
+
+      {/* Controls */}
+      <div className="shrink-0 bg-black/80 backdrop-blur-md px-4 py-4" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        <div className="flex items-center justify-center gap-6">
+          {/* Attach (circular preview of most recent) */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="h-14 w-14 rounded-full overflow-hidden border-2 border-white/40 bg-white/10 flex items-center justify-center hover:bg-white/20 shrink-0"
+            aria-label="Attach from storage"
+            title="Attach from local storage"
+          >
+            {recent.length > 0 && recent[0].file.type.startsWith('image/') ? (
+              <img src={recent[0].url} alt="recent" className="h-full w-full object-cover" />
+            ) : recent.length > 0 && recent[0].file.type.startsWith('video/') ? (
+              <video src={recent[0].url} className="h-full w-full object-cover" muted />
+            ) : (
+              <ImageIcon className="w-6 h-6" />
+            )}
+          </button>
+
+          {/* Capture center */}
+          <button
+            type="button"
+            onClick={() => {
+              if (mode === 'photo') capturePhoto();
+              else if (recording) stopVideoRecording();
+              else startVideoRecording();
+            }}
+            disabled={!!error}
+            aria-label={mode === 'photo' ? 'Take photo' : recording ? 'Stop recording' : 'Start recording'}
+            className={`h-20 w-20 rounded-full border-4 ${recording ? 'border-red-500 bg-red-600' : 'border-white bg-white/20'} flex items-center justify-center active:scale-95 transition shrink-0`}
+          >
+            {mode === 'photo' ? (
+              <Camera className="w-8 h-8" />
+            ) : recording ? (
+              <span className="h-7 w-7 rounded-sm bg-white" />
+            ) : (
+              <Video className="w-8 h-8" />
+            )}
+          </button>
+
+          {/* Photo/Video toggle */}
+          <button
+            type="button"
+            onClick={() => setMode((m) => (m === 'photo' ? 'video' : 'photo'))}
+            className="h-14 w-14 rounded-full border-2 border-white/40 bg-white/10 flex items-center justify-center hover:bg-white/20 shrink-0"
+            aria-label={`Switch to ${mode === 'photo' ? 'video' : 'photo'} mode`}
+            title={mode === 'photo' ? 'Photo mode' : 'Video mode'}
+          >
+            {mode === 'photo' ? <ImageIcon className="w-6 h-6" /> : <Video className="w-6 h-6" />}
+          </button>
+
+          {/* Rotate */}
+          <button
+            type="button"
+            onClick={rotateCamera}
+            className="h-14 w-14 rounded-full border-2 border-white/40 bg-white/10 flex items-center justify-center hover:bg-white/20 shrink-0"
+            aria-label="Rotate camera"
+            title="Rotate camera"
+          >
+            <RotateCcw className="w-6 h-6" />
+          </button>
+        </div>
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept="image/*,video/*,.pdf,.doc,.docx,.txt"
+          onChange={handleRecentPick}
+          className="sr-only"
+          aria-label="Pick recent files"
+        />
       </div>
     </div>
   );
