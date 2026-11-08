@@ -551,7 +551,7 @@ const CreatePage = () => {
   const [cameraTorchSupported, setCameraTorchSupported] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraRecordSecs, setCameraRecordSecs] = useState(0);
-  const [cameraDest, setCameraDest] = useState<'story' | 'photo' | 'video' | 'moment'>('story');
+  const [cameraDest, setCameraDest] = useState<'story' | 'photo' | 'video' | 'moment' | 'thought'>('story');
   // Who can see new uploads: public (everyone), followers (followers-only),
   // private (only you). Sent to the server with every post; the server
   // enforces it for every account on every device.
@@ -2691,11 +2691,22 @@ const CreatePage = () => {
 
   /** Send a captured file into the composer the user chose in the camera tab. */
   const routeCameraFile = (file: File) => {
+    if (!file || !(isImageFile(file) || isVideoFile(file))) {
+      showError('Captured file is not a supported image or video.');
+      return;
+    }
+    if (file.size === 0) {
+      showError('Captured file is empty. Please try again.');
+      return;
+    }
     const isImage = isImageFile(file);
     const isVideo = isVideoFile(file);
     let dest = cameraDest;
+    // Keep type/destination consistent: a video can't go to Photos, an image
+    // can't go to Videos/Moments (moments are video-only).
     if (isVideo && dest === 'photo') dest = 'video';
     if (isImage && dest === 'video') dest = 'photo';
+    if (isImage && dest === 'moment') dest = 'photo';
     setCameraDest(dest);
     // Clear other media so camera capture directly goes to the chosen section
     setStoryFiles([]);
@@ -2720,15 +2731,23 @@ const CreatePage = () => {
       case 'moment':
         setMomentFiles([file]);
         break;
+      case 'thought':
+        setThoughtVideo(file);
+        break;
     }
     setActiveTab(dest);
-    showSuccess(`Capture added to ${dest === 'photo' ? 'Photos' : dest === 'video' ? 'Videos' : dest === 'story' ? 'Stories' : 'Moments'} section. Review and post.`);
+    showSuccess(`Capture added to ${dest === 'photo' ? 'Photos' : dest === 'video' ? 'Videos' : dest === 'story' ? 'Stories' : dest === 'thought' ? 'Thoughts' : 'Moments'} section. Review and post.`);
   };
 
   const handleCameraCapture = async () => {
     if (publishLockRef.current) return;
-    const file = await capturePhoto();
-    if (file) routeCameraFile(file);
+    publishLockRef.current = true;
+    try {
+      const file = await capturePhoto();
+      if (file) routeCameraFile(file);
+    } finally {
+      publishLockRef.current = false;
+    }
   };
 
   const handleCameraRecordToggle = () => {
@@ -5357,7 +5376,7 @@ const CreatePage = () => {
 
             <div className="absolute bottom-0 left-0 right-0 pb-[max(env(safe-area-inset-bottom),1rem)] bg-gradient-to-t from-black/90 via-black/40 to-transparent pt-10 px-4 pointer-events-none">
               <div className="flex items-center justify-center mb-6 pointer-events-auto">
-                <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment')}>
+                <Select value={cameraDest} onValueChange={(v) => setCameraDest(v as 'story' | 'photo' | 'video' | 'moment' | 'thought')}>
                   <SelectTrigger className="w-auto bg-black/60 text-white border-white/40 rounded-full px-4">
                     <SelectValue placeholder="Send to" />
                   </SelectTrigger>
@@ -5366,6 +5385,7 @@ const CreatePage = () => {
                     <SelectItem value="photo" className="text-white focus:bg-white/20 focus:text-white">Photos</SelectItem>
                     <SelectItem value="video" className="text-white focus:bg-white/20 focus:text-white">Videos</SelectItem>
                     <SelectItem value="moment" className="text-white focus:bg-white/20 focus:text-white">Moments</SelectItem>
+                    <SelectItem value="thought" className="text-white focus:bg-white/20 focus:text-white">Thoughts</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
