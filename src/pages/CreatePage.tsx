@@ -1033,6 +1033,13 @@ const CreatePage = () => {
 // STRICT type routing: each type is written to exactly ONE collection so a
 // photo can never leak into Moments and a moment never leaks into Thoughts.
   async function persistContent(content: Record<string, unknown>) {
+    // Extract #hashtags from the caption/content so they are indexed for
+    // search and discoverability, not just left inline in the text.
+    if (!Array.isArray(content.tags)) {
+      const text = String(content.content || content.caption || content.title || content.description || '');
+      const tags = Array.from(new Set((text.match(/#[\w]+/g) || []).map((t) => t.slice(1).toLowerCase())));
+      if (tags.length) content.tags = tags;
+    }
     // Real author identity: profile edits (name/avatar) are stamped onto
     // every upload so feeds show the authentic user, never a stale name.
     const author = await resolveCurrentAuthor();
