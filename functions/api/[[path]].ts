@@ -41,6 +41,8 @@ export interface Env {
   // Contabo shared brain for AI search/feed suggestions (best-effort proxy).
   BRAIN_URL?: string;
   BRAIN_BASE_URL?: string;
+  EQUYVO_SERVICE_TOKEN?: string;
+  EQUYVO_API_BASE?: string;
   // Admin token for GET /api/reports (dashboard.acronous.com monitor).
   // Set via `wrangler pages secret put REPORTS_ADMIN_TOKEN`. Never public.
   REPORTS_ADMIN_TOKEN?: string;
@@ -96,7 +98,7 @@ const KEYS = {
   // COMMENTS:<contentId> holds the ordered id list (newest first, capped).
   // COMMENT:<id> holds the comment object. CSETTINGS:<contentId> holds owner
   // controls ({ commentsEnabled }). All identity comes from the verified
-  // caller + stored profile — never invented on the client.
+  // caller + stored profile ΓÇö never invented on the client.
   COMMENTS: (contentId) => 'comments:' + contentId,
   COMMENT: (id) => 'comment:' + id,
   // Per-author ledger of comment ids. Lets account deletion purge comments the
@@ -123,7 +125,7 @@ async function acquireShareMutationLock(key: string): Promise<() => void> {
   };
 }
 
-// ── Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
+// ΓöÇΓöÇ Backend AI helpers (mirrors worker/src/kv.ts): interest graph + smart
 // search/feed ranking. Kept dependency-free and bounded so Pages Functions
 // stay fast (no per-request full-list scans, no blocking brain calls).
 const AI_SYNONYMS = {
@@ -245,7 +247,7 @@ async function aiFetchJson(url, init, timeoutMs) {
 }
 
 // ---------------------------------------------------------------------------
-// Privacy helpers — server-side visibility enforcement. The frontend only ever
+// Privacy helpers ΓÇö server-side visibility enforcement. The frontend only ever
 // sends/receives the generic `visibility` field ('public' | 'followers' |
 // 'private' | 'hidden'); all graph checks happen here, never in the client.
 // ---------------------------------------------------------------------------
@@ -318,6 +320,17 @@ async function ensureProfile(env, u) {
     };
     await env.EQUYVO_KV.put(KEYS.PROFILE(id), JSON.stringify(profile));
     await invalidateProfileIndex(env);
+    try {
+      const apiBase = (env.EQUYVO_API_BASE || env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
+      const svcToken = env.EQUYVO_SERVICE_TOKEN;
+      if (apiBase && svcToken) {
+        fetch(apiBase + '/equyvo-api/equyvo/users/upsert', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Service-Token': svcToken },
+          body: JSON.stringify({ cognito_sub: id, email: (u && u.email) || '', username: name }),
+        }).catch(() => {});
+      }
+    } catch {}
     return profile;
   } catch { return null; }
 }
@@ -369,7 +382,7 @@ async function profileWithFallback(env, pid) {
   return created || null;
 }
 
-// ── Profile identity resolution ──────────────────────────────────────────
+// ΓöÇΓöÇ Profile identity resolution ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Profile rows are keyed by account id, but legacy data also contains rows
 // keyed by email and duplicate rows for one email. Those must never become a
 // canonical identity: routes/search resolve to the real account id instead.
@@ -505,7 +518,7 @@ async function buildProfileIndex(env: any): Promise<any[]> {
         isSeed: profile.isSeed === true,
         // Live presence is part of the public summary so /api/live/now can
         // discover every live account (not just the viewer's following graph)
-        // from the same bounded index — no full-KV scan per request.
+        // from the same bounded index ΓÇö no full-KV scan per request.
         isLive: profile.isLive === true,
         liveAt: typeof profile.liveAt === 'string' ? profile.liveAt : '',
         liveTitle: typeof profile.liveTitle === 'string' ? profile.liveTitle.slice(0, 160) : '',
@@ -661,7 +674,7 @@ async function resolveProfileRef(env: any, target: string): Promise<any | null> 
           if (canonical) return { id: authId, profile: canonical, via: 'canonical-id' };
         }
         if (isEmailLike(direct.id) && cleaned !== direct.id) {
-          // Row is a legacy email-keyed duplicate — never canonical.
+          // Row is a legacy email-keyed duplicate ΓÇö never canonical.
         }
       }
       return { id: String(direct.id || cleaned), profile: direct, via: 'id' };
@@ -922,7 +935,7 @@ async function isFollowingPair(env, viewerId, authorId) {
 }
 
 // Light viewer resolution for PUBLIC reads: verified session/JWT when present,
-// otherwise anonymous. Never rejects — anonymous viewers simply see public
+// otherwise anonymous. Never rejects ΓÇö anonymous viewers simply see public
 // content only. An unverified X-User-Id header (or ?viewerId / ?userId query)
 // must never grant viewer identity: anyone could claim a private account and
 // read its followers-only posts. Header fallback stays available only when
@@ -1107,7 +1120,7 @@ function publicSafeProfile(profile) {
 }
 
 // ---------------------------------------------------------------------------
-// Profile display-name change quota — server-side source of truth.
+// Profile display-name change quota ΓÇö server-side source of truth.
 //  - Every account gets NAME_CHANGE_BASE_QUOTA (2) free display-name changes.
 //  - Profile icons/avatars, bios and usernames stay unlimited.
 //  - Each verified paid-plan purchase grants +2 more (idempotent per
@@ -1149,19 +1162,19 @@ function quotaErrorBody(used, quota) {
 }
 
 // ---------------------------------------------------------------------------
-// Creator Pro verified badge — global, server-owned registry of verified
+// Creator Pro verified badge ΓÇö global, server-owned registry of verified
 // names. The client can never set these fields; every rule is enforced here.
 //
 // PURCHASE GRANT
 //   A verified Creator Pro payment grants the verified tick to the exact
-//   display name on the profile — granted ONCE per Creator Pro purchase and
+//   display name on the profile ΓÇö granted ONCE per Creator Pro purchase and
 //   held only by that account.
 //
 // EXCLUSIVITY
 //   Active record: verifiedname:<lower> -> { userId, name, grantedAt }
 //   KV keys are case-insensitive ("Riya" == "riya") and permanent-ish. A name
 //   held by one account can NEVER be verified by another account (any plan,
-//   ever) — released names become tombstones that keep blocking forever.
+//   ever) ΓÇö released names become tombstones that keep blocking forever.
 //   This satisfies "only one name per Creator Pro subscriber; a verified name
 //   can't be repeated to another user paying for Creator Pro".
 //
@@ -1207,14 +1220,14 @@ function verifiedProfileState(prof) {
  * - Name changes first tombstone the previous name (permanent block for others).
  * - Exclusive by construction: the registry key must be free or already this
  *   user's own record.
- * Returns { ok, patch?, error?, code?, canChangeAt? } — never throws.
+ * Returns { ok, patch?, error?, code?, canChangeAt? } ΓÇö never throws.
  */
 async function grantVerifiedName(env, userId, prevProfile, candidateName) {
   const st = verifiedProfileState(prevProfile);
   const name = normVerifiedName(candidateName || prevProfile.name || prevProfile.username || '');
   const lower = name.toLowerCase();
   if (!lower) {
-    return { ok: false, error: 'Add a profile name first — the verified badge attaches to your name.', code: 'VERIFIED_NAME_EMPTY' };
+    return { ok: false, error: 'Add a profile name first ΓÇö the verified badge attaches to your name.', code: 'VERIFIED_NAME_EMPTY' };
   }
   // Idempotent: same user re-verifying the very same name.
   if (st.active && st.lower === lower && st.grantedAt) {
@@ -1223,7 +1236,7 @@ async function grantVerifiedName(env, userId, prevProfile, candidateName) {
   // Exclusive claim: registry must be free OR this same user's record.
   const rec = await verifiedNameRecord(env, lower);
   if (rec && rec.userId && rec.userId !== String(userId)) {
-    return { ok: false, code: 'VERIFIED_NAME_TAKEN', error: `"${name}" is already a verified name on another account. Verified names are unique and cannot be reused — pick your own.` };
+    return { ok: false, code: 'VERIFIED_NAME_TAKEN', error: `"${name}" is already a verified name on another account. Verified names are unique and cannot be reused ΓÇö pick your own.` };
   }
   const now = Date.now();
   // Tombstone the previous verified name so NO other account can ever claim it.
@@ -1249,7 +1262,7 @@ function withVerifiedPublicFields(profile) {
 
 
 // ---------------------------------------------------------------------------
-// Content-safety helpers — server-only. Blocklists, heuristics, and the shared
+// Content-safety helpers ΓÇö server-only. Blocklists, heuristics, and the shared
 // Acronous brain check all run here. The client only ever receives a generic
 // "violates community guidelines" message; internals are never exposed.
 // ---------------------------------------------------------------------------
@@ -1271,7 +1284,7 @@ const SAFETY_BLOCK_PATTERNS = [
   /\b(kill yourself|end your life|you should die|go kill yourself)\b/i,
   /\b(how to (make|build).{0,30}(bomb|explosive|bioweapon|chemical weapon|nuke|dirty bomb))\b/i,
   /\b(join (isis|al-?qaeda|terror))\b/i,
-  /\b(i will kill you|i['’]m going to kill (you|them)|kill all (muslims|christians|jews|hindus|whites|blacks))\b/i,
+  /\b(i will kill you|i['ΓÇÖ]m going to kill (you|them)|kill all (muslims|christians|jews|hindus|whites|blacks))\b/i,
   /\b(sell (drugs|cocaine|heroin|meth)|buy (cocaine|heroin|meth))\b/i,
   /\b(porn|xxx|hentai|escort|onlyfans|nude|naked|sex\s?tape|erotic|hardcore|blowjob|handjob|cumshot)\b/i,
 ];
@@ -1285,7 +1298,7 @@ const SAFETY_REVIEW_PATTERNS = [
   /\b(suicide|self[- ]?harm|self[- ]?injury|cutting (myself|yourself)|overdose|hang myself|end (my|your) life)\b/i,
   /\b(kill myself|suicide|self[\s-]?harm|cutting myself)\b/i,
   /\b(fuck (you|off)|slut|whore|retard|kike|chink|fag(got)?)\b/i,
-  /\b(send money|wire transfer|gift card|crypto (doubling|giveaway)|you (have )?won (a|₹|\$))\b/i,
+  /\b(send money|wire transfer|gift card|crypto (doubling|giveaway)|you (have )?won (a|Γé╣|\$))\b/i,
 ];
 
 function moderateTextLocal(text) {
@@ -1370,8 +1383,8 @@ async function moderateContent(env, fields) {
 }
 
 
-// ── Chat + notifications helpers (bounded, lag-free) ─────────────────────
-// Chat pairs use a canonical key so A→B and B→A share one ledger (max 300
+// ΓöÇΓöÇ Chat + notifications helpers (bounded, lag-free) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+// Chat pairs use a canonical key so AΓåÆB and BΓåÆA share one ledger (max 300
 // messages, trimmed on write). Ticks: sent = reached server, delivered =
 // reached peer device, seen = peer opened the thread. Notifications are
 // per-user capped lists (max 100) written best-effort, never blocking reads.
@@ -1399,9 +1412,9 @@ async function writeChatMessages(env, a, b, list) {
 
 // ---- Chat ledger v2: event-sourced per-message records --------------------
 // KV is eventually consistent. The original design kept the whole thread as
-// ONE array (read → push → write on a single key). Two devices sending within
+// ONE array (read ΓåÆ push ΓåÆ write on a single key). Two devices sending within
 // the same few seconds both read the same stale copy and the second write
-// REPLACED the first message — messages could literally disappear across
+// REPLACED the first message ΓÇö messages could literally disappear across
 // devices. Now every message lives under its own key (chatmsg:...) and each
 // sender appends to a per-sender index (chatidx:...): concurrent senders
 // never touch the same keys, so messages can no longer overwrite each other.
@@ -1659,7 +1672,7 @@ async function enqueueModeration(env, entry) {
 }
 
 // ---------------------------------------------------------------------------
-// Comments — persistent per-content discussions with replies, likes, shares,
+// Comments ΓÇö persistent per-content discussions with replies, likes, shares,
 // pins and owner controls. Real identity only: author display fields are
 // resolved server-side from the verified caller + stored profile, so a
 // comment can never carry a bot/fake avatar or name.
@@ -1850,7 +1863,7 @@ async function syncContentCommentCount(env, found, count) {
 }
 
 // ---------------------------------------------------------------------------
-// Plan catalog — SERVER-SIDE source of truth. Frontend plans.ts is display-only
+// Plan catalog ΓÇö SERVER-SIDE source of truth. Frontend plans.ts is display-only
 // and must never be trusted for enforcement. Prices in INR/month.
 // Storage quotas per EQUYVO SUBSCRIPTION MODEL:
 //   Free 1GB / Plus 10GB / Premium 30GB / Creator 150GB / Creator Pro 500GB / Biz custom
@@ -2003,7 +2016,7 @@ function computeRelativeTime(createdAt) {
   return `${Math.floor(day / 365)}y ago`;
 }
 
-// ── Media truth (server-enforced) ─────────────────────────────────────────
+// ΓöÇΓöÇ Media truth (server-enforced) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
 // Writers have used every representation over time: `media` as a string, an
 // array of {type,url}, or an object; sometimes only `image`/`videoUrl`. Feed
 // clients must never receive a raw array in a field they render as `<img src>`.
@@ -2078,7 +2091,7 @@ function normalizeMediaFields(item) {
     if (value == null) return;
     // Cover-slot rule: if the item already has playable media, singular image
     // fields (`image` / `image_url` / `imageUrl`) could only have carried the
-    // cover/poster — real second gallery slides always live in the media
+    // cover/poster ΓÇö real second gallery slides always live in the media
     // array. Visiting them as slides is what made a video thought with a
     // custom thumbnail render the thumbnail as a separate second media block.
     if (hasPlayableHint && String(hint).toLowerCase().startsWith('image')) return;
@@ -2098,7 +2111,7 @@ function normalizeMediaFields(item) {
     }
   };
   // Preserve the original list for gallery renderers.
-  // Playable media can come from `media`/`videoUrl`/`audioUrl` — detect it
+  // Playable media can come from `media`/`videoUrl`/`audioUrl` ΓÇö detect it
   // BEFORE the visits so image-family fields are treated as cover slots.
   const hasPlayableHint = !!(serverFirstMediaUrl(item.videoUrl) || serverFirstMediaUrl(item.video_url) || serverFirstMediaUrl(item.video) ||
     serverFirstMediaUrl(item.audioUrl) || serverFirstMediaUrl(item.audio_url) || serverFirstMediaUrl(item.audio));
@@ -2184,14 +2197,14 @@ function transformItem(item) {
   }
   // Make every media representation render-safe BEFORE type routing reads it.
   normalizeMediaFields(item);
-  // ── Content-type truth (server-enforced) ────────────────────────────────
+  // ΓöÇΓöÇ Content-type truth (server-enforced) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   // Every surface relies on `type` to choose its renderer. Legacy clients wrote
   // photos into the moments collection and videos into photo posts; without
   // normalization those items appear in the wrong place (a photo in the
   // short-video feed, a video in the photo grid). Enforce the truth here once:
-  //   • moment WITHOUT playable video → photo
-  //   • legacy type "image"          → photo
-  //   • video/image types follow the actual media (videoUrl/mediaType wins)
+  //   ΓÇó moment WITHOUT playable video ΓåÆ photo
+  //   ΓÇó legacy type "image"          ΓåÆ photo
+  //   ΓÇó video/image types follow the actual media (videoUrl/mediaType wins)
   const rawType = String(item.type || item.contentType || '').toLowerCase();
   const hasVideo = itemHasPlayableVideo(item);
   if (rawType === 'moment' && !hasVideo) {
@@ -2241,7 +2254,7 @@ function applyViewerVoteState(item, viewer) {
   return item;
 }
 
-// Clean orphaned IDs — lag fix: validate only the head inline (first 120)
+// Clean orphaned IDs ΓÇö lag fix: validate only the head inline (first 120)
 // in parallel; the full sweep runs throttled in the background. The old code
 // did up to 500 sequential KV reads on EVERY feed/search request.
 async function cleanOrphans(env, listKey, getKey) {
@@ -2266,7 +2279,7 @@ async function cleanOrphans(env, listKey, getKey) {
 }
 
 // Content-type truth: a "moment" is the short-video surface. Any item stored
-// as a moment without playable video (legacy/photo uploads) is NOT a moment —
+// as a moment without playable video (legacy/photo uploads) is NOT a moment ΓÇö
 // callers bucket it back into the photo feed instead of the video rail.
 function itemHasPlayableVideo(item) {
   if (!item || typeof item !== 'object') return false;
@@ -2306,7 +2319,7 @@ function asPhotoItem(item) {
 // never wipe genuine user content regardless of its text.
 // Bot/test author signals: automated-account email domains, the Playwright id
 // prefix, and smoke-test display names (e.g. "SmokeAlice"). These are author
-// identity fields only — post CONTENT text is never matched, so a real post
+// identity fields only ΓÇö post CONTENT text is never matched, so a real post
 // that happens to contain the word "test" or "smoke" is never dropped.
 const TEST_TEXT_PATTERNS = [/@test\.com$/i, /^pwsrc_/i, /^smoke/i];
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}T/;
@@ -2315,7 +2328,7 @@ function isSeedItem(item) {
   if (!item || typeof item !== 'object') return false;
   if (item.isSeed) return true;
   if (item.id && typeof item.id === 'string' && item.id.startsWith('seed-')) return true;
-  // Any item backed by real uploaded media is real user content — never seed.
+  // Any item backed by real uploaded media is real user content ΓÇö never seed.
   const refs = [
     item.thumbnail,
     item.image,
@@ -2835,7 +2848,7 @@ function bearerFrom(request) {
 // =============== Local billing grants (paid through this app) ===============
 // Central billing verifies every Razorpay payment (HMAC + order binding),
 // but its own subscription status only resolves CENTRAL Acronous JWTs.
-// Equyvo's session tokens are opaque KV keys — central can never decode
+// Equyvo's session tokens are opaque KV keys ΓÇö central can never decode
 // them, so a real payment used to stay invisible to plan resolution,
 // storage quotas and ad gating. A successful verify therefore records the
 // grant HERE (reusing the PLAN_CACHE shape resolvePlan already reads) so a
@@ -2863,7 +2876,7 @@ async function putLocalGrant(env, actorId, email, planId, untilMs, paymentId) {
     ts: Date.now(),
   };
   try {
-    // Long-TTL account grant (not the 10-min billing cache — this one is
+    // Long-TTL account grant (not the 10-min billing cache ΓÇö this one is
     // the purchase itself, valid until the month ends).
     await env.EQUYVO_KV.put(
       KEYS.PLAN_CACHE(actorId),
@@ -3145,7 +3158,7 @@ function validMediaKey(key) {
 // down later via R2_PUBLIC_BASE + signed URLs if abuse appears).
 async function serveR2(request, env, key, cors, method) {
   if (!env.EQUYVO_R2) {
-    return json({ error: 'Media warehouse not bound. Enable R2 (see wrangler.toml) — Cloudinary URLs remain authoritative until then.' }, 503, cors);
+    return json({ error: 'Media warehouse not bound. Enable R2 (see wrangler.toml) ΓÇö Cloudinary URLs remain authoritative until then.' }, 503, cors);
   }
   if (!validMediaKey(key)) return json({ error: 'Invalid media key' }, 400, cors);
   let head = null;
@@ -3182,7 +3195,7 @@ async function serveR2(request, env, key, cors, method) {
 
   if (isLegacyGzip) {
     // Decompressed path: HEAD reports the DECOMPRESSED size, GET streams the
-    // plain bytes. Range requests are refused (Accept-Ranges: none) — gzip
+    // plain bytes. Range requests are refused (Accept-Ranges: none) ΓÇö gzip
     // objects are small stills, not video.
     let plain = null;
     try {
@@ -3345,13 +3358,13 @@ async function createItem(context, kind, listKey, itemKey, cors) {
 
   const now = new Date().toISOString();
 
-  // ── Idempotent-create guard: identical rapid re-posts return the original ──
+  // ΓöÇΓöÇ Idempotent-create guard: identical rapid re-posts return the original ΓöÇΓöÇ
   // Double-tapped "Post" buttons, retried taps during a slow network, or
   // replayed requests previously created real duplicate stories/moments in
   // the feed. Now an identical item from the SAME account within a short
   // window returns the ALREADY-created item instead of duplicating it.
   // Distinct uploads (different text/media or after the window) create as
-  // normal — nothing legitimate is ever swallowed.
+  // normal ΓÇö nothing legitimate is ever swallowed.
   let idempotencyId = '';
   let idempotencyKey = '';
   try {
@@ -3488,6 +3501,27 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   }
 
   await kv.put(itemKey(id), JSON.stringify(item));
+  try {
+    const apiBase = (env.EQUYVO_API_BASE || env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
+    const svcToken = env.EQUYVO_SERVICE_TOKEN;
+    if (apiBase && svcToken) {
+      const tags = Array.isArray(item.tags) ? item.tags : [];
+      const dwPromise = fetch(apiBase + '/equyvo-api/equyvo/posts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Service-Token': svcToken },
+        body: JSON.stringify({
+          id,
+          kind: kind === 'posts' ? 'post' : kind.replace(/s$/, ''),
+          author_cognito_sub: actor.id,
+          body: item.content || item.title || item.description || '',
+          visibility: item.visibility || 'public',
+          tags,
+          created_at: item.createdAt || now,
+        }),
+      }).catch(() => {});
+      try { if (context && typeof context.waitUntil === 'function') context.waitUntil(dwPromise); } catch {}
+    }
+  } catch {}
   const listJson = await kv.get(listKey);
   const ids = listJson ? JSON.parse(listJson) : [];
   ids.unshift(id);
@@ -3656,7 +3690,7 @@ export const onRequest = async (context) => {
 
     const kv = env.EQUYVO_KV;
 
-    // AUTH (self-contained, no email verification required) ─────────────
+    // AUTH (self-contained, no email verification required) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // Equyvo keeps its own user store in KV so sign-up/sign-in never depend
     // on an external Cognito pool or email confirmation. A valid email +
     // password is enough to use the app.
@@ -3802,7 +3836,7 @@ export const onRequest = async (context) => {
 
     // GEO (public): the visitor's country (Cloudflare edge data) so the
     // pricing page can show country-appropriate currency approximations.
-    // Returns only the two-letter country code — no other data. Falls back
+    // Returns only the two-letter country code ΓÇö no other data. Falls back
     // to an empty code, which the client resolves from browser locale.
     if (path === '/api/geo' && method === 'GET') {
       let country = '';
@@ -3813,7 +3847,7 @@ export const onRequest = async (context) => {
       return json({ data: { country }, error: null }, 200, { ...cors, 'Cache-Control': 'private, max-age=3600' });
     }
 
-    // PLANS (public catalog — quotas only, no secrets)
+    // PLANS (public catalog ΓÇö quotas only, no secrets)
     if (path === '/api/plans' && method === 'GET') {
       const plans = Object.values(PLAN_CATALOG).map((p) => ({
         id: p.id, label: p.label, priceInr: p.priceInr,
@@ -3826,16 +3860,16 @@ export const onRequest = async (context) => {
       return json({ data: { plans, platformFeeBps: PLATFORM_FEE_BPS }, error: null }, 200, cors);
     }
 
-    // RAZORPAY STANDARD CHECKOUT (same-origin proxy to central billing) ────
+    // RAZORPAY STANDARD CHECKOUT (same-origin proxy to central billing) ΓöÇΓöÇΓöÇΓöÇ
     //   POST /api/create-order   -> central /v1/billing/order
     //   POST /api/verify-payment -> central /v1/billing/verify
-    // Secrets stay in the central billing worker — Equyvo holds none. The
+    // Secrets stay in the central billing worker ΓÇö Equyvo holds none. The
     // browser only ever sees key_id + order_id, and returns payment_id +
     // signature for verify.
     //
     // Bearer policy (the "Sign in failed" fix): the bearer is forwarded
     // ONLY when central can verify it (dashboard SSO JWT). Equyvo's own
-    // session tokens are opaque KV keys — forwarded verbatim they made
+    // session tokens are opaque KV keys ΓÇö forwarded verbatim they made
     // central answer 401 "Please sign in to continue." on every tap of a
     // plan card, which surfaced to users as an endless sign-in loop.
     // Signed-in Equyvo callers instead check out through the verified
@@ -3860,7 +3894,7 @@ export const onRequest = async (context) => {
       if (!centralAuthed && !orderEmail) return json({ error: 'Please sign in first.' }, 401, cors);
       // Abuse guard: order/verify spam costs real upstream writes (Razorpay
       // orders, central bookkeeping). Per-minute caps keyed to whoever is
-      // paying — central caller, account id, guest email, or IP fallback.
+      // paying ΓÇö central caller, account id, guest email, or IP fallback.
       const rlId = centralAuthed
         ? 'u:' + bearer.slice(-24)
         : payerActor && payerActor.id ? 'a:' + payerActor.id
@@ -3872,7 +3906,7 @@ export const onRequest = async (context) => {
       }
       if (path === '/api/create-order') {
         // STRICT: a catalog plan id is required. Raw client-supplied amounts
-        // are never forwarded — the central worker prices from its catalog
+        // are never forwarded ΓÇö the central worker prices from its catalog
         // (and also rejects bare amounts since hardening).
         const plan = typeof body.plan === 'string' ? body.plan.slice(0, 64) : '';
         if (!plan) return json({ error: 'A plan id is required.' }, 400, cors);
@@ -3895,9 +3929,9 @@ export const onRequest = async (context) => {
           body: JSON.stringify(body),
         });
         const data = await upstream.json().catch(() => ({ error: 'Bad billing response.' }));
-        // Verified purchase → record the grant LOCALLY so the paid tier is
+        // Verified purchase ΓåÆ record the grant LOCALLY so the paid tier is
         // visible to plan resolution / quotas / ad-gating right away and on
-        // every device — never gated on central's own JWT recognition.
+        // every device ΓÇö never gated on central's own JWT recognition.
         if (upstream.ok && path === '/api/verify-payment' && data && data.ok) {
           try {
             const paidPlan = String(data.plan || body.plan || '').slice(0, 64);
@@ -3914,7 +3948,7 @@ export const onRequest = async (context) => {
                 data.claimed = true;
               } else if (orderEmail) {
                 // True guest (no session): park the grant under the payment
-                // email — claim-on-signin promotes it to the account.
+                // email ΓÇö claim-on-signin promotes it to the account.
                 await kv.put(
                   localEmailGrantKey(orderEmail),
                   JSON.stringify({ plan: paidPlan, until: untilMs, paymentId: String(body.razorpay_payment_id || '').slice(0, 100) }),
@@ -3923,7 +3957,7 @@ export const onRequest = async (context) => {
               }
             }
           } catch { /* grant persistence is best-effort */ }
-          // Verified purchase → +2 display-name changes (idempotent per
+          // Verified purchase ΓåÆ +2 display-name changes (idempotent per
           // payment). Best-effort: never fails the payment response itself.
           try {
             const actor = await getActor(request, env);
@@ -3950,7 +3984,7 @@ export const onRequest = async (context) => {
               // Creator Pro verified badge: granted with this payment. The
               // tick attaches to the profile's registered display name (or
               // username) and is globally exclusive in the verified-name
-              // registry — see grantVerifiedName. Idempotent: renewing the
+              // registry ΓÇö see grantVerifiedName. Idempotent: renewing the
               // same plan keeps the exact same verified name and date.
               const paidPlan = String((data && data.plan) || (body && body.plan) || '').slice(0, 64);
               if (paidPlan === 'eq_creator_pro') {
@@ -4050,7 +4084,7 @@ export const onRequest = async (context) => {
     }
     }
 
-    // POSTS (interest-ranked when userId/sort present; plain otherwise —
+    // POSTS (interest-ranked when userId/sort present; plain otherwise ΓÇö
     // existing frontend keeps working with zero changes).
     // Visibility-enforced: private/followers-only items are only returned to
     // authorized viewers; removed/quarantined items are owner-only.
@@ -4094,7 +4128,7 @@ export const onRequest = async (context) => {
       return await createItem(context, 'posts', KEYS.POSTS, KEYS.POST, cors);
     }
 
-    // ONE CONTENT ITEM BY ID ───────────────────────────────────────────────
+    // ONE CONTENT ITEM BY ID ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // Shared links (/posts/:id, /profile/posts/:id) redirect to
     // /app/home?post=<id>; the feed fetches any post that is not on the
     // current page here. Same visibility rules as the feeds: private,
@@ -4131,8 +4165,8 @@ export const onRequest = async (context) => {
     }
 
     // THOUGHTS TRENDING (real engagement algorithm, server-computed):
-    // GET /api/thoughts/trending — topics come ONLY from explicit tags and
-    // #hashtags in real thoughts (never invented). Score = Σ(engagement ×
+    // GET /api/thoughts/trending ΓÇö topics come ONLY from explicit tags and
+    // #hashtags in real thoughts (never invented). Score = ╬ú(engagement ├ù
     // recency decay) with a volume floor, where engagement is the same
     // composite the feed uses (pop score + reacts + likes + comments).
     // Direction compares the last 24h against the previous window so the
@@ -4148,7 +4182,7 @@ export const onRequest = async (context) => {
             return json({ data: { topics: c.topics, source: 'algorithm', computedAt: c.computedAt, cached: true }, error: null }, 200, cors);
           }
         }
-      } catch { /* cache miss — compute below */ }
+      } catch { /* cache miss ΓÇö compute below */ }
 
       const viewer = await getViewer(request, env);
       const ids = (await cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT)).slice(0, 300);
@@ -4299,7 +4333,7 @@ export const onRequest = async (context) => {
 
     // VERIFIED-NAME availability (authenticated): can THIS account claim the
     // candidate name as its Creator Pro verified identity? Never leaks the
-    // owner's identity — only availability + the reason.
+    // owner's identity ΓÇö only availability + the reason.
     if (path === '/api/profile/verify-name-check' && method === 'GET') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -4325,7 +4359,7 @@ export const onRequest = async (context) => {
     // safety stack used at publish time (local blocklists + Acronous safety
     // brain + vision survey of small frame samples) so obvious adult /
     // violent / exploitative / illegal media is refused on the spot. This is
-    // a UX gate, not the final gate — publish-time moderation still runs and
+    // a UX gate, not the final gate ΓÇö publish-time moderation still runs and
     // can quarantine. The verdict travels to the client, internals (patterns,
     // brain URLs) never leave the server.
     if (path === '/api/content-screen' && method === 'POST') {
@@ -4409,7 +4443,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }
       if (verdict !== 'allow' && !category) category = 'unspecified';
       const message = verdict === 'block'
-        ? 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media). It was not added.'
+        ? 'This content isnΓÇÖt allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media). It was not added.'
         : verdict === 'review'
           ? 'This content looks potentially unsafe and cannot be added until it passes review.'
           : '';
@@ -4426,7 +4460,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         return json({ data: null, error: 'Profile not found' }, 404, cors);
       }
       // Resolve ids, legacy email ids, @handles, usernames and display names
-      // to the canonical account id — never a duplicate/email-keyed row.
+      // to the canonical account id ΓÇö never a duplicate/email-keyed row.
       const resolved = await resolveProfileRef(env, rawUserId);
       if (!resolved || !resolved.profile) return json({ data: null, error: 'Profile not found' }, 404, cors);
       const userId = String(resolved.id || resolved.profile.id || '');
@@ -4621,7 +4655,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
           }, 403, cors);
         }
         // The new name must be claimable (never owned/tombstoned by another
-        // account). Verification follows the name — the registry moves.
+        // account). Verification follows the name ΓÇö the registry moves.
         const g = await grantVerifiedName(env, id, prevProfile, clean.name);
         if (!g.ok) {
           return json({ error: g.error, code: g.code }, 409, cors);
@@ -4630,7 +4664,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       } else if (nameChanged && vs.pending) {
         // A Creator Pro payment is waiting for a claimable unique name
         // (their name at purchase time was verified by someone else).
-        // Establishing the verified identity consumes no quota — it is a
+        // Establishing the verified identity consumes no quota ΓÇö it is a
         // first-time grant, like a fresh profile's first name.
         const g = await grantVerifiedName(env, id, prevProfile, clean.name);
         if (g.ok && g.patch) {
@@ -4670,7 +4704,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: merged, error: null }, 200, cors);
     }
 
-    // SEARCH — interest-aware AI ranking (backend-only, no frontend changes).
+    // SEARCH ΓÇö interest-aware AI ranking (backend-only, no frontend changes).
     if (path === '/api/search' && method === 'GET') {
       const query = String(url.searchParams.get('q') || '').slice(0, 200);
       const limit = clamp(parseInt(url.searchParams.get('limit') || '20', 10), 1, 50);
@@ -4688,7 +4722,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         ...e,
         ownerId: e.ownerId || e.userId || e.user_id || e.authorId,
       })));
-      // NOTE: do not early-return on empty content here — people results are
+      // NOTE: do not early-return on empty content here ΓÇö people results are
       // resolved below and must still be returned when there is no content.
       const pops = {};
       await Promise.all(base.slice(0, 100).map(async (it) => {
@@ -4733,7 +4767,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       };
       const ranked = base.map((item) => ({ item, s: scoreItem(item) })).sort((a, b) => b.s - a.s);
       const personalized = Object.keys(interests).length > 0;
-      // ── People search: match real user profiles (name / username / bio) ──
+      // ΓöÇΓöÇ People search: match real user profiles (name / username / bio) ΓöÇΓöÇ
       // Uses the shared profile index, so duplicate rows for one account are
       // collapsed to a single canonical result (never an email-keyed row) and
       // searching any part of a name/username still finds the person.
@@ -4752,7 +4786,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
             if (isEmailLike(canonicalId) || p.emailKeyed) continue;
             if (/@test\.com$/i.test(String(p.email || '')) || /^pwsrc_/i.test(pid)) continue;
             // Bot display names (smoke/test accounts) never surface in people
-            // search — same author signals as the content seed filter.
+            // search ΓÇö same author signals as the content seed filter.
             if (isSeedItem(p)) continue;
             const username = String(p.username || '').toLowerCase();
             const name = String(p.name || '').toLowerCase();
@@ -4807,7 +4841,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { results: matching.slice(0, limit).map((x) => transformItem(x.item)), users: matchedUsers, totalCount: matching.length, userCount: matchedUsers.length, isAiRecommended: personalized, personalized } }, 200, cors);
     }
 
-    // FEED — personalized across posts+thoughts+moments (new; old clients unaffected).
+    // FEED ΓÇö personalized across posts+thoughts+moments (new; old clients unaffected).
     if (path === '/api/feed' && method === 'GET') {
       const limit = clamp(parseInt(url.searchParams.get('limit') || '30', 10), 1, 100);
       const offset = Math.max(0, parseInt(url.searchParams.get('offset') || '0', 10) || 0);
@@ -4844,7 +4878,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { items: scored.slice(offset, offset + limit).map((x) => x.it), totalCount: norm.length, personalized } }, 200, cors);
     }
 
-    // ENGAGEMENT — persist interest signals + popularity (new; old clients unaffected).
+    // ENGAGEMENT ΓÇö persist interest signals + popularity (new; old clients unaffected).
     if (path === '/api/engagement' && method === 'POST') {
       let raw;
       try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
@@ -4877,7 +4911,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { ok: true, interests: Object.keys(interests).length } }, 200, cors);
     }
 
-    // LIKES / REACTIONS — the real engagement write path.
+    // LIKES / REACTIONS ΓÇö the real engagement write path.
     // Every like is persisted on the item (counter + likedBy ledger) and the
     // content OWNER gets a notification. Previously likes only changed local
     // React state, so the owner never heard about them and every device showed
@@ -4965,10 +4999,10 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { id: itemId, likes: nextCount, reacts: Number(item.reacts || 0) || 0, hasLiked: wantLiked }, error: null }, 200, cors);
     }
 
-    // VIEWS — persistence for the Eye badge shown on every public content row.
+    // VIEWS ΓÇö persistence for the Eye badge shown on every public content row.
     // Exactly like likes/shares/follow: one view PER ACCOUNT, kept on a
     // `viewedBy` ledger on the item. Re-opening never double-counts (the
-    // ledger gate itself makes this idempotent — no rate counter needed, the
+    // ledger gate itself makes this idempotent ΓÇö no rate counter needed, the
     // only possible write is the first open by an account, ever).
     // Privacy: invisible content 404s, and filterVisibleItems strips `views`
     // from rows that are not effectively public (private accounts /
@@ -4996,7 +5030,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       const ledger = Array.isArray(item.viewedBy) ? item.viewedBy.map((x: unknown) => String(x).toLowerCase()) : [];
       const had = ledger.some((x: string) => refs.has(x));
       if (had) {
-        // Already counted for this account — fetch path stays read-only.
+        // Already counted for this account ΓÇö fetch path stays read-only.
         return json({ data: { id: itemId, views: Number(item.views ?? item.views_count ?? 0) || 0, counted: false }, error: null }, 200, cors);
       }
       const stored = Number(item.views ?? item.views_count ?? 0) || 0;
@@ -5027,7 +5061,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { id: itemId, views: nextViews, counted: true }, error: null }, 200, cors);
     }
 
-    // VOTES — real upvote/downvote persistence for thoughts. Previously the
+    // VOTES ΓÇö real upvote/downvote persistence for thoughts. Previously the
     // client faked this with random numbers, so counts reset on every reload
     // and the owner never saw votes. One ledger per direction per item; a
     // vote switch adjusts both counters without double-counting.
@@ -5101,7 +5135,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }, error: null }, 200, cors);
     }
 
-    // SHARES — increment the post's share counter. Sharing used to update only
+    // SHARES ΓÇö increment the post's share counter. Sharing used to update only
     // local state, so the count reset on reload and never moved for anyone
     // else. The share sheet itself is still device-native (client-side).
     if (path === '/api/shares' && method === 'POST') {
@@ -5158,7 +5192,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }
     }
 
-    // GET /api/likes?itemId= — authoritative like state for the viewer.
+    // GET /api/likes?itemId= ΓÇö authoritative like state for the viewer.
     if ((path === '/api/likes' || path === '/api/react') && method === 'GET') {
       const itemId = String(url.searchParams.get('itemId') || url.searchParams.get('contentId') || '').slice(0, 64);
       if (!itemId) return json({ error: 'itemId required' }, 400, cors);
@@ -5183,7 +5217,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }, 200, cors);
     }
 
-    // SUGGEST — AI search suggestions via brain proxy with local fallback.
+    // SUGGEST ΓÇö AI search suggestions via brain proxy with local fallback.
     if (path === '/api/suggest/search' && method === 'GET') {
       const q = String(url.searchParams.get('q') || '').slice(0, 100);
       if (!q) return json({ data: { suggestions: [] } }, 200, cors);
@@ -5228,7 +5262,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     }
 
     // ---- FOLLOW GRAPH (server-side source of truth) ----
-    // POST /api/follow { target } — follow a public account directly; for a
+    // POST /api/follow { target } ΓÇö follow a public account directly; for a
     // private account this creates a pending request instead.
     if (path === '/api/follow' && method === 'POST') {
       const body = await readJson(request);
@@ -5311,7 +5345,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { isFollowing: true, pending: false }, error: null }, 200, cors);
     }
 
-    // DELETE /api/follow/:target — unfollow (also withdraws pending requests).
+    // DELETE /api/follow/:target ΓÇö unfollow (also withdraws pending requests).
     if (path.match(/^\/api\/follow\//) && method === 'DELETE' && !path.startsWith('/api/follow/requests')) {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -5361,7 +5395,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { isFollowing: false, pending: false }, error: null }, 200, cors);
     }
 
-    // GET /api/follow/status?target= — { isFollowing, pending } for the caller.
+    // GET /api/follow/status?target= ΓÇö { isFollowing, pending } for the caller.
     if (path === '/api/follow/status' && method === 'GET') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -5390,7 +5424,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { isFollowing, pending }, error: null }, 200, cors);
     }
 
-    // GET /api/followers/:userId and GET /api/following/:userId — counts and
+    // GET /api/followers/:userId and GET /api/following/:userId ΓÇö counts and
     // id lists. Private accounts expose these only to owners/followers.
     if ((path.match(/^\/api\/followers\//) || path.match(/^\/api\/following\//)) && method === 'GET') {
       const isFollowers = path.startsWith('/api/followers/');
@@ -5430,7 +5464,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { count: ids.length, ids: ids.slice(0, 500), profiles }, error: null }, 200, cors);
     }
 
-    // GET /api/follow/requests — pending follow requests for the caller
+    // GET /api/follow/requests ΓÇö pending follow requests for the caller
     // (private-account owners). POST /api/follow/accept|decline { requester }.
     if (path === '/api/follow/requests' && method === 'GET') {
       const actor = await getActor(request, env);
@@ -5563,7 +5597,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }
       if (Array.isArray(clean.tags)) parsed.tags = clean.tags.map((t) => String(t).slice(0, 40)).slice(0, 10);
       // Owner-supplied cover art: uploaded thumbnail URL only (never inline
-      // data — those belong in /api/upload, not in KV item bodies).
+      // data ΓÇö those belong in /api/upload, not in KV item bodies).
       // An explicit empty string clears the cover (profile "Remove cover").
       let thumbnailCleared = false;
       if (typeof clean.thumbnail === 'string' && clean.thumbnail) {
@@ -5597,7 +5631,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     }
 
     // ---- REPORTS (community safety) ----
-    // POST /api/report { kind, id, reason?, details? } — any signed-in
+    // POST /api/report { kind, id, reason?, details? } ΓÇö any signed-in
     // account can report. Auto-hide at 3 reports, auto-remove at 5, with an
     // immediate brain re-check on every report. Generic responses only.
     if (path === '/api/report' && method === 'POST') {
@@ -5656,7 +5690,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         brainVerdict = await brainSafetyCheck(env, String(parsed.content || parsed.title || parsed.description || ''));
       } catch { /* fail-open */ }
       // Human eval: a report is a strong negative label for the shared brain
-      // (best-effort — safety flow never blocks on it).
+      // (best-effort ΓÇö safety flow never blocks on it).
       try {
         void brainProxy('/v1/feedback', {
           session_id: String(actor.id).slice(0, 100),
@@ -5681,7 +5715,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
-    // DELETE ENDPOINTS (strictly owner-only — see deleteItem).
+    // DELETE ENDPOINTS (strictly owner-only ΓÇö see deleteItem).
     if (path.match(/^\/api\/posts\//) && method === 'DELETE') {
       const id = decodeURIComponent(path.split('/api/posts/')[1] || '');
       return await deleteItem(context, KEYS.POSTS, KEYS.POST, id, cors);
@@ -5726,7 +5760,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       if (actor.username) refs.add(normalizeProfileAlias(actor.username));
 
       let deletedPosts = 0, deletedThoughts = 0, deletedStories = 0, deletedMoments = 0;
-      // Index rows carry the display name (not user id) as creator — track
+      // Index rows carry the display name (not user id) as creator ΓÇö track
       // deleted item ids so their index rows are purged explicitly too.
       const deletedIds = new Set();
 
@@ -5898,19 +5932,19 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { success: true, deletedPosts, deletedThoughts, deletedStories, deletedMoments, deletedComments }, error: null }, 200, cors);
     }
 
-    // MEDIA UPLOAD — R2 primary warehouse (zero egress), Cloudinary selective.
+    // MEDIA UPLOAD ΓÇö R2 primary warehouse (zero egress), Cloudinary selective.
     // Flow: auth -> plan quota -> mime + per-plan size -> sha256 dedupe ->
     // R2 put (original, required when bound) -> Cloudinary (variants,
     // best-effort when bound) -> usage accounting. secureUrl is ALWAYS the
     // best delivery URL (R2 when available), so the frontend needs no changes.
-    // ── CHUNKED UPLOAD (resumable multipart → R2) ────────────────────────────
+    // ΓöÇΓöÇ CHUNKED UPLOAD (resumable multipart ΓåÆ R2) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // Long videos / vlogs / live recordings exceed what a single fetch body
     // and a single worker memory window can safely carry. The client slices
     // the file into 8MB parts and streams them one request at a time:
-    //   POST /api/upload/init            → { uploadId, partSize }
-    //   PUT  /api/upload/part?uploadId&partIndex  (chunk as 'file') → { etag }
-    //   POST /api/upload/complete        → same payload shape as /api/upload
-    //   POST /api/upload/abort           → cancels (removes R2 multipart)
+    //   POST /api/upload/init            ΓåÆ { uploadId, partSize }
+    //   PUT  /api/upload/part?uploadId&partIndex  (chunk as 'file') ΓåÆ { etag }
+    //   POST /api/upload/complete        ΓåÆ same payload shape as /api/upload
+    //   POST /api/upload/abort           ΓåÆ cancels (removes R2 multipart)
     // Plan caps are checked at INIT against the declared total size and at
     // COMPLETE against the real assembled size, so partial progress can
     // never bypass billing.
@@ -5938,7 +5972,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       if (!mimeAllowed(contentType)) return json({ error: 'Only images, videos and audio are allowed' }, 415, cors);
       if (declaredBytes <= 0) return json({ error: 'Empty file' }, 400, cors);
       if (declaredBytes <= SINGLE_UPLOAD_MAX_BYTES) {
-        // Small enough for the single-shot path — tell the client to use it.
+        // Small enough for the single-shot path ΓÇö tell the client to use it.
         return json({ data: { chunked: false }, error: null }, 200, cors);
       }
       const envCapMB = parseInt(env.MAX_UPLOAD_MB, 10) || quota.maxUploadMB;
@@ -6016,7 +6050,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       try {
         partBytes = await file.arrayBuffer();
         partHash = await sha256Hex(partBytes);
-      } catch { /* hashing is metadata only — continue */ }
+      } catch { /* hashing is metadata only ΓÇö continue */ }
       // Security: verify the first chunk's real bytes.
       if (partIndex === 1 && partBytes) {
         const detected = detectMimeFromBytes(partBytes);
@@ -6384,7 +6418,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }, 200, cors);
     }
 
-    // R2 MEDIA DELIVERY — public GET/HEAD with Range + immutable cache.
+    // R2 MEDIA DELIVERY ΓÇö public GET/HEAD with Range + immutable cache.
     // Works with zero DNS setup (same-origin proxy). Set R2_PUBLIC_BASE to a
     // custom domain / R2.dev URL and uploads will hand out those URLs
     // directly, bypassing this proxy for even cheaper delivery.
@@ -6393,7 +6427,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return await serveR2(request, env, key, cors, method);
     }
 
-    // USER CONTENT — every collection for one account (posts + thoughts +
+    // USER CONTENT ΓÇö every collection for one account (posts + thoughts +
     // stories + moments), visibility-enforced. This is what makes an upload
     // on one device appear on every other device and for other accounts.
     if (path.match(/^\/api\/users\//) && path.endsWith('/content') && method === 'GET') {
@@ -6442,7 +6476,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     }
 
     // USER POSTS (visibility-enforced; private accounts reveal content only
-    // to themselves and their followers — everyone else gets []).
+    // to themselves and their followers ΓÇö everyone else gets []).
     if (path.match(/^\/api\/users\//) && path.endsWith('/posts') && method === 'GET') {
       const rawUserId = decodeURIComponent(path.split('/api/users/')[1].replace('/posts', ''));
       const resolved = await resolveProfileRef(env, rawUserId);
@@ -6584,7 +6618,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       const amountInr = Math.floor(Number(clean.amountInr || 0));
       if (!to || to === actor.id) return json({ error: 'Invalid recipient' }, 400, cors);
       if (!Number.isFinite(amountInr) || amountInr < 10 || amountInr > 100000) {
-        return json({ error: 'Tip must be ₹10–₹1,00,000' }, 400, cors);
+        return json({ error: 'Tip must be Γé╣10ΓÇôΓé╣1,00,000' }, 400, cors);
       }
       const fee = Math.floor((amountInr * PLATFORM_FEE_BPS) / 10000);
       const tip = {
@@ -6622,7 +6656,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       const amountInr = Math.floor(Number(clean.amountInr || 0));
       if (!to || to === actor.id) return json({ error: 'Invalid recipient' }, 400, cors);
       if (!Number.isFinite(amountInr) || amountInr < 10 || amountInr > 100000) {
-        return json({ error: 'SuperChat must be ₹10–₹1,00,000' }, 400, cors);
+        return json({ error: 'SuperChat must be Γé╣10ΓÇôΓé╣1,00,000' }, 400, cors);
       }
       // Recipient must be an eligible creator.
       try {
@@ -6664,7 +6698,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
             authorName: 'SuperChat',
             authorUsername: 'SuperChat',
             authorAvatar: '',
-            text: `SuperChat ₹${amountInr}`,
+            text: `SuperChat Γé╣${amountInr}`,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
             likes: 0, likedBy: [], shares: 0, repliesCount: 0, isPinned: false, isEdited: false,
@@ -6675,7 +6709,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       try {
         await pushUserNotification(env, to, {
           kind: 'superchat', title: 'New SuperChat',
-          body: 'Someone sent you ₹' + amountInr + ' via SuperChat.',
+          body: 'Someone sent you Γé╣' + amountInr + ' via SuperChat.',
           actorId: actor.id, contentId: contentId || undefined,
         });
       } catch { /* ignore */ }
@@ -6696,7 +6730,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       const amountInr = Math.floor(Number(clean.amountInr || 0));
       if (!creator || creator === actor.id) return json({ error: 'Invalid creator' }, 400, cors);
       if (!Number.isFinite(amountInr) || amountInr < 29 || amountInr > 100000) {
-        return json({ error: 'Subscription must be ₹29–₹1,00,000' }, 400, cors);
+        return json({ error: 'Subscription must be Γé╣29ΓÇôΓé╣1,00,000' }, 400, cors);
       }
       const fee = Math.floor((amountInr * PLATFORM_FEE_BPS) / 10000);
       const sub = {
@@ -6740,7 +6774,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     // ---- BILLING STATUS (same-origin) ----
     // 1) Local grant first: a plan paid through Equyvo (Razorpay-verified by
     //    central) must show up even though central only resolves its own
-    //    JWTs — Equyvo session tokens used to fall back to free here, which
+    //    JWTs ΓÇö Equyvo session tokens used to fall back to free here, which
     //    made paid tiers vanish after an app restart.
     // 2) Central proxy for callers holding a central JWT (cross-product
     //    subscriptions live there).
@@ -6773,7 +6807,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     }
 
     // ---- BILLING CLAIM (guest purchase linking) ----
-    // POST /api/claim-billing — links a guest-paid plan (same email) to the
+    // POST /api/claim-billing ΓÇö links a guest-paid plan (same email) to the
     // caller's account. Local email grants (paid through THIS app while
     // signed out) are claimed first; central claim handles browsers that
     // present a verifiable central JWT.
@@ -6846,9 +6880,9 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data, error: null }, 200, cors);
     }
 
-    // ── CHAT TRANSPORT (WhatsApp-style ticks, follow-gated) ────────────────
+    // ΓöÇΓöÇ CHAT TRANSPORT (WhatsApp-style ticks, follow-gated) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // POST /api/chat/:peer/send { text?, type?, fileUrl?, fileName? }
-    //   → { id, delivered:false } + status `sent` (single tick = on server).
+    //   ΓåÆ { id, delivered:false } + status `sent` (single tick = on server).
     //   Delivery (`delivered`, double tick) + read (`seen`, Seen label) are
     //   confirmed via GET messages / POST seen polling below.
     //   Gate: either side must follow the other, else 403 (strangers blocked).
@@ -6909,7 +6943,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
           }, 2500).catch(() => null);
         }
       } catch { /* ignore */ }
-      // Nudge the peer (unread badge + push) — best-effort, never blocks send.
+      // Nudge the peer (unread badge + push) ΓÇö best-effort, never blocks send.
       try {
         const me = await getStoredProfile(env, actor.id);
         const name = (me && (me.username || me.name)) || actor.id;
@@ -6922,7 +6956,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { id: msg.id, delivered: false }, error: null }, 200, cors);
     }
 
-    // GET /api/chat/:peer/messages?limit= — merged ledger; marks messages
+    // GET /api/chat/:peer/messages?limit= ΓÇö merged ledger; marks messages
     // addressed TO the caller as `delivered` (double tick for the sender).
     if (path.match(/^\/api\/chat\//) && path.endsWith('/messages') && method === 'GET') {
       const actor = await getActor(request, env);
@@ -6968,7 +7002,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { messages: out }, error: null }, 200, cors);
     }
 
-    // POST /api/chat/:peer/seen — caller opened the thread: all messages TO
+    // POST /api/chat/:peer/seen ΓÇö caller opened the thread: all messages TO
     // them become `delivered`, and their own pending messages TO the peer
     // stay until the peer polls; peer's messages to caller become `seen`.
     if (path.match(/^\/api\/chat\//) && path.endsWith('/seen') && method === 'POST') {
@@ -6991,7 +7025,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
-    // POST /api/chat/:peer/delivered { id } — peer-device ack (double tick).
+    // POST /api/chat/:peer/delivered { id } ΓÇö peer-device ack (double tick).
     if (path.match(/^\/api\/chat\//) && path.endsWith('/delivered') && method === 'POST') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -7010,7 +7044,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
-    // GET /api/chat/threads — follow-based thread list with unread counts.
+    // GET /api/chat/threads ΓÇö follow-based thread list with unread counts.
     // POST /api/chat/:peer/delete { id, forEveryone? } - delete message.
     if (path.match(/^\/api\/chat\//) && path.endsWith('/delete') && method === 'POST') {
       const actor = await getActor(request, env);
@@ -7068,7 +7102,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { threads: threads.slice(0, 300) }, error: null }, 200, cors);
     }
 
-    // ── STORY CHAT WITH AUDIENCE ───────────────────────────────────────────
+    // ΓöÇΓöÇ STORY CHAT WITH AUDIENCE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // Audience member sends a message to a creator's story; creator gets a
     // notification (kind 'chat') and can reply into their next story.
     if (path === '/api/story-chat' && method === 'POST') {
@@ -7103,9 +7137,9 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
-    // ── NOTIFICATIONS ──────────────────────────────────────────────────────
-    // GET /api/notifications — pending follow requests (as items) + stored
-    // per-user items (accepts, chat nudges, uploads, live). Bounded ≤100.
+    // ΓöÇΓöÇ NOTIFICATIONS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // GET /api/notifications ΓÇö pending follow requests (as items) + stored
+    // per-user items (accepts, chat nudges, uploads, live). Bounded Γëñ100.
     if (path === '/api/notifications' && method === 'GET') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -7154,7 +7188,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { items: items.slice(0, 100) }, error: null }, 200, cors);
     }
 
-    // POST /api/notifications/read { ids? } — mark read (all when omitted).
+    // POST /api/notifications/read { ids? } ΓÇö mark read (all when omitted).
     if (path === '/api/notifications/read' && method === 'POST') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -7172,8 +7206,8 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
-    // ── REPORTS LEDGER (dashboard.acronous.com monitor) ────────────────────
-    // GET /api/reports?limit= — admin-gated via X-Admin-Token matching
+    // ΓöÇΓöÇ REPORTS LEDGER (dashboard.acronous.com monitor) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // GET /api/reports?limit= ΓÇö admin-gated via X-Admin-Token matching
     // REPORTS_ADMIN_TOKEN. Returns newest reports with content snapshots so
     // developers can identify the account + basis. Never public.
     // POST /api/notifications/clear - wipe the caller's stored notifications
@@ -7238,7 +7272,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { reports: out }, error: null }, 200, cors);
     }
 
-    // ── REPORT MODERATION (dashboard.acronous.com actions) ───────────────
+    // ΓöÇΓöÇ REPORT MODERATION (dashboard.acronous.com actions) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // POST /api/reports/action { reportId?, kind?, contentId?, owner?,
     //   action: 'quarantine'|'remove'|'restore'|'delete'|'restrict-account'|'unrestrict-account'|'delete-account-content' }
     // Admin-gated via X-Admin-Token. Lets developers remove, restrict
@@ -7336,9 +7370,9 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       } catch { return json({ error: 'Moderation action failed.' }, 500, cors); }
     }
 
-    // ── LIVE PRESENCE ──────────────────────────────────────────────────────
-    // ── ADMIN CONTENT BROWSER (dashboard.acronous.com) ───────────────────
-    // GET /api/admin/content?limit= — admin-gated via X-Admin-Token. Returns
+    // ΓöÇΓöÇ LIVE PRESENCE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ΓöÇΓöÇ ADMIN CONTENT BROWSER (dashboard.acronous.com) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // GET /api/admin/content?limit= ΓÇö admin-gated via X-Admin-Token. Returns
     // EVERY content item uploaded by users (posts/thoughts/stories/moments)
     // unless the uploading user deleted it themselves (deleted items are gone
     // from KV). Includes full media fields so developers can view content.
@@ -7393,10 +7427,10 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { items: items.slice(0, limit), stats }, error: null }, 200, cors);
     }
 
-    // POST /api/live/start|stop — owner toggles their live flag; followers
+    // POST /api/live/start|stop ΓÇö owner toggles their live flag; followers
     // get a "X is live now" notification (bounded 50, background).
     // The flag lives on the profile row AND is mirrored into the bounded
-    // profile index, so /api/live/now can show the stream to every account —
+    // profile index, so /api/live/now can show the stream to every account ΓÇö
     // not just people who already follow the broadcaster.
     const LIVE_MAX_MS = 4 * 60 * 60 * 1000;
     if ((path === '/api/live/start' || path === '/api/live/stop') && method === 'POST') {
@@ -7449,7 +7483,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { live: starting, liveAt: starting ? new Date().toISOString() : null }, error: null }, 200, cors);
     }
 
-    // GET /api/live/now — EVERY account that is live right now (public
+    // GET /api/live/now ΓÇö EVERY account that is live right now (public
     // discoverability), plus a `following` flag so the UI can surface followed
     // creators first. Private accounts are only visible to their followers.
     if (path === '/api/live/now' && method === 'GET') {
@@ -7508,7 +7542,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { topics }, error: null }, 200, cors);
     }
 
-    // ── COMMENTS ─────────────────────────────────────────────────────────
+    // ΓöÇΓöÇ COMMENTS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // Persistent per-media discussions. Every comment carries real identity
     // (verified caller + stored profile); the client never supplies names or
     // avatars. Tapping a media's comment button calls GET /api/comments to
@@ -7726,7 +7760,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { comment: toPublicComment(comment, actor.id) }, error: null }, 201, cors);
     }
 
-    // PUT /api/comments/:id — edit own comment. POST .../like|share|pin and
+    // PUT /api/comments/:id ΓÇö edit own comment. POST .../like|share|pin and
     // DELETE ... live alongside (exact-id match guarded to those suffixes).
     const commentIdMatch = path.match(/^\/api\/comments\/([^/]+)(\/(like|share|pin))?$/);
     if (commentIdMatch && (method === 'PUT' || method === 'DELETE' || method === 'POST')) {
@@ -8295,10 +8329,9 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
         return json({ data: { thumbnail: 'generated', credits: r }, error: null }, 200, cors);
       }
 
-      return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
     }
 
-    // PUT /api/content/:id/comment-settings { enabled } — owner-only toggle.
+    // PUT /api/content/:id/comment-settings { enabled } ΓÇö owner-only toggle.
     const csetMatch = path.match(/^\/api\/content\/([^/]+)\/comment-settings$/);
     if (csetMatch && method === 'PUT') {
       const contentId = decodeURIComponent(csetMatch[1] || '').split('?')[0].slice(0, 64);
@@ -8320,8 +8353,8 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { contentId, commentsEnabled: saved.commentsEnabled }, error: null }, 200, cors);
     }
 
-    return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
-  // ── AI CONTENT SUGGESTIONS (Acronous LLM brain, best-effort) ────────────
+
+  // ΓöÇΓöÇ AI CONTENT SUGGESTIONS (Acronous LLM brain, best-effort) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (path === '/api/ai/suggest' && method === 'POST') {
     const actor = await getActor(request, env);
     const denied = actorResponse(actor, env, cors);
@@ -8363,7 +8396,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     }
   }
 
-  // ── ACCOUNT EXPORT (GDPR-style) ─────────────────────────────────────────
+  // ΓöÇΓöÇ ACCOUNT EXPORT (GDPR-style) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (path === '/api/account/export' && method === 'GET') {
     const actor = await getActor(request, env);
     const denied = actorResponse(actor, env, cors);
@@ -8382,7 +8415,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     return json({ data: { profile, posts: mine, exportedAt: new Date().toISOString() }, error: null }, 200, cors);
   }
 
-  // ── ACCOUNT DELETION (soft delete) ──────────────────────────────────────
+  // ΓöÇΓöÇ ACCOUNT DELETION (soft delete) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
   if (path === '/api/account' && method === 'DELETE') {
     const actor = await getActor(request, env);
     const denied = actorResponse(actor, env, cors);
@@ -8395,6 +8428,139 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
     try { await addAudit(env, actor.id, 'account_deleted', 'user', actor.id, {}); } catch {}
     return json({ data: { deleted: true }, error: null }, 200, cors);
   }
+
+
+    // ── AI CONTENT SUGGESTIONS ──────────────────────────────────────────────
+    if (path === '/api/ai/suggest' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const bearer = bearerFrom(request);
+      const { planId } = await resolvePlan(env, actor, bearer);
+      const quota = planQuota(planId);
+      if (!quota.ai_suggestions) {
+        return json({ error: 'AI suggestions are a paid feature. Upgrade to unlock.', code: 'ENTITLEMENT_AI_SUGGESTIONS', planId }, 402, cors);
+      }
+      const rl = await rateLimit(kv, 'ai_suggest', actor.id, rateLimitFor(planId, 'ai'));
+      if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
+      let body = {};
+      try { body = await readJson(request); } catch { body = {}; }
+      const kind = String(body.kind || 'caption').slice(0, 24);
+      const text = String(body.text || '').slice(0, 2000);
+      const tone = String(body.tone || 'neutral').slice(0, 24);
+      const brainBase = (env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
+      if (!brainBase) {
+        return json({ data: { suggestions: [], fallback: true }, error: null }, 200, cors);
+      }
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 8000);
+      try {
+        const r = await fetch(brainBase + '/v1/suggest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ kind, text, tone, user: actor.id }),
+          signal: controller.signal,
+        });
+        clearTimeout(timer);
+        if (!r.ok) return json({ data: { suggestions: [], fallback: true }, error: null }, 200, cors);
+        const out = await r.json().catch(() => ({}));
+        return json({ data: { suggestions: out.suggestions || out.data || [], fallback: false }, error: null, planId }, 200, cors);
+      } catch {
+        clearTimeout(timer);
+        return json({ data: { suggestions: [], fallback: true }, error: null }, 200, cors);
+      }
+    }
+
+    // ── ACCOUNT EXPORT ──────────────────────────────────────────────────────
+    if (path === '/api/account/export' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const profile = await getStoredProfile(env, actor.id).catch(() => null);
+      const ids = await cleanOrphans(env, KEYS.POSTS, KEYS.POST);
+      const mine = [];
+      for (const id of ids.slice(0, 500)) {
+        try {
+          const raw = await kv.get(KEYS.POST(id));
+          if (!raw) continue;
+          const it = JSON.parse(raw);
+          if (it && (it.ownerId === actor.id || it.userId === actor.id)) mine.push(it);
+        } catch {}
+      }
+      return json({ data: { profile, posts: mine, exportedAt: new Date().toISOString() }, error: null }, 200, cors);
+    }
+
+    // ── ACCOUNT DELETION ────────────────────────────────────────────────────
+    if (path === '/api/account' && method === 'DELETE') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      try {
+        const p = await getStoredProfile(env, actor.id);
+        if (p) { p.deleted_at = new Date().toISOString(); p.display_name = 'Deleted user'; await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(p)); }
+      } catch {}
+      try { await kv.put('deleted:' + actor.id, new Date().toISOString(), { expirationTtl: 60 * 60 * 24 * 365 }); } catch {}
+      return json({ data: { deleted: true }, error: null }, 200, cors);
+    }
+
+    // ── TRENDING HASHTAGS ──────────────────────────────────────────────────
+    if (path === '/api/hashtags/trending' && method === 'GET') {
+      const CACHE_KEY = 'trending:hashtags:v1';
+      try {
+        const cached = await kv.get(CACHE_KEY);
+        if (cached) {
+          const c = JSON.parse(cached);
+          if (c && Array.isArray(c.tags) && c.computedAt && (Date.now() - c.computedAt) < 60000) {
+            return json({ data: { tags: c.tags, computedAt: c.computedAt, cached: true }, error: null }, 200, cors);
+          }
+        }
+      } catch {}
+      const postIds = (await cleanOrphans(env, KEYS.POSTS, KEYS.POST)).slice(0, 300);
+      const thoughtIds = (await cleanOrphans(env, KEYS.THOUGHTS, KEYS.THOUGHT)).slice(0, 300);
+      const allIds = [...postIds, ...thoughtIds];
+      const raw = (await Promise.all(allIds.map(async (id) => {
+        try {
+          const k = postIds.includes(id) ? KEYS.POST(id) : KEYS.THOUGHT(id);
+          const t = await kv.get(k);
+          return t ? JSON.parse(t) : null;
+        } catch { return null; }
+      }))).filter(Boolean);
+      const counts = {};
+      for (const it of raw) {
+        const text = String(it.content || it.title || it.description || '') + ' ' + (Array.isArray(it.tags) ? it.tags.join(' ') : '');
+        const matches = text.match(/#([a-zA-Z0-9_]{2,30})/g) || [];
+        for (const m of matches) {
+          const tag = m.toLowerCase();
+          counts[tag] = (counts[tag] || 0) + 1;
+        }
+      }
+      const tags = Object.entries(counts)
+        .map(([tag, n]) => ({ tag, count: n }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 30);
+      const computedAt = Date.now();
+      try { await kv.put(CACHE_KEY, JSON.stringify({ tags, computedAt }), { expirationTtl: 120 }); } catch {}
+      return json({ data: { tags, computedAt, cached: false }, error: null }, 200, cors);
+    }
+
+    // ── MODERATION ENQUEUE ─────────────────────────────────────────────────
+    if (path === '/api/moderation/enqueue' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let body = {};
+      try { body = await readJson(request); } catch { body = {}; }
+      const { kind, id, reason, ai_score, ai_confidence } = body;
+      if (!kind || !id) return json({ error: 'kind and id required' }, 400, cors);
+      try {
+        const qKey = 'modq:' + generateId();
+        await kv.put(qKey, JSON.stringify({ kind, id, reason: reason || 'auto', ai_score, ai_confidence, by: actor.id, at: new Date().toISOString() }), { expirationTtl: 60 * 60 * 24 * 30 });
+        const list = JSON.parse((await kv.get('modq:list')) || '[]');
+        list.unshift(qKey);
+        await kv.put('modq:list', JSON.stringify(list.slice(0, 500)));
+      } catch {}
+      return json({ data: { enqueued: true }, error: null }, 200, cors);
+    }
 
   return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);
   } catch (err) {

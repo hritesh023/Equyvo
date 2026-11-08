@@ -42,6 +42,8 @@ BILLING_BASE_URL = "https://api.acronous.com"
 # REQUIRE_VERIFIED_WRITES = "true"
 # Contabo shared brain for AI search/feed suggestions (best-effort, 2.5s cap).
 BRAIN_URL = "https://brain.acronous.com"
+# Equyvo Contabo backend (PG/Redis gateway) base URL.
+EQUYVO_API_BASE = "https://brain.acronous.com"
 # NOTE: Pages Functions have no cron triggers. Keep the stack warm with an
 # external 5-min ping (UptimeRobot/cron-job.org) to /api/warmup + /api/health.
 # The standalone worker/src/index.ts also exports scheduled() for Worker deploys.
