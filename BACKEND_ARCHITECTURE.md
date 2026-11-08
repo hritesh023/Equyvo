@@ -37,8 +37,8 @@
 |---|---|---|
 | PostgreSQL normalized schema | KV JSON blobs | No relational queries, no FK integrity, no migrations, no joins. |
 | Redis cache/sessions/rate-limit | KV counters | KV is eventual-consistent; not suitable for strict per-user counters at scale. |
-| Contabo PostgreSQL | None deployed | No PG container on VPS. |
-| Contabo Redis | None deployed | No Redis container on VPS. |
+| Contabo PostgreSQL | Deployed (empty) | Container healthy; schema applied; no production data yet (dual-write not started). |
+| Contabo Redis | Deployed (empty) | Container healthy; not yet wired to Equyvo backend. |
 | Hyperdrive | Not configured | Not needed until PG is reachable over the public internet (it won't be). |
 | Durable Objects rate limits | KV-based | DO not yet implemented; KV counters acceptable at current scale. |
 | Video transcoding/thumbnails/multi-res | Not implemented | Cloudinary selective transforms only. |
@@ -145,7 +145,9 @@ Assumptions: Cloudflare Paid $5/mo base; R2 $0.015/GB-mo storage, $0.36/million 
 - Rebuilt production bundle, synced Capacitor, rebuilt Android release (APK + AAB).
 - Deployed Pages (production) → `equyvo.acronous.com` serving v1.2.83, R2 bound.
 - Pushed git commit to `origin/main`.
-- Verified Contabo VPS reachable (root SSH); confirmed no PG/Redis currently; Ollama healthy with qwen models; 229GB free disk.
+- Verified Contabo VPS reachable (root SSH); Ollama healthy with qwen models; 229GB free disk.
+- **Deployed PostgreSQL 16 + Redis 7 containers on Contabo** (isolated compose project `contabo`, ports 127.0.0.1:5433 / 6380, resource-capped, healthy).
+- **Applied `backend/migrations/001_init.sql`** to the new database (all core tables + 6 seeded subscription plans). Verified `equyvo_app` role can read `subscription_plans` (6 rows).
 
 ## 7. What is NOT implemented (recommendations only)
 
