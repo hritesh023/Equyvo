@@ -4007,7 +4007,7 @@ const CreatePage = () => {
         <CardHeader>
           <CardTitle>What would you like to create?</CardTitle>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-7 gap-4">
+        <CardContent className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-8 gap-4">
           <Button
             variant={activeTab === 'story' ? 'default' : 'outline'}
             className="flex flex-col h-28 items-center justify-center gap-2 hover:scale-105 transition-transform duration-200"
@@ -4070,6 +4070,15 @@ const CreatePage = () => {
             <Video className="h-8 w-8 text-orange-500" />
             <span>Moments</span>
             <span className="text-xs text-muted-foreground">Clips</span>
+          </Button>
+          <Button
+            variant={activeTab === 'camera' ? 'default' : 'outline'}
+            className="flex flex-col h-28 items-center justify-center gap-2 hover:scale-105 transition-transform duration-200"
+            onClick={() => setActiveTab('camera')}
+          >
+            <Camera className="h-8 w-8 text-teal-500" />
+            <span>Camera</span>
+            <span className="text-xs text-muted-foreground">Capture</span>
           </Button>
           {planEntitlements?.liveMoments && (
             <Button

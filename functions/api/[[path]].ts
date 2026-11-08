@@ -6925,7 +6925,7 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       };
       // Event-sourced store: per-message key + per-sender index append. Two
       // devices sending at once can no longer overwrite each other's history.
-      await storeChatMessage(env, actor.id, peer, msg);
+      try { await storeChatMessage(env, actor.id, peer, msg); } catch (e) { return json({ error: 'Message could not be stored. Try again.' }, 500, cors); }
       // Human-eval fan-out: every message becomes a labelled preference for
       // the shared Acronous brain (Contabo). Backend-only.
       try {

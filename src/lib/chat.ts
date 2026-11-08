@@ -477,6 +477,7 @@ export async function pullThreadMessages(threadId: string): Promise<ChatMessage[
     const byId = new Map(local.map((m) => [m.id, m]));
     for (const s of items) {
       if (s && s.id) {
+        const existing = byId.get(String(s.id));
         const m = { ...s, threadId } as ChatMessage;
         // Decrypt end-to-end payload for display.
         if (m.text) {
@@ -484,6 +485,12 @@ export async function pullThreadMessages(threadId: string): Promise<ChatMessage[
         }
         // Mark e2e if it was encrypted on the wire.
         if (typeof s.text === 'string' && s.text.startsWith('e2e:')) m.e2e = true;
+        // Preserve the sender's own device time so outgoing bubbles keep the
+        // local system clock instead of being overwritten by server time.
+        if (existing && existing.fromMe && existing.createdAt) {
+          m.createdAt = existing.createdAt;
+          if (existing.timestamp) m.timestamp = existing.timestamp;
+        }
         byId.set(String(s.id), m);
       }
     }
