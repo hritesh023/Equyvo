@@ -90,14 +90,12 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
       }
       recorderRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
   // when facing changes while open
   useEffect(() => {
     if (!open) return;
     void startStream(facing);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [facing]);
 
   useEffect(() => {
