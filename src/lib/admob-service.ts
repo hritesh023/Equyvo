@@ -239,9 +239,10 @@ export async function prepareInterstitial(): Promise<boolean> {
     interstitialState = 'prepared';
     interstitialAdId = adId;
     return true;
-  } catch {
+  } catch (e) {
     interstitialState = 'idle';
     interstitialAdId = null;
+    try { console.warn('[AdMob] prepareInterstitial failed:', e); } catch { /* ignore */ }
     return false;
   }
 }
@@ -264,8 +265,9 @@ export async function showInterstitial(): Promise<boolean> {
       await plugin.showInterstitial(
         interstitialAdId ? { adId: interstitialAdId } : undefined,
       );
-    } catch {
+    } catch (e) {
       interstitialState = 'idle';
+      try { console.warn('[AdMob] showInterstitial failed:', e); } catch { /* ignore */ }
       return false;
     }
     lastInterstitialShownAt = Date.now();

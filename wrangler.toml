@@ -37,8 +37,9 @@ database_id = "af7ffe1a-d34e-41df-af3f-d9b539864655"
 #   MAX_UPLOAD_MB= (optional global cap; per-plan caps always apply)
 #   ALLOWED_ORIGINS=https://equyvo.com,https://www.equyvo.com
 [vars]
-APP_VERSION = "1.2.93"
-BILLING_BASE_URL = "https://api.acronous.com"# Reject unverified X-User-Id writes: callers must present a valid Cognito or
+APP_VERSION = "1.2.94"
+BILLING_BASE_URL = "https://api.acronous.com"
+# Reject unverified X-User-Id writes: callers must present a valid Cognito or
 # central Acronous JWT. Prevents account spoofing ("bad authentication" caused
 # by silently accepting forged headers, then failing billing as another user).
 # NOTE: set as a Pages dashboard variable / secret (same name), NOT here —

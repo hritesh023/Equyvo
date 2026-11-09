@@ -64,6 +64,7 @@ export function useInterstitialAds(): void {
       if (vids.some((v) => !v.paused && !v.ended)) return;
       showingRef.current = true;
       try {
+        await prepareInterstitial();
         await showInterstitial();
       } finally {
         showingRef.current = false;
@@ -80,4 +81,11 @@ export function useInterstitialAds(): void {
     if (!shouldShowAds(plan)) return;
     void prepareInterstitial();
   }, [plan]);
+
+  // Prepare as early as possible on native (not only on plan change) so the
+  // first natural break actually has an ad ready to show.
+  useEffect(() => {
+    if (!isNativePlatform()) return;
+    void prepareInterstitial();
+  }, []);
 }
