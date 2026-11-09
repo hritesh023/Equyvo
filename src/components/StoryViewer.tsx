@@ -448,8 +448,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   };
 
-  const chatEnabled = !!currentStory?.chatWithAudience && !isOwnStory;
-  const chatPrompt = (currentStory?.chatPrompt as string) || 'Chat with your creator';
+  const chatEnabled = !!(currentStory?.chatWithAudience || (currentStory as any)?.chat_with_audience) && !isOwnStory;
+  const chatPrompt = String(currentStory?.chatPrompt || (currentStory as any)?.chat_prompt || 'Chat with your creator');
 
   const handleSendChatAudience = async () => {
     const msg = chatMsg.trim();

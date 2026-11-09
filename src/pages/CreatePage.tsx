@@ -4141,7 +4141,7 @@ const CreatePage = () => {
       {/* Publish progress: exact byte-level bar for every composer tab while
           one upload network is active (chunked flow reports real progress). */}
       {isUploading && uploadProgress && (
-        <div className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3 space-y-2" role="status" aria-live="polite">
+        <div className="fixed bottom-4 left-4 right-4 z-50 rounded-lg border border-primary/30 bg-background/95 backdrop-blur px-4 py-3 space-y-2 shadow-lg" role="status" aria-live="polite">
           <div className="flex items-center justify-between text-xs font-medium">
             <span className="text-primary">
               {uploadProgress.phase === 'screening'
