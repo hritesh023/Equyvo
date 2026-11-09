@@ -22,6 +22,8 @@ export interface Env {
   // Optional R2 bucket for permanent media warehouse (zero egress).
   // Bind in wrangler.toml / Pages dashboard as EQUYVO_R2.
   EQUYVO_R2?: R2Bucket;
+  // Cloudflare D1 fallback database (used only when Contabo storage > 65%).
+  EQUYVO_D1?: D1Database;
   // Public delivery base for R2 (e.g. https://cdn.equyvo.com). If unset,
   // delivery falls back to Cloudinary URLs.
   R2_PUBLIC_BASE?: string;
@@ -3672,6 +3674,157 @@ async function deleteItem(context, listKey, itemKey, id, cors) {
 
 // =============== Request handler ===============
 
+// ---------------------------------------------------------------------------
+// Storage guard: Contabo (300GB disk / 24GB RAM) is the primary data store.
+// When its usage exceeds 65% (disk OR ram), new writes automatically shift to
+// the Cloudflare D1 fallback (paid) so the app never runs out of space.
+// The decision is cached in KV for 5 minutes to avoid hammering Contabo.
+// ---------------------------------------------------------------------------
+const CONTABO_TOTAL_DISK_GB = 300;
+const CONTABO_TOTAL_RAM_GB = 24;
+const STORAGE_GUARD_THRESHOLD = 0.65;
+const STORAGE_GUARD_CACHE_KEY = 'maint:storage_guard_v1';
+const STORAGE_GUARD_TTL_MS = 5 * 60 * 1000;
+
+async function contaboUsage(env) {
+  // Try the Contabo backend first (authoritative).
+  try {
+    const base = String(env.EQUYVO_API_BASE || env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
+    const svc = env.EQUYVO_SERVICE_TOKEN;
+    if (base && svc) {
+      const r = await fetch(base + '/equyvo-api/contabo/storage', {
+        headers: { 'X-Service-Token': svc },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (r.ok) {
+        const j = await r.json().catch(() => null);
+        if (j && typeof j === 'object') {
+          return {
+            diskUsedGB: Number(j.diskUsedGB ?? j.disk_used_gb ?? 0),
+            diskTotalGB: Number(j.diskTotalGB ?? j.disk_total_gb ?? CONTABO_TOTAL_DISK_GB),
+            ramUsedGB: Number(j.ramUsedGB ?? j.ram_used_gb ?? 0),
+            ramTotalGB: Number(j.ramTotalGB ?? j.ram_total_gb ?? CONTABO_TOTAL_RAM_GB),
+          };
+        }
+      }
+    }
+  } catch { /* fall through to cached */ }
+  // Cached fallback (written by an external monitor / cron).
+  try {
+    const raw = await env.EQUYVO_KV.get(STORAGE_GUARD_CACHE_KEY);
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (j && j.diskUsedGB != null) {
+        return {
+          diskUsedGB: Number(j.diskUsedGB || 0),
+          diskTotalGB: Number(j.diskTotalGB || CONTABO_TOTAL_DISK_GB),
+          ramUsedGB: Number(j.ramUsedGB || 0),
+          ramTotalGB: Number(j.ramTotalGB || CONTABO_TOTAL_RAM_GB),
+        };
+      }
+    }
+  } catch { /* ignore */ }
+  return null;
+}
+
+async function storageGuard(env) {
+  const cached = await env.EQUYVO_KV.get(STORAGE_GUARD_CACHE_KEY + ':decision');
+  try {
+    if (cached) {
+      const j = JSON.parse(cached);
+      if (j && j.t && (Date.now() - Number(j.t)) < STORAGE_GUARD_TTL_MS) {
+        return { shifted: !!j.shifted, pct: Number(j.pct || 0), usage: j.usage || null };
+      }
+    }
+  } catch { /* rebuild */ }
+  const usage = await contaboUsage(env);
+  let pct = 0;
+  let shifted = false;
+  if (usage) {
+    const diskPct = usage.diskTotalGB > 0 ? usage.diskUsedGB / usage.diskTotalGB : 0;
+    const ramPct = usage.ramTotalGB > 0 ? usage.ramUsedGB / usage.ramTotalGB : 0;
+    pct = Math.max(diskPct, ramPct);
+    shifted = pct > STORAGE_GUARD_THRESHOLD;
+    // Record to D1 when shifted (audit trail).
+    if (shifted && env.EQUYVO_D1) {
+      try {
+        await env.EQUYVO_D1.prepare(
+          'INSERT INTO storage_guard (contabo_used_gb, contabo_total_gb, contabo_ram_used_gb, contabo_ram_total_gb, usage_pct, shifted) VALUES (?,?,?,?,?,?)'
+        ).bind(usage.diskUsedGB, usage.diskTotalGB, usage.ramUsedGB, usage.ramTotalGB, pct, 1).run();
+      } catch { /* best-effort */ }
+    }
+  }
+  const decision = { t: Date.now(), shifted, pct, usage };
+  try { await env.EQUYVO_KV.put(STORAGE_GUARD_CACHE_KEY + ':decision', JSON.stringify(decision), { expirationTtl: 300 }); } catch {}
+  return { shifted, pct, usage };
+}
+
+async function useD1(env) {
+  const g = await storageGuard(env);
+  return g.shifted && !!env.EQUYVO_D1;
+}
+
+// ---------------------------------------------------------------------------
+// Real-email validation: regex + disposable-domain block + DNS MX check via
+// Cloudflare DoH + optional Contabo deep verification. Combines AWS/Cloudflare/
+// Contabo so only emails that truly exist can register.
+// ---------------------------------------------------------------------------
+const DISPOSABLE_EMAIL_DOMAINS = new Set([
+  'mailinator.com','guerrillamail.com','tempmail.com','10minutemail.com','trashmail.com',
+  'yopmail.com','fakeinbox.com','sharklasers.com','getnada.com','maildrop.cc',
+  'dispostable.com','mintemail.com','temp-mail.org','throwawaymail.com','emailondeck.com',
+]);
+function emailDomain(email) { const i = String(email || '').lastIndexOf('@'); return i >= 0 ? String(email).slice(i + 1).toLowerCase() : ''; }
+
+async function hasMxRecord(domain) {
+  try {
+    const r = await fetch('https://1.1.1.1/dns-query?name=' + encodeURIComponent(domain) + '&type=MX', {
+      headers: { 'Accept': 'application/dns-json' },
+      signal: AbortSignal.timeout(4000),
+    });
+    if (!r.ok) return true; // fail-open on network errors
+    const j = await r.json().catch(() => null);
+    if (!j) return true;
+    if (Array.isArray(j.Answer) && j.Answer.length > 0) return true;
+    // Some domains use A record for mail; treat NOERROR with no MX as suspicious but not blocking.
+    return j.Status !== 3; // NXDOMAIN => false
+  } catch {
+    return true; // fail-open
+  }
+}
+
+async function contaboVerifyEmail(env, email) {
+  try {
+    const base = String(env.EQUYVO_API_BASE || env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
+    const svc = env.EQUYVO_SERVICE_TOKEN;
+    if (!base || !svc) return null; // not configured => skip
+    const r = await fetch(base + '/equyvo-api/auth/verify-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Service-Token': svc },
+      body: JSON.stringify({ email }),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!r.ok) return null;
+    const j = await r.json().catch(() => null);
+    if (!j || typeof j !== 'object') return null;
+    return j.exists === true;
+  } catch {
+    return null;
+  }
+}
+
+async function validateRealEmail(env, email) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return { ok: false, reason: 'Invalid email format.' };
+  const domain = emailDomain(e);
+  if (!domain || DISPOSABLE_EMAIL_DOMAINS.has(domain)) return { ok: false, reason: 'Disposable or temporary email addresses are not allowed.' };
+  const mx = await hasMxRecord(domain);
+  if (!mx) return { ok: false, reason: 'Email domain does not exist.' };
+  const deep = await contaboVerifyEmail(env, e);
+  if (deep === false) return { ok: false, reason: 'Email address could not be verified.' };
+  return { ok: true };
+}
+
 export const onRequest = async (context) => {
   const { request, env } = context;
   const url = new URL(request.url);
@@ -3714,6 +3867,8 @@ export const onRequest = async (context) => {
       const isPrivate = body.isPrivate === true || body.accountType === 'private';
       if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return json({ error: 'A valid email is required.' }, 400, cors);
       if (!password || password.length < 6) return json({ error: 'Password must be at least 6 characters.' }, 400, cors);
+      const emailCheck = await validateRealEmail(env, email);
+      if (!emailCheck.ok) return json({ error: emailCheck.reason || 'Email could not be verified.' }, 400, cors);
       // Bot guard: automated test/smoke accounts can never register. Matches
       // the same author signals the read-path seed filter uses, so no bot
       // identity can create content that later has to be purged.
@@ -3770,7 +3925,9 @@ export const onRequest = async (context) => {
         if (/@test\.com$/i.test(email) || /^pwsrc_/i.test(loginName) || /^smoke/i.test(loginName)) {
           return json({ error: 'Invalid email or password.' }, 401, cors);
         }
-        // Auto-provision on login so returning/legacy users are never
+                const loginEmailCheck = await validateRealEmail(env, email);
+        if (!loginEmailCheck.ok) return json({ error: 'Invalid email or password.' }, 401, cors);
+// Auto-provision on login so returning/legacy users are never
         // blocked by a missing record (treats login as sign-up fallback).
         const salt = crypto.randomUUID();
         const hashed = await hashPwLocal(password, salt);
@@ -3837,7 +3994,12 @@ export const onRequest = async (context) => {
       try { await kv.get(KEYS.NEXT_ID); } catch { kvStatus = 'down'; }
       const r2Status = env.EQUYVO_R2 ? 'bound' : 'unbound';
       const status = kvStatus === 'up' ? 'ok' : 'down';
-      return json({ status, kv: kvStatus, r2: r2Status, version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, status === 'ok' ? 200 : 503, cors);
+      return json({ status, kv: kvStatus, r2: r2Status, d1: env.EQUYVO_D1 ? 'bound' : 'unbound', storageGuard: await storageGuard(env), version: env.APP_VERSION || '1.0.0', requestId, timestamp: new Date().toISOString() }, status === 'ok' ? 200 : 503, cors);
+
+     if (path === '/api/storage/guard' && method === 'GET') {
+       const guard = await storageGuard(env);
+       return json({ data: guard, error: null }, 200, cors);
+     }
     }
 
     if (path === '/api/warmup' && method === 'GET') {

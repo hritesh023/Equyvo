@@ -20,6 +20,11 @@ preview_id = "6822c0d9813e4bc68724dec1b69593c6"
 binding = "EQUYVO_R2"
 bucket_name = "equyvo-media"
 
+# --- Cloudflare D1 fallback (used only when Contabo storage > 65%) ---
+[[d1_databases]]
+binding = "EQUYVO_D1"
+database_name = "equyvo-db"
+database_id = "af7ffe1a-d34e-41df-af3f-d9b539864655"
 # --- Production vars (set secrets via dashboard / `wrangler pages secret put`) ---
 # REQUIRED secrets (never commit, never expose with VITE_ prefix):
 #   CLOUDINARY_CLOUD_NAME, CLOUDINARY_UPLOAD_PRESET,
@@ -32,7 +37,7 @@ bucket_name = "equyvo-media"
 #   MAX_UPLOAD_MB= (optional global cap; per-plan caps always apply)
 #   ALLOWED_ORIGINS=https://equyvo.com,https://www.equyvo.com
 [vars]
-APP_VERSION = "1.2.86"
+APP_VERSION = "1.2.87"
 BILLING_BASE_URL = "https://api.acronous.com"
 # Reject unverified X-User-Id writes: callers must present a valid Cognito or
 # central Acronous JWT. Prevents account spoofing ("bad authentication" caused
