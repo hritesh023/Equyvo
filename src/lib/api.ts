@@ -581,6 +581,12 @@ export const api = {
       body: JSON.stringify({ id, forEveryone: !!forEveryone }),
     }),
 
+  chatClear: (peer: string) =>
+    request<{ data: { ok: boolean; clearedAt?: number }; error: null }>(`/chat/${encodeURIComponent(peer)}/clear`, {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }),
+
   chatMessages: (peer: string, limit = 100) =>
     request<{ data: { messages: any[] }; error: null }>(`/chat/${encodeURIComponent(peer)}/messages?limit=${limit}`),
 

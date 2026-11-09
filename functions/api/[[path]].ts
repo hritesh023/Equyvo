@@ -1515,8 +1515,18 @@ async function readThreadLedger(env, a, b, limit) {
   const merged = [...out.values()].sort(
     (x, y) => (new Date(x.createdAt).getTime() || 0) - (new Date(y.createdAt).getTime() || 0),
   );
+  // Honour a server-side "clear chat" marker so cleared messages never
+  // re-appear on any device after a pull/sync.
+  let clearedAt = 0;
+  try {
+    const raw = await env.EQUYVO_KV.get('chatcleared:' + pair);
+    clearedAt = raw ? (Number(raw) || 0) : 0;
+  } catch { clearedAt = 0; }
+  const visible = clearedAt
+    ? merged.filter((m) => (new Date(m.createdAt).getTime() || 0) > clearedAt)
+    : merged;
   const n = Math.min(300, Math.max(1, Number(limit) || 100));
-  return merged.slice(-n);
+  return visible.slice(-n);
 }
 
 /**
@@ -7073,6 +7083,23 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       }
       await putChatMessagePer(env, chatPairToken(actor.id, peer), m);
       return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    // POST /api/chat/:peer/clear ΓÇö wipe the thread history for BOTH participants
+    // (server-side clearedAt marker + legacy blob reset). Prevents cleared chats
+    // from re-appearing after a sync/pull on any device.
+    if (path.match(/^\/api\/chat\//) && path.endsWith('/clear') && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const rawPeer = decodeURIComponent(path.split('/api/chat/')[1].replace('/clear', '')).split('?')[0];
+      const peer = await canonicalAccountId(env, rawPeer);
+      if (!peer) return json({ error: 'Invalid peer' }, 400, cors);
+      const pair = chatPairToken(actor.id, peer);
+      const clearedAt = Date.now();
+      try { await env.EQUYVO_KV.put('chatcleared:' + pair, String(clearedAt)); } catch { /* ignore */ }
+      try { await writeChatMessages(env, actor.id, peer, []); } catch { /* ignore */ }
+      return json({ data: { ok: true, clearedAt }, error: null }, 200, cors);
     }
 
     if (path === '/api/chat/threads' && method === 'GET') {

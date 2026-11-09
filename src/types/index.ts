@@ -108,7 +108,7 @@ export interface Story {
   image: string;
   video?: string;
   audio?: string;
-  type?: 'image' | 'video';
+  type?: 'image' | 'video' | 'text-story' | 'text';
   time?: string;
   content?: string;
   userId?: string;
@@ -123,4 +123,8 @@ export interface Story {
   likes?: number;
   chatWithAudience?: boolean;
   chatPrompt?: string;
+  backgroundColor?: string;
+  background?: string;
+  textColor?: string;
+  color?: string;
 }

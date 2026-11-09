@@ -716,6 +716,15 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                 e.currentTarget.style.display = 'none';
               }}
             />
+          ) : (currentStory?.type === 'text-story' || currentStory?.backgroundColor || currentStory?.background || currentStory?.content) ? (
+            <div
+              className="story-image flex items-center justify-center"
+              style={{ backgroundColor: String(currentStory?.backgroundColor || currentStory?.background || '#000000') }}
+            >
+              <div className="px-6 text-center" style={{ color: String(currentStory?.textColor || currentStory?.color || '#FFFFFF') }}>
+                <p className="text-2xl md:text-3xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
+              </div>
+            </div>
           ) : (
             <div className="story-image flex items-center justify-center bg-black">
               <span className="text-white/60 text-sm">Media unavailable</span>

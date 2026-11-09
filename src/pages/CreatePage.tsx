@@ -680,6 +680,8 @@ const CreatePage = () => {
               content: String(s.content || ''),
               backgroundColor: String(s.backgroundColor || s.background || '#000000'),
               textColor: String(s.textColor || s.color || '#FFFFFF'),
+              chatWithAudience: s.chatWithAudience === true || s.chat_with_audience === true,
+              chatPrompt: String(s.chatPrompt || s.chat_prompt || 'Chat with your creator'),
               uploadDate: at,
               isPrivate: isPriv(s),
               views: num(s.views),
@@ -934,6 +936,8 @@ const CreatePage = () => {
     content: string;
     backgroundColor: string;
     textColor: string;
+    chatWithAudience?: boolean;
+    chatPrompt?: string;
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -941,8 +945,6 @@ const CreatePage = () => {
     comments: number;
     shares: number;
     expiresAt: Date;
-    chatWithAudience?: boolean;
-    chatPrompt?: string;
   }
 
   function getThumbnailFromUpload(result: { secureUrl: string; resourceType: string; variants?: { thumbnail?: string } | null } | null | undefined): string {
@@ -1577,7 +1579,7 @@ const CreatePage = () => {
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
-        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt });
+        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt });
         setIsUploading(false);
         if (textStoryErr) {
           showError('Saved locally but feed sync failed: ' + textStoryErr);
@@ -5520,8 +5522,8 @@ const CreatePage = () => {
 
       {/* Upload Loading Overlay */}
       {isUploading && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <Card className="p-8 text-center">
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[99999] pointer-events-auto">
+          <Card className="p-8 text-center max-w-sm mx-4">
             <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-primary" />
             <p className="text-lg font-semibold">Uploading your media...</p>
             <p className="text-sm text-muted-foreground mt-2">This may take a moment depending on file size</p>

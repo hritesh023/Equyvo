@@ -761,7 +761,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 if (!activeChat) return;
                 const ok = window.confirm('Clear all messages in this chat?');
                 if (!ok) return;
-                clearThread(activeChat.id);
+                void clearThread(activeChat.id);
                 refreshMsgs(activeChat.id);
                 refreshThreads();
               }}

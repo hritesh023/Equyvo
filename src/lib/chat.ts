@@ -221,6 +221,8 @@ export function ensureThread(peer: { id: string; name: string; avatar?: string }
     upsertThread(merged);
     return merged;
   }
+  let clearedAt: number | undefined;
+  try { clearedAt = Number(localStorage.getItem('equyvo_chat_cleared_' + id) || 0) || undefined; } catch { clearedAt = undefined; }
   const t: ChatThread = {
     id,
     peerId: String(peer.id || peer.name),
@@ -231,6 +233,7 @@ export function ensureThread(peer: { id: string; name: string; avatar?: string }
     lastMessage: '',
     timestamp: nowTime(),
     unread: 0,
+    clearedAt,
   };
   upsertThread(t);
   return t;
@@ -498,7 +501,10 @@ export async function pullThreadMessages(threadId: string): Promise<ChatMessage[
     const me = getStoredUser();
     const myId = me ? String(me.id || me.email || '') : '';
     const thread = readThreads().find((t) => t.id === threadId);
-    const clearedAt = Number(thread?.clearedAt || 0);
+    let clearedAt = Number(thread?.clearedAt || 0);
+    if (!clearedAt) {
+      try { clearedAt = Number(localStorage.getItem('equyvo_chat_cleared_' + threadId) || 0); } catch { clearedAt = 0; }
+    }
     const filtered = [...byId.values()].filter((m) =>
       !(Array.isArray(m.deletedFor) && myId && m.deletedFor.includes(myId)) &&
       (!clearedAt || Number(m?.createdAt || 0) > clearedAt),
@@ -553,10 +559,14 @@ export function deleteThread(threadId: string): void {
 }
 
 /** Clear all messages in a thread but keep the thread itself. */
-export function clearThread(threadId: string): void {
+export async function clearThread(threadId: string): Promise<void> {
   if (!threadId) return;
   try {
-    const clearedAt = Date.now();
+    let clearedAt = Date.now();
+    try {
+      const res = await api.chatClear(threadId);
+      if (res?.data?.clearedAt) clearedAt = Number(res.data.clearedAt);
+    } catch { /* best-effort: keep local clear */ }
     const all = readMessages();
     all[threadId] = [];
     writeMessages(all);
@@ -569,6 +579,7 @@ export function clearThread(threadId: string): void {
       // Persist clearedAt even if the thread row is recreated later.
       try { localStorage.setItem('equyvo_chat_cleared_' + threadId, String(clearedAt)); } catch { /* ignore */ }
     }
+    try { localStorage.setItem('equyvo_chat_cleared_' + threadId, String(clearedAt)); } catch { /* ignore */ }
     emitChatUpdated(threadId);
   } catch {
     /* ignore */
