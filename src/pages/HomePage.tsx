@@ -244,6 +244,7 @@ const HomePage = () => {
 
   // Real stories data from the API.
   const [stories, setStories] = useState<Story[]>([]);
+  const [viewerStories, setViewerStories] = useState<Story[]>([]);
   const [isLoadingStories, setIsLoadingStories] = useState(true);
 
   // Fetch stories + refresh live when a story is uploaded
@@ -376,13 +377,24 @@ const HomePage = () => {
   }, []);
 
   // Story handlers
+  const storyOwnerKey = (s: Story): string =>
+    String(ownerIdOf(s) || (s as any).userId || (s as any).user_id || (s as any).user || '').trim().toLowerCase();
+
   const handleStoryClick = (index: number) => {
-    setCurrentStoryIndex(index);
+    const picked = stories[index];
+    if (!picked) return;
+    const key = storyOwnerKey(picked);
+    const group = key
+      ? stories.filter((s) => storyOwnerKey(s) === key)
+      : [picked];
+    const list = group.length ? group : [picked];
+    setViewerStories(list);
+    setCurrentStoryIndex(0);
     setShowStoryViewer(true);
   };
 
   const handleNextStory = () => {
-    if (currentStoryIndex < stories.length - 1) {
+    if (currentStoryIndex < viewerStories.length - 1) {
       setCurrentStoryIndex(prev => prev + 1);
     } else {
       setShowStoryViewer(false);
@@ -943,8 +955,19 @@ const HomePage = () => {
                   <p className="text-xs lg:text-sm">No stories available yet</p>
                 </div>
               ) : (
-                // Real stories
-                stories.map((story, index) => (
+                // Real stories — one card per account (a creator's multiple
+                // stories collapse into a single story ring, like Instagram).
+                (() => {
+                  const seen = new Set<string>();
+                  const cards: { story: Story; index: number }[] = [];
+                  stories.forEach((s, i) => {
+                    const k = storyOwnerKey(s);
+                    if (seen.has(k)) return;
+                    seen.add(k);
+                    cards.push({ story: s, index: i });
+                  });
+                  return cards;
+                })().map(({ story, index }) => (
                   <div 
                     key={story.id} 
                     className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0 cursor-pointer group"
@@ -1149,7 +1172,7 @@ const HomePage = () => {
       {/* Story Viewer */}
       {showStoryViewer && (
         <StoryViewer
-          stories={stories}
+          stories={viewerStories.length ? viewerStories : stories}
           currentIndex={currentStoryIndex}
           onClose={handleCloseStoryViewer}
           onNext={handleNextStory}
