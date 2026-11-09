@@ -359,7 +359,20 @@ const DiscoverPage = () => {
     longform: ['#tutorial', '#documentary', '#review', '#interview', '#podcast', '#course', '#webinar', '#deepdive']
   };
 
-  const currentTags = sectionTags[activeTab as keyof typeof sectionTags] || [];
+  const [trendingTags, setTrendingTags] = useState<string[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch('/api/tags/trending?limit=12');
+        const j = await res.json().catch(() => null);
+        const tags = Array.isArray(j?.data?.tags) ? j.data.tags : [];
+        if (!cancelled && tags.length) setTrendingTags(tags);
+      } catch { /* keep defaults */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const currentTags = trendingTags.length ? trendingTags : (sectionTags[activeTab as keyof typeof sectionTags] || []);
 
   // Live Discover feed — was hardcoded to [] so uploads never appeared.
   // Strict routing: only durable media (photo/video/moment/thought/live),

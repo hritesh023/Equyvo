@@ -5434,6 +5434,36 @@ const adultish = /adult|nudity|porn|graphic|gore|explicit|sexual/.test(catStr);
       return json({ data: { suggestions: fb.slice(0, 8), source: 'local', personalized: top.length > 0 } }, 200, cors);
     }
 
+    // TRENDING HASHTAGS
+    if (path === '/api/tags/trending' && method === 'GET') {
+      const limit = clamp(parseInt(url.searchParams.get('limit') || '12', 10), 1, 50);
+      const viewer = await getViewer(request, env);
+      const indexJson = await kv.get(KEYS.CONTENT_INDEX);
+      const index = indexJson ? JSON.parse(indexJson) : [];
+      const base = await filterVisibleItems(env, viewer, index.map((e) => ({
+        ...e, ownerId: e.ownerId || e.userId || e.user_id || e.authorId,
+      })));
+      const pops = {};
+      await Promise.all(base.slice(0, 200).map(async (it) => {
+        try { const r = await kv.get(KEYS.POP(it.id)); if (r) pops[it.id] = parseInt(r, 10) || 0; } catch {}
+      }));
+      const weights = new Map();
+      for (const it of base) {
+        const tags = Array.isArray(it.tags) ? it.tags : [];
+        const engagement = (Number(it.views) || 0) + (Number(it.likes ?? it.likes_count) || 0) * 3 + (Number(pops[it.id]) || 0) * 5 + aiRecency(it.publishedAt || it.createdAt) * 2;
+        for (const t of tags) {
+          const tag = String(t || '').trim().replace(/^#+/, '');
+          if (!tag) continue;
+          weights.set(tag, (weights.get(tag) || 0) + Math.max(1, engagement));
+        }
+      }
+      const sorted = [...weights.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([t]) => '#' + t);
+      if (!sorted.length) {
+        return json({ data: { tags: ['#trending', '#explore', '#foryou'], source: 'local' }, error: null }, 200, cors);
+      }
+      return json({ data: { tags: sorted, source: 'local' }, error: null }, 200, cors);
+    }
+
     // ---- FOLLOW GRAPH (server-side source of truth) ----
     // POST /api/follow { target } ΓÇö follow a public account directly; for a
     // private account this creates a pending request instead.
