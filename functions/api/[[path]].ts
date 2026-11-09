@@ -6303,10 +6303,16 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       const rawPartIndex = parseInt(url.searchParams.get('partIndex') || '', 10) || 0;
       const partIndex = clamp(rawPartIndex, 1, MAX_MULTIPART_PARTS);
       let session = null;
-      try {
-        const raw = await kv.get('upl:' + uploadId);
-        if (raw) session = JSON.parse(raw);
-      } catch { session = null; }
+      for (let attempt = 0; attempt < 5 && !session; attempt++) {
+        try {
+          const raw = await kv.get('upl:' + uploadId);
+          if (raw) { session = JSON.parse(raw); break; }
+        } catch { session = null; }
+        if (!session) await new Promise((r) => setTimeout(r, 150 * (attempt + 1)));
+      }
+      if (!session) {
+        try { const raw = await kv.get('upl:' + uploadId); if (raw) session = JSON.parse(raw); } catch { session = null; }
+      }
       if (!session || session.actorId !== actor.id) {
         return json({ error: 'Upload session not found. Restart the upload.' , code: 'UPLOAD_SESSION_GONE' }, 404, cors);
       }
@@ -6354,7 +6360,9 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       try {
         session.parts[String(partIndex)] = { etag, hash: partHash, size: Number(file.size || 0) };
         await kv.put('upl:' + uploadId, JSON.stringify(session), { expirationTtl: 6 * 60 * 60 });
-      } catch { /* best-effort progress tracking */ }
+      } catch (e) {
+        return json({ error: 'Chunk progress could not be saved. Retry this part.', code: 'UPLOAD_PART_SAVE_FAILED' }, 502, cors);
+      }
       return json({ data: { partIndex, etag, bytes: Number(file.size || 0) }, error: null }, 200, cors);
     }
 
@@ -6375,12 +6383,22 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         return json({ error: 'Upload session not found. Restart the upload.', code: 'UPLOAD_SESSION_GONE' }, 404, cors);
       }
       const expectedParts = Math.ceil(Number(session.size || 0) / Number(session.partSize || UPLOAD_PART_SIZE));
-      const partEntries = Object.entries(session.parts || {})
+      let partsSource = session.parts || {};
+      if (Array.isArray(payload.parts) && payload.parts.length > 0) {
+        const fromClient = {};
+        for (const p of payload.parts) {
+          const idx = Number(p && (p.partIndex || p.i || p.index));
+          const etag = String((p && (p.etag || p.e)) || '');
+          if (idx > 0 && etag) fromClient[String(idx)] = { etag, size: Number((p && p.size) || 0) };
+        }
+        if (Object.keys(fromClient).length > 0) partsSource = fromClient;
+      }
+      const partEntries = Object.entries(partsSource || {})
         .map(([k, v]) => ({ i: parseInt(k, 10), etag: (v && v.etag) || '', hash: (v && v.hash) || '', size: (v && v.size) || 0 }))
         .filter((p) => p.i > 0 && p.etag)
         .sort((a, b) => a.i - b.i);
       if (!Number.isFinite(expectedParts) || expectedParts < 1 || partEntries.length !== expectedParts || partEntries.some((p, index) => p.i !== index + 1)) {
-        return json({ error: 'Some upload chunks are missing. Retry the missing parts.', code: 'UPLOAD_PARTS_INCOMPLETE' }, 400, cors);
+        return json({ error: 'Some upload chunks are missing. Retry the missing parts. (parts=' + partEntries.length + ' expected=' + expectedParts + ' client=' + (Array.isArray(payload.parts)?payload.parts.length:0) + ')', code: 'UPLOAD_PARTS_INCOMPLETE' }, 400, cors);
       }
       if (!partEntries.length) {
         return json({ error: 'No chunks received. Please restart the upload.', code: 'UPLOAD_NO_PARTS' }, 400, cors);
@@ -6416,7 +6434,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);
-          obj = await mpu.completeMultipartUpload(partEntries.map((p) => ({ partNumber: p.i, etag: p.etag })));
+          obj = await mpu.complete(partEntries.map((p) => ({ partNumber: p.i, etag: p.etag })));
           finalizeErr = null;
           break;
         } catch (e) {

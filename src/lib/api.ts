@@ -322,6 +322,7 @@ async function uploadChunked(
   const partSize = started.partSize || CHUNK_PART_SIZE;
   const totalParts = Math.ceil(total / partSize);
   let uploaded = 0;
+  const partEtags: Array<{ partIndex: number; etag: string }> = [];
   onProgress(0, 'uploading');
   try {
     for (let partIndex = 1; partIndex <= totalParts; partIndex++) {
@@ -336,6 +337,8 @@ async function uploadChunked(
             // Session gone / quota answer — retrying cannot help.
             throwUploadError(res.error, (/UPLOAD_SESSION_GONE/.test(res.error) ? 'UPLOAD_SESSION_GONE' : undefined));
           }
+          const etag = (res.data && res.data.etag) || '';
+          partEtags.push({ partIndex, etag });
           lastErr = null;
           break;
         } catch (e) {
@@ -355,7 +358,7 @@ async function uploadChunked(
       if (attempt > 0) await new Promise((r) => setTimeout(r, 400 * attempt));
       comp = await request<{ data?: UploadResult; error?: string }>('/upload/complete', {
         method: 'POST',
-        body: JSON.stringify({ uploadId, duration: meta?.duration }),
+        body: JSON.stringify({ uploadId, duration: meta?.duration, parts: partEtags }),
       });
       if (!comp.error && comp.data) { lastErr = null; break; }
       lastErr = comp.error || 'Upload finished without a result';
