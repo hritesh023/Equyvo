@@ -34,7 +34,8 @@ import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { sharePost } from '@/utils/share';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
 import { sendHumanEval, evalVote, evalLike } from '@/lib/human-eval';
-import InFeedAdGate from '@/components/ads/InFeedAdGate';
+// Native advanced ad is now shown once at app open (see App.tsx) instead of
+// being re-injected into the feed on every navigation.
 
 const HomePage = () => {
   const navigate = useNavigate();
@@ -1064,9 +1065,7 @@ const HomePage = () => {
           />
         )}
 
-        {/* Sponsored — one calm native slot between sections. Never on video,
-            never auto-playing: just a dismissible card that keeps the feed free. */}
-        <InFeedAdGate placement="home-between" />
+        {/* Native advanced ad moved to a single app-open slot (App.tsx). */}
 
         {/* Main Feed with For You, Following, and optionally Chats tabs */}
         <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as 'foryou' | 'following' | 'chats')} className="w-full">

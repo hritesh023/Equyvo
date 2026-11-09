@@ -23,7 +23,7 @@ import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-n
 import { shareItem } from '@/utils/share';
 import { isBlockedContent } from '@/utils/delete';
 import type { FullscreenContent, ContentType } from '@/types';
-import InFeedAdGate from '@/components/ads/InFeedAdGate';
+// Native advanced ad is now shown once at app open (see App.tsx).
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
 import { resolveMediaFields } from '@/lib/media';
 import { toCount } from '@/lib/count';
@@ -1477,11 +1477,7 @@ const DiscoverPage = () => {
         </TabsContent>
       </Tabs>
 
-      {/* Sponsored — single calm native slot below discovery content.
-          Never overlays video, never auto-plays. */}
-      <div className="mt-8 max-w-2xl mx-auto">
-        <InFeedAdGate placement="discover-bottom" />
-      </div>
+      {/* Native advanced ad moved to a single app-open slot (App.tsx). */}
       
       {/* Fullscreen Viewer */}
       {fullscreenContent && (

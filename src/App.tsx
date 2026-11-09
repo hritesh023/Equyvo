@@ -31,6 +31,7 @@ import { useIsMobile } from './hooks/use-mobile';
 import { useIsTablet } from './hooks/use-tablet';
 import { useNavMode } from './hooks/use-nav-mode';
 import { initializeAds } from './lib/admob-service';
+import AppOpenAd from './components/AppOpenAd';
 import { useAdPlan } from './hooks/use-ad-plan';
 import { useInterstitialAds } from './hooks/use-interstitial-ads';
 import { initBackNavigation, setGoBack, trackNavigation } from './lib/back-navigation';
@@ -351,6 +352,7 @@ const AppContent = () => {
           overlaying content. Desktop/tablet uses the top nav instead. */}
       {shouldShowNavbar && !chatOpen && !navHidden && <MobileBottomNav />}
       <Toaster />
+      <AppOpenAd />
     </div>
   </div>
   );

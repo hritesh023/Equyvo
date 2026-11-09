@@ -22,6 +22,7 @@ interface NativeAdCardProps {
   placement: string;
   compact?: boolean;
   className?: string;
+  onDismiss?: () => void;
 }
 
 const DISMISS_KEY = 'equyvo_dismissed_ads';
@@ -37,6 +38,7 @@ const NativeAdCard: React.FC<NativeAdCardProps> = ({
   placement,
   compact = false,
   className = '',
+  onDismiss,
 }) => {
   const navigate = useNavigate();
   const [ad, setAd] = useState<NativeAdData | null>(null);
@@ -92,6 +94,7 @@ const NativeAdCard: React.FC<NativeAdCardProps> = ({
     } catch {
       /* ignore */
     }
+    try { onDismiss?.(); } catch { /* ignore */ }
   };
 
   const handleCta = () => {

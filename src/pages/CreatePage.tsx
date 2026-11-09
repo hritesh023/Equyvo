@@ -502,23 +502,11 @@ const CreatePage = () => {
   useEffect(() => {
     try { (window as any).__equyvoUploading = isUploading; } catch { /* ignore */ }
   }, [isUploading]);
-  // Lock background scroll while the upload overlay is open so the page cannot
-  // be scrolled into an empty spacer area (upload progress layout glitch).
-  useEffect(() => {
-    if (!isUploading) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = prev; };
-  }, [isUploading]);
-  // Hardware/system-back busy guard: while an upload runs, a stray back press
-  // can never silently leave the page and lose progress — the coordinator
-  // shows "press back again"; a deliberate second press still lets them go.
-  useEffect(() => {
-    if (isUploading) {
-      setAppBusy(true);
-      return () => setAppBusy(false);
-    }
-  }, [isUploading]);
+  // Uploads no longer lock the whole app: only the Create page shows progress,
+  // and navigation to other pages is allowed. The upload itself runs in the
+  // background and continues even if this page is unmounted, so progress is
+  // never lost by navigating away.
+  // (No body overflow lock, no global busy guard.)
   // Publish-progress bar state (exact byte progress from the upload runner).
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(null);
   // Plan caps for pre-publish validation (size / length) + upgrade hints.
@@ -5530,11 +5518,11 @@ const CreatePage = () => {
 
       {/* Upload Loading Overlay */}
       {isUploading && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-[99999] pointer-events-auto">
-          <Card className="p-8 text-center max-w-sm mx-4">
-            <Loader2 className="h-10 w-10 animate-spin mx-auto mb-4 text-primary" />
-            <p className="text-lg font-semibold">Uploading your media...</p>
-            <p className="text-sm text-muted-foreground mt-2">This may take a moment depending on file size</p>
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[99999] pointer-events-none">
+          <Card className="p-4 text-center max-w-sm mx-4 shadow-2xl pointer-events-auto">
+            <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
+            <p className="text-sm font-semibold">Uploading your media...</p>
+            <p className="text-xs text-muted-foreground mt-1">This may take a moment depending on file size</p>
           </Card>
         </div>
       )}
