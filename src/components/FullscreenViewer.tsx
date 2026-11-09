@@ -1677,7 +1677,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                <SaveButton postId={viewerContentId} content={actualContent} />
             </div>
             
-            {actualContent.creatorId && onFollow && (
+            {actualContent.creatorId && onFollow && !(String((JSON.parse(localStorage.getItem('userProfile')||'{}').id)||'').toLowerCase() === String(actualContent.creatorId||'').toLowerCase()) && (
               <Button
                 variant={followedCreators.has(actualContent.creatorId) ? "default" : "outline"}
                 size="sm"
@@ -1798,7 +1798,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                <SaveButton postId={viewerContentId} content={actualContent} />
             </div>
             
-            {actualContent.creatorId && onFollow && (
+            {actualContent.creatorId && onFollow && !(String((JSON.parse(localStorage.getItem('userProfile')||'{}').id)||'').toLowerCase() === String(actualContent.creatorId||'').toLowerCase()) && (
               <Button
                 variant={followedCreators.has(actualContent.creatorId) ? "default" : "outline"}
                 size="sm"

@@ -120,6 +120,17 @@ const FollowButton: React.FC<FollowButtonProps> = ({
     }
   };
 
+  // Never render a follow button for the signed-in user's own account.
+  try {
+    const me = getStoredUser();
+    const meId = String(me?.id || '').trim().toLowerCase();
+    const meName = String(me?.username || me?.fullName || '').trim().toLowerCase();
+    const target = String(serverTarget || key || '').trim().toLowerCase();
+    if (me && target && (target === meId || (meName && target === meName))) {
+      return null;
+    }
+  } catch { /* ignore */ }
+
   return (
     <Button
       variant={isFollowing ? 'secondary' : variant}
