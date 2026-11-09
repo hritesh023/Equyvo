@@ -63,15 +63,49 @@ export function isOwnContent(
   }
   if (!mine.size) return false;
 
-  const theirs = new Set<string>(ownerIdentities(item ?? undefined));
-  if (opts?.postOwnerId) theirs.add(norm(opts.postOwnerId));
-  if (opts?.postUserId) theirs.add(norm(opts.postUserId));
-  if (!theirs.size) return false;
+  const strongFields = [
+    (item as any)?.ownerId,
+    (item as any)?.userId,
+    (item as any)?.user_id,
+    (item as any)?.authorId,
+    (item as any)?.creatorId,
+    opts?.postOwnerId,
+    opts?.postUserId,
+  ].map(norm).filter(Boolean);
 
-  for (const id of theirs) {
-    if (mine.has(id)) return true;
+  const mineStrong = new Set([
+    ...myIdentities().filter((x) => x && x.length > 8), // ids/emails, not short names
+  ]);
+  try {
+    const me = getStoredUser();
+    if (me?.id) mineStrong.add(norm(me.id));
+    if (me?.email) mineStrong.add(norm(me.email));
+  } catch { /* ignore */ }
+  if (opts?.currentUserId) mineStrong.add(norm(opts.currentUserId));
+
+  // When strong (account-id) fields exist, ONLY those decide ownership. This
+  // prevents a shared display name from falsely attributing one account's
+  // content to another account on the same or a different device.
+  if (strongFields.length) {
+    return strongFields.some((id) => mineStrong.has(id));
   }
-  return false;
+
+  // Legacy fallback: only display-name fields, and only when no account id is
+  // available anywhere on the item.
+  const legacyFields = [
+    (item as any)?.creator,
+    (item as any)?.user,
+    (item as any)?.username,
+    (item as any)?.handle,
+  ].map(norm).filter(Boolean);
+  if (!legacyFields.length) return false;
+  const mineNames = new Set(myIdentities().map(norm));
+  try {
+    const me = getStoredUser();
+    if ((me as { username?: string } | null)?.username) mineNames.add(norm((me as { username?: string }).username));
+    if (me?.email) mineNames.add(norm(String(me.email).split('@')[0]));
+  } catch { /* ignore */ }
+  return legacyFields.some((id) => mineNames.has(id));
 }
 
 /** Preferred stable id of the current user for API ownership checks. */

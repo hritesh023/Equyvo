@@ -50,6 +50,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const [progress, setProgress] = useState(0);
   const [comment, setComment] = useState('');
   const [chatOpen, setChatOpen] = useState(false);
+  const chatOpenRef = useRef(false);
+  useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
   const [chatMsg, setChatMsg] = useState('');
   const [chatSending, setChatSending] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
@@ -346,6 +348,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       const increment = (interval / duration) * 100;
       
       progressIntervalRef.current = setInterval(() => {
+        if (chatOpenRef.current) return;
         setProgress(prev => {
           const newProgress = prev + increment;
           
@@ -708,6 +711,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                       }
                     }}
                     onEnded={() => {
+                      if (chatOpenRef.current) return;
                       if (currentIndex < stories.length - 1) onNext(); else onClose();
                     }}
                   />
@@ -814,6 +818,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           aria-label="Next story"
           onClick={(e) => {
             e.stopPropagation();
+            if (chatOpenRef.current) return;
             if (currentIndex < stories.length - 1) onNext();
             else onClose();
           }}

@@ -502,6 +502,14 @@ const CreatePage = () => {
   useEffect(() => {
     try { (window as any).__equyvoUploading = isUploading; } catch { /* ignore */ }
   }, [isUploading]);
+  // Lock background scroll while the upload overlay is open so the page cannot
+  // be scrolled into an empty spacer area (upload progress layout glitch).
+  useEffect(() => {
+    if (!isUploading) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, [isUploading]);
   // Hardware/system-back busy guard: while an upload runs, a stray back press
   // can never silently leave the page and lose progress — the coordinator
   // shows "press back again"; a deliberate second press still lets them go.
