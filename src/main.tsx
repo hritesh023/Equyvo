@@ -4,6 +4,15 @@ import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./globals.css";
 
+// Disable copy/cut/paste inside the app for content protection.
+try {
+  const block = (e: Event) => { e.preventDefault(); e.stopPropagation(); };
+  document.addEventListener('copy', block, true);
+  document.addEventListener('cut', block, true);
+  document.addEventListener('paste', block, true);
+  document.addEventListener('contextmenu', block, true);
+} catch { /* ignore */ }
+
 /*
  * GLOBAL MEDIA FAILSAFE.
  *

@@ -820,10 +820,24 @@ const DiscoverPage = () => {
                 <CardContent className="p-4">
                   <div className="flex gap-4">
                     <div className="w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden bg-black">
-                      <DiscoverImg
-                        src={item.thumbnail || item.image}
-                        className="w-full h-full object-contain"
-                      />
+                      {item.thumbnail || item.image ? (
+                        <DiscoverImg
+                          src={item.thumbnail || item.image}
+                          className="w-full h-full object-contain"
+                        />
+                      ) : item.videoUrl ? (
+                        <video
+                          src={item.videoUrl}
+                          className="w-full h-full object-cover"
+                          muted
+                          playsInline
+                          preload="metadata"
+                        />
+                      ) : (
+                        <div className={`flex items-center justify-center bg-muted w-full h-full`}>
+                          <Image className="w-8 h-8 text-muted-foreground/50" />
+                        </div>
+                      )}
                     </div>
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-2">
@@ -848,6 +862,18 @@ const DiscoverPage = () => {
                          item.contentType === 'video' ? `▶️ Video content from ${item.creator} - watch this amazing video` :
                          `📷 Photo by ${item.creator} - stunning visual content`}
                       </p>
+                      <button
+                        type="button"
+                        className="text-xs text-primary underline underline-offset-2 mb-2"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const text = encodeURIComponent(item.title || '');
+                          const target = (navigator.language || 'en').split('-')[0];
+                          window.open(`https://translate.google.com/?sl=auto&tl=${target}&text=${text}&op=translate`, '_blank', 'noopener,noreferrer');
+                        }}
+                      >
+                        Translate
+                      </button>
                       <div className="flex items-center gap-4 text-sm text-muted-foreground">
                         <span className="flex items-center gap-1">
                           <ThumbsUp className="w-4 h-4" /> {toCount(postLikes.get(item.id) ?? item.likes)}

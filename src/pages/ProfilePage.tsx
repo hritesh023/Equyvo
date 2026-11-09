@@ -5,6 +5,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Play, Camera, Volume2, VolumeX, Trash, AlertTriangle, BadgeCheck } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import ContentManagementTab from '@/components/ContentManagementTab';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -1496,6 +1497,9 @@ const ProfilePage = () => {
           <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
           <TabsTrigger value="thoughts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Thoughts</TabsTrigger>
           {isSelfView && (
+            <TabsTrigger value="manage" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Manage</TabsTrigger>
+          )}
+          {isSelfView && (
             <>
               <TabsTrigger value="history" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">History</TabsTrigger>
               <TabsTrigger value="saved" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Saved</TabsTrigger>
@@ -2162,6 +2166,12 @@ const ProfilePage = () => {
             </div>
           )}
         </TabsContent>
+
+        {isSelfView && (
+          <TabsContent value="manage" className="mt-6 space-y-4">
+            <ContentManagementTab userId={userId} isSelf={isSelfView} />
+          </TabsContent>
+        )}
 
         {isSelfView && (
           <TabsContent value="history" className="mt-6 space-y-4">

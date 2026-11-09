@@ -553,6 +553,34 @@ const CreatePage = () => {
   // enforces it for every account on every device.
   const [contentVisibility, setContentVisibilityState] = useState<'public' | 'followers' | 'private'>('public');
 
+  // Auto-save draft (Gmail-style): restore any in-progress draft on mount and
+  // persist the latest form state on unmount/navigation so an accidental swipe
+  // never wipes what the user was writing.
+  const draftRef = useRef<any>({});
+  useEffect(() => {
+    draftRef.current = { thoughtContent, photoCaption, videoCaption, momentContent, textStoryContent, liveTitle, liveDescription };
+  });
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('equyvo_create_draft_autosave');
+      if (raw) {
+        const d = JSON.parse(raw);
+        if (d.thoughtContent) setThoughtContent(d.thoughtContent);
+        if (d.photoCaption) setPhotoCaption(d.photoCaption);
+        if (d.videoCaption) setVideoCaption(d.videoCaption);
+        if (d.momentContent) setMomentContent(d.momentContent);
+        if (d.textStoryContent) setTextStoryContent(d.textStoryContent);
+        if (d.liveTitle) setLiveTitle(d.liveTitle);
+        if (d.liveDescription) setLiveDescription(d.liveDescription);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  useEffect(() => {
+    return () => {
+      try { localStorage.setItem('equyvo_create_draft_autosave', JSON.stringify(draftRef.current || {})); } catch { /* ignore */ }
+    };
+  }, []);
+
   // Uploads are public ("Everyone") by default on every account, so a fresh
   // create session never silently defaults to a restricted audience.
   useEffect(() => {

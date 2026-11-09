@@ -1691,3 +1691,6 @@ html.cap-native {
 .equyvo-compact main .container {
   max-width: 72rem;
 }
+
+* { -webkit-user-select: none; user-select: none; }
+input, textarea { -webkit-user-select: text; user-select: text; }
