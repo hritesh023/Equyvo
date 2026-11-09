@@ -396,10 +396,7 @@ export async function screenMedia(
       signal,
     }), SAMPLE_TIMEOUT_MS + 4000);
     if (res.status === 401 || res.status === 403) {
-       // Auth hiccup: fail open so uploads aren't blocked by a screening
-       // round-trip that couldn't authenticate. The server still enforces
-       // policy at publish time.
-       return { verdict: 'allow', checked: false };
+       return { verdict: 'block', category: 'unspecified', checked: false, message: 'Please sign in again before uploading. Content cannot be posted without the safety check.' };
      }
      if (!res.ok) return { verdict: 'allow', checked: false };
     const data = await res.json().catch(() => null);

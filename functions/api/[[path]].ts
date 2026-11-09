@@ -4682,11 +4682,16 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
             if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';
           }
         } catch { /* fall through to fail-open */ }
-        // AI vision is best-effort. Fail-open on infra failure.
-        if (verdict === 'allow' && !confirmed && samples.length > 0) {
-          // no-op: allow
+        // AI vision is best-effort. If media was supplied but the AI eye did
+        // not actually run, do NOT let it through unaudited.
+        const isImageFile = /\.(jpe?g|png|gif|webp|bmp)$/i.test(filename);
+        if (!confirmed && samples.length > 0 && isImageFile) {
+          verdict = 'review';
+          if (!category) category = 'unspecified';
         }
       }
+      const isMediaFile = /\.(jpe?g|png|gif|webp|bmp|mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
+      if (isMediaFile && samples.length === 0) { verdict = 'review'; if (!category) category = 'unspecified'; }
       if (verdict !== 'allow' && !category) category = 'unspecified';
       const message = verdict === 'block'
         ? 'This content isnΓÇÖt allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media). It was not added.'

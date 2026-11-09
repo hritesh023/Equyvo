@@ -4165,7 +4165,7 @@ const CreatePage = () => {
       {/* Publish progress: exact byte-level bar for every composer tab while
           one upload network is active (chunked flow reports real progress). */}
       {isUploading && uploadProgress && (
-        <div className="fixed bottom-4 left-4 right-4 z-50 rounded-lg border border-primary/30 bg-background/95 backdrop-blur px-4 py-3 space-y-2 shadow-lg" role="status" aria-live="polite">
+        <div className="fixed bottom-24 left-4 right-4 z-50 rounded-lg border border-primary/30 bg-background/95 backdrop-blur px-4 py-3 space-y-2 shadow-lg" role="status" aria-live="polite">
           <div className="flex items-center justify-between text-xs font-medium">
             <span className="text-primary">
               {uploadProgress.phase === 'screening'
@@ -5546,7 +5546,7 @@ const CreatePage = () => {
 
       {/* Upload Loading Overlay */}
       {isUploading && (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[99999] pointer-events-none">
+        <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[99999] pointer-events-none">
           <Card className="p-4 text-center max-w-sm mx-4 shadow-2xl pointer-events-auto">
             <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
             <p className="text-sm font-semibold">Uploading your media...</p>
