@@ -7,7 +7,7 @@ import { DisplayProvider } from './lib/display';
 import Navbar, { MobileBottomNav } from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
-
+import GlobalUploadProgress from './components/GlobalUploadProgress';
 import ErrorBoundary from './components/ErrorBoundary'; 
 import SplashScreen from './components/SplashScreen'; 
 import { NetworkProvider } from './contexts/NetworkContext';
@@ -353,6 +353,7 @@ const AppContent = () => {
       {shouldShowNavbar && !chatOpen && !navHidden && <MobileBottomNav />}
       <Toaster />
       <AppOpenAd />
+      <GlobalUploadProgress />
     </div>
   </div>
   );

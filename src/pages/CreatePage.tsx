@@ -20,7 +20,7 @@ import { setContentVisibility } from '@/utils/visibility';
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
-import api, { type UploadProgress, type UploadResult } from '@/lib/api';
+import { setUploadState } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
 import { useEntitlements } from '@/hooks/use-entitlements';
@@ -503,13 +503,16 @@ const CreatePage = () => {
     try { (window as any).__equyvoUploading = isUploading; } catch { /* ignore */ }
   }, [isUploading]);
   // Uploads no longer lock the whole app: only the Create page shows progress,
-  // and navigation to other pages is allowed. The upload itself runs in the
-  // background and continues even if this page is unmounted, so progress is
+  // and navigation to other pages is allowed. The upload itself runs in the  // background and continues even if this page is unmounted, so progress is
   // never lost by navigating away.
   // (No body overflow lock, no global busy guard.)
   // Publish-progress bar state (exact byte progress from the upload runner).
   const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(null);
-  // Plan caps for pre-publish validation (size / length) + upgrade hints.
+  // Mirror local upload state into the global store so progress survives
+  // navigation away from this page (uploads run in the background).
+  useEffect(() => {
+    setUploadState({ isUploading, progress: uploadProgress ? { pct: uploadProgress.pct, phase: String(uploadProgress.phase) } : null });
+  }, [isUploading, uploadProgress]);  // Plan caps for pre-publish validation (size / length) + upgrade hints.
   const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
   const { entitlements: planEntitlements } = useEntitlements();
   const [livePortrait, setLivePortrait] = useState(false);

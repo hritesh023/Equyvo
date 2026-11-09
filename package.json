@@ -1,8 +1,7 @@
 {
   "name": "vite_react_shadcn_ts",
   "private": true,
-  "version": "1.2.92",
-  "type": "module",
+  "version": "1.2.93",  "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:api": "wrangler pages dev dist --port 8788",

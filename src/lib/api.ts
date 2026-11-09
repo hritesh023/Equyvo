@@ -322,8 +322,7 @@ async function uploadChunked(
   const partSize = started.partSize || CHUNK_PART_SIZE;
   const totalParts = Math.ceil(total / partSize);
   let uploaded = 0;
-  const partEtags: Array<{ partIndex: number; etag: string }> = [];
-  onProgress(0, 'uploading');
+  const partEtags: Array<{ partIndex: number; etag: string; size: number }> = [];  onProgress(0, 'uploading');
   try {
     for (let partIndex = 1; partIndex <= totalParts; partIndex++) {
       const start = (partIndex - 1) * partSize;
@@ -338,8 +337,8 @@ async function uploadChunked(
             throwUploadError(res.error, (/UPLOAD_SESSION_GONE/.test(res.error) ? 'UPLOAD_SESSION_GONE' : undefined));
           }
           const etag = (res.data && res.data.etag) || '';
-          partEtags.push({ partIndex, etag });
-          lastErr = null;
+          const bytes = Number((res.data && (res.data as any).bytes) || chunk.size || 0);
+          partEtags.push({ partIndex, etag, size: bytes });          lastErr = null;
           break;
         } catch (e) {
           if (e instanceof Error && (e as Error & { code?: string }).code === 'UPLOAD_SESSION_GONE') throw e;

@@ -6389,8 +6389,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         for (const p of payload.parts) {
           const idx = Number(p && (p.partIndex || p.i || p.index));
           const etag = String((p && (p.etag || p.e)) || '');
-          if (idx > 0 && etag) fromClient[String(idx)] = { etag, size: Number((p && p.size) || 0) };
-        }
+          if (idx > 0 && etag) { const serverSize = Number((session.parts && session.parts[String(idx)] && session.parts[String(idx)].size) || 0); const clientSize = Number((p && p.size) || 0); fromClient[String(idx)] = { etag, size: clientSize > 0 ? clientSize : serverSize, hash: (session.parts && session.parts[String(idx)] && session.parts[String(idx)].hash) || '' }; }        }
         if (Object.keys(fromClient).length > 0) partsSource = fromClient;
       }
       const partEntries = Object.entries(partsSource || {})
