@@ -817,7 +817,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             {!chatOpen ? (
               <button
                 type="button"
-                onClick={() => setChatOpen(true)}
+                onClick={(e) => { e.preventDefault(); e.stopPropagation(); setChatOpen(true); }}
                 className="w-full rounded-full bg-white/15 backdrop-blur-md border border-white/25 px-4 py-2 text-left text-sm text-white hover:bg-white/25 transition"
               >
                 {chatPrompt}
