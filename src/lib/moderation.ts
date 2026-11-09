@@ -341,7 +341,7 @@ export async function screenMedia(
   // values are passed to the server-side eye (with a hint) instead of
   // blocking outright, so legitimate skin-heavy footage (cooking, sports,
   // religious/cultural events) is not refused on a heuristic alone.
-  const skinHardBlock = isVideo ? 0.9 : 0.85;
+  const skinHardBlock = isVideo ? 0.92 : 0.9;
   if (maxSkin >= skinHardBlock) {
     return {
       verdict: 'block',
@@ -358,7 +358,7 @@ export async function screenMedia(
   // colors dominate a large share of the frame.
   // Hard block only when violence colors dominate most of the frame. Mid-range
   // values are forwarded as a hint for the server-side eye.
-  if (maxViolence >= 0.4) {
+  if (maxViolence >= 0.45) {
     return {
       verdict: 'block',
       category: 'violent',

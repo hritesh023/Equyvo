@@ -717,24 +717,23 @@ export const api = {
       try { onProgress?.({ loaded: Math.min(loaded, Math.max(totalCount, 1)), total: Math.max(totalCount, 1), phase }); } catch { /* observer errors never break uploads */ }
     };
     step(0, 1, 'screening');
-    // Client-side pre-screen only for larger files; small files rely on the
-    // server-side moderation pass to keep uploads fast.
-    if (file.size > 1 * 1024 * 1024) {
-      try {
-        const mod = await import('./moderation');
-        const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
-        if (screen.verdict !== 'allow') {
-          throw new mod.ContentBlockedError(
-            screen.message || 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media).',
-            screen.category || 'unspecified',
-          );
-        }
-      } catch (e) {
-        // Only the deliberate block should stop the upload — anything else
-        // (network hiccup, sampling quirk) fails open and the publish-time
-        // server moderation still applies.
-        if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
+    // Screen EVERY upload through the safety gate, regardless of size, so
+    // small files cannot bypass the AI check. Infrastructure failures still
+    // fail open; deliberate policy blocks always stop the upload.
+    try {
+      const mod = await import('./moderation');
+      const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
+      if (screen.verdict !== 'allow') {
+        throw new mod.ContentBlockedError(
+          screen.message || 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media).',
+          screen.category || 'unspecified',
+        );
       }
+    } catch (e) {
+      // Only the deliberate block should stop the upload — anything else
+      // (network hiccup, sampling quirk) fails open and the publish-time
+      // server moderation still applies.
+      if (e instanceof Error && (e as Error).name === 'ContentBlockedError') throw e;
     }
     // Security: detect the real media type from the file's magic bytes so a
     // renamed/disguised file cannot bypass the type gate.
