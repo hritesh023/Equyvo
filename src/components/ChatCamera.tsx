@@ -291,10 +291,15 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
       {/* Controls */}
       <div className="shrink-0 bg-black/80 backdrop-blur-md px-4 py-4" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
         <div className="flex items-center justify-center gap-6">
-          {/* Attach (circular preview of most recent) */}
+          {/* Attach (circular preview of most recent) — tapping attaches the
+              most recent item directly (WhatsApp-style); the + button opens
+              the picker to add more from local storage. */}
           <button
             type="button"
-            onClick={() => fileInputRef.current?.click()}
+            onClick={() => {
+              if (recent.length > 0) attachRecent(recent[0]);
+              else fileInputRef.current?.click();
+            }}
             className="h-14 w-14 rounded-full overflow-hidden border-2 border-white/40 bg-white/10 flex items-center justify-center hover:bg-white/20 shrink-0"
             aria-label="Attach from storage"
             title="Attach from local storage"
@@ -306,6 +311,17 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
             ) : (
               <ImageIcon className="w-6 h-6" />
             )}
+          </button>
+
+          {/* Open picker to add more from local storage */}
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="h-10 w-10 rounded-full border-2 border-white/40 bg-white/10 flex items-center justify-center hover:bg-white/20 shrink-0"
+            aria-label="Pick more from storage"
+            title="Pick more from storage"
+          >
+            <Plus className="w-5 h-5" />
           </button>
 
           {/* Capture center */}
