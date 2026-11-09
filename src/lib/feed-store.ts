@@ -9,7 +9,7 @@
 import api from './api';
 import { fetchMoments, fetchPosts, fetchStories } from './data';
 import { getThoughts } from './thoughts';
-import { resolveMediaFields } from './media';
+import { isVideoUrl, resolveMediaFields } from './media';
 
 export type FeedContentType =
   | 'post'
@@ -120,6 +120,9 @@ export function creatorOf(item: UnifiedItem): string {
 export function storyImageOf(item: unknown): string {
   const s = (item || {}) as Record<string, unknown>;
   const resolved = resolveMediaFields(s);
+  // An uploaded custom cover (thumbnail) wins over the original media so the
+  // story card/viewer shows the chosen thumbnail, not the original content.
+  if (resolved.thumbnail && !isVideoUrl(resolved.thumbnail)) return resolved.thumbnail;
   if (resolved.image) return resolved.image;
   return resolved.mediaItems.find((m) => m.type !== 'video' && m.type !== 'audio')?.url || '';
 }

@@ -48,9 +48,10 @@ export function useInterstitialAds(): void {
     if (path !== lastPathRef.current) {
       navCountRef.current += 1;
       lastPathRef.current = path;
+      contentOpenRef.current = false;
     }
     // Let the user settle in before the first interstitial.
-    if (navCountRef.current < 2) return;
+    if (navCountRef.current < 1) return;
     if (contentOpenRef.current) return;
 
     const videos = Array.from(document.querySelectorAll('video'));
@@ -67,7 +68,7 @@ export function useInterstitialAds(): void {
       } finally {
         showingRef.current = false;
       }
-    }, 450);
+    }, 300);
 
     return () => window.clearTimeout(timer);
   }, [location.pathname, plan]);

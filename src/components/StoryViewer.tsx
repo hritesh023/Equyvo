@@ -66,6 +66,14 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const currentStory = stories[currentIndex];
 
+  // Pause auto-advance while the chat box is open so typing does not close the story.
+  useEffect(() => {
+    if (chatOpen) {
+      if (progressIntervalRef.current) { clearInterval(progressIntervalRef.current); progressIntervalRef.current = null; }
+      try { videoRef.current?.pause(); } catch { /* ignore */ }
+    }
+  }, [chatOpen]);
+
   useEffect(() => {
     setChatOpen(false);
     setChatMsg('');
@@ -796,7 +804,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           aria-label="Previous story"
           onClick={(e) => {
             e.stopPropagation();
-            if (currentIndex > 0) onPrevious();
+            if (chatOpen) return; if (currentIndex > 0) onPrevious();
           }}
           className="absolute left-0 top-24 bottom-24 w-[28%] cursor-pointer z-[5] max-md:top-20 max-md:bottom-20"
         />

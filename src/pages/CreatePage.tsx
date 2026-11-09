@@ -1574,8 +1574,8 @@ const CreatePage = () => {
           comments: 0,
           shares: 0,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
-            chatWithAudience: contentVisibility !== 'private' ? (forcedChat ?? textStoryChatWithAudience) : false,
-            chatPrompt: contentVisibility !== 'private' && (forcedChat ?? textStoryChatWithAudience) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
+            chatWithAudience: (forcedChat === true) ? true : (contentVisibility !== 'private' ? textStoryChatWithAudience : false),
+            chatPrompt: (forcedChat === true || (contentVisibility !== 'private' && textStoryChatWithAudience)) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
