@@ -313,17 +313,6 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
             )}
           </button>
 
-          {/* Open picker to add more from local storage */}
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="h-10 w-10 rounded-full border-2 border-white/40 bg-white/10 flex items-center justify-center hover:bg-white/20 shrink-0"
-            aria-label="Pick more from storage"
-            title="Pick more from storage"
-          >
-            <Plus className="w-5 h-5" />
-          </button>
-
           {/* Capture center */}
           <button
             type="button"
