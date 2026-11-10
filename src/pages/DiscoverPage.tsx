@@ -873,20 +873,9 @@ const DiscoverPage = () => {
                       >
                         Translate
                       </button>
-                      <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                        <span className="flex items-center gap-1">
-                          <ThumbsUp className="w-4 h-4" /> {toCount(postLikes.get(item.id) ?? item.likes)}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <MessageCircle className="w-4 h-4" /> {toCount(item.comments)}
-                        </span>
-                        <span className="flex items-center gap-1">
-                          <Eye className="w-4 h-4" /> {toCount(item.views)}
-                        </span>
-                        <span>{Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
-                      </div>
+
                     </div>
-                    <div className="flex flex-col gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
