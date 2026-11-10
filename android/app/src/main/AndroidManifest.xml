@@ -17,6 +17,7 @@
             android:launchMode="singleTask"
             android:windowSoftInputMode="adjustResize"
             android:supportsPictureInPicture="true"
+            android:resizeableActivity="true"
             android:exported="true"
             android:enableOnBackInvokedCallback="true"
             android:importantForAutofill="yes">
