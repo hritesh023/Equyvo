@@ -325,7 +325,13 @@ export async function screenMedia(
   // filename + MIME + text checks above still apply, and the server re-runs
   // the full safety stack at publish time. Hard-blocking here caused legitimate
   // cooking/religious/educational uploads to be refused for decode hiccups.
-  if ((isImage || isVideo) && samples.length === 0) {
+  // Videos that cannot be sampled at all are not allowed through: a guard that
+  // silently passes undecodable media is no guard at all. Images keep the
+  // previous fail-open behaviour so a decode hiccup never strands a photo.
+  if (isVideo && samples.length === 0) {
+    return { verdict: 'review', category: 'unspecified', checked: false, message: 'This video could not be verified for safety. Please try a different file.' };
+  }
+  if (isImage && samples.length === 0) {
     return { verdict: 'allow', checked: false };
   }
   // Heuristic nudity guard: a HIGH skin-tone ratio indicates likely 18+
