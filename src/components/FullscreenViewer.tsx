@@ -1561,7 +1561,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => {
-                       void toggleFullscreen();
+                       void setShowDetailsPanel(false);
+toggleFullscreen();
                     }}
                     className="text-white hover:text-blue-400 transition-colors p-2 hover:bg-white/10 rounded-full"
                     title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
@@ -2043,7 +2044,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             height: isSplitView ? '100%' : '100vh'
           }}
           onClick={() => {
-            void toggleFullscreen();
+            void setShowDetailsPanel(false);
+toggleFullscreen();
           }}
         >
           {imageSrc && !imageFailed ? (

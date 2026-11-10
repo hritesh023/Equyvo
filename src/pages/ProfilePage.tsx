@@ -2418,7 +2418,7 @@ const ProfilePage = () => {
       {fullscreenContent && (
         <SafeFullscreenViewer
           content={fullscreenContent}
-          type={fullscreenContent.type || (fullscreenContent.mediaType === 'video' ? 'video' : fullscreenContent.mediaType === 'image' ? 'image' : 'live')}
+          type={fullscreenContent.videoUrl ? 'video' : (fullscreenContent.type || (fullscreenContent.mediaType === 'video' ? 'video' : fullscreenContent.mediaType === 'image' ? 'image' : 'live'))}
           onClose={closeFullscreen}
           onComment={(videoId, creator) => handleComment(videoId, creator)}
           onShare={handleShare}
