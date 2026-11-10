@@ -524,7 +524,18 @@ const CreatePage = () => {
       setIsUploading(s.isUploading);
       setUploadProgress(s.progress ? { pct: s.progress.pct, phase: s.progress.phase as UploadProgress['phase'] } : null);
     });
-    return unsub;
+    const onDone = () => {
+      setIsUploading(false);
+      setUploadProgress(null);
+      try { setUploadState({ isUploading: false, progress: null }); } catch {}
+    };
+    window.addEventListener('userPostCreated', onDone);
+    window.addEventListener('contentCreated', onDone);
+    return () => {
+      unsub();
+      window.removeEventListener('userPostCreated', onDone);
+      window.removeEventListener('contentCreated', onDone);
+    };
   }, []);  // Plan caps for pre-publish validation (size / length) + upgrade hints.
   const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
   const { entitlements: planEntitlements } = useEntitlements();
