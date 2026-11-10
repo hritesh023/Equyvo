@@ -739,8 +739,8 @@ const DiscoverPage = () => {
         onClick={handleViewModeToggle}
         className="gap-2"
       >
-        {viewMode === 'grid' ? <List className="w-4 h-4" /> : <Grid className="w-4 h-4" />}
-        {viewMode === 'grid' ? 'List View' : 'Grid View'}
+        {viewMode === 'grid' ? <Grid className="w-4 h-4" /> : <List className="w-4 h-4" />}
+        {viewMode === 'grid' ? 'Grid View' : 'List View'}
       </Button>
 
       {/* Clear Filters */}
