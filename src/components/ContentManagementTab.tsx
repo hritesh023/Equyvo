@@ -4,6 +4,7 @@ import { Trash2, Eye, EyeOff, Loader2, Clock, Users, ThumbsUp } from 'lucide-rea
 import api from '@/lib/api';
 import { formatWatchTime } from '@/lib/media';
 import { showSuccess, showError } from '@/utils/toast';
+import { isBlockedContent } from '@/utils/delete';
 
 interface Props { userId: string; isSelf: boolean; }
 
@@ -22,7 +23,7 @@ const ContentManagementTab: React.FC<Props> = ({ userId, isSelf }) => {
         ...(data.stories || []).map((s: any) => ({ ...s, _kind: 'story' })),
         ...(data.moments || []).map((m: any) => ({ ...m, _kind: 'moment' })),
       ];
-      setItems(all);
+      setItems(all.filter((x) => !isBlockedContent(x)));
     } catch { showError('Failed to load content'); }
     finally { setLoading(false); }
   };
@@ -30,6 +31,7 @@ const ContentManagementTab: React.FC<Props> = ({ userId, isSelf }) => {
   useEffect(() => { if (userId) load(); }, [userId]);
 
   const remove = async (item: any) => {
+    if (!window.confirm('Delete this content permanently? This cannot be undone.')) return;
     try {
       if (item._kind === 'thought') await api.deleteThought(item.id);
       else if (item._kind === 'story') await api.deleteStory(item.id);
