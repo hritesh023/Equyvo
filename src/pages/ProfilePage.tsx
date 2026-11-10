@@ -33,6 +33,7 @@ import EditProfileModal from '@/components/EditProfileModal';
 import EditPostModal from '@/components/EditPostModal';
 import CommentSection from '@/components/CommentSection';
 import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import ResilientVideo from '@/components/ResilientVideo';
 import VotingButtons from '@/components/VotingButtons';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import WatchHistorySection from '@/components/WatchHistorySection';
