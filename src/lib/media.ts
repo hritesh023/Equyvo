@@ -408,6 +408,26 @@ export function normalizeContentList<T = Record<string, unknown>>(items: unknown
   return items.map((item) => normalizeContentItem(item as T));
 }
 
+/** Format a duration (seconds or "m:ss"/"h:mm:ss" string) as mm:ss (or hh:mm:ss). */
+export function formatWatchTime(value: unknown): string {
+  if (value == null || value === '') return '';
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    // Already formatted (m:ss or h:mm:ss).
+    if (/^\d+:\d{2}(:\d{2})?$/.test(trimmed)) return trimmed;
+    const n = Number(trimmed);
+    if (!Number.isFinite(n)) return trimmed;
+    value = n;
+  }
+  const total = Math.max(0, Math.floor(Number(value) || 0));
+  if (!total) return '';
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
 /** Convenience wrappers used by feeds that receive already-normalised items. */
 export function imageOf(item: MediaSource | null | undefined): string {
   if (!item) return '';

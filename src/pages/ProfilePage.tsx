@@ -13,6 +13,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { sharePost } from '@/utils/share';
+import InAppShareSheet from '@/components/InAppShareSheet';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent, Post } from '@/types';
 
@@ -52,7 +53,7 @@ import { pickDisplayName, profilePreviewFrom, userNameOf } from '@/lib/identity'
 import { toCount, bumpCount } from '@/lib/count';
 import api from '@/lib/api';
 import { isVideoItem } from '@/lib/feed-store';
-import { normalizeContentList, normalizeContentItem, resolveMediaFields } from '@/lib/media';
+import { normalizeContentList, normalizeContentItem, resolveMediaFields, formatWatchTime } from '@/lib/media';
 
 const ownerIdOf = (post: unknown): string => {
   const p = (post || {}) as Record<string, unknown>;
@@ -192,6 +193,7 @@ const ProfilePage = () => {
   const [currentPostId, setCurrentPostId] = useState<string>('');
   const [currentPostUser, setCurrentPostUser] = useState<string>('');
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
+  const [sharePayload, setSharePayload] = useState<any>(null);
   const [universalMediaContent, setUniversalMediaContent] = useState<FullscreenContent | null>(null);
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [savedStories, setSavedStories] = useState<Set<string>>(new Set());
@@ -820,27 +822,31 @@ const ProfilePage = () => {
   };
 
 
-  const handleShare = async (post: Post) => {
-    const result = await sharePost({
+  const handleShare = (post: Post) => {
+    const shareUrl = `${window.location.origin}/app/profile?post=${encodeURIComponent(post.id)}`;
+    setSharePayload({
       id: post.id,
-      user: post.user,
-      content: post.content || '',
-      image: post.media || post.image
+      user: post.user || 'creator',
+      content: post.content || 'Check out this post on Equyvo',
+      image: post.media || post.image,
+      url: shareUrl,
+      onShared: async () => {
+        try {
+          const result = await sharePost({
+            id: post.id,
+            user: post.user,
+            content: post.content || '',
+            image: post.media || post.image,
+          });
+          if (result.success && result.recorded && typeof result.shares === 'number') {
+            setUserProfile(prev => ({
+              ...prev,
+              posts: (prev.posts || []).map(p => (p.id === post.id ? { ...p, shares: result.shares } : p)),
+            }));
+          }
+        } catch { /* best-effort */ }
+      },
     });
-    if (!result.success && !result.cancelled) {
-      showError(result.error || 'Share failed');
-      return;
-    }
-    if (result.success && result.recorded === false) {
-      showError(result.error || 'The share count could not be saved');
-      return;
-    }
-    if (result.recorded && typeof result.shares === 'number') {
-      setUserProfile(prev => ({
-        ...prev,
-        posts: (prev.posts || []).map(p => (p.id === post.id ? { ...p, shares: result.shares } : p)),
-      }));
-    }
   };
 
   const handleSave = (postId: string) => {
@@ -1887,7 +1893,7 @@ const ProfilePage = () => {
                     className="w-full h-full object-cover"
                   />
                   <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-1 rounded">
-                    {video.duration || 'Video'}
+                    {formatWatchTime(video.duration) || 'Video'}
                   </div>
                   <div
                     className="absolute top-2 right-2 rounded-full bg-black/60 backdrop-blur-sm"
@@ -2463,6 +2469,12 @@ const ProfilePage = () => {
           </Card>
         </div>
       )}
+      <InAppShareSheet
+        open={!!sharePayload}
+        onClose={() => setSharePayload(null)}
+        payload={sharePayload || {}}
+        onShared={async () => { if (sharePayload?.onShared) await sharePayload.onShared(); }}
+      />
     </div>
   );
 };

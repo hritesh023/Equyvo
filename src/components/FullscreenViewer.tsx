@@ -18,7 +18,7 @@ import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import api from '@/lib/api';
-import { normalizeContentItem } from '@/lib/media';
+import { normalizeContentItem, formatWatchTime } from '@/lib/media';
 import { toCount } from '@/lib/count';
 
 interface FullscreenViewerProps {
@@ -1293,7 +1293,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           )}
           
           {/* Combined bottom overlay with video info and controls */}
-          <div className="absolute bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none eq-safe-bottom">
+          <div className="fixed bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none eq-safe-bottom" style={{ zIndex: 60 }}>
             {/* Details Section - above controls */}
             {!isSplitView && (
               <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0'}`}
@@ -1360,7 +1360,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                     )}
                     {actualContent.duration && (
                       <span className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" /> {actualContent.duration}
+                        <Clock className="h-4 w-4" /> {formatWatchTime(actualContent.duration)}
                       </span>
                     )}
                   </div>
@@ -1620,7 +1620,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               )}
               {actualContent.duration && (
                 <span className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" /> {actualContent.duration}
+                  <Clock className="h-4 w-4" /> {formatWatchTime(actualContent.duration)}
                 </span>
               )}
             </div>

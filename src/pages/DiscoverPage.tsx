@@ -26,7 +26,7 @@ import { isBlockedContent } from '@/utils/delete';
 import type { FullscreenContent, ContentType } from '@/types';
 // Native advanced ad is now shown once at app open (see App.tsx).
 import { allowedForSurface, creatorOf, imageUrlOf, timeOf, videoUrlOf } from '@/lib/feed-store';
-import { resolveMediaFields } from '@/lib/media';
+import { resolveMediaFields, formatWatchTime } from '@/lib/media';
 import { toCount } from '@/lib/count';
 import { fetchMoments, fetchPosts } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
@@ -1087,7 +1087,7 @@ const DiscoverPage = () => {
               )}
               {toCardType(item) === 'video' && item.duration && (
                 <div className="absolute bottom-12 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                  {item.duration}
+                  {formatWatchTime(item.duration)}
                 </div>
               )}
             </div>
@@ -1131,7 +1131,7 @@ const DiscoverPage = () => {
                 <Badge className="absolute top-2 left-2 bg-orange-500/90 hover:bg-orange-600 border-none">#{i + 1} Trending</Badge>
                 {toCardType(item) === 'video' && item.duration && (
                   <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                    {item.duration}
+                    {formatWatchTime(item.duration)}
                   </div>
                 )}
                 <div className="absolute top-2 right-12">
@@ -1366,7 +1366,7 @@ const DiscoverPage = () => {
                 <DiscoverImg src={item.thumbnail || item.image} alt="" className="w-full h-full object-contain" />
                 {item.duration && (
                   <div className="absolute bottom-2 right-2 bg-black/90 text-white text-xs px-1.5 py-0.5 rounded font-medium">
-                    {item.duration}
+                    {formatWatchTime(item.duration)}
                   </div>
                 )}
                 <div className="absolute top-2 left-2">
