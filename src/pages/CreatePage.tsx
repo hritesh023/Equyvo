@@ -497,7 +497,7 @@ const CreatePage = () => {
   const [uploadedMoments, setUploadedMoments] = useState<UploadedMoment[]>([]);
   const [uploadedTextStories, setUploadedTextStories] = useState<UploadedTextStory[]>([]);
   // Content management moved to Profile page Manage tab.
-  const [isUploading, setIsUploading] = useState(false);
+  const [isUploading, setIsUploading] = useState(() => { try { return getUploadState().isUploading; } catch { return false; } });
   useEffect(() => {
     try { (window as any).__equyvoUploading = isUploading; } catch { /* ignore */ }
   }, [isUploading]);
@@ -506,7 +506,7 @@ const CreatePage = () => {
   // never lost by navigating away.
   // (No body overflow lock, no global busy guard.)
   // Publish-progress bar state (exact byte progress from the upload runner).
-  const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(null);
+  const [uploadProgress, setUploadProgress] = useState<{ pct: number; phase: UploadProgress['phase'] } | null>(() => { try { const s = getUploadState(); return s.progress ? { pct: s.progress.pct, phase: s.progress.phase as UploadProgress['phase'] } : null; } catch { return null; } });
   // Mirror local upload state into the global store so progress survives
   // navigation away from this page (uploads run in the background).
   useEffect(() => {

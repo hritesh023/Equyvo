@@ -193,6 +193,14 @@ const ProfilePage = () => {
   const [currentPostId, setCurrentPostId] = useState<string>('');
   const [currentPostUser, setCurrentPostUser] = useState<string>('');
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
+  const [followedCreators, setFollowedCreators] = useState<Set<string>>(new Set());
+  const handleFollow = (creatorId: string) => {
+    setFollowedCreators(prev => {
+      const next = new Set(prev);
+      if (next.has(creatorId)) next.delete(creatorId); else next.add(creatorId);
+      return next;
+    });
+  };
   const [sharePayload, setSharePayload] = useState<any>(null);
   const [universalMediaContent, setUniversalMediaContent] = useState<FullscreenContent | null>(null);
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
@@ -2414,6 +2422,8 @@ const ProfilePage = () => {
           onComment={(videoId, creator) => handleComment(videoId, creator)}
           onShare={handleShare}
           onContentChange={(content) => setFullscreenContent(content)}
+          onFollow={handleFollow}
+          followedCreators={followedCreators}
         />
       )}
 

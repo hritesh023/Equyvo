@@ -133,6 +133,14 @@ const DiscoverPage = () => {
   const [activeTab, setActiveTab] = useState('grid');
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
   const [fullscreenType, setFullscreenType] = useState<ContentType>('image');
+  const [followedCreators, setFollowedCreators] = useState<Set<string>>(new Set());
+  const handleFollow = (creatorId: string) => {
+    setFollowedCreators(prev => {
+      const next = new Set(prev);
+      if (next.has(creatorId)) next.delete(creatorId); else next.add(creatorId);
+      return next;
+    });
+  };
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
   const [commentedPosts, setCommentedPosts] = useState<Set<string>>(new Set());
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
@@ -1515,6 +1523,8 @@ const DiscoverPage = () => {
           onClose={handleCloseFullscreen}
           onExpand={handleExpandFullscreen}
           onContentChange={(content) => setFullscreenContent(content)}
+          onFollow={handleFollow}
+          followedCreators={followedCreators}
         />
       )}
 
