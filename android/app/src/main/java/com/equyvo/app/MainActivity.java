@@ -86,6 +86,29 @@ public class MainActivity extends BridgeActivity {
         };
         pipHandler.postDelayed(registerPip, 200L);
 
+        // Enable native keyboard autofill + DOM storage so the WebView behaves
+        // like other apps: password managers, address/contact autofill and
+        // keyboard shortcuts work out of the box.
+        final Handler webSettingsHandler = new Handler(Looper.getMainLooper());
+        final Runnable configureWebView = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    if (bridge != null && bridge.getWebView() != null) {
+                        android.webkit.WebSettings ws = bridge.getWebView().getSettings();
+                        ws.setJavaScriptEnabled(true);
+                        ws.setDomStorageEnabled(true);
+                        ws.setDatabaseEnabled(true);
+                        ws.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
+                        // WebView autofill is enabled via manifest importantForAutofill.
+                    } else {
+                        webSettingsHandler.postDelayed(this, 200L);
+                    }
+                } catch (Throwable ignored) {}
+            }
+        };
+        webSettingsHandler.postDelayed(configureWebView, 200L);
+
         final View content = findViewById(android.R.id.content);
         ViewCompat.setOnApplyWindowInsetsListener(content, (v, windowInsets) -> {
             Insets bars = windowInsets.getInsets(

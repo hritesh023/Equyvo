@@ -18,7 +18,8 @@
             android:windowSoftInputMode="adjustResize"
             android:supportsPictureInPicture="true"
             android:exported="true"
-            android:enableOnBackInvokedCallback="true">
+            android:enableOnBackInvokedCallback="true"
+            android:importantForAutofill="yes">
 
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
