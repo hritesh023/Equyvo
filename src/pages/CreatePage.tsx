@@ -1027,27 +1027,28 @@ const CreatePage = () => {
       let duration: number | undefined;
       try { duration = isVideo ? (await probeVideoDuration(raw)) : undefined; } catch { duration = undefined; }
       const onProgress = (p: UploadProgress) => {
+        let nextPct = 1;
+        let nextPhase: UploadProgress['phase'] = p.phase;
         if (slot.count > 1) {
-          // Batch: reserves slot.index/count → (slot.index+1)/count of the bar.
           const span = 1 / slot.count;
           const frac = p.total > 0 ? Math.max(0, Math.min(1, p.loaded / p.total)) : 0;
-          setUploadProgress({
-            phase: p.phase,
-            pct: Math.max(1, Math.min(99, Math.round((slot.index + frac) * span * 100))),
-          });
+          nextPct = Math.max(1, Math.min(99, Math.round((slot.index + frac) * span * 100)));
         } else {
-          setUploadProgress({
-            phase: p.phase,
-            pct: Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50)),
-          });
+          nextPct = Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50));
         }
+        setUploadProgress({ phase: nextPhase, pct: nextPct });
+        try { setUploadState({ isUploading: true, progress: { pct: nextPct, phase: String(nextPhase) } }); } catch {}
       };
       const doUpload = async () => {
         const { data, error } = await api.uploadFile(raw, folder, onProgress, { duration });
         if (error) throw new Error(error);
+        const donePct = slot.count > 1
+          ? Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100)))
+          : 100;
         setUploadProgress(slot.count > 1
-          ? { phase: 'uploading', pct: Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100))) }
+          ? { phase: 'uploading', pct: donePct }
           : { phase: 'done', pct: 100 });
+        try { setUploadState({ isUploading: true, progress: { pct: donePct, phase: slot.count > 1 ? 'uploading' : 'done' } }); } catch {}
         return data || null;
       };
       let lastErr: unknown = null;
