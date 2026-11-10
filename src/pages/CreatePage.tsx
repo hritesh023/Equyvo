@@ -1282,7 +1282,7 @@ const CreatePage = () => {
       safeFiles = results.filter((x) => x.r.verdict === 'allow').map((x) => x.f);
     } catch {
       safeFiles = Array.from(files);
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       setSafetyChecking(false);
       setAppBusy(false);
     }
@@ -1583,7 +1583,7 @@ const CreatePage = () => {
         showSuccess('Story saved as draft!');
         break;
       }
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
       // post/schedule/draft paths that never touched progress also clear it here.
       if (action === 'post') setUploadProgress(null);
@@ -1680,7 +1680,7 @@ const CreatePage = () => {
         setTextStoryChatPrompt('Chat with your creator');
         break;
     }
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
     }
   };
@@ -1825,7 +1825,7 @@ const CreatePage = () => {
         showSuccess('Thought saved as draft!');
         break;
     }
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
     }
   };
@@ -1964,7 +1964,7 @@ const CreatePage = () => {
         showSuccess(`${photoFiles.length} photo(s) saved as draft!`);
         break;
       }
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
     }
@@ -2120,7 +2120,7 @@ const CreatePage = () => {
         showSuccess(`${videoFiles.length} video(s) saved as draft!`);
         break;
       }
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
     }
@@ -2163,7 +2163,7 @@ const CreatePage = () => {
           setLiveDescription('');
           setShowScheduleModal(false);
           setScheduleDateTime('');
-        } finally {
+        } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
           publishLockRef.current = false;
         }
         break;
@@ -2182,7 +2182,7 @@ const CreatePage = () => {
           };
           setDraftPosts(prev => [...prev, newDraftLive]);
           showSuccess('Live stream saved as draft!');
-        } finally {
+        } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
           publishLockRef.current = false;
         }
         break;
@@ -2348,7 +2348,7 @@ const CreatePage = () => {
         showSuccess(`${momentFiles.length} moment(s) saved as draft!`);
         break;
       }
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
     }
@@ -2522,7 +2522,7 @@ const CreatePage = () => {
       setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
 
       showSuccess('Live stream started! Followers have been notified.');
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
     }
   };
@@ -2804,7 +2804,7 @@ const CreatePage = () => {
     try {
       const file = await capturePhoto();
       if (file) routeCameraFile(file);
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
     }
   };
@@ -2998,7 +2998,7 @@ const CreatePage = () => {
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       showError(msg || "Couldn't update the thumbnail. Please try again.");
-    } finally {
+    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       setThumbBusyId(null);
     }
   };
