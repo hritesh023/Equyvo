@@ -2410,6 +2410,7 @@ const ProfilePage = () => {
           onClose={closeFullscreen}
           onComment={(videoId, creator) => handleComment(videoId, creator)}
           onShare={handleShare}
+          onContentChange={(content) => setFullscreenContent(content)}
         />
       )}
 

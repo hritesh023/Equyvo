@@ -1514,6 +1514,7 @@ const DiscoverPage = () => {
           type={fullscreenType}
           onClose={handleCloseFullscreen}
           onExpand={handleExpandFullscreen}
+          onContentChange={(content) => setFullscreenContent(content)}
         />
       )}
 
