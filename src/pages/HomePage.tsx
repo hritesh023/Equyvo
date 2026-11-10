@@ -32,6 +32,7 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { useIsTablet } from '@/hooks/use-tablet';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { sharePost } from '@/utils/share';
+import InAppShareSheet from '@/components/InAppShareSheet';
 import { brainFeedSuggest, brainLearn } from '@/lib/brain';
 import { sendHumanEval, evalVote, evalLike } from '@/lib/human-eval';
 // Native advanced ad is now shown once at app open (see App.tsx) instead of
@@ -51,6 +52,7 @@ const HomePage = () => {
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
+  const [sharePayload, setSharePayload] = useState<any>(null);
   const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story'>('moment');
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
   const [commentSectionOpen, setCommentSectionOpen] = useState(false);
@@ -631,39 +633,41 @@ const HomePage = () => {
     });
   };
 
-  const handleSharePost = async (post: Post) => {
+  const handleSharePost = (post: Post) => {
     if (!post?.id) return;
-    const result = await sharePost({
+    const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(post.id)}`;
+    setSharePayload({
       id: post.id,
       user: post.user || 'creator',
       content: post.content || 'Amazing content on Equyvo',
       image: post.media || post.image,
+      url: shareUrl,
+      onShared: async () => {
+        try {
+          const result = await sharePost({
+            id: post.id,
+            user: post.user || 'creator',
+            content: post.content || 'Amazing content on Equyvo',
+            image: post.media || post.image,
+          });
+          if (result.success && result.recorded && typeof result.shares === 'number') {
+            setEnhancedPosts(prev => prev.map(p =>
+              p.id === post.id ? { ...p, shares: result.shares } : p,
+            ));
+            if (!result.alreadyShared) {
+              teachBrain(post.content?.slice(0, 120) || post.type || post.id);
+              sendHumanEval({
+                itemId: post.id,
+                action: 'share',
+                text: post.content?.slice(0, 120) || post.type || post.id,
+                tags: (post as any)?.tags,
+                creator: (post as any)?.user,
+              });
+            }
+          }
+        } catch { /* best-effort */ }
+      },
     });
-    if (!result.success && !result.cancelled) {
-      showError(result.error || 'Could not share this post');
-      return;
-    }
-    if (result.success && result.recorded === false) {
-      showError(result.error || 'The share count could not be saved');
-      return;
-    }
-    // Never optimistically increment here. The server ledger decides whether
-    // this account is the first sharer and returns the authoritative count.
-    if (result.recorded && typeof result.shares === 'number') {
-      setEnhancedPosts(prev => prev.map(p =>
-        p.id === post.id ? { ...p, shares: result.shares } : p,
-      ));
-      if (!result.alreadyShared) {
-        teachBrain(post.content?.slice(0, 120) || post.type || post.id);
-        sendHumanEval({
-          itemId: post.id,
-          action: 'share',
-          text: post.content?.slice(0, 120) || post.type || post.id,
-          tags: (post as any)?.tags,
-          creator: (post as any)?.user,
-        });
-      }
-    }
   };
 
   const handleSavePost = (postId: string) => {
@@ -1219,6 +1223,12 @@ const HomePage = () => {
         onClose={() => setReportModalOpen(null)}
         contentId={reportModalOpen || ''}
         contentType="post"
+      />
+      <InAppShareSheet
+        open={!!sharePayload}
+        onClose={() => setSharePayload(null)}
+        payload={sharePayload || {}}
+        onShared={async () => { if (sharePayload?.onShared) await sharePayload.onShared(); }}
       />
     </div>
   );
