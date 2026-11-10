@@ -150,6 +150,13 @@ export function isDevEnvironment(): boolean {
       return false;
     }
   } catch { /* ignore */ }
+  // Native shells identify themselves in the UA even before Capacitor is
+  // injected, so real ad units are used on device (never test units).
+  try {
+    if (typeof navigator !== 'undefined' && /EquyvoApp/i.test(navigator.userAgent || '')) {
+      return false;
+    }
+  } catch { /* ignore */ }
   if (import.meta.env.DEV) return true;
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;

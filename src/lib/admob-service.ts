@@ -91,10 +91,12 @@ function loadPlugin(): Promise<{ plugin: AdMobPlugin | null }> {
 
 export function isNativePlatform(): boolean {
   try {
-    return Capacitor.isNativePlatform();
-  } catch {
-    return false;
-  }
+    if (Capacitor.isNativePlatform()) return true;
+  } catch { /* ignore */ }
+  try {
+    if (typeof navigator !== 'undefined' && /EquyvoApp/i.test(navigator.userAgent || '')) return true;
+  } catch { /* ignore */ }
+  return false;
 }
 
 /** Initialize Mobile Ads SDK once (safe to call repeatedly). */

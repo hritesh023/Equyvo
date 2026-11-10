@@ -35,7 +35,8 @@ export function useInterstitialAds(): void {
   }, []);
 
   useEffect(() => {
-    if (!isNativePlatform()) return;
+    const native = isNativePlatform() || (typeof navigator !== 'undefined' && /EquyvoApp/i.test(navigator.userAgent || ''));
+    if (!native) return;
     // Interstitials are a free-tier format (Plus/Premium are ad-light or
     // ad-free and must never be interrupted by a full-screen ad).
     const isFreeTier = !plan || plan === 'eq_free';
@@ -75,7 +76,8 @@ export function useInterstitialAds(): void {
   }, [location.pathname, plan]);
 
   useEffect(() => {
-    if (!isNativePlatform()) return;
+    const native = isNativePlatform() || (typeof navigator !== 'undefined' && /EquyvoApp/i.test(navigator.userAgent || ''));
+    if (!native) return;
     const isFreeTier = !plan || plan === 'eq_free';
     if (!isFreeTier) return;
     if (!shouldShowAds(plan)) return;
@@ -85,7 +87,8 @@ export function useInterstitialAds(): void {
   // Prepare as early as possible on native (not only on plan change) so the
   // first natural break actually has an ad ready to show.
   useEffect(() => {
-    if (!isNativePlatform()) return;
+    const native = isNativePlatform() || (typeof navigator !== 'undefined' && /EquyvoApp/i.test(navigator.userAgent || ''));
+    if (!native) return;
     void prepareInterstitial();
   }, []);
 }
