@@ -360,6 +360,30 @@ const AppContent = () => {
 };
 
 const App = () => {
+  React.useEffect(() => {
+    // Let the system keyboard (Gboard etc.) use its normal autofill/suggestion
+    // behaviour on every text field, without adding any custom keyboard UI.
+    const apply = (root: ParentNode) => {
+      try {
+        root.querySelectorAll('input, textarea').forEach((el) => {
+          const input = el as HTMLInputElement | HTMLTextAreaElement;
+          if (!input.getAttribute('autocomplete')) input.setAttribute('autocomplete', 'on');
+          if (!input.getAttribute('autocorrect')) input.setAttribute('autocorrect', 'on');
+          if (!input.getAttribute('spellcheck')) input.setAttribute('spellcheck', 'true');
+        });
+      } catch { /* ignore */ }
+    };
+    apply(document);
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        m.addedNodes.forEach((n) => {
+          if (n instanceof Element) apply(n);
+        });
+      }
+    });
+    mo.observe(document.body, { childList: true, subtree: true });
+    return () => mo.disconnect();
+  }, []);
   const [showApp, setShowApp] = useState(false);
   React.useEffect(() => {
     const timer = setTimeout(() => {
