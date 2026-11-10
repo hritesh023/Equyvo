@@ -1899,10 +1899,14 @@ const ProfilePage = () => {
                   <div className="absolute inset-0 flex items-center justify-center">
                     <Play className="h-10 w-10 text-white opacity-80" />
                   </div>
-                  <img
-                    src={video.thumbnail || video.media}
-                    alt={video.content}
+                  <ResilientVideo
+                    src={video.videoUrl || video.media}
+                    poster={video.thumbnail || undefined}
+                    controls
+                    playsInline
+                    preload="metadata"
                     className="w-full h-full object-cover"
+                    onClick={(e) => { e.stopPropagation(); addToWatchHistory(video); handleFullscreen(video); }}
                   />
                   <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-1 rounded">
                     {formatWatchTime(video.duration) || 'Video'}
