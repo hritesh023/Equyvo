@@ -805,11 +805,23 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
 
   const handleMinimize = () => {
     const video = videoRef.current;
+    const isNative = !!(window as any)?.Capacitor?.isNativePlatform?.();
+    // On native, skip the unreliable WebView PiP and use the native bridge.
+    if (isNative) {
+      try {
+        const bridge = (window as any).AndroidPiP;
+        if (bridge && typeof bridge.enter === 'function') {
+          try { bridge.setFullscreenActive?.(true); } catch { /* ignore */ }
+          bridge.enter();
+          return;
+        }
+      } catch { /* ignore */ }
+    }
 
     // 1. Prefer TRUE system-level Picture-in-Picture (persists across apps,
     //    draggable across the whole device) — like YouTube/Netflix.
     try {
-      if (video && (document as any).pictureInPictureEnabled && typeof (video as any).requestPictureInPicture === 'function') {
+      if (!isNative && video && (document as any).pictureInPictureEnabled && typeof (video as any).requestPictureInPicture === 'function') {
         (video as any).requestPictureInPicture().catch(() => { /* fall through to native/app fallback */ });
         // If the promise resolves we are done; if it rejects we fall through.
         return;
