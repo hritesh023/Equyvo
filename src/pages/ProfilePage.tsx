@@ -42,7 +42,7 @@ import VideoSeekBar from '@/components/VideoSeekBar';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
 import { evalLike, evalVote } from '@/lib/human-eval';
 import { getStoredUser, clearViewerCaches } from '@/lib/auth';
-import { deleteContent } from '@/utils/delete';
+import { deleteContent, isBlockedContent } from '@/utils/delete';
 import { setContentVisibility } from '@/utils/visibility';
 import ReportModal from '@/components/ReportModal';
 import FollowListModal from '@/components/FollowListModal';
@@ -341,7 +341,7 @@ const ProfilePage = () => {
           ] as Post[];
         }
         if (serverItems.length) {
-          setUserProfile(prev => ({ ...prev, posts: serverItems }));
+          setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isBlockedContent(p)) }));
           return;
         }
         // Legacy fallback: posts-only endpoint for accounts whose content
@@ -351,7 +351,7 @@ const ProfilePage = () => {
         setUserProfile(prev => {
           const existing = prev.posts || [];
           const serverById = new Map((legacy.data as Post[]).map((p) => [p.id, p]));
-          return { ...prev, posts: [...(legacy.data as Post[]), ...existing.filter(p => !serverById.has(p.id))] };
+          return { ...prev, posts: [...(legacy.data as Post[]).filter((p: any) => !isBlockedContent(p)), ...existing.filter(p => !serverById.has(p.id) && !isBlockedContent(p))] };
         });
       })().catch(() => {
         if (!cancelled) setProfileLookupFailed(true);
