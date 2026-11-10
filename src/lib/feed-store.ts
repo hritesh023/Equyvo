@@ -327,30 +327,38 @@ export function captureVideoPoster(file: File | Blob): Promise<string> {
       const video = document.createElement('video');
       video.muted = true;
       video.playsInline = true;
-      video.preload = 'auto';
-      video.src = url;
+      video.preload = 'metadata';
       const done = (poster: string) => {
         try { URL.revokeObjectURL(url); } catch { /* ignore */ }
         resolve(poster);
       };
-      video.onloadeddata = () => {
-        try {
-          video.currentTime = Math.min(0.5, (video.duration || 1) / 3);
-        } catch { done(''); }
+      let settled = false;
+      const finish = (poster: string) => {
+        if (settled) return;
+        settled = true;
+        done(poster);
       };
-      video.onseeked = () => {
+      const draw = () => {
         try {
           const canvas = document.createElement('canvas');
           canvas.width = video.videoWidth || 320;
-          canvas.height = video.videoHeight || 480;
+          canvas.height = video.videoHeight || 180;
           const ctx = canvas.getContext('2d');
-          if (!ctx) return done('');
+          if (!ctx) return finish('');
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-          done(canvas.toDataURL('image/jpeg', 0.7));
-        } catch { done(''); }
+          finish(canvas.toDataURL('image/jpeg', 0.72));
+        } catch { finish(''); }
       };
-      video.onerror = () => done('');
-      setTimeout(() => done(''), 4000);
+      video.onloadedmetadata = () => {
+        try { video.currentTime = Math.min(0.5, (video.duration || 1) / 3); } catch { draw(); }
+      };
+      video.onseeked = draw;
+      video.onloadeddata = () => {
+        if (!settled && video.readyState >= 2) draw();
+      };
+      video.onerror = () => finish('');
+      video.src = url;
+      setTimeout(() => finish(''), 6000);
     } catch {
       resolve('');
     }

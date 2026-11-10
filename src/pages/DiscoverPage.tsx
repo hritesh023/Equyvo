@@ -16,6 +16,7 @@ import FullscreenBrowse from '@/components/FullscreenBrowse';
 import CommentSection from '@/components/CommentSection';
 import SearchSuggest from '@/components/SearchSuggest';
 import StandardPostMenu from '@/components/StandardPostMenu';
+import InAppShareSheet from '@/components/InAppShareSheet';
 import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
@@ -141,6 +142,7 @@ const DiscoverPage = () => {
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [fullscreenBrowseOpen, setFullscreenBrowseOpen] = useState(false);
+  const [sharePayload, setSharePayload] = useState<any>(null);
   
   // New state for filtering and sorting
   const [sortBy, setSortBy] = useState<'relevance' | 'trending' | 'newest' | 'popular'>('relevance');
@@ -255,25 +257,22 @@ const DiscoverPage = () => {
     setCommentSectionOpen(true);
   };
 
-  const handleShare = async (content: any) => {
+  const handleShare = (content: any) => {
     const shareUrl = content?.id
       ? `${window.location.origin}/app/home?post=${encodeURIComponent(content.id)}`
       : window.location.href;
-    const result = await shareItem(String(content?.id || ''), {
+    setSharePayload({
+      id: content?.id,
       title: content?.title || 'Discover on Equyvo',
-      text: content?.description || content?.content || 'Check out this content on Equyvo!',
+      content: content?.description || content?.content || 'Check out this content on Equyvo!',
       url: shareUrl,
+      onShared: async () => {
+        if (content?.id) {
+          try { await api.share(String(content.id)); } catch { /* best-effort */ }
+          setSharedPosts(prev => new Set(prev).add(String(content.id)));
+        }
+      },
     });
-    if (!result.success && !result.cancelled) {
-      showError(result.error || 'Could not share this content');
-      return;
-    }
-    if (result.recorded && content?.id) {
-      setSharedPosts(prev => new Set(prev).add(String(content.id)));
-    }
-    if (result.success && result.recorded === false) {
-      showError(result.error || 'The share count could not be saved');
-    }
   };
 
   const handleCloseFullscreen = () => {
@@ -1559,6 +1558,12 @@ const DiscoverPage = () => {
         onClose={() => setReportModalOpen(null)}
         contentId={reportModalOpen || ''}
         contentType="post"
+      />
+      <InAppShareSheet
+        open={!!sharePayload}
+        onClose={() => setSharePayload(null)}
+        payload={sharePayload || {}}
+        onShared={async () => { if (sharePayload?.onShared) await sharePayload.onShared(); }}
       />
     </div>
   );

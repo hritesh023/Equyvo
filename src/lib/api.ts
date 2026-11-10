@@ -362,7 +362,21 @@ async function uploadChunked(
       if (!comp.error && comp.data) { lastErr = null; break; }
       lastErr = comp.error || 'Upload finished without a result';
     }
-    if (lastErr) throwUploadError(lastErr);
+    if (lastErr) {
+      // Last resort: retry the whole file as a single-shot upload so a
+      // transient R2 multipart-finalize failure never strands the user.
+      try {
+        const formData = new FormData();
+        formData.append('file', payload);
+        if (folder) formData.append('folder', folder);
+        const fallback = await request<{ data?: UploadResult; error?: string }>('/upload', { method: 'POST', body: formData });
+        if (!fallback.error && fallback.data) {
+          onProgress(total, 'done');
+          return fallback;
+        }
+      } catch { /* fall through to the original error */ }
+      throwUploadError(lastErr);
+    }
     onProgress(total, 'done');
     if (!comp || !comp.data) throwUploadError('Upload finished without a result');
     return comp;
