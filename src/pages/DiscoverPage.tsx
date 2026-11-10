@@ -883,7 +883,7 @@ const DiscoverPage = () => {
                       </button>
 
                     </div>
-                    <div className="flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-1 overflow-hidden">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
