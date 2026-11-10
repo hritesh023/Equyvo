@@ -16,7 +16,7 @@ import { compressImage } from '@/lib/utils';
 import { markHasRealContent } from '@/lib/data';
 import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
-import { setContentVisibility } from '@/utils/visibility';
+
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
@@ -2854,123 +2854,6 @@ const CreatePage = () => {
   const handleDeleteDraftPost = (id: string) => {
     setDraftPosts(prev => prev.filter(post => post.id !== id));
     showSuccess('Draft deleted successfully!');
-  };
-
-  // Content management functions — every action hits the server first (the
-  // owner-only source of truth) and updates local state only on success, so
-  // deletes/privacy actually hold on every device and for every account.
-  const handleDeleteVideo = async (id: string) => {
-    try {
-      await deleteContent({ postId: id, contentType: 'post' });
-      setUploadedVideos(prev => prev.filter(video => video.id !== id));
-    } catch { /* deleteContent already reported the failure */ }
-  };
-
-  const handleDeleteStory = async (id: string) => {
-    try {
-      await deleteContent({ postId: id, contentType: 'story' });
-      setUploadedStories(prev => prev.filter(story => story.id !== id));
-    } catch { /* already reported */ }
-  };
-
-  const handleDeleteThought = async (id: string) => {
-    try {
-      await deleteContent({ postId: id, contentType: 'thought' });
-      setUploadedThoughts(prev => prev.filter(thought => thought.id !== id));
-    } catch { /* already reported */ }
-  };
-
-  const handleDeletePhoto = async (id: string) => {
-    try {
-      await deleteContent({ postId: id, contentType: 'post' });
-      setUploadedPhotos(prev => prev.filter(photo => photo.id !== id));
-    } catch { /* already reported */ }
-  };
-
-  const handleDeleteMoment = async (id: string) => {
-    try {
-      await deleteContent({ postId: id, contentType: 'moment' });
-      setUploadedMoments(prev => prev.filter(moment => moment.id !== id));
-    } catch { /* already reported */ }
-  };
-
-  const handleDeleteTextStory = async (id: string) => {
-    try {
-      await deleteContent({ postId: id, contentType: 'story' });
-      setUploadedTextStories(prev => prev.filter(textStory => textStory.id !== id));
-    } catch { /* already reported */ }
-  };
-
-  const managementKindFor = (contentType: string): string => {
-    switch (contentType) {
-      case 'video':
-      case 'photo':
-        return 'post';
-      case 'story':
-      case 'text-story':
-        return 'story';
-      case 'thought':
-        return 'thought';
-      case 'moment':
-      case 'moments':
-        return 'moment';
-      default:
-        return 'post';
-    }
-  };
-
-  const isCurrentlyPrivate = (contentType: string, id: string): boolean => {
-    switch (contentType) {
-      case 'video': return !!uploadedVideos.find(v => v.id === id)?.isPrivate;
-      case 'story': return !!uploadedStories.find(s => s.id === id)?.isPrivate;
-      case 'thought': return !!uploadedThoughts.find(t => t.id === id)?.isPrivate;
-      case 'photo': return !!uploadedPhotos.find(p => p.id === id)?.isPrivate;
-      case 'moment':
-      case 'moments': return !!uploadedMoments.find(m => m.id === id)?.isPrivate;
-      case 'text-story': return !!uploadedTextStories.find(t => t.id === id)?.isPrivate;
-      default: return false;
-    }
-  };
-
-  // Owner-only "hide from public": flips server visibility, then mirrors
-  // locally. Reverts nothing on failure — local state only changes on success.
-  const handleTogglePrivacy = async (contentType: string, id: string) => {
-    const makePrivate = !isCurrentlyPrivate(contentType, id);
-    const ok = await setContentVisibility(id, managementKindFor(contentType), makePrivate ? 'private' : 'public');
-    if (!ok) return;
-    switch (contentType) {
-      case 'video':
-        setUploadedVideos(prev => prev.map(video =>
-          video.id === id ? { ...video, isPrivate: makePrivate } : video
-        ));
-        break;
-      case 'story':
-        setUploadedStories(prev => prev.map(story =>
-          story.id === id ? { ...story, isPrivate: makePrivate } : story
-        ));
-        break;
-      case 'thought':
-        setUploadedThoughts(prev => prev.map(thought =>
-          thought.id === id ? { ...thought, isPrivate: makePrivate } : thought
-        ));
-        break;
-      case 'photo':
-        setUploadedPhotos(prev => prev.map(photo =>
-          photo.id === id ? { ...photo, isPrivate: makePrivate } : photo
-        ));
-        break;
-      case 'moment':
-      case 'moments':
-        setUploadedMoments(prev => prev.map(moment =>
-          moment.id === id ? { ...moment, isPrivate: makePrivate } : moment
-        ));
-        break;
-      case 'text-story':
-        setUploadedTextStories(prev => prev.map(textStory =>
-          textStory.id === id ? { ...textStory, isPrivate: makePrivate } : textStory
-        ));
-        break;
-    }
   };
 
   // ---- Custom thumbnails (upload a separate one, or adjust the current) ----
