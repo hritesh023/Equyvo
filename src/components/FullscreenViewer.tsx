@@ -352,17 +352,19 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       };
     }
     
-    // Mobile videos (non-moments, non-stories) use 16:9 ratio - force landscape
+    // Mobile videos (non-moments, non-stories) use 16:9 ratio - keep the video
+    // inside the viewport so the action/progress bars anchor to the screen
+    // bottom instead of floating in the middle of a centered 16:9 box.
     if (isMobileDevice && isVideoType && !isPortraitMoment && !isStory) {
       return {
         width: '100vw',
-        height: '56.25vw', // 16:9 ratio (9/16 = 0.5625) - forces landscape orientation
+        height: '100vh',
         maxHeight: '100vh',
-        maxWidth: '177.78vh', // 16/9 = 1.7778
+        maxWidth: '100vw',
         objectFit: 'contain',
         position: 'relative',
         backgroundColor: 'black',
-        transform: 'rotate(0deg)', // Ensure no rotation
+        transform: 'rotate(0deg)',
         transformOrigin: 'center'
       };
     }
@@ -740,7 +742,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const formatTime = (time: number) => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
   if (!actualContent) return null;

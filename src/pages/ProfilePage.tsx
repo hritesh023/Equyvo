@@ -1398,7 +1398,7 @@ const ProfilePage = () => {
   const formatTime = (time: number) => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+    return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
   return (
@@ -1850,6 +1850,13 @@ const ProfilePage = () => {
         <TabsContent value="moments" className="mt-6">
           <Moments
             moments={userProfile.posts.filter(post => post.type === 'moment' && isVideoItem(post as any)).map(toMomentView)}
+            onDelete={(momentId) => {
+              handleDeletePost(momentId);
+              setUserProfile(prev => ({
+                ...prev,
+                posts: prev.posts.filter(p => p.id !== momentId),
+              }));
+            }}
             onFullscreen={(moment) => {
               const fullPost = userProfile.posts.find(p => p.id === moment.id) || moment as unknown as Post;
               addToWatchHistory(fullPost);

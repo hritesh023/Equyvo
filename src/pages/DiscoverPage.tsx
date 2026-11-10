@@ -979,10 +979,24 @@ const DiscoverPage = () => {
               className={`relative aspect-square bg-muted group cursor-pointer overflow-hidden ${i % 3 === 0 && i % 2 === 0 ? 'row-span-2 col-span-2' : ''}`}
               onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
             >
-              <DiscoverImg
-                src={item.thumbnail || item.image}
-                className="w-full h-full object-contain bg-black transition-transform duration-500 group-hover:scale-[1.02]"
-              />
+              {item.thumbnail || item.image ? (
+                <DiscoverImg
+                  src={item.thumbnail || item.image}
+                  className="w-full h-full object-contain bg-black transition-transform duration-500 group-hover:scale-[1.02]"
+                />
+              ) : item.videoUrl ? (
+                <video
+                  src={item.videoUrl}
+                  className="w-full h-full object-contain bg-black"
+                  muted
+                  playsInline
+                  preload="metadata"
+                />
+              ) : (
+                <div className="flex items-center justify-center bg-muted w-full h-full">
+                  <Image className="w-8 h-8 text-muted-foreground/50" />
+                </div>
+              )}
               {/* Top-left: category */}
               <div className="absolute top-2 left-2">
                 <Badge className="text-xs bg-black/50 hover:bg-black/70">
