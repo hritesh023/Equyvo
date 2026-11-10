@@ -2232,7 +2232,7 @@ const ProfilePage = () => {
                       <div className="flex-1">
                         <p className="font-medium">{post.content || post.title || post.caption || 'Saved content'}</p>
                         <p className="text-sm text-muted-foreground">
-                          {post.user || post.creator || 'Unknown'} • {post.time || 'Recently'}
+                          {pickDisplayName(post.user, post.creator) || 'Saved content'} • {post.time || 'Recently'}
                           {post.type === 'story' && ' • Story'}
                         </p>
                         {post.views && (
@@ -2301,30 +2301,7 @@ const ProfilePage = () => {
                       >
                         <Bookmark className={`h-4 w-4 ${savedPosts.has(post.id) ? 'fill-current' : ''}`} />
                       </Button>
-                      {post.likes && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="flex items-center gap-1"
-                          onClick={() => handleFullscreen(post as unknown as Post)}
-                          aria-label={`View post with ${post.likes} likes`}
-                          title="Open post details"
-                        >
-                          <ThumbsUp className="h-4 w-4" /> {toCount(post.likes)}
-                        </Button>
-                      )}
-                      {post.comments && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="flex items-center gap-1"
-                          onClick={() => handleComment(post.id, (post as any).user || (post as any).creator || 'Unknown')}
-                          aria-label={`View ${post.comments} comments`}
-                          title="View comments"
-                        >
-                          <MessageCircle className="h-4 w-4" /> {post.comments}
-                        </Button>
-                      )}
+
                       <Button
                         variant="ghost"
                         size="sm"

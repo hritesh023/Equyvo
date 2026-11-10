@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Trash2, Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Trash2, Eye, EyeOff, Loader2, Clock, Users, ThumbsUp } from 'lucide-react';
 import api from '@/lib/api';
+import { formatWatchTime } from '@/lib/media';
 import { showSuccess, showError } from '@/utils/toast';
 
 interface Props { userId: string; isSelf: boolean; }
@@ -66,6 +67,11 @@ const ContentManagementTab: React.FC<Props> = ({ userId, isSelf }) => {
           <div className="flex-1 min-w-0">
             <p className="text-sm font-medium truncate">{item.title || item.content || item._kind}</p>
             <p className="text-xs text-muted-foreground">{item._kind} · {item.visibility || 'public'}</p>
+             <div className="flex items-center gap-3 mt-1 text-xs text-muted-foreground">
+               {item.views ? <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {item.views}</span> : null}
+               {item.likes ? <span className="flex items-center gap-1"><ThumbsUp className="h-3 w-3" /> {item.likes}</span> : null}
+               {formatWatchTime(item.duration) ? <span className="flex items-center gap-1"><Clock className="h-3 w-3" /> {formatWatchTime(item.duration)}</span> : null}
+             </div>
           </div>
           <Button size="icon" variant="ghost" onClick={() => toggleVisibility(item)} title="Toggle visibility">
             {item.visibility === 'private' ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
