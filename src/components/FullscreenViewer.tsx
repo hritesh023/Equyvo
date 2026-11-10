@@ -49,7 +49,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // could lose the payload on a double render (StrictMode / parent state
   // update) and swap the viewer onto stale content.
   const rawContentRef = useRef<any>(null);
-  if (rawContentRef.current === null) {
+  // Reset the cached payload whenever a DIFFERENT item is opened, so reopening
+  // the same viewer never reuses a stale payload (which made the second open
+  // fall back to the legacy/buggy fullscreen layout).
+  const currentId = (content as any)?.id ?? (content as any)?.contentId;
+  if (rawContentRef.current === null || (rawContentRef.current?.id ?? rawContentRef.current?.contentId) !== currentId) {
     const temp = (window as any).tempFullscreenContent;
     rawContentRef.current = temp || content;
     if (temp) (window as any).tempFullscreenContent = null;
@@ -124,6 +128,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [showCommentSection, setShowCommentSection] = useState(false);
   const [isSplitView, setIsSplitView] = useState(false);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
+  const [hideOverlay, setHideOverlay] = useState(false);
   const [showImageOverlay, setShowImageOverlay] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
   const lastMouseMoveRef = useRef<number>(Date.now());
@@ -1143,7 +1148,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     >
       {/* Top bar with minimal controls */}
       <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0'}`}
+        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe ${hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0')}`}
         style={{
           pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
         }}
@@ -1226,6 +1231,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             }
           }}
           onClick={(e) => {
+            setHideOverlay(false);
             const target = e.target as HTMLElement | null;
             
             if (target?.closest('.top-controls-bar')) return;
@@ -1308,7 +1314,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           <div className="fixed bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none eq-safe-bottom" style={{ zIndex: 60 }}>
             {/* Details Section - above controls */}
             {!isSplitView && (
-              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0'}`}
+              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0')}`}
                 style={{
                   pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
                 }}
@@ -1561,8 +1567,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => {
-                       void setShowDetailsPanel(false);
-toggleFullscreen();
+                       setHideOverlay(true);
+void toggleFullscreen();
                     }}
                     className="text-white hover:text-blue-400 transition-colors p-2 hover:bg-white/10 rounded-full"
                     title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
@@ -2044,8 +2050,8 @@ toggleFullscreen();
             height: isSplitView ? '100%' : '100vh'
           }}
           onClick={() => {
-            void setShowDetailsPanel(false);
-toggleFullscreen();
+            setHideOverlay(true);
+void toggleFullscreen();
           }}
         >
           {imageSrc && !imageFailed ? (
