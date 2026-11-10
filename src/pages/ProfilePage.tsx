@@ -219,6 +219,9 @@ const ProfilePage = () => {
       return createTargetPlaceholder(routeTarget, routePreview);
     }
     const savedProfile = readCachedOwnProfile();
+    if (savedProfile && Array.isArray(savedProfile.posts)) {
+      savedProfile.posts = savedProfile.posts.filter((p: any) => !isBlockedContent(p));
+    }
     if (savedProfile) return savedProfile;
     return createDefaultProfile(getStoredUser());
   });
