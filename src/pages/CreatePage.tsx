@@ -20,7 +20,7 @@ import { deleteContent } from '@/utils/delete';
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
-import { setUploadState } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
+import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
 import { useEntitlements } from '@/hooks/use-entitlements';
@@ -511,7 +511,21 @@ const CreatePage = () => {
   // navigation away from this page (uploads run in the background).
   useEffect(() => {
     setUploadState({ isUploading, progress: uploadProgress ? { pct: uploadProgress.pct, phase: String(uploadProgress.phase) } : null });
-  }, [isUploading, uploadProgress]);  // Plan caps for pre-publish validation (size / length) + upgrade hints.
+  }, [isUploading, uploadProgress]);
+  // Hydrate from the global upload store so progress survives navigation away
+  // from this page (the upload keeps running in the background).
+  useEffect(() => {
+    const us = getUploadState();
+    if (us.isUploading) {
+      setIsUploading(true);
+      if (us.progress) setUploadProgress({ pct: us.progress.pct, phase: us.progress.phase as UploadProgress['phase'] });
+    }
+    const unsub = subscribeUpload((s) => {
+      setIsUploading(s.isUploading);
+      setUploadProgress(s.progress ? { pct: s.progress.pct, phase: s.progress.phase as UploadProgress['phase'] } : null);
+    });
+    return unsub;
+  }, []);  // Plan caps for pre-publish validation (size / length) + upgrade hints.
   const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
   const { entitlements: planEntitlements } = useEntitlements();
   const [livePortrait, setLivePortrait] = useState(false);
@@ -1454,7 +1468,7 @@ const CreatePage = () => {
             (r): r is { file: File; result: UploadResult } => !!r.result,
           );
           if (storySuccesses.length === 0) {
-            setIsUploading(false);
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
             showError('Story upload failed — no cover was posted without its media.');
             break;
@@ -1508,7 +1522,7 @@ const CreatePage = () => {
             });
             if (err) storyPersistError = err;
           }
-          setIsUploading(false);
+          setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
           setUploadProgress(null);
           if (storyPersistError) {
             showError('Saved locally but feed sync failed: ' + storyPersistError);
@@ -1604,7 +1618,7 @@ const CreatePage = () => {
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
         const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt });
-        setIsUploading(false);
+        setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         if (textStoryErr) {
           showError('Saved locally but feed sync failed: ' + textStoryErr);
         } else {
@@ -1681,7 +1695,7 @@ const CreatePage = () => {
         let thoughtUploadResult: { secureUrl: string; resourceType: string; publicId?: string; r2Key?: string; variants?: { thumbnail?: string } | null } | null = null;
         if (thoughtVideo) {
           const capErr = checkPlanCap(thoughtVideo, 'Thought media');
-          if (capErr) { setIsUploading(false); setUploadProgress(null); showError(capErr); break; }
+          if (capErr) { setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {}; setUploadProgress(null); showError(capErr); break; }
           try {
             const uploadFile = thoughtVideo.type.startsWith('image/') ? await compressImage(thoughtVideo) : thoughtVideo;
             const upResult = await runUpload(uploadFile, 'equyvo/thoughts', { index: 0, count: 1 });
@@ -1700,7 +1714,7 @@ const CreatePage = () => {
         const thoughtMediaType = isImageFile(thoughtVideo) ? 'image' : isVideoFile(thoughtVideo) ? 'video' : undefined;
         const thoughtSecureUrl = thoughtUploadResult?.secureUrl || '';
         if (thoughtVideo && !thoughtSecureUrl) {
-          setIsUploading(false);
+          setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
           setUploadProgress(null);
           showError('Thought media upload failed — nothing was posted without its media.');
           break;
@@ -1758,7 +1772,7 @@ const CreatePage = () => {
           resourceType: newUploadedThought.resourceType,
           r2Key: newUploadedThought.r2Key,
         });
-        setIsUploading(false);
+        setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         setUploadProgress(null);
         if (persistErr) {
           showError('Thought saved locally but feed sync failed: ' + persistErr);
@@ -1841,7 +1855,7 @@ const CreatePage = () => {
             (r): r is { file: File; result: UploadResult } => !!r.result,
           );
           if (photoSuccesses.length === 0) {
-            setIsUploading(false);
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
             showError('Photo upload failed — nothing was posted without its media.');
             break;
@@ -1890,7 +1904,7 @@ const CreatePage = () => {
             });
             if (err) photoPersistError = err;
           }
-          setIsUploading(false);
+          setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
           setUploadProgress(null);
           if (photoPersistError) {
             showError('Saved locally but feed sync failed: ' + photoPersistError);
@@ -1989,7 +2003,7 @@ const CreatePage = () => {
             (r): r is { file: File; result: UploadResult; durationSec?: number } => !!r.result,
           );
           if (videoSuccesses.length === 0) {
-            setIsUploading(false);
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
             showError('Video upload failed — no thumbnail was posted without its video.');
             break;
@@ -2045,7 +2059,7 @@ const CreatePage = () => {
             });
             if (err) videoPersistError = err;
           }
-          setIsUploading(false);
+          setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
           setUploadProgress(null);
           if (videoPersistError) {
             showError('Saved locally but feed sync failed: ' + videoPersistError);
@@ -2204,7 +2218,7 @@ const CreatePage = () => {
             (r): r is { file: File; result: UploadResult; durationSec?: number } => !!r.result,
           );
           if (momentSuccesses.length === 0) {
-            setIsUploading(false);
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
             showError('Moment upload failed — no cover was posted without its media.');
             break;
@@ -2273,7 +2287,7 @@ const CreatePage = () => {
             });
             if (err) momentPersistError = err;
           }
-          setIsUploading(false);
+          setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
           setUploadProgress(null);
           if (momentPersistError) {
             showError('Saved locally but feed sync failed: ' + momentPersistError);
@@ -2356,7 +2370,7 @@ const CreatePage = () => {
           audio: true,
         });
       } catch (error) {
-        setIsUploading(false);
+        setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         if (error instanceof Error) {
           if (error.name === 'NotAllowedError') {
             showError('Camera and microphone access denied. Allow access in your device/app settings to go live.');
@@ -2379,7 +2393,7 @@ const CreatePage = () => {
       } catch {
         mediaStream.getTracks().forEach(t => t.stop());
         setStream(null);
-        setIsUploading(false);
+        setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         showError('This device cannot record live video. Please update your system WebView.');
         return;
       }
@@ -2493,7 +2507,7 @@ const CreatePage = () => {
       recorder.start();
       recordingStartRef.current = Date.now();
       setIsRecording(true);
-      setIsUploading(false);
+      setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
 
       showSuccess('Live stream started! Followers have been notified.');
     } finally {
@@ -2558,7 +2572,7 @@ const CreatePage = () => {
     } catch (err) {
       showError('Live recording upload failed — the raw recording was saved to your device. Try again later.' + (err instanceof Error ? ` (${err.message})` : ''));
     }
-    setIsUploading(false);
+    setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
     setUploadProgress(null);
 
     if (!liveUploadResult?.secureUrl) {

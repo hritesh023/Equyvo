@@ -219,7 +219,7 @@ export function housePromoAd(placement: string): NativeAdData {
 let interstitialState: 'idle' | 'prepared' | 'showing' = 'idle';
 let interstitialAdId: string | null = null;
 let lastInterstitialShownAt = 0;
-const INTERSTITIAL_MIN_INTERVAL_MS = 3 * 60 * 1000; // 3 minutes between shows
+const INTERSTITIAL_MIN_INTERVAL_MS = 90 * 1000; // 90 seconds between shows
 
 /** Prepare an interstitial ad (idempotent). */
 export async function prepareInterstitial(): Promise<boolean> {

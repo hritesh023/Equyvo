@@ -2182,7 +2182,7 @@ const ProfilePage = () => {
 
         {isSelfView && (
           <TabsContent value="manage" className="mt-6 space-y-4">
-            <ContentManagementTab userId={userId} isSelf={isSelfView} />
+            <ContentManagementTab userId={targetProfileId || viewerId} isSelf={isSelfView} />
           </TabsContent>
         )}
 

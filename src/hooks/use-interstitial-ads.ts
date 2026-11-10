@@ -13,7 +13,7 @@ export function useInterstitialAds(): void {
   const plan = useAdPlan();
   const location = useLocation();
   const contentOpenRef = useRef(false);
-  const navCountRef = useRef(0);
+  const hasNavigatedRef = useRef(false);
   const lastPathRef = useRef(location.pathname);
   const showingRef = useRef(false);
 
@@ -46,12 +46,12 @@ export function useInterstitialAds(): void {
     if (path === '/pricing' || path === '/app/pricing') return;
 
     if (path !== lastPathRef.current) {
-      navCountRef.current += 1;
+      hasNavigatedRef.current = true;
       lastPathRef.current = path;
       contentOpenRef.current = false;
     }
     // Let the user settle in before the first interstitial.
-    if (navCountRef.current < 1) return;
+    if (!hasNavigatedRef.current) return;
     if (contentOpenRef.current) return;
 
     const videos = Array.from(document.querySelectorAll('video'));
