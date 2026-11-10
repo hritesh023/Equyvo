@@ -249,7 +249,7 @@ function throwUploadError(message: string, code?: string): never {
   throw e;
 }
 
-const CHUNK_PART_SIZE = 8 * 1024 * 1024;
+const CHUNK_PART_SIZE = 16 * 1024 * 1024;
 const PART_TIMEOUT_MS = 180_000;
 
 function extFromBlob(blob: Blob): string {

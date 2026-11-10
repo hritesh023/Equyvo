@@ -14,7 +14,7 @@ import { navItems } from '@/components/Navbar';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { shareItem } from '@/utils/share';
 import api from '@/lib/api';
-import { normalizeContentItem, resolveMediaFields } from '@/lib/media';
+import { normalizeContentItem, resolveMediaFields, formatWatchTime } from '@/lib/media';
 import { toCount } from '@/lib/count';
 
 interface FullscreenBrowseProps {
@@ -258,7 +258,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                           )}
                           {content.duration && !content.isLive && (
                             <div className="absolute bottom-2 right-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                              {content.duration}
+                              {formatWatchTime(content.duration)}
                             </div>
                           )}
                         </div>
@@ -413,7 +413,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
                           )}
                           {content.duration && (
                             <div className="absolute bottom-1 right-1 bg-black/70 text-white text-[10px] px-1 py-0.5 rounded">
-                              {content.duration}
+                              {formatWatchTime(content.duration)}
                             </div>
                           )}
                         </div>

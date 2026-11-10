@@ -3101,7 +3101,7 @@ function cloudinaryVariants(secureUrl, resourceType, quality) {
 }
 
 const ALLOWED_MIME_PREFIXES = ['image/', 'video/', 'audio/'];
-const UPLOAD_PART_SIZE = 8 * 1024 * 1024;
+const UPLOAD_PART_SIZE = 16 * 1024 * 1024;
 const SINGLE_UPLOAD_MAX_BYTES = UPLOAD_PART_SIZE;
 const MAX_MULTIPART_PARTS = 10000;
 const EXT_MIME_SERVER = {

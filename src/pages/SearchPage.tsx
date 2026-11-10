@@ -16,6 +16,7 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
 import FollowButton from '@/components/FollowButton';
 import { cn } from '@/lib/utils';
+import { formatWatchTime } from '@/lib/media';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { searchContent, searchContentAsync, ContentIndexItem, SearchedUser, getAllContent } from '@/lib/content-index';
@@ -586,7 +587,7 @@ const SearchPage: React.FC = () => {
                         />
                         {result.type === 'video' && (
                           <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-2 py-1 rounded">
-                            {result.duration}
+                            {formatWatchTime(result.duration)}
                           </div>
                         )}
                         <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-all duration-300 rounded-t-lg flex items-center justify-center">
@@ -709,7 +710,7 @@ const SearchPage: React.FC = () => {
                             {result.type === 'video' && (
                               <>
                                 <span>•</span>
-                                <span>{result.duration}</span>
+                                <span>{formatWatchTime(result.duration)}</span>
                               </>
                             )}
                           </div>
