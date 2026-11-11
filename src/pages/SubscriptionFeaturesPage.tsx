@@ -48,7 +48,7 @@ const SubscriptionFeaturesPage: React.FC = () => {
       else earned = window.confirm('Watch a short sponsored ad to unlock 500MB uploads for 24 hours?');
       if (!earned) { toast.error('Ad not completed. No reward granted.'); return; }
       const token = localStorage.getItem('equyvo_cognito_token');
-      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) } });
       if (!r.ok) throw new Error('boost failed');
       toast.success('500MB upload limit unlocked for 24 hours!');
     } catch { toast.error('Could not unlock reward. Please try again.'); }

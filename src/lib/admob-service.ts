@@ -233,13 +233,13 @@ export async function prepareInterstitial(): Promise<boolean> {
     await initializeAds();
     const { plugin } = await loadPlugin();
     if (!plugin?.prepareInterstitial) return false;
-    await plugin.prepareInterstitial({
+    const info = await plugin.prepareInterstitial({
       adId,
       isTesting: isDevEnvironment(),
       npa: !personalizedAdsEnabled(),
     });
     interstitialState = 'prepared';
-    interstitialAdId = adId;
+    interstitialAdId = (info && (info as { adUnitId?: string }).adUnitId) || adId;
     return true;
   } catch (e) {
     interstitialState = 'idle';
@@ -264,9 +264,9 @@ export async function showInterstitial(): Promise<boolean> {
     if (!plugin?.showInterstitial) return false;
     interstitialState = 'showing';
     try {
-      await plugin.showInterstitial(
-        interstitialAdId ? { adId: interstitialAdId } : undefined,
-      );
+      // Show the most recently prepared interstitial (passing a stale/incorrect
+      // adId here previously prevented the ad from rendering at all).
+      await plugin.showInterstitial();
     } catch (e) {
       interstitialState = 'idle';
       try { console.warn('[AdMob] showInterstitial failed:', e); } catch { /* ignore */ }
@@ -307,17 +307,24 @@ export async function showRewardedAd(): Promise<boolean> {
     await initializeAds();
     const { plugin } = await loadPlugin();
     if (!plugin?.prepareRewardVideoAd || !plugin?.showRewardVideoAd) return false;
-    const units = [effectiveRewardedAdUnitId(), TEST_REWARDED_AD_UNIT_ID].filter(Boolean);
-    for (const adId of units) {
-      try {
-        await plugin.prepareRewardVideoAd({
-          adId,
-          isTesting: adId === TEST_REWARDED_AD_UNIT_ID || isDevEnvironment(),
-          npa: !personalizedAdsEnabled(),
-        });
-        const reward = await plugin.showRewardVideoAd();
-        if (reward) return true;
-      } catch { /* try next unit */ }
+    const adId = effectiveRewardedAdUnitId();
+    if (!adId) return false;
+    try {
+      const info = await plugin.prepareRewardVideoAd({
+        adId,
+        isTesting: isDevEnvironment(),
+        npa: !personalizedAdsEnabled(),
+      });
+      const reward = await plugin.showRewardVideoAd(
+        info && (info as { adUnitId?: string }).adUnitId
+          ? { adId: (info as { adUnitId?: string }).adUnitId }
+          : undefined,
+      );
+      // AdMob resolves the promise with a reward item only when the user
+      // actually earns the reward; treat a non-null result as earned.
+      if (reward !== null && reward !== undefined) return true;
+    } catch (e) {
+      try { console.warn('[AdMob] rewarded ad failed:', e); } catch { /* ignore */ }
     }
     return false;
   } catch {

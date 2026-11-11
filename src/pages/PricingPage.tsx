@@ -125,7 +125,7 @@ const PricingPage: React.FC = () => {
       }
       if (!earned) { toast.error('Ad not completed. No reward granted.'); return; }
       const token = ((): string | null => { try { return localStorage.getItem('equyvo_cognito_token'); } catch { return null; } })();
-      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: token ? { Authorization: 'Bearer ' + token } : {} });
+      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) } });
       if (!r.ok) throw new Error('boost failed');
       toast.success('500MB upload limit unlocked for 24 hours!');
     } catch {
