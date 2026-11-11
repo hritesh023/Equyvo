@@ -155,9 +155,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose]);
   useBackOverlay(true, handleBackInViewer);
 
-  // Detect mobile device and orientation
-  const isMobileDevice = window.innerWidth < 768;
+  // Detect mobile device and orientation. Use the SHORTER side so a phone/tablet
+  // rotated to landscape (16:9) is still treated as mobile instead of flipping
+  // to the desktop layout, which left the details/progress bars floating in the
+  // middle of / beyond the top of the screen.
+  const isMobileDevice = Math.min(window.innerWidth, window.innerHeight) < 768;
   const isPortraitOrientation = window.innerHeight > window.innerWidth;
+  const isShortLandscape = window.innerWidth > window.innerHeight && window.innerHeight < 500;
 
   // Resolve the effective type from multiple sources of truth
   const resolvedType = actualContent?.type ||
@@ -477,7 +481,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   useEffect(() => {
     // Detect if desktop or mobile
     const checkDevice = () => {
-      setIsDesktop(window.innerWidth >= 768);
+      setIsDesktop(Math.min(window.innerWidth, window.innerHeight) >= 768);
     };
     
     // Check fullscreen state
@@ -1334,10 +1338,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           )}
           
           {/* Combined bottom overlay with video info and controls */}
-          <div className="fixed bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none eq-safe-bottom" style={{ zIndex: 60 }}>
+          <div
+            className={`fixed bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none ${isShortLandscape ? '' : 'eq-safe-bottom'}`}
+            style={{
+              zIndex: 60,
+              paddingBottom: isShortLandscape
+                ? 'max(0.5rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px))'
+                : undefined,
+            }}
+          >
             {/* Details Section - above controls */}
             {!isSplitView && (
-              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0')}`}
+              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''} ${hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0')}`}
                 style={{
                   pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
                 }}
@@ -1491,11 +1503,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             <div 
               className="bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-500 pointer-events-none"
               style={{ 
-                paddingBottom: isPortraitMoment
-                  ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 120px)'
-                  : (isMobileDevice && !isPortraitMoment && !isStory)
-                    ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 80px)'
-                    : 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 140px)',
+                paddingBottom: isShortLandscape
+                  ? 'calc(max(0.5rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 16px)'
+                  : isPortraitMoment
+                    ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 120px)'
+                    : (isMobileDevice && !isPortraitMoment && !isStory)
+                      ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 80px)'
+                      : 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 140px)',
                 display: showControls ? 'block' : 'none'
               }}
             >
