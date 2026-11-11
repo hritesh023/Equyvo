@@ -239,6 +239,7 @@ function probeVideoDuration(src: Blob): Promise<number | undefined> {
 }
 
 const CreatePage = () => {
+  const deferredSuccess = (message: string) => { setTimeout(() => showSuccess(message), 0); };
   // Deep-link a composer section: /app/create?tab=moment opens the Moments
   // composer directly (Moments' empty state sends users there) so tapping
   // "Create a moment" never lands on the wrong composer type.
@@ -1575,9 +1576,9 @@ const CreatePage = () => {
           if (storyPersistError) {
             showError('Saved locally but feed sync failed: ' + storyPersistError);
           } else if (storySuccesses.length < storyResults.length) {
-            showSuccess(`${storySuccesses.length} story item(s) posted; failed files were kept for retry.`);
+            deferredSuccess(`${storySuccesses.length} story item(s) posted; failed files were kept for retry.`);
           } else {
-            showSuccess('Story posted successfully! It will be available for 24 hours.');
+            deferredSuccess('Story posted successfully! It will be available for 24 hours.');
           }
           // Keep failed files selected for retry; the consumed cover is cleared.
           setStoryFiles(prev => prev.filter(f => !storySuccesses.some(s => s.file === f)));
@@ -1601,7 +1602,7 @@ const CreatePage = () => {
           };
           setScheduledPosts(prev => [...prev, newScheduledStory]);
         }
-        showSuccess('Story scheduled successfully!');
+        deferredSuccess('Story scheduled successfully!');
         setStoryFiles([]);
         setShowScheduleModal(false);
         setScheduleDateTime('');
@@ -1616,7 +1617,7 @@ const CreatePage = () => {
           };
           setDraftPosts(prev => [...prev, newDraftStory]);
         }
-        showSuccess('Story saved as draft!');
+        deferredSuccess('Story saved as draft!');
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -1671,7 +1672,7 @@ const CreatePage = () => {
         if (textStoryErr) {
           showError('Saved locally but feed sync failed: ' + textStoryErr);
         } else {
-          showSuccess('Text story posted successfully! It will be available for 24 hours.');
+          deferredSuccess('Text story posted successfully! It will be available for 24 hours.');
         }
         setTextStoryContent('');
         setTextStoryBackground('#000000');
@@ -1695,7 +1696,7 @@ const CreatePage = () => {
           status: 'scheduled'
         };
         setScheduledPosts(prev => [...prev, newScheduledTextStory]);
-        showSuccess('Text story scheduled successfully!');
+        deferredSuccess('Text story scheduled successfully!');
         setTextStoryContent('');
         setTextStoryBackground('#000000');
         setTextStoryColor('#FFFFFF');
@@ -1712,7 +1713,7 @@ const CreatePage = () => {
           createdAt: new Date()
         };
         setDraftPosts(prev => [...prev, newDraftTextStory]);
-        showSuccess('Text story saved as draft!');
+        deferredSuccess('Text story saved as draft!');
         setTextStoryChatWithAudience(false);
         setTextStoryChatPrompt('Chat with your creator');
         break;
@@ -1828,7 +1829,7 @@ const CreatePage = () => {
         if (persistErr) {
           showError('Thought saved locally but feed sync failed: ' + persistErr);
         } else {
-          showSuccess('Thought posted successfully!');
+          deferredSuccess('Thought posted successfully!');
         }
         setThoughtContent('');
         setThoughtVideo(null);
@@ -1847,7 +1848,7 @@ const CreatePage = () => {
           status: 'scheduled'
         };
         setScheduledPosts(prev => [...prev, newScheduledThought]);
-        showSuccess('Thought scheduled successfully!');
+        deferredSuccess('Thought scheduled successfully!');
         setThoughtContent('');
         setThoughtVideo(null);
         setShowScheduleModal(false);
@@ -1861,7 +1862,7 @@ const CreatePage = () => {
           createdAt: new Date()
         };
         setDraftPosts(prev => [...prev, newDraftThought]);
-        showSuccess('Thought saved as draft!');
+        deferredSuccess('Thought saved as draft!');
         break;
     }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -1968,9 +1969,9 @@ const CreatePage = () => {
           if (photoPersistError) {
             showError('Saved locally but feed sync failed: ' + photoPersistError);
           } else if (photoSuccesses.length < uploadedPhotoResults.length) {
-            showSuccess(`${photoSuccesses.length} photo(s) posted; failed files were kept for retry.`);
+            deferredSuccess(`${photoSuccesses.length} photo(s) posted; failed files were kept for retry.`);
           } else {
-            showSuccess(`${photoSuccesses.length} photo(s) posted successfully!`);
+            deferredSuccess(`${photoSuccesses.length} photo(s) posted successfully!`);
           }
           // Keep failed files selected for retry.
           setPhotoFiles(prev => prev.filter(f => !photoSuccesses.some(s => s.file === f)));
@@ -1992,7 +1993,7 @@ const CreatePage = () => {
           };
           setScheduledPosts(prev => [...prev, newScheduledPhotos]);
         }
-        showSuccess(`${photoFiles.length} photo(s) scheduled successfully!`);
+        deferredSuccess(`${photoFiles.length} photo(s) scheduled successfully!`);
         setPhotoFiles([]);
         setPhotoCaption('');
         setShowScheduleModal(false);
@@ -2008,7 +2009,7 @@ const CreatePage = () => {
           };
           setDraftPosts(prev => [...prev, newDraftPhotos]);
         }
-        showSuccess(`${photoFiles.length} photo(s) saved as draft!`);
+        deferredSuccess(`${photoFiles.length} photo(s) saved as draft!`);
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -2131,9 +2132,9 @@ const CreatePage = () => {
           if (videoPersistError) {
             showError('Saved locally but feed sync failed: ' + videoPersistError);
           } else if (videoSuccesses.length < uploadedVideoResults.length) {
-            showSuccess(`${videoSuccesses.length} video(s) posted; failed files were kept for retry.`);
+            deferredSuccess(`${videoSuccesses.length} video(s) posted; failed files were kept for retry.`);
           } else {
-            showSuccess(`${videoSuccesses.length} video(s) posted successfully!`);
+            deferredSuccess(`${videoSuccesses.length} video(s) posted successfully!`);
           }
           // Keep failed files selected for retry; the consumed thumbnail is cleared.
           setVideoFiles(prev => prev.filter(f => !videoSuccesses.some(s => s.file === f)));
@@ -2156,7 +2157,7 @@ const CreatePage = () => {
           };
           setScheduledPosts(prev => [...prev, newScheduledVideos]);
         }
-        showSuccess(`${videoFiles.length} video(s) scheduled successfully!`);
+        deferredSuccess(`${videoFiles.length} video(s) scheduled successfully!`);
         setVideoFiles([]);
         setVideoCaption('');
         setShowScheduleModal(false);
@@ -2172,7 +2173,7 @@ const CreatePage = () => {
           };
           setDraftPosts(prev => [...prev, newDraftVideos]);
         }
-        showSuccess(`${videoFiles.length} video(s) saved as draft!`);
+        deferredSuccess(`${videoFiles.length} video(s) saved as draft!`);
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -2214,7 +2215,7 @@ const CreatePage = () => {
             status: 'scheduled'
           };
           setScheduledPosts(prev => [...prev, newScheduledLive]);
-          showSuccess('Live stream scheduled successfully!');
+          deferredSuccess('Live stream scheduled successfully!');
           setLiveTitle('');
           setLiveDescription('');
           setShowScheduleModal(false);
@@ -2238,7 +2239,7 @@ const CreatePage = () => {
             createdAt: new Date()
           };
           setDraftPosts(prev => [...prev, newDraftLive]);
-          showSuccess('Live stream saved as draft!');
+          deferredSuccess('Live stream saved as draft!');
         } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
           publishLockRef.current = false;
         }
@@ -2369,9 +2370,9 @@ const CreatePage = () => {
           if (momentPersistError) {
             showError('Saved locally but feed sync failed: ' + momentPersistError);
           } else if (momentSuccesses.length < uploadedResults.length) {
-            showSuccess(`${momentSuccesses.length} moment(s) posted; failed files were kept for retry.`);
+            deferredSuccess(`${momentSuccesses.length} moment(s) posted; failed files were kept for retry.`);
           } else {
-            showSuccess(`${momentSuccesses.length} moment(s) posted successfully!`);
+            deferredSuccess(`${momentSuccesses.length} moment(s) posted successfully!`);
           }
           // Keep failed files selected for retry; the consumed cover is cleared.
           setMomentFiles(prev => prev.filter(f => !momentSuccesses.some(s => s.file === f)));
@@ -2394,7 +2395,7 @@ const CreatePage = () => {
           };
           setScheduledPosts(prev => [...prev, newScheduledMoments]);
         }
-        showSuccess(`${momentFiles.length} moment(s) scheduled successfully!`);
+        deferredSuccess(`${momentFiles.length} moment(s) scheduled successfully!`);
         setMomentFiles([]);
         setMomentContent('');
         setShowScheduleModal(false);
@@ -2410,7 +2411,7 @@ const CreatePage = () => {
           };
           setDraftPosts(prev => [...prev, newDraftMoments]);
         }
-        showSuccess(`${momentFiles.length} moment(s) saved as draft!`);
+        deferredSuccess(`${momentFiles.length} moment(s) saved as draft!`);
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -2587,7 +2588,7 @@ const CreatePage = () => {
       setIsRecording(true);
       setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
 
-      showSuccess('Live stream started! Followers have been notified.');
+      deferredSuccess('Live stream started! Followers have been notified.');
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
       publishLockRef.current = false;
     }
@@ -2620,7 +2621,7 @@ const CreatePage = () => {
       detail: { title: liveTitle }
     }));
 
-    showSuccess('Live stream ended and recording saved!');
+    deferredSuccess('Live stream ended and recording saved!');
     setLiveTitle('');
     setLiveDescription('');
     setLiveThumbnailFile(null);
@@ -2866,7 +2867,7 @@ const CreatePage = () => {
         break;
     }
     setActiveTab(dest);
-    showSuccess(`Capture added to ${dest === 'photo' ? 'Photos' : dest === 'video' ? 'Videos' : dest === 'story' ? 'Stories' : dest === 'thought' ? 'Thoughts' : 'Moments'} section. Review and post.`);
+    deferredSuccess(`Capture added to ${dest === 'photo' ? 'Photos' : dest === 'video' ? 'Videos' : dest === 'story' ? 'Stories' : dest === 'thought' ? 'Thoughts' : 'Moments'} section. Review and post.`);
   };
 
   const handleCameraCapture = async () => {
@@ -2946,12 +2947,12 @@ const CreatePage = () => {
 
   const handleDeleteScheduledPost = (id: string) => {
     setScheduledPosts(prev => prev.filter(post => post.id !== id));
-    showSuccess('Scheduled post deleted successfully!');
+    deferredSuccess('Scheduled post deleted successfully!');
   };
 
   const handleDeleteDraftPost = (id: string) => {
     setDraftPosts(prev => prev.filter(post => post.id !== id));
-    showSuccess('Draft deleted successfully!');
+    deferredSuccess('Draft deleted successfully!');
   };
 
   // ---- Custom thumbnails (upload a separate one, or adjust the current) ----
@@ -2998,7 +2999,7 @@ const CreatePage = () => {
         }
         setLiveThumbnailFile(file);
         setLiveThumbnailPreview(URL.createObjectURL(file));
-        showSuccess('Stream thumbnail updated');
+        deferredSuccess('Stream thumbnail updated');
         return;
       }
       if (t.kind === 'pending-video' || t.kind === 'pending-moment' || t.kind === 'pending-thought' || t.kind === 'pending-story') {
@@ -3011,28 +3012,28 @@ const CreatePage = () => {
           }
           setVideoThumbFile(file);
           setVideoThumbPreview(previewUrl);
-          showSuccess('Video thumbnail set — it will be used when you post.');
+          deferredSuccess('Video thumbnail set — it will be used when you post.');
         } else if (t.kind === 'pending-moment') {
           if (momentThumbPreview.startsWith('blob:')) {
             try { URL.revokeObjectURL(momentThumbPreview); } catch { /* ignore */ }
           }
           setMomentThumbFile(file);
           setMomentThumbPreview(previewUrl);
-          showSuccess('Moment cover set — it will be used when you post.');
+          deferredSuccess('Moment cover set — it will be used when you post.');
         } else if (t.kind === 'pending-thought') {
           if (thoughtThumbPreview.startsWith('blob:')) {
             try { URL.revokeObjectURL(thoughtThumbPreview); } catch { /* ignore */ }
           }
           setThoughtThumbFile(file);
           setThoughtThumbPreview(previewUrl);
-          showSuccess('Thought thumbnail set — it will be used when you post.');
+          deferredSuccess('Thought thumbnail set — it will be used when you post.');
         } else {
           if (storyThumbPreview.startsWith('blob:')) {
             try { URL.revokeObjectURL(storyThumbPreview); } catch { /* ignore */ }
           }
           setStoryThumbFile(file);
           setStoryThumbPreview(previewUrl);
-          showSuccess('Story cover set — it will be used when you post.');
+          deferredSuccess('Story cover set — it will be used when you post.');
         }
         return;
       }
@@ -3066,7 +3067,7 @@ const CreatePage = () => {
       } catch {
         /* ignore */
       }
-      showSuccess('Thumbnail updated everywhere');
+      deferredSuccess('Thumbnail updated everywhere');
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : '';
       showError(msg || "Couldn't update the thumbnail. Please try again.");
