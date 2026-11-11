@@ -100,7 +100,11 @@ public class MainActivity extends BridgeActivity {
                         ws.setDomStorageEnabled(true);
                         ws.setDatabaseEnabled(true);
                         ws.setMixedContentMode(android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW);
-                        // WebView autofill is enabled via manifest importantForAutofill.
+                        // Keep the WebView's own InputConnection (captureInput=false) so the
+                        // system keyboard keeps its suggestion strip / autocorrect /
+                        // spell-check / autofill. Mark the view important for autofill.
+                        try { bridge.getWebView().setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_YES); } catch (Throwable ignored) {}
+                        try { bridge.getWebView().setSaveEnabled(true); } catch (Throwable ignored) {}
                     } else {
                         webSettingsHandler.postDelayed(this, 200L);
                     }

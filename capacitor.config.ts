@@ -24,7 +24,12 @@ const config: CapacitorConfig = {
   },
   android: {
     allowMixedContent: true,
-    captureInput: true,
+    // captureInput MUST stay false: when true, Capacitor substitutes a bare
+    // BaseInputConnection for the WebView's normal InputConnection, which
+    // strips the IME suggestion strip / autocorrect / spell-check / autofill
+    // that Gboard and other system keyboards rely on. Keeping the WebView's
+    // own InputConnection lets the keyboard behave like in every other app.
+    captureInput: false,
     webContentsDebuggingEnabled: isDev,
     backgroundColor: '#000000'
   },

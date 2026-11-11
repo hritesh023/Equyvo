@@ -55,14 +55,22 @@
     // default keyboard behaves like other apps. Password/email fields keep
     // their own sensible settings.
     (function () {
+      function isTextLike(el) {
+        var type = (el.getAttribute('type') || 'text').toLowerCase();
+        return !['password','email','tel','number','url','date','time','datetime-local','month','week','color','file','hidden','checkbox','radio','range','submit','button','reset','image'].includes(type);
+      }
       function fix(el) {
         if (!el || !el.tagName) return;
         var t = el.tagName.toLowerCase();
         if (t !== 'input' && t !== 'textarea') return;
-        var type = (el.getAttribute('type') || 'text').toLowerCase();
-        if (type === 'password' || type === 'email' || type === 'tel' || type === 'number' || type === 'url') return;
+        if (!isTextLike(el) && t !== 'textarea') {
+          // Keep autocomplete for non-text types (browser autofill) but skip spellcheck toggles.
+          if (!el.getAttribute('autocomplete')) el.setAttribute('autocomplete', 'on');
+          return;
+        }
         if (el.getAttribute('spellcheck') !== 'false') el.setAttribute('spellcheck', 'true');
         if (!el.getAttribute('autocorrect')) el.setAttribute('autocorrect', 'on');
+        if (!el.getAttribute('autocapitalize')) el.setAttribute('autocapitalize', 'sentences');
         if (!el.getAttribute('autocomplete') || el.getAttribute('autocomplete') === 'off') el.setAttribute('autocomplete', 'on');
       }
       function scan(root) {
@@ -81,6 +89,9 @@
         });
       });
       obs.observe(document.documentElement, { childList: true, subtree: true });
+      // Re-apply on focus so React re-renders cannot strip the attributes
+      // right before the keyboard opens.
+      document.addEventListener('focusin', function (e) { fix(e.target); }, true);
     })();
   </script>
 </body>
