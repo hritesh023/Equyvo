@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send, RotateCcw } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send, RotateCcw, Settings, Gauge, UserPlus, Eye, Minimize2, Download, Captions } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from '@/lib/utils';
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -53,9 +53,22 @@ const MomentsPage = () => {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [isActiveVideoPlaying, setIsActiveVideoPlaying] = useState(false);
+  const [autoAdvance, setAutoAdvance] = useState(true);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1);
+  const [showCaptions, setShowCaptions] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [followingCreators, setFollowingCreators] = useState<Set<string>>(new Set());
   const lastTapRef = useRef<{ time: number; index: number }>({ time: 0, index: -1 });
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [likeAnimIndex, setLikeAnimIndex] = useState<number | null>(null);
+
+  // Apply playback speed to the active video.
+  useEffect(() => {
+    const v = videoRefs.current[activeVideoIndex];
+    if (v) {
+      try { v.playbackRate = playbackSpeed; } catch { /* ignore */ }
+    }
+  }, [playbackSpeed, activeVideoIndex]);
 
   // Track play state of the active video for media session
   useEffect(() => {
@@ -686,9 +699,19 @@ const MomentsPage = () => {
                 backgroundColor: 'black',
                 objectPosition: 'center center',
               }}
-              loop
+              loop={!autoAdvance}
               playsInline
               muted={isMuted}
+              onEnded={() => {
+                if (!autoAdvance) return;
+                const container = containerRef.current;
+                if (!container) return;
+                const slides = container.querySelectorAll('.moment-slide');
+                const next = activeVideoIndex + 1;
+                if (next < slides.length) {
+                  (slides[next] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'start' });
+                }
+              }}
               autoPlay
               preload="metadata"
               onTimeUpdate={() => handleTimeUpdate(index)}
@@ -750,8 +773,8 @@ const MomentsPage = () => {
 
           {/* Overlay Content - Optimized for Portrait */}
           <div className="absolute inset-0 max-w-md mx-auto pointer-events-none">
-            {/* Top Bar (Mute) */}
-            <div className="absolute top-4 right-4 z-20 pointer-events-auto">
+            {/* Top Bar (Mute / Speed / PiP) */}
+            <div className="absolute top-4 right-4 z-20 pointer-events-auto flex flex-col gap-2 items-end">
               <Button
                 variant="ghost"
                 size="icon"
@@ -760,6 +783,36 @@ const MomentsPage = () => {
               >
                 {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
               </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                className="bg-black/20 hover:bg-black/40 text-white rounded-full backdrop-blur-sm"
+                onClick={() => setSettingsOpen(o => !o)}
+                title="Playback settings"
+              >
+                <Settings className="h-5 w-5" />
+              </Button>
+              {settingsOpen && index === activeVideoIndex && (
+                <div className="bg-black/70 backdrop-blur-md rounded-xl p-3 flex flex-col gap-2 min-w-[160px]">
+                  <div className="text-white text-xs font-semibold">Speed</div>
+                  <div className="flex gap-1">
+                    {[0.5,1,1.5,2].map(sp => (
+                      <button key={sp} onClick={() => setPlaybackSpeed(sp)} className={`px-2 py-1 rounded text-xs ${playbackSpeed===sp?'bg-white text-black':'bg-white/10 text-white'}`}>{sp}x</button>
+                    ))}
+                  </div>
+                  <button onClick={() => setAutoAdvance(a=>!a)} className="text-white text-xs text-left hover:bg-white/10 rounded px-2 py-1">
+                    Auto-advance: {autoAdvance?'On':'Off'}
+                  </button>
+                  <button onClick={() => setShowCaptions(c=>!c)} className="text-white text-xs text-left hover:bg-white/10 rounded px-2 py-1">
+                    Captions: {showCaptions?'On':'Off'}
+                  </button>
+                  <button onClick={() => {
+                    try { (window as any).AndroidPiP?.enter?.(); } catch {}
+                  }} className="text-white text-xs text-left hover:bg-white/10 rounded px-2 py-1">
+                    Minimize (PiP)
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Right Side Actions */}
@@ -777,6 +830,30 @@ const MomentsPage = () => {
                   <AvatarImage src={moment.avatar} />
                   <AvatarFallback>{moment.user[0]}</AvatarFallback>
                 </Avatar>
+              </div>
+              <div className="flex flex-col items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="p-0 hover:bg-transparent text-white hover:scale-110 transition-transform"
+                  onClick={async (e) => {
+                    e.stopPropagation();
+                    const target = String((moment as any).ownerId || (moment as any).userId || '');
+                    if (!target) return;
+                    try {
+                      if (followingCreators.has(target)) {
+                        await (await import('@/lib/api')).api.unfollow(target);
+                        setFollowingCreators(prev => { const n=new Set(prev); n.delete(target); return n; });
+                      } else {
+                        await (await import('@/lib/api')).api.follow(target);
+                        setFollowingCreators(prev => new Set(prev).add(target));
+                      }
+                    } catch { /* ignore */ }
+                  }}
+                >
+                  <UserPlus className={cn("h-6 w-6 drop-shadow-md", followingCreators.has(String((moment as any).ownerId || (moment as any).userId || '')) ? "text-blue-400" : "")} />
+                </Button>
+                <span className="text-white text-[10px] font-medium drop-shadow-md">Follow</span>
               </div>
 
               <div className="flex flex-col items-center gap-1">
@@ -859,6 +936,14 @@ const MomentsPage = () => {
                   {moment.description}
                 </p>
               </div>
+              <div className="flex items-center gap-2 text-white/80 text-xs mb-2 drop-shadow-md">
+                <Eye className="h-3 w-3" /> {toCount(moment.views)} views
+              </div>
+              {showCaptions && moment.description && (
+                <div className="mb-2 max-w-[80%]">
+                  <p className="text-white text-sm drop-shadow-md line-clamp-3">{moment.description}</p>
+                </div>
+              )}
               <div className="flex items-center gap-2 bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-sm animate-pulse cursor-pointer hover:bg-white/30 transition-colors">
                 <Music2 className="h-3 w-3" />
                 <p className="text-xs font-medium truncate max-w-[150px]">{moment.song}</p>
