@@ -694,6 +694,15 @@ const MomentsPage = () => {
               onTimeUpdate={() => handleTimeUpdate(index)}
               onSeeked={() => handleSeeked(index)}
               onLoadedMetadata={() => handleLoadedMetadata(index)}
+               onError={(e) => {
+                 const v = e.currentTarget;
+                 if (!v.dataset.origSrc) v.dataset.origSrc = moment.videoUrl || '';
+                 const attempts = Number(v.dataset.retryCount || '0');
+                 if (attempts >= 3) return;
+                 v.dataset.retryCount = String(attempts + 1);
+                 const base = v.dataset.origSrc || moment.videoUrl || '';
+                 v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+               }}
               onClick={(e) => {
                 const now = Date.now();
                 const isDbl = now - lastTapRef.current.time < 400 && lastTapRef.current.index === index;

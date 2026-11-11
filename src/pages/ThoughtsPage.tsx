@@ -278,7 +278,19 @@ const MediaRenderer: React.FC<{
           onClick={togglePlay}
           onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
-          onError={() => setVideoError(true)}
+          onError={(e) => {
+             const v = e.currentTarget;
+             if (!v.dataset.origSrc) v.dataset.origSrc = media.url || '';
+             const attempts = Number(v.dataset.thoughtRetry || '0');
+             if (attempts < 2) {
+               v.dataset.thoughtRetry = String(attempts + 1);
+               const base = v.dataset.origSrc || media.url || '';
+               v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+               v.load();
+             } else {
+               setVideoError(true);
+             }
+           }}
           playsInline
           preload="metadata"
         />

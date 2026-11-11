@@ -1036,6 +1036,15 @@ const HomePage = () => {
                               muted
                               playsInline
                               preload="metadata"
+                              onError={(e) => {
+                                const v = e.currentTarget;
+                                if (!v.dataset.origSrc) v.dataset.origSrc = vsrc;
+                                const attempts = Number(v.dataset.homeRetry || '0');
+                                if (attempts >= 2) return;
+                                v.dataset.homeRetry = String(attempts + 1);
+                                const base = v.dataset.origSrc || vsrc;
+                                v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                              }}
                             />
                           );
                         }

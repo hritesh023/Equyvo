@@ -848,6 +848,15 @@ const DiscoverPage = () => {
                           muted
                           playsInline
                           preload="metadata"
+                          onError={(e) => {
+                            const v = e.currentTarget;
+                            if (!v.dataset.origSrc) v.dataset.origSrc = item.videoUrl || '';
+                            const attempts = Number(v.dataset.discRetry || '0');
+                            if (attempts >= 2) return;
+                            v.dataset.discRetry = String(attempts + 1);
+                            const base = v.dataset.origSrc || item.videoUrl || '';
+                            v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                          }}
                         />
                       ) : (
                         <div className={`flex items-center justify-center bg-muted w-full h-full`}>
