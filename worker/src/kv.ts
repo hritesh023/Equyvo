@@ -575,7 +575,7 @@ export const SEED_PURGED_KEY = 'seed_purged';
 // Bump when purge logic/bot patterns change so production KV re-runs the
 // purge exactly once after the deploy. Must stay in sync with
 // functions/api/[[path]].ts (Pages Functions is the production backend).
-export const SEED_PURGE_VERSION = '2';
+export const SEED_PURGE_VERSION = '4';
 
 export async function purgeSeedData(env: Env): Promise<void> {
   const kv = env.EQUYVO_KV;
@@ -602,14 +602,8 @@ export async function purgeSeedData(env: Env): Promise<void> {
       if (raw) {
         try { item = JSON.parse(raw); } catch { /* keep */ }
       }
-      if (raw && isSeedItem(item)) {
-        for (const uid of [item.userId, item.user_id, item.creator, item.user]) {
-          if (typeof uid === 'string' && uid) removedUserIds.add(uid);
-        }
-        await kv.delete(getKey(id));
-      } else {
-        remaining.push(id);
-      }
+      // Purge all content so the app stays empty until real uploads.
+      await kv.delete(getKey(id));
     }
     if (remaining.length !== ids.length) {
       await kv.put(listKey, JSON.stringify(remaining));
@@ -621,11 +615,7 @@ export async function purgeSeedData(env: Env): Promise<void> {
   await removeFromList(KEYS.STORIES, KEYS.STORY);
   await removeFromList(KEYS.MOMENTS, KEYS.MOMENT);
 
-  const indexJson = await kv.get(KEYS.CONTENT_INDEX);
-  if (indexJson) {
-    const index = JSON.parse(indexJson);
-    await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(index.filter((i: any) => !isSeedItem(i))));
-  }
+  await kv.put(KEYS.CONTENT_INDEX, JSON.stringify([]));
 
   for (const pid of SEED_PROFILE_IDS) {
     await kv.delete(KEYS.PROFILE(pid));

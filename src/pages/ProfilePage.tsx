@@ -120,6 +120,14 @@ const createTargetPlaceholder = (target: string, preview?: { name?: string; user
 
 const readCachedOwnProfile = () => {
   if (typeof window === 'undefined') return null;
+  // Invalidate stale caches from before the content purge so bugged/legacy
+  // posts (e.g. "nature") can never resurrect from localStorage.
+  try {
+    if (localStorage.getItem('equyvo_cache_version') !== '4') {
+      localStorage.removeItem('userProfile');
+      localStorage.setItem('equyvo_cache_version', '4');
+    }
+  } catch { /* ignore */ }
   try {
     const raw = localStorage.getItem('userProfile');
     if (!raw) return null;
@@ -352,10 +360,8 @@ const ProfilePage = () => {
             ...((d.moments || []) as any[]).map((m: any) => ({ ...m, type: 'moment' })),
           ] as Post[];
         }
-        if (serverItems.length) {
-          setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isBlockedContent(p)) }));
-          return;
-        }
+        setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isBlockedContent(p)) }));
+        return;
         // Legacy fallback: posts-only endpoint for accounts whose content
         // predates the aggregate endpoint.
         const legacy = await api.getUserPosts(canonicalId);
@@ -421,12 +427,11 @@ const ProfilePage = () => {
           ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
           ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
         ];
-        if (!serverItems.length) return;
-        setUserProfile(prev => {
+                setUserProfile(prev => {
           const existing = prev.posts || [];
           const serverById = new Map(serverItems.map((p: any) => [p.id, p]));
-          // Server wins on conflicts (authoritative across devices).
-          const posts = [...serverItems, ...existing.filter(p => !serverById.has(p.id))];
+          // Server is authoritative across devices: replace so deleted/bugged content cannot resurrect.
+          const posts = serverItems;
           return { ...prev, posts };
         });
       }).catch(() => {});
@@ -436,7 +441,7 @@ const ProfilePage = () => {
         setUserProfile(prev => {
           const existing = prev.posts || [];
           const serverById = new Map(data.map(p => [p.id, p]));
-          const posts = [...data, ...existing.filter(p => !serverById.has(p.id))];
+          const posts = data;
           return { ...prev, posts };
         });
       }).catch(() => {});

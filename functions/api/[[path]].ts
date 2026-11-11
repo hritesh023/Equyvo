@@ -2472,7 +2472,7 @@ async function filterSeed(env, items) {
 // Bump SEED_PURGE_VERSION whenever the purge logic or bot patterns change so
 // production KV re-runs the purge exactly once after the deploy.
 const SEED_PURGED_KEY = 'seed_purged';
-const SEED_PURGE_VERSION = '3';
+const SEED_PURGE_VERSION = '4';
 
 // Legacy demo profiles (user1/user2) plus the 2026-10 smoke-test accounts:
 // the "SmokeAlice" author and its companion "liker" account. Both are removed
@@ -2501,14 +2501,9 @@ async function purgeSeedData(env) {
       if (raw) {
         try { item = JSON.parse(raw); } catch { /* keep */ }
       }
-      if (raw && isSeedItem(item)) {
-        for (const uid of [item.userId, item.user_id, item.creator, item.user]) {
-          if (typeof uid === 'string' && uid) removedUserIds.add(uid);
-        }
-        await kv.delete(getKey(id));
-      } else {
-        remaining.push(id);
-      }
+      // Purge EVERY existing content item so the app stays empty until real
+      // users publish. Keep user accounts intact (no profile deletion).
+      await kv.delete(getKey(id));
     }
     if (remaining.length !== ids.length) {
       await kv.put(listKey, JSON.stringify(remaining));
@@ -2520,12 +2515,8 @@ async function purgeSeedData(env) {
   await removeFromList(KEYS.STORIES, KEYS.STORY);
   await removeFromList(KEYS.MOMENTS, KEYS.MOMENT);
 
-  const indexJson = await kv.get(KEYS.CONTENT_INDEX);
-  if (indexJson) {
-    const index = JSON.parse(indexJson);
-    const remaining = index.filter((i) => !isSeedItem(i));
-    await kv.put(KEYS.CONTENT_INDEX, JSON.stringify(remaining));
-  }
+  // Clear the entire content index so nothing surfaces until real uploads.
+  await kv.put(KEYS.CONTENT_INDEX, JSON.stringify([]));
 
   for (const pid of SEED_PROFILE_IDS) {
     await kv.delete(KEYS.PROFILE(pid));
