@@ -525,6 +525,10 @@ const CreatePage = () => {
       setUploadProgress(s.progress ? { pct: s.progress.pct, phase: s.progress.phase as UploadProgress['phase'] } : null);
     });
     const onDone = () => {
+      // Never clobber an in-flight publish: the handler's own finally block
+      // owns the reset. Resetting here mid-upload caused the progress bar /
+      // loading widget to desync from the actual upload state.
+      if (publishLockRef.current) return;
       setIsUploading(false);
       setUploadProgress(null);
       try { setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -4773,7 +4777,7 @@ const CreatePage = () => {
       )}
 
       {/* Upload Loading Overlay */}
-      {isUploading && (
+      {isUploading && uploadProgress && (
         <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[99999] pointer-events-none">
           <Card className="p-4 text-center max-w-sm mx-4 shadow-2xl pointer-events-auto">
             <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />

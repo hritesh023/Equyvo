@@ -13,6 +13,7 @@ import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { shareItem } from '@/utils/share';
+import InAppShareSheet, { ShareSheetPayload } from '@/components/InAppShareSheet';
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
 import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, isVideoItem, videoUrlOf, withoutHidden } from '@/lib/feed-store';
@@ -57,6 +58,9 @@ const MomentsPage = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showCaptions, setShowCaptions] = useState(true);
   const [followingCreators, setFollowingCreators] = useState<Set<string>>(new Set());
+  const [shareSheetOpen, setShareSheetOpen] = useState(false);
+  const [sharePayload, setSharePayload] = useState<ShareSheetPayload | null>(null);
+  const [sharedMomentId, setSharedMomentId] = useState<string | null>(null);
   const lastTapRef = useRef<{ time: number; index: number }>({ time: 0, index: -1 });
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [likeAnimIndex, setLikeAnimIndex] = useState<number | null>(null);
@@ -574,6 +578,19 @@ const MomentsPage = () => {
     }
   };
 
+  const openShareSheetForMoment = (moment: any) => {
+    setSharedMomentId(moment.id);
+    setSharePayload({
+      id: moment.id,
+      user: moment.user || 'creator',
+      content: moment.description || '',
+      image: moment.thumbnail || moment.videoUrl || '',
+      url: `${window.location.origin}/app/home?post=${encodeURIComponent(moment.id)}`,
+      title: `Moment by ${moment.user} on Equyvo`,
+    });
+    setShareSheetOpen(true);
+  };
+
   // Menu handlers
   // Only the owning account can delete a moment. Other accounts can only
   // hide it from their own view or report it — never delete it.
@@ -773,7 +790,7 @@ const MomentsPage = () => {
           {/* Overlay Content - Optimized for Portrait */}
           <div className="absolute inset-0 max-w-md mx-auto pointer-events-none">
             {/* Top Bar (Mute / Speed / PiP) */}
-            <div className="absolute top-4 right-4 z-20 pointer-events-auto flex flex-col gap-2 items-end">
+            <div className="absolute top-4 left-4 z-20 pointer-events-auto flex flex-col gap-2 items-start">
               <Button
                 variant="ghost"
                 size="icon"
@@ -873,7 +890,7 @@ const MomentsPage = () => {
                   variant="ghost" 
                   size="icon" 
                   className="p-0 hover:bg-transparent text-white hover:scale-110 transition-transform"
-                  onClick={(e) => { e.stopPropagation(); handleShare(moment.id); }}
+                  onClick={(e) => { e.stopPropagation(); openShareSheetForMoment(moment); }}
                 >
                   <Share2 className="h-8 w-8 drop-shadow-md" />
                 </Button>
@@ -889,7 +906,7 @@ const MomentsPage = () => {
                   onDelete={isOwnMoment(moment.id) ? handleDeleteMoment : undefined}
                   onHide={handleHide}
                   onCopyLink={handleCopyLink}
-                  onShare={() => handleShare(moment.id)}
+                  onShare={() => openShareSheetForMoment(moment)}
                   className="text-white hover:bg-transparent hover:scale-110 transition-transform"
                 />
                 <span className="text-white text-xs font-medium drop-shadow-md">More</span>
@@ -990,6 +1007,22 @@ const MomentsPage = () => {
           onClose={() => setReportMomentId(null)}
           contentId={reportMomentId}
           contentType="moment"
+        />
+      )}
+
+      {/* In-app share sheet (followers/following + OS share) */}
+      {sharePayload && (
+        <InAppShareSheet
+          open={shareSheetOpen}
+          onClose={() => { setShareSheetOpen(false); setSharePayload(null); setSharedMomentId(null); }}
+          payload={sharePayload}
+          onShared={async (res) => {
+            if (sharedMomentId && typeof res?.shares === 'number') {
+              setMoments((prev) => (prev || []).map((m) =>
+                m.id === sharedMomentId ? { ...m, shares: toCount(res.shares) } : m,
+              ));
+            }
+          }}
         />
       )}
     </div>

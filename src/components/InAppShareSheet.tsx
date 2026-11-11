@@ -24,7 +24,7 @@ interface Props {
   open: boolean;
   onClose: () => void;
   payload: ShareSheetPayload;
-  onShared?: () => void | Promise<void>;
+  onShared?: (result?: { shares?: number }) => void | Promise<void>;
 }
 
 const InAppShareSheet: React.FC<Props> = ({ open, onClose, payload, onShared }) => {
@@ -60,10 +60,16 @@ const InAppShareSheet: React.FC<Props> = ({ open, onClose, payload, onShared }) 
     try {
       const r = await openShareSheet({ title: shareTitle, text: shareText, url: shareUrl });
       if (r.success) {
+        let shares: number | undefined;
         if (payload.id) {
-          try { await api.share(payload.id); } catch { /* best-effort */ }
+          try {
+            const res = await api.share(payload.id);
+            const d = (res as any)?.data;
+            const n = Number(d?.shares ?? d?.shares_count);
+            if (Number.isFinite(n) && n >= 0) shares = n;
+          } catch { /* best-effort */ }
         }
-        if (onShared) await onShared();
+        if (onShared) await onShared(shares !== undefined ? { shares } : undefined);
         showSuccess('Shared');
         onClose();
       } else if (!r.cancelled) {
@@ -84,10 +90,16 @@ const InAppShareSheet: React.FC<Props> = ({ open, onClose, payload, onShared }) 
       const link = shareUrl;
       const msg = `${shareText ? shareText + ' ' : ''}${link}`;
       await sendChatMessage(thread.id, msg);
+      let shares: number | undefined;
       if (payload.id) {
-        try { await api.share(payload.id); } catch { /* best-effort */ }
+        try {
+          const res = await api.share(payload.id);
+          const d = (res as any)?.data;
+          const n = Number(d?.shares ?? d?.shares_count);
+          if (Number.isFinite(n) && n >= 0) shares = n;
+        } catch { /* best-effort */ }
       }
-      if (onShared) await onShared();
+      if (onShared) await onShared(shares !== undefined ? { shares } : undefined);
       showSuccess(`Sent to ${p.name || p.username}`);
       onClose();
     } catch {
