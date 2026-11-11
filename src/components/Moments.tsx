@@ -664,6 +664,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                           loop
                           playsInline
                           preload="metadata"
+                          controls
                           autoPlay={false} // Explicitly disable auto-play for home page too
                           onMouseEnter={() => handleVideoHover(moment.id, true, moment.videoUrl || moment.media)}
                           onMouseLeave={() => handleVideoHover(moment.id, false, moment.videoUrl || moment.media)}
@@ -981,6 +982,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       loop
                       playsInline
                       preload="metadata"
+                      controls
                       autoPlay={false}
                       onClick={(e) => {
                         e.stopPropagation();

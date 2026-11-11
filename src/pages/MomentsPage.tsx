@@ -21,6 +21,7 @@ import { getStoredUser } from '@/lib/auth';
 import { showError } from '@/utils/toast';
 import ReportModal from '@/components/ReportModal';
 import VideoSeekBar from '@/components/VideoSeekBar';
+import ResilientVideo from '@/components/ResilientVideo';
 import api from '@/lib/api';
 import { useVideo2xPress } from '@/lib/video-2x';
 import { toCount, bumpCount } from '@/lib/count';
@@ -687,8 +688,9 @@ const MomentsPage = () => {
               }}
               loop
               playsInline
-              muted={true}
+              muted={isMuted}
               autoPlay
+              preload="metadata"
               onTimeUpdate={() => handleTimeUpdate(index)}
               onSeeked={() => handleSeeked(index)}
               onLoadedMetadata={() => handleLoadedMetadata(index)}
