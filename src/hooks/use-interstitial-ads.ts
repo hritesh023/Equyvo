@@ -55,14 +55,17 @@ export function useInterstitialAds(): void {
     if (!hasNavigatedRef.current) return;
     if (contentOpenRef.current) return;
 
+    // Only block the interstitial when an audible (unmuted) video is actively
+    // playing — muted feed autoplay must not permanently suppress ads, or
+    // interstitials never show on video-heavy feeds.
     const videos = Array.from(document.querySelectorAll('video'));
-    if (videos.some((v) => !v.paused && !v.ended)) return;
+    if (videos.some((v) => !v.paused && !v.ended && !v.muted)) return;
 
     const timer = window.setTimeout(async () => {
       if (showingRef.current) return;
       if (contentOpenRef.current) return;
       const vids = Array.from(document.querySelectorAll('video'));
-      if (vids.some((v) => !v.paused && !v.ended)) return;
+      if (vids.some((v) => !v.paused && !v.ended && !v.muted)) return;
       showingRef.current = true;
       try {
         await prepareInterstitial();

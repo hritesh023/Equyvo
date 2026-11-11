@@ -310,24 +310,24 @@ export async function showRewardedAd(): Promise<boolean> {
     const adId = effectiveRewardedAdUnitId();
     if (!adId) return false;
     try {
-      const info = await plugin.prepareRewardVideoAd({
+      await plugin.prepareRewardVideoAd({
         adId,
         isTesting: isDevEnvironment(),
         npa: !personalizedAdsEnabled(),
       });
-      const reward = await plugin.showRewardVideoAd(
-        info && (info as { adUnitId?: string }).adUnitId
-          ? { adId: (info as { adUnitId?: string }).adUnitId }
-          : undefined,
-      );
-      // AdMob resolves the promise with a reward item only when the user
-      // actually earns the reward; treat a non-null result as earned.
-      if (reward !== null && reward !== undefined) return true;
+      // Show the most recently prepared rewarded ad. Passing a stale/incorrect
+      // adId here previously prevented the ad from rendering at all (mirrors
+      // the interstitial fix).
+      await plugin.showRewardVideoAd();
+      // A successful show (no throw) counts as the reward being granted.
+      return true;
     } catch (e) {
       try { console.warn('[AdMob] rewarded ad failed:', e); } catch { /* ignore */ }
+      return false;
     }
-    return false;
   } catch {
     return false;
   }
 }
+
+

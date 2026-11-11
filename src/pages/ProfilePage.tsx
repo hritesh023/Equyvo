@@ -1926,7 +1926,7 @@ const ProfilePage = () => {
               handleFullscreen(video);
             }}>
                 <div className="relative aspect-video bg-black">
-                  <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                     <Play className="h-10 w-10 text-white opacity-80" />
                   </div>
                   <ResilientVideo
