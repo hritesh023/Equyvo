@@ -38,9 +38,10 @@ export const getThoughts = async (limit = 20, offset = 0) => {
   try {
     const { data, error } = await api.getThoughts(limit, offset);
     if (error) return { data: [], error };
+    const safeData = Array.isArray(data) ? data : [];
     
     const user = await getAuthenticatedUser();
-    const thoughtsWithVotes = data.map((thought: Thought) => ({
+    const thoughtsWithVotes = safeData.map((thought: Thought) => ({
       ...thought,
       // Real counts only: never fabricate engagement numbers client-side.
       upvotes_count: (thought as any).upvotes_count || 0,

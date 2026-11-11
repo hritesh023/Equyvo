@@ -2415,6 +2415,9 @@ function isSeedItem(item) {
   if (!item || typeof item !== 'object') return false;
   if (item.isSeed) return true;
   if (item.id && typeof item.id === 'string' && item.id.startsWith('seed-')) return true;
+  // Auto-generated profile entries are not real posts; treat them as seed so
+  // the feed stays empty until a user actually publishes content.
+  if (item.category === 'profile' || item.type === 'profile') return true;
   // Any item backed by real uploaded media is real user content ΓÇö never seed.
   const refs = [
     item.thumbnail,
@@ -2469,7 +2472,7 @@ async function filterSeed(env, items) {
 // Bump SEED_PURGE_VERSION whenever the purge logic or bot patterns change so
 // production KV re-runs the purge exactly once after the deploy.
 const SEED_PURGED_KEY = 'seed_purged';
-const SEED_PURGE_VERSION = '2';
+const SEED_PURGE_VERSION = '3';
 
 // Legacy demo profiles (user1/user2) plus the 2026-10 smoke-test accounts:
 // the "SmokeAlice" author and its companion "liker" account. Both are removed
