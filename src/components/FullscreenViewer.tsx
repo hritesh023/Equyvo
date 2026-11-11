@@ -128,6 +128,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [showCommentSection, setShowCommentSection] = useState(false);
   const [isSplitView, setIsSplitView] = useState(false);
   const [showDetailsPanel, setShowDetailsPanel] = useState(false);
+  const [relatedItems, setRelatedItems] = useState<any[]>([]);
+  const [relatedLoading, setRelatedLoading] = useState(false);
   const [hideOverlay, setHideOverlay] = useState(false);
   const [showImageOverlay, setShowImageOverlay] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
@@ -158,9 +160,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const isPortraitOrientation = window.innerHeight > window.innerWidth;
 
   // Resolve the effective type from multiple sources of truth
-  const resolvedType = actualType ||
-                        actualContent?.type ||
+  const resolvedType = actualContent?.type ||
                         actualContent?.contentType ||
+                        actualType ||
                         'image';
   const resolvedContentType = actualContent?.contentType || resolvedType;
   
@@ -1115,6 +1117,27 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   };
 
 
+  // Fetch related content for the side panel whenever split view is opened.
+  useEffect(() => {
+    if (!isSplitView) return;
+    let cancelled = false;
+    setRelatedLoading(true);
+    (async () => {
+      try {
+        const res = await api.getPosts(50);
+        const list = Array.isArray(res?.data) ? res.data : [];
+        const currentId = String(actualContent?.id || actualContent?.videoId || actualContent?.imageId || '');
+        const filtered = list.filter((it: any) => String(it?.id || it?.videoId || it?.imageId || '') !== currentId);
+        if (!cancelled) setRelatedItems(filtered);
+      } catch {
+        if (!cancelled) setRelatedItems([]);
+      } finally {
+        if (!cancelled) setRelatedLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [isSplitView, actualContent?.id]);
+
   const handleSplitView = () => {
     const video = videoRef.current;
     const wasPlaying = video && !video.paused;
@@ -1148,9 +1171,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     >
       {/* Top bar with minimal controls */}
       <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe ${hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-full') : 'opacity-100 translate-y-0')}`}
+        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe opacity-100 translate-y-0`}
         style={{
-          pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
+          pointerEvents: 'auto'
         }}
         onMouseEnter={() => {
           if (isVideoType) {
@@ -1849,7 +1872,39 @@ void toggleFullscreen();
           </div>
           <div className="flex-1 overflow-y-auto p-4 eq-safe-bottom">
           <div className="space-y-4">
-            <p className="text-gray-400 text-sm">No related content available yet</p>
+            {relatedLoading && (
+              <p className="text-gray-400 text-sm">Loading related content…</p>
+            )}
+            {!relatedLoading && relatedItems.length === 0 && (
+              <p className="text-gray-400 text-sm">No related content available yet</p>
+            )}
+            {!relatedLoading && relatedItems.map((item: any) => {
+              const itemId = String(item?.id || item?.videoId || item?.imageId || '');
+              const thumb = item?.thumbnail || item?.image || item?.mediaUrl || item?.media || '';
+              return (
+                <button
+                  key={itemId}
+                  type="button"
+                  onClick={() => {
+                    try {
+                      const normalized = normalizeContentItem<any>(item);
+                      if (onContentChange) onContentChange(normalized);
+                    } catch { /* ignore */ }
+                  }}
+                  className="w-full flex gap-3 items-center text-left rounded-lg p-2 hover:bg-white/5 transition-colors"
+                >
+                  <div className="w-24 h-16 flex-shrink-0 rounded overflow-hidden bg-black">
+                    {thumb ? (
+                      <img src={String(thumb)} alt={item?.title || ''} className="w-full h-full object-cover" />
+                    ) : null}
+                  </div>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-white text-sm font-medium line-clamp-2">{item?.title || 'Untitled'}</p>
+                    <p className="text-gray-400 text-xs truncate">{item?.creator || item?.user || ''}</p>
+                  </div>
+                </button>
+              );
+            })}
           </div>
           </div>
         </div>
