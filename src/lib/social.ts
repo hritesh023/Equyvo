@@ -15,6 +15,8 @@ export interface SocialProfile {
   avatar: string;
   isPrivate?: boolean;
   verified?: boolean;
+  lastSeen?: string;
+  online?: boolean;
 }
 
 function meId(): string {
@@ -158,6 +160,10 @@ export async function getFollowers(userId?: string): Promise<{ list: SocialProfi
     const u = String(p?.username || p?.name || p?.id || '').toLowerCase().replace(/^@/, '');
     return !!u && u !== 'user' && u !== 'users' && p?.id;
   });
+  for (const p of list) {
+    const ls = (p as any).lastSeen;
+    (p as any).online = !!ls && (Date.now() - new Date(ls).getTime()) < 120000;
+  }
   return { list, restricted };
 }
 
@@ -180,6 +186,10 @@ export async function getFollowing(userId?: string): Promise<{ list: SocialProfi
     const u = String(p?.username || p?.name || p?.id || '').toLowerCase().replace(/^@/, '');
     return !!u && u !== 'user' && u !== 'users' && p?.id;
   });
+  for (const p of list) {
+    const ls = (p as any).lastSeen;
+    (p as any).online = !!ls && (Date.now() - new Date(ls).getTime()) < 120000;
+  }
   return { list, restricted };
 }
 

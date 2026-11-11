@@ -1014,6 +1014,11 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ enabled }) },
     ),
 
+  // Presence heartbeat — updates the signed-in account's lastSeen so followers/
+  // following can see an online indicator in chats.
+  presence: () =>
+    request<{ data: { ok: boolean }; error: null }>('/presence', { method: 'POST' }),
+
   // Health check
   health: () => request<{ status: string }>('/health'),
 };

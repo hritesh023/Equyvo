@@ -143,7 +143,43 @@ function liveEnabled(): boolean {
 /** Fire a real OS-level notification when permission was granted. */
 export function sendSystemNotification(title: string, body: string): void {
   try {
-    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    if (typeof window === 'undefined') return;
+    const cap = (window as any)?.Capacitor;
+    const isNative = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+    // On native (Android/iOS) the web Notification API is not available, so
+    // use Capacitor's LocalNotifications plugin to surface a real system
+    // notification in the tray, exactly like other apps.
+    if (isNative) {
+      // In-app banner covers it while the app is in the foreground; the OS
+      // tray notification is only needed when the app is backgrounded.
+      if (document.visibilityState === 'visible') return;
+      void (async () => {
+        try {
+          const { LocalNotifications } = await import('@capacitor/local-notifications');
+          let perm = await LocalNotifications.checkPermissions();
+          if (perm.display !== 'granted') {
+            perm = await LocalNotifications.requestPermissions();
+          }
+          if (perm.display !== 'granted') return;
+          await LocalNotifications.schedule({
+            notifications: [
+              {
+                title,
+                body,
+                id: Date.now() % 2147483647,
+                schedule: { at: new Date(Date.now() + 50) },
+                actionTypeId: '',
+                extra: null,
+              },
+            ],
+          });
+        } catch {
+          /* ignore */
+        }
+      })();
+      return;
+    }
+    if (!('Notification' in window)) return;
     if (Notification.permission !== 'granted') return;
     if (document.visibilityState === 'visible') return; // in-app banner covers it
     const n = new Notification(title, { body, tag: `equyvo-${Date.now()}` });
@@ -162,7 +198,20 @@ export function sendSystemNotification(title: string, body: string): void {
 
 export async function requestPushPermission(): Promise<boolean> {
   try {
-    if (typeof window === 'undefined' || !('Notification' in window)) return false;
+    if (typeof window === 'undefined') return false;
+    const cap = (window as any)?.Capacitor;
+    const isNative = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
+    if (isNative) {
+      try {
+        const { LocalNotifications } = await import('@capacitor/local-notifications');
+        let perm = await LocalNotifications.checkPermissions();
+        if (perm.display !== 'granted') perm = await LocalNotifications.requestPermissions();
+        return perm.display === 'granted';
+      } catch {
+        return false;
+      }
+    }
+    if (!('Notification' in window)) return false;
     if (Notification.permission === 'granted') return true;
     if (Notification.permission === 'denied') return false;
     const res = await Notification.requestPermission();

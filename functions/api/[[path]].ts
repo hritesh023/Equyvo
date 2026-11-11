@@ -1711,6 +1711,7 @@ function profileSummary(p, fallbackId) {
     avatar: String(p.avatar || ''),
     isPrivate: p.isPrivate === true,
     verified: p.verified === true,
+    lastSeen: typeof p.lastSeen === 'string' ? p.lastSeen : '',
   };
 }
 
@@ -4058,6 +4059,18 @@ export const onRequest = async (context) => {
     }
 
     // HEALTH (public, versioned for deploy verification; honest KV check)
+    if (path === '/api/presence' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      try {
+        const stored = await getStoredProfile(env, actor.id);
+        const next = { ...(stored && typeof stored === 'object' ? stored : { id: actor.id }), lastSeen: new Date().toISOString() };
+        await env.EQUYVO_KV.put(KEYS.PROFILE(actor.id), JSON.stringify(next));
+      } catch { /* best-effort */ }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
     if (path === '/api/health' && method === 'GET') {
       let kvStatus = 'up';
       try { await kv.get(KEYS.NEXT_ID); } catch { kvStatus = 'down'; }

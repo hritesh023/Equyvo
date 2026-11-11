@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown } from 'lucide-react';
 import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
@@ -122,10 +122,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const recCancelRef = useRef(false);
   const MAX_VOICE_SECS = 120;
 
+  const [showScrollDown, setShowScrollDown] = useState(false);
   const handleScroll = () => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    stickToBottomRef.current = nearBottom;
+    setShowScrollDown(!nearBottom);
   };
   const { chatTheme } = useChatTheme();
   const navigate = useNavigate();
@@ -144,6 +147,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
   const refreshThreads = () => setThreads(listThreads());
   const refreshMsgs = (id: string | null) => setMsgs(id ? listMessages(id) : []);
+
+  // Presence heartbeat: keep this account's lastSeen fresh so followers/following
+  // see an accurate online indicator in their chats.
+  useEffect(() => {
+    const beat = () => { try { void api.presence(); } catch { /* ignore */ } };
+    beat();
+    const t = window.setInterval(beat, 30000);
+    const onVis = () => { if (document.visibilityState === 'visible') beat(); };
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', onVis); };
+  }, []);
 
   // Initial: merge legacy localStorage contacts once, then load social graph.
   useEffect(() => {
@@ -176,10 +190,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         if (cancelled) return;
         const toPeer = (p: SocialProfile) => {
           const resolved = pickDisplayName(p.name, p.username) || nameFromEmail(p.id) || String(p.id || '').trim();
+          const online = p.online === true || (typeof p.lastSeen === 'string' && !!p.lastSeen && (Date.now() - new Date(p.lastSeen).getTime()) < 120000);
           return {
             id: p.id,
             name: resolved || String(p.id || '').trim(),
             avatar: p.avatar,
+            online,
           };
         };
         syncThreadsFromSocial(f.list.map(toPeer), g.list.map(toPeer));
@@ -200,11 +216,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     };
     const onFollowChanged = () => { void syncSocial(); };
     const onVisible = () => { if (document.visibilityState === 'visible') void syncSocial(); };
+    const presenceTick = window.setInterval(() => { void syncSocial(); }, 30000);
     window.addEventListener('chatUpdated', onUpdate);
     window.addEventListener('followChanged', onFollowChanged);
     document.addEventListener('visibilitychange', onVisible);
     return () => {
       cancelled = true;
+      window.clearInterval(presenceTick);
       window.removeEventListener('chatUpdated', onUpdate);
       window.removeEventListener('followChanged', onFollowChanged);
       document.removeEventListener('visibilitychange', onVisible);
@@ -935,9 +953,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <div ref={bottomRef} />
               </div>
             </div>
-          </div>
+           </div>
+             {showScrollDown && (
+               <button
+                 type="button"
+                 aria-label="Scroll to latest message"
+                 title="Scroll to latest message"
+                 onClick={() => {
+                   const el = scrollContainerRef.current;
+                   if (el) el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' });
+                   stickToBottomRef.current = true;
+                   setShowScrollDown(false);
+                 }}
+                 className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-purple-600 text-white shadow-lg hover:bg-purple-500"
+               >
+                 <ChevronDown className="h-5 w-5" />
+               </button>
+             )}
 
-          <div className="p-3 border-t bg-white/95 dark:bg-background/50 backdrop-blur-md flex-none chat-overlay-composer">
+           <div className="p-3 border-t bg-white/95 dark:bg-background/50 backdrop-blur-md flex-none chat-overlay-composer">
             {replyTo && (
               <div className="mb-3 flex items-center justify-between gap-2 rounded-lg border border-slate-600 bg-slate-800/60 px-3 py-2 text-xs text-slate-200">
                 <div className="min-w-0">

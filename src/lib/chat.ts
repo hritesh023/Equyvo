@@ -208,7 +208,7 @@ export function listMessages(threadId: string): ChatMessage[] {
 }
 
 /** Ensure a thread exists for a social peer (idempotent). */
-export function ensureThread(peer: { id: string; name: string; avatar?: string }, relation: ChatRelation): ChatThread {
+export function ensureThread(peer: { id: string; name: string; avatar?: string; online?: boolean }, relation: ChatRelation): ChatThread {
   const id = String(peer.id || peer.name);
   const existing = readThreads().find((t) => t.id === id);
   if (existing) {
@@ -217,6 +217,7 @@ export function ensureThread(peer: { id: string; name: string; avatar?: string }
       peerName: peer.name || existing.peerName,
       peerAvatar: peer.avatar ?? existing.peerAvatar,
       relation,
+      online: typeof peer.online === 'boolean' ? peer.online : existing.online,
     };
     upsertThread(merged);
     return merged;
@@ -229,7 +230,7 @@ export function ensureThread(peer: { id: string; name: string; avatar?: string }
     peerName: peer.name || String(peer.id),
     peerAvatar: peer.avatar || '',
     relation,
-    online: false,
+    online: !!peer.online,
     lastMessage: '',
     timestamp: nowTime(),
     unread: 0,
@@ -241,8 +242,8 @@ export function ensureThread(peer: { id: string; name: string; avatar?: string }
 
 /** Seed threads from follower/following lists (merges, never wipes history). */
 export function syncThreadsFromSocial(
-  followers: { id: string; name: string; avatar?: string }[],
-  following: { id: string; name: string; avatar?: string }[],
+  followers: { id: string; name: string; avatar?: string; online?: boolean }[],
+  following: { id: string; name: string; avatar?: string; online?: boolean }[],
 ): ChatThread[] {
   // Prune threads for peers no longer in the follow graph (unfollowed or
   // removed follower). Keep messages keyed by peer id so a re-follow restores
@@ -259,16 +260,20 @@ export function syncThreadsFromSocial(
   }
   const followerIds = new Set(followers.map((f) => String(f.id).toLowerCase()));
   const followingIds = new Set(following.map((f) => String(f.id).toLowerCase()));
+  const onlineMap = new Map<string, boolean>();
+  for (const f of [...followers, ...following]) {
+    onlineMap.set(String(f.id).toLowerCase(), !!f.online);
+  }
   for (const f of followers) {
     const rel: ChatRelation = followingIds.has(String(f.id).toLowerCase()) ? 'mutual' : 'follower';
-    ensureThread({ id: String(f.id), name: String(f.name || f.id), avatar: f.avatar }, rel);
+    ensureThread({ id: String(f.id), name: String(f.name || f.id), avatar: f.avatar, online: !!f.online }, rel);
   }
   for (const f of following) {
     if (followerIds.has(String(f.id).toLowerCase())) {
-      ensureThread({ id: String(f.id), name: String(f.name || f.id), avatar: f.avatar }, 'mutual');
+      ensureThread({ id: String(f.id), name: String(f.name || f.id), avatar: f.avatar, online: !!f.online }, 'mutual');
       continue;
     }
-    ensureThread({ id: String(f.id), name: String(f.name || f.id), avatar: f.avatar }, 'following');
+    ensureThread({ id: String(f.id), name: String(f.name || f.id), avatar: f.avatar, online: !!f.online }, 'following');
   }
   // Refresh mutual flags on existing threads.
   const list = readThreads().map((t) => {
@@ -276,7 +281,8 @@ export function syncThreadsFromSocial(
     const isFollower = followerIds.has(k) || t.relation === 'follower' || t.relation === 'mutual';
     const isFollowing = followingIds.has(k) || t.relation === 'following' || t.relation === 'mutual';
     const relation: ChatRelation = isFollower && isFollowing ? 'mutual' : isFollower ? 'follower' : isFollowing ? 'following' : t.relation;
-    return { ...t, relation };
+    const online = onlineMap.has(k) ? !!onlineMap.get(k) : t.online;
+    return { ...t, relation, online };
   });
   writeThreads(list);
   emitChatUpdated();
