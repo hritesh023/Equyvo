@@ -81,6 +81,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   useEffect(() => {
     setImageRenderKey(0);
     setImageFailed(false);
+    setHideOverlay(false);
+    setContentOnly(false);
+    setShowControls(true);
   }, [actualContent?.id]);
   // Record a view exactly once per account per item the first time it opens.
   // Server dedupes via the viewedBy ledger, so calling on every open is safe.
@@ -116,7 +119,27 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       window.dispatchEvent(new CustomEvent('fullscreenViewerClosed'));
       try { (window as any).AndroidPiP?.setFullscreenActive?.(false); } catch { /* ignore */ }
     };
-  }, []);  const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
+  }, []);
+
+  // When the OS enters PiP, hide all overlays so the mini window shows only content.
+  useEffect(() => {
+    const handler = (e: any) => {
+      const active = !!e?.detail?.active;
+      if (active) {
+        setContentOnly(true);
+        setHideOverlay(true);
+        setShowControls(false);
+      } else {
+        setContentOnly(false);
+        setHideOverlay(false);
+        setShowControls(true);
+      }
+    };
+    window.addEventListener('pipModeChanged', handler as EventListener);
+    return () => window.removeEventListener('pipModeChanged', handler as EventListener);
+  }, []);
+
+  const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
   const [volume, setVolume] = useState(1);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -131,6 +154,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [relatedItems, setRelatedItems] = useState<any[]>([]);
   const [relatedLoading, setRelatedLoading] = useState(false);
   const [hideOverlay, setHideOverlay] = useState(false);
+  const [contentOnly, setContentOnly] = useState(false);
   const [showImageOverlay, setShowImageOverlay] = useState(false);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
   const lastMouseMoveRef = useRef<number>(Date.now());
@@ -817,13 +841,21 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const handleMinimize = () => {
     const video = videoRef.current;
     const isNative = !!(window as any)?.Capacitor?.isNativePlatform?.();
+    // Hide everything except the content so the PiP window shows only media.
+    setContentOnly(true);
+    setHideOverlay(true);
+    setShowControls(false);
     // On native, skip the unreliable WebView PiP and use the native bridge.
     if (isNative) {
       try {
         const bridge = (window as any).AndroidPiP;
         if (bridge && typeof bridge.enter === 'function') {
           try { bridge.setFullscreenActive?.(true); } catch { /* ignore */ }
-          bridge.enter();
+          // First exit the app; Android then auto-enters PiP via onUserLeaveHint
+          // because fullscreenActive is true, opening the draggable small window.
+          setTimeout(() => { try { bridge.exit?.(); } catch { /* ignore */ } }, 100);
+          // Fallback: directly enter PiP in case the leave hint does not fire.
+          setTimeout(() => { try { bridge.enter(); } catch { /* ignore */ } }, 550);
           return;
         }
       } catch { /* ignore */ }
@@ -843,7 +875,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     try {
       const bridge = (window as any).AndroidPiP;
       if (bridge && typeof bridge.enter === 'function') {
-        bridge.enter();
+        setTimeout(() => { try { bridge.exit?.(); } catch { /* ignore */ } }, 100);
+        setTimeout(() => { try { bridge.enter(); } catch { /* ignore */ } }, 550);
         // Keep the fullscreen viewer mounted so the PiP window shows THIS
         // post (not the app shell/header). The user exits via the OS PiP
         // close affordance; do not tear the viewer down here.
@@ -1175,9 +1208,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     >
       {/* Top bar with minimal controls */}
       <div
-        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe opacity-100 translate-y-0`}
+        className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-safe-top eq-fullscreen-top-safe ${contentOnly ? 'opacity-0 pointer-events-none -translate-y-full' : 'opacity-100 translate-y-0'}`}
         style={{
-          pointerEvents: 'auto'
+          pointerEvents: contentOnly ? 'none' : 'auto'
         }}
         onMouseEnter={() => {
           if (isVideoType) {
@@ -1258,6 +1291,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             }
           }}
           onClick={(e) => {
+            if (contentOnly) {
+              setContentOnly(false);
+              setHideOverlay(false);
+              setShowControls(true);
+              return;
+            }
             setHideOverlay(false);
             const target = e.target as HTMLElement | null;
             
@@ -1349,9 +1388,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           >
             {/* Details Section - above controls */}
             {!isSplitView && (
-              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''} ${hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0')}`}
+              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''} ${contentOnly || hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0')}`}
                 style={{
-                  pointerEvents: isVideoType && !showDetailsPanel ? 'none' : 'auto'
+                  pointerEvents: (contentOnly || hideOverlay || (isVideoType && !showDetailsPanel)) ? 'none' : 'auto'
                 }}
                 onMouseEnter={() => {
                   if (isVideoType) {
@@ -1510,7 +1549,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                     : (isMobileDevice && !isPortraitMoment && !isStory)
                       ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 80px)'
                       : 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 140px)',
-                display: showControls ? 'block' : 'none'
+                display: (contentOnly || !showControls) ? 'none' : 'block'
               }}
             >
               {/* Progress Bar — hover/drag shows a small preview window above the bar */}
@@ -1604,13 +1643,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => {
+                       setContentOnly(true);
                        setHideOverlay(true);
-void toggleFullscreen();
+                       setShowControls(false);
                     }}
                     className="text-white hover:text-blue-400 transition-colors p-2 hover:bg-white/10 rounded-full"
-                    title={isFullscreen ? "Exit Fullscreen" : "Enter Fullscreen"}
+                    title="Minimize details"
                   >
-                    {isFullscreen ? <Minimize2 className="h-5 w-5" /> : <Maximize2 className="h-5 w-5" />}
+                    <Minimize2 className="h-5 w-5" />
                   </button>
                 </div>
               </div>
