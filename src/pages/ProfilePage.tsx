@@ -1617,17 +1617,14 @@ const ProfilePage = () => {
                     {(post.media || post.image || post.thumbnail) && (
                       post.mediaType === 'video' || post.type === 'video' ? (
                         post.videoUrl || post.video ? (
-                          <video
+                          <ResilientVideo
                             src={post.videoUrl || post.video}
                             poster={post.thumbnail || post.image || post.media}
-                            className="w-full rounded-lg mb-3 md:mb-4 object-contain bg-black max-h-60 md:max-h-80 cursor-pointer"
-                            muted
-                            loop
+                            controls
                             playsInline
                             preload="metadata"
+                            className="w-full rounded-lg mb-3 md:mb-4 object-contain bg-black max-h-60 md:max-h-80 cursor-pointer"
                             onClick={() => handleFullscreen(post)}
-                            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-                            onMouseLeave={(e) => e.currentTarget.pause()}
                           />
                         ) : (
                           <img
@@ -2026,87 +2023,29 @@ const ProfilePage = () => {
                   {post.media && (
                     <div className="mb-4">
                       {post.mediaType === 'video' ? (
-                        <div className="relative w-full rounded-lg overflow-hidden bg-black" style={{ aspectRatio: '9/16', maxHeight: '320px' }}>
+                        post.videoUrl ? (
+                          <ResilientVideo
+                            src={post.videoUrl}
+                            poster={post.thumbnail || post.media}
+                            controls
+                            playsInline
+                            preload="metadata"
+                            className="w-full rounded-lg mb-4 object-contain bg-black max-h-80 cursor-pointer"
+                            onClick={() => handleFullscreen(post)}
+                          />
+                        ) : (
                           <img
                             src={post.thumbnail || post.media}
                             alt="Video thumbnail"
-                            className="absolute inset-0 w-full h-full object-cover"
+                            loading="lazy"
+                            className="w-full rounded-lg object-contain bg-black max-h-80 cursor-pointer"
+                            onClick={() => handleFullscreen(post)}
                             onError={(e) => {
                               const target = e.target as HTMLImageElement;
-                              // Real media only: rewrite broken art, never swap in a fake image.
-                              const attempts = Number(target.dataset.mediaRetry || '0');
-                              const base = target.getAttribute('src') || '';
-                              if (base && attempts < 1) {
-                                target.dataset.mediaRetry = String(attempts + 1);
-                                target.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
-                              } else {
-                                target.style.display = 'none';
-                              }
+                              target.style.display = 'none';
                             }}
                           />
-                          {post.videoUrl ? (
-                          <video
-                            ref={(el) => { if (el) videoRefs.current[post.id] = el; }}
-                            src={post.videoUrl}
-                            className="absolute inset-0 w-full h-full object-cover cursor-pointer"
-                            muted={isMuted}
-                            loop
-                            playsInline
-                            preload="metadata"
-                            onClick={() => handleVideoPlayPause(post.id)}
-                            onError={(e) => handleVideoError(post.id, e)}
-                            onTimeUpdate={() => handleTimeUpdate(post.id, videoRefs.current[post.id])}
-                            onLoadedMetadata={() => handleLoadedMetadata(post.id, videoRefs.current[post.id])}
-                            onMouseEnter={(e) => {
-                              const video = e.target as HTMLVideoElement;
-                              video.play().catch(() => {});
-                            }}
-                            onMouseLeave={(e) => {
-                              const video = e.target as HTMLVideoElement;
-                              video.pause();
-                            }}
-                          />
-                          ) : null}
-                          {isLoading[post.id] && (
-                            <div className="absolute inset-0 bg-black/50 flex items-center justify-center">
-                              <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
-                            </div>
-                          )}
-                          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                            {!playingVideos.has(post.id) && (
-                              <div className="bg-black/50 backdrop-blur-sm rounded-full p-2">
-                                <Play className="h-4 w-4 text-white" />
-                              </div>
-                            )}
-                          </div>
-                          <div className="absolute top-2 right-2 bg-black/60 backdrop-blur-sm rounded-full px-2 py-1">
-                            <Video className="h-3 w-3 text-white" />
-                          </div>
-                          {/* Progress Bar — hover/drag shows a small preview window */}
-                          {playingVideos.has(post.id) && (
-                            <div
-                              className="absolute bottom-2 left-2 right-2 z-20"
-                              onClick={(e) => e.stopPropagation()}
-                            >
-                              <VideoSeekBar
-                                videoRef={{ get current() { return videoRefs.current[post.id] || null; } } as React.RefObject<HTMLVideoElement | null>}
-                                currentTime={currentTime[post.id] || 0}
-                                duration={videoDuration[post.id] || 0}
-                                onSeek={(t) => {
-                                  const v = videoRefs.current[post.id];
-                                  if (!v || !Number.isFinite(t)) return;
-                                  try {
-                                    v.currentTime = Math.max(0, t);
-                                  } catch {
-                                    /* ignore */
-                                  }
-                                  setCurrentTime(prev => ({ ...prev, [post.id]: t }));
-                                }}
-                                compact
-                              />
-                            </div>
-                          )}
-                        </div>
+                        )
                       ) : (
                         <img
                           src={post.media}
@@ -2262,28 +2201,14 @@ const ProfilePage = () => {
                     {(post.media || post.thumbnail || post.image) && (
                       <div className="mb-3">
                         {(post.mediaType === 'video' || post.type === 'video') && (post.videoUrl || post.video) ? (
-                          <video
+                          <ResilientVideo
                             src={post.videoUrl || post.video}
-                            className="w-full rounded-lg object-contain bg-black max-h-60 cursor-pointer"
-                            muted
-                            loop
+                            poster={post.thumbnail || post.media || post.image}
+                            controls
                             playsInline
                             preload="metadata"
+                            className="w-full rounded-lg object-contain bg-black max-h-60 cursor-pointer"
                             onClick={() => handleFullscreen(post)}
-                            onMouseEnter={(e) => e.currentTarget.play().catch(() => {})}
-                            onMouseLeave={(e) => e.currentTarget.pause()}
-                            onError={(e) => {
-                              // One dropped range request must not blank the
-                              // saved item — retry with a cache-bust.
-                              const v = e.currentTarget;
-                              const attempts = Number(v.dataset.savedRetry || '0');
-                              const base = post.videoUrl || post.video || '';
-                              if (base && attempts < 2) {
-                                v.dataset.savedRetry = String(attempts + 1);
-                                v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
-                                v.load();
-                              }
-                            }}
                           />
                         ) : (
                           <img
