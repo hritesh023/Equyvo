@@ -543,6 +543,7 @@ const CreatePage = () => {
     };
   }, []);  // Plan caps for pre-publish validation (size / length) + upgrade hints.
   const [planCaps, setPlanCaps] = useState<{ planLabel: string; maxUploadMB: number; maxVideoSec: number } | null>(null);
+  const [uploadBoostMB, setUploadBoostMB] = useState<number>(0);
   const { entitlements: planEntitlements } = useEntitlements();
   const [livePortrait, setLivePortrait] = useState(false);
   const openScheduleModal = () => {
@@ -841,6 +842,23 @@ const CreatePage = () => {
     return () => { alive = false; };
   }, []);
 
+   // Rewarded upload boost (500MB for 24h after watching an ad).
+   useEffect(() => {
+     let alive = true;
+     (async () => {
+       try {
+         const token = ((): string | null => { try { return localStorage.getItem('equyvo_cognito_token'); } catch { return null; } })();
+         const r = await fetch('/api/rewards/upload-boost', { method: 'GET', headers: token ? { Authorization: 'Bearer ' + token } : {} });
+         if (!r.ok) return;
+         const j = await r.json();
+         const mb = Number(j?.data?.maxUploadMB || 0);
+         if (alive && j?.data?.active && mb > 0) setUploadBoostMB(mb);
+       } catch { /* ignore */ }
+     })();
+     return () => { alive = false; };
+   }, []);
+
+
   // Persist scheduled/drafts across sessions (IndexedDB, survives app kills).
   useEffect(() => {
     let alive = true;
@@ -1021,8 +1039,10 @@ const CreatePage = () => {
   /** '' when within plan caps, otherwise the upgrade-flavoured reason. */
   const checkPlanCap = (file: File | Blob, kindLabel: string): string => {
     const caps = planCaps;
-    if (caps?.maxUploadMB && file.size > CAP_MB(caps.maxUploadMB)) {
-      return `${kindLabel} is ${Math.round(file.size / (1024 * 1024))}MB — the ${caps.planLabel} plan allows up to ${caps.maxUploadMB}MB per file. Upgrade for higher limits.`;
+    const effectiveMax = Math.max(caps?.maxUploadMB || 0, uploadBoostMB || 0);
+    if (effectiveMax && file.size > CAP_MB(effectiveMax)) {
+      const label = uploadBoostMB > (caps?.maxUploadMB || 0) ? 'rewarded boost' : (caps?.planLabel || 'your plan');
+      return `${kindLabel} is ${Math.round(file.size / (1024 * 1024))}MB - ${label} allows up to ${effectiveMax}MB per file. Upgrade for higher limits.`;
     }
     return '';
   };
