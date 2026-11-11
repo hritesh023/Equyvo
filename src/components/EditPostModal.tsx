@@ -180,6 +180,15 @@ const EditPostModal: React.FC<EditPostModalProps> = ({
                         src={mediaPreview}
                         className="w-full max-h-64 object-contain"
                         controls
+                        onError={(e) => {
+                          const v = e.currentTarget;
+                          if (!v.dataset.origSrc) v.dataset.origSrc = mediaPreview || '';
+                          const attempts = Number(v.dataset.editRetry || '0');
+                          if (attempts >= 2) return;
+                          v.dataset.editRetry = String(attempts + 1);
+                          const base = v.dataset.origSrc || mediaPreview || '';
+                          v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
+                        }}
                       />
                     </div>
                   ) : (

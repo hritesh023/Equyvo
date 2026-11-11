@@ -278,7 +278,7 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
                 {item.file.type.startsWith('image/') ? (
                   <img src={item.url} alt={item.file.name} className="h-full w-full object-cover" />
                 ) : item.file.type.startsWith('video/') ? (
-                  <video src={item.url} className="h-full w-full object-cover" muted />
+                  <video src={item.url} className="h-full w-full object-cover" muted onError={(e)=>{const v=e.currentTarget;if(!v.dataset.origSrc)v.dataset.origSrc=item.url||"";const a=Number(v.dataset.ccRetry||"0");if(a>=2)return;v.dataset.ccRetry=String(a+1);const b=v.dataset.origSrc||item.url||"";v.src=`${b}${b.includes("?")?"&":"?"}retry=${a+1}`;}} />
                 ) : (
                   <span className="flex h-full w-full items-center justify-center text-[10px] px-1 text-center break-all">{item.file.name.slice(0, 8)}</span>
                 )}
@@ -307,7 +307,7 @@ export const ChatCamera: React.FC<ChatCameraProps> = ({ open, onClose, onAttach 
             {recent.length > 0 && recent[0].file.type.startsWith('image/') ? (
               <img src={recent[0].url} alt="recent" className="h-full w-full object-cover" />
             ) : recent.length > 0 && recent[0].file.type.startsWith('video/') ? (
-              <video src={recent[0].url} className="h-full w-full object-cover" muted />
+              <video src={recent[0].url} className="h-full w-full object-cover" muted onError={(e)=>{const v=e.currentTarget;if(!v.dataset.origSrc)v.dataset.origSrc=recent[0].url||"";const a=Number(v.dataset.ccRetry2||"0");if(a>=2)return;v.dataset.ccRetry2=String(a+1);const b=v.dataset.origSrc||recent[0].url||"";v.src=`${b}${b.includes("?")?"&":"?"}retry=${a+1}`;}} />
             ) : (
               <ImageIcon className="w-6 h-6" />
             )}
