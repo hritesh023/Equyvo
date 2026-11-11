@@ -1641,7 +1641,7 @@ const ProfilePage = () => {
                       post.mediaType === 'video' || post.type === 'video' ? (
                         post.videoUrl || post.video ? (
                           <ResilientVideo
-                            src={post.videoUrl || post.video}
+                            src={post.videoUrl || post.video || post.media}
                             poster={post.thumbnail || post.image}
                             controls
                             playsInline
@@ -1808,7 +1808,7 @@ const ProfilePage = () => {
               {userProfile.posts.filter(p => p.type === 'story' || (p as { type?: string }).type === 'text-story').map((story) => (
                 <Card key={story.id} className="overflow-hidden">
                   <div className="relative aspect-[9/16] bg-black">
-                    {story.type !== 'text-story' && (normalizeContentItem<Post>(story).videoUrl) ? (
+                    {story.type !== 'text-story' && isVideoItem(story) ? (
                       <ResilientVideo
                         src={normalizeContentItem<Post>(story).videoUrl}
                         poster={normalizeContentItem<Post>(story).thumbnail || normalizeContentItem<Post>(story).image}
@@ -1930,7 +1930,7 @@ const ProfilePage = () => {
                     <Play className="h-10 w-10 text-white opacity-80" />
                   </div>
                   <ResilientVideo
-                    src={video.videoUrl || video.media}
+                    src={video.videoUrl || video.video || video.media}
                     poster={video.thumbnail || undefined}
                     controls
                     playsInline
@@ -2058,7 +2058,7 @@ const ProfilePage = () => {
                       {post.mediaType === 'video' ? (
                         post.videoUrl ? (
                           <ResilientVideo
-                            src={post.videoUrl}
+                            src={post.videoUrl || post.video || post.media}
                             poster={post.thumbnail}
                             controls
                             playsInline
@@ -2235,7 +2235,7 @@ const ProfilePage = () => {
                       <div className="mb-3">
                         {(post.mediaType === 'video' || post.type === 'video') && (post.videoUrl || post.video) ? (
                           <ResilientVideo
-                            src={post.videoUrl || post.video}
+                            src={post.videoUrl || post.video || post.media}
                             poster={post.thumbnail || post.image}
                             controls
                             playsInline

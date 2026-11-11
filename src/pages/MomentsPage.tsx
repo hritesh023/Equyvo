@@ -3,7 +3,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
-import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send, RotateCcw, Settings, Gauge, UserPlus, Eye, Minimize2, Download, Captions } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, ThumbsUp, MessageCircle, Share2, Bookmark, Music2, MoreVertical, Send, RotateCcw, Gauge, UserPlus, Eye, Minimize2, Download, Captions } from 'lucide-react';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from '@/lib/utils';
 import { useIsMobile } from "@/hooks/use-mobile";
@@ -56,7 +56,6 @@ const MomentsPage = () => {
   const [autoAdvance, setAutoAdvance] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showCaptions, setShowCaptions] = useState(true);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [followingCreators, setFollowingCreators] = useState<Set<string>>(new Set());
   const lastTapRef = useRef<{ time: number; index: number }>({ time: 0, index: -1 });
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -783,36 +782,7 @@ const MomentsPage = () => {
               >
                 {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
               </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="bg-black/20 hover:bg-black/40 text-white rounded-full backdrop-blur-sm"
-                onClick={() => setSettingsOpen(o => !o)}
-                title="Playback settings"
-              >
-                <Settings className="h-5 w-5" />
-              </Button>
-              {settingsOpen && index === activeVideoIndex && (
-                <div className="bg-black/70 backdrop-blur-md rounded-xl p-3 flex flex-col gap-2 min-w-[160px]">
-                  <div className="text-white text-xs font-semibold">Speed</div>
-                  <div className="flex gap-1">
-                    {[0.5,1,1.5,2].map(sp => (
-                      <button key={sp} onClick={() => setPlaybackSpeed(sp)} className={`px-2 py-1 rounded text-xs ${playbackSpeed===sp?'bg-white text-black':'bg-white/10 text-white'}`}>{sp}x</button>
-                    ))}
-                  </div>
-                  <button onClick={() => setAutoAdvance(a=>!a)} className="text-white text-xs text-left hover:bg-white/10 rounded px-2 py-1">
-                    Auto-advance: {autoAdvance?'On':'Off'}
-                  </button>
-                  <button onClick={() => setShowCaptions(c=>!c)} className="text-white text-xs text-left hover:bg-white/10 rounded px-2 py-1">
-                    Captions: {showCaptions?'On':'Off'}
-                  </button>
-                  <button onClick={() => {
-                    try { (window as any).AndroidPiP?.enter?.(); } catch {}
-                  }} className="text-white text-xs text-left hover:bg-white/10 rounded px-2 py-1">
-                    Minimize (PiP)
-                  </button>
-                </div>
-              )}
+
             </div>
 
             {/* Right Side Actions */}
