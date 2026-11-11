@@ -928,9 +928,10 @@ const DiscoverPage = () => {
                         <StandardPostMenu
                           postId={item.id}
                           postUserId={item.creatorId}
+                          postOwnerId={item.creatorId}
                           contentType={toCardType(item) === 'video' ? 'video' : toCardType(item) === 'live' ? 'live' : 'post'}
                           onReport={handleReport}
-                          onHide={handleHide}
+
                           onCopyLink={handleCopyLink}
                           onShare={() => handleShare({ id: item.id, title: item.title, image: item.image })}
                         />
@@ -1007,9 +1008,10 @@ const DiscoverPage = () => {
                 <StandardPostMenu
                   postId={item.id}
                   postUserId={item.creatorId}
+                          postOwnerId={item.creatorId}
                   contentType={toCardType(item) === 'video' ? 'video' : toCardType(item) === 'live' ? 'live' : 'post'}
                   onReport={handleReport}
-                  onHide={handleHide}
+
                   onCopyLink={handleCopyLink}
                   onShare={() => handleShare({ id: item.id, title: item.title, image: item.image })}
                   className="text-white hover:text-white"
@@ -1161,9 +1163,10 @@ const DiscoverPage = () => {
                     <StandardPostMenu
                       postId={item.id}
                       postUserId={item.creatorId}
+                          postOwnerId={item.creatorId}
                       contentType={toCardType(item) === 'video' ? 'video' : toCardType(item) === 'live' ? 'live' : 'post'}
                       onReport={handleReport}
-                      onHide={handleHide}
+    
                       onCopyLink={handleCopyLink}
                       onShare={() => handleShare({
                         id: item.id,
@@ -1279,9 +1282,10 @@ const DiscoverPage = () => {
                     <StandardPostMenu
                       postId={item.id}
                       postUserId={item.creatorId}
+                          postOwnerId={item.creatorId}
                       contentType="live"
                       onReport={handleReport}
-                      onHide={handleHide}
+    
                       onCopyLink={handleCopyLink}
                       onShare={() => handleShare({
                         id: item.id,
@@ -1381,9 +1385,10 @@ const DiscoverPage = () => {
                     <StandardPostMenu
                       postId={item.id}
                       postUserId={item.creatorId}
+                          postOwnerId={item.creatorId}
                       contentType="video"
                       onReport={handleReport}
-                      onHide={handleHide}
+    
                       onCopyLink={handleCopyLink}
                       onShare={() => handleShare({ id: item.id, title: item.title, image: item.thumbnail || item.image })}
                     />

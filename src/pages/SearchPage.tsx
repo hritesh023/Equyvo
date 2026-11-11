@@ -653,8 +653,10 @@ const SearchPage: React.FC = () => {
                             </Button>
                             <StandardPostMenu
                               postId={result.id}
+                              postUserId={result.userId || result.creator || result.user}
+                              postOwnerId={result.ownerId || result.userId}
                               onReport={handleReport}
-                              onHide={handleHide}
+
                               onCopyLink={handleCopyLink}
                               onShare={() => handleShare(result)}
                               className="h-7 w-7 p-0 text-muted-foreground hover:text-foreground"
@@ -729,8 +731,10 @@ const SearchPage: React.FC = () => {
                             </Button>
                             <StandardPostMenu
                               postId={result.id}
+                              postUserId={result.userId || result.creator || result.user}
+                              postOwnerId={result.ownerId || result.userId}
                               onReport={handleReport}
-                              onHide={handleHide}
+
                               onCopyLink={handleCopyLink}
                               onShare={() => handleShare(result)}
                               className="h-6 w-6 p-0 text-muted-foreground hover:text-foreground"
@@ -754,7 +758,7 @@ const SearchPage: React.FC = () => {
                           <StandardPostMenu
                             postId={result.id}
                             onReport={handleReport}
-                            onHide={handleHide}
+
                             onCopyLink={handleCopyLink}
                             onShare={() => handleShare(result)}
                           />

@@ -259,12 +259,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                       onDelete={handleDelete}
                       onEdit={handleEdit}
                       onShare={(postId) => onShare(posts.find(p => p.id === postId))}
-                      onHide={(postId) => {
-                        // Handle hide functionality - remove from feed
-                        const updatedPosts = posts.filter(p => p.id !== postId);
-                        // You might want to update the parent component's posts state
-                        showSuccess('Post hidden from feed');
-                      }}
+
                       onCopyLink={(postId) => {
                         // Shared links open the exact post in the feed.
                         const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
