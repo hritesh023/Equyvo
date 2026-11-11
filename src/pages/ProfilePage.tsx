@@ -1642,7 +1642,7 @@ const ProfilePage = () => {
                         post.videoUrl || post.video ? (
                           <ResilientVideo
                             src={post.videoUrl || post.video}
-                            poster={post.thumbnail || post.image || post.media}
+                            poster={post.thumbnail || post.image}
                             controls
                             playsInline
                             preload="metadata"
@@ -1808,7 +1808,17 @@ const ProfilePage = () => {
               {userProfile.posts.filter(p => p.type === 'story' || (p as { type?: string }).type === 'text-story').map((story) => (
                 <Card key={story.id} className="overflow-hidden">
                   <div className="relative aspect-[9/16] bg-black">
-                    {story.type !== 'text-story' && (story.thumbnail || story.image || story.media) ? (
+                    {story.type !== 'text-story' && (normalizeContentItem<Post>(story).videoUrl) ? (
+                      <ResilientVideo
+                        src={normalizeContentItem<Post>(story).videoUrl}
+                        poster={normalizeContentItem<Post>(story).thumbnail || normalizeContentItem<Post>(story).image}
+                        controls
+                        playsInline
+                        preload="metadata"
+                        className="w-full h-full object-cover cursor-pointer"
+                        onClick={() => handleFullscreen(story)}
+                      />
+                    ) : story.type !== 'text-story' && (story.thumbnail || story.image || story.media) ? (
                       <img
                         src={story.thumbnail || story.image || story.media}
                         alt={story.content || 'Story'}
@@ -1980,8 +1990,8 @@ const ProfilePage = () => {
         </TabsContent>
 
         <TabsContent value="thoughts" className="mt-6 space-y-4">
-          {[...viewerReactedPosts, ...userProfile.posts.filter(p => p.type === 'thought')].length > 0 ? (
-            [...viewerReactedPosts, ...userProfile.posts.filter(p => p.type === 'thought')].map((post) => (
+          {[...viewerReactedPosts, ...userProfile.posts.filter(p => p.type === 'thought')].map(p => normalizeContentItem<Post>(p)).length > 0 ? (
+            [...viewerReactedPosts, ...userProfile.posts.filter(p => p.type === 'thought')].map(p => normalizeContentItem<Post>(p)).map((post) => (
               <Card key={post.id} className={`p-4 slide-up ${post.isReacted ? 'border-green-200 bg-green-50/50' : ''}`}>
                 <CardHeader className="flex flex-row items-center justify-between p-0 mb-4">
                   <div className="flex items-center gap-3">
@@ -2049,7 +2059,7 @@ const ProfilePage = () => {
                         post.videoUrl ? (
                           <ResilientVideo
                             src={post.videoUrl}
-                            poster={post.thumbnail || post.media}
+                            poster={post.thumbnail}
                             controls
                             playsInline
                             preload="metadata"
@@ -2193,7 +2203,7 @@ const ProfilePage = () => {
             </CardTitle>
             {allSavedContent.length > 0 ? (
               <div className="space-y-4">
-                {allSavedContent.map((post) => (
+                {allSavedContent.map((post) => normalizeContentItem<Post>(post)).map((post) => (
                   <Card key={post.id} className="p-4">
                     <div className="flex items-center gap-3 mb-3">
                       {post.type === 'moment' ? (
@@ -2226,7 +2236,7 @@ const ProfilePage = () => {
                         {(post.mediaType === 'video' || post.type === 'video') && (post.videoUrl || post.video) ? (
                           <ResilientVideo
                             src={post.videoUrl || post.video}
-                            poster={post.thumbnail || post.media || post.image}
+                            poster={post.thumbnail || post.image}
                             controls
                             playsInline
                             preload="metadata"
