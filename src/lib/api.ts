@@ -782,11 +782,41 @@ export const api = {
       const formData = new FormData();
       formData.append('file', payload);
       if (folder) formData.append('folder', folder);
-      const res = await request<{ data?: UploadResult; error?: string }>('/upload', {
-        method: 'POST',
-        body: formData,
+      // Use XMLHttpRequest so the browser reports real upload progress
+      // (fetch has no upload progress). Keeps the bar from sticking at 1%.
+      const res = await new Promise<{ data?: UploadResult; error?: string }>((resolve) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${API_BASE}/upload`, true);
+        const headers = authHeaders();
+        for (const [k, v] of Object.entries(headers)) {
+          try { xhr.setRequestHeader(k, v); } catch { /* ignore */ }
+        }
+        xhr.upload.onprogress = (e) => {
+          if (e.lengthComputable && e.total > 0) {
+            step(e.loaded, e.total, 'uploading');
+          } else {
+            step(0, total, 'uploading');
+          }
+        };
+        xhr.onload = () => {
+          let json: any = {};
+          try { json = JSON.parse(xhr.responseText || '{}'); } catch { json = {}; }
+          if (xhr.status >= 200 && xhr.status < 300) {
+            step(total, total, json?.data ? 'done' : 'uploading');
+            resolve(json);
+          } else {
+            try { handlePaywall(xhr.status, json); } catch { /* ignore */ }
+            resolve({ error: (typeof json?.error === 'string' && json.error) || `Request failed with status ${xhr.status}` });
+          }
+        };
+        xhr.onerror = () => resolve({ error: 'Network error' });
+        xhr.ontimeout = () => resolve({ error: 'Request timed out. Check your connection and try again.' });
+        xhr.timeout = REQUEST_TIMEOUT_MS.upload;
+        step(0, total, 'processing');
+        try { xhr.send(formData); } catch (e) {
+          resolve({ error: e instanceof Error ? e.message : 'Network error' });
+        }
       });
-      step(total, total, res.data ? 'done' : 'uploading');
       return res;
     }
     return await uploadChunked(payload, folder, meta, (loaded, phase) => step(loaded, total, phase));
