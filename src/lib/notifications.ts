@@ -150,9 +150,8 @@ export function sendSystemNotification(title: string, body: string): void {
     // use Capacitor's LocalNotifications plugin to surface a real system
     // notification in the tray, exactly like other apps.
     if (isNative) {
-      // In-app banner covers it while the app is in the foreground; the OS
-      // tray notification is only needed when the app is backgrounded.
-      if (document.visibilityState === 'visible') return;
+      // On native, always surface a real OS-level (tray) notification so it
+      // behaves like other apps' notifications, not only the in-app bell.
       void (async () => {
         try {
           const { LocalNotifications } = await import('@capacitor/local-notifications');
