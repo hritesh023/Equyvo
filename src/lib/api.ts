@@ -250,6 +250,11 @@ function throwUploadError(message: string, code?: string): never {
 }
 
 const CHUNK_PART_SIZE = 16 * 1024 * 1024;
+
+// Cancellation state for the in-flight upload (single-flight).
+let currentUploadXHR: XMLHttpRequest | null = null;
+let currentUploadId: string | null = null;
+let uploadCancelled = false;
 const PART_TIMEOUT_MS = 180_000;
 
 function extFromBlob(blob: Blob): string {
@@ -265,24 +270,51 @@ function extFromBlob(blob: Blob): string {
   return 'bin';
 }
 
-/** One PUT /upload/part with timeout + few retries; returns nothing on fail. */
+/** One PUT /upload/part with timeout + few retries; reports per-part byte
+ *  progress through `onProgress` (loaded bytes within this part) so the
+ *  publish bar moves honestly instead of jumping only at part boundaries. */
 async function uploadOnePart(
   uploadId: string,
   partIndex: number,
   chunk: Blob,
+  onProgress?: (loaded: number, total: number) => void,
 ): Promise<{ data?: { partIndex: number; etag: string; bytes: number }; error?: string }> {
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), PART_TIMEOUT_MS);
-  try {
+  return new Promise((resolve) => {
+    const xhr = new XMLHttpRequest();
+    currentUploadXHR = xhr;
+    xhr.open('PUT', `${API_BASE}/upload/part?uploadId=${encodeURIComponent(uploadId)}&partIndex=${partIndex}`, true);
+    const headers = authHeaders();
+    for (const [k, v] of Object.entries(headers)) {
+      try { xhr.setRequestHeader(k, v); } catch { /* ignore */ }
+    }
+    xhr.upload.onprogress = (e) => {
+      try {
+        const total = (e.lengthComputable && e.total > 0) ? e.total : (chunk.size || 1);
+        const loaded = Math.min(e.loaded || 0, total);
+        onProgress?.(loaded, total);
+      } catch { /* ignore */ }
+    };
+    xhr.onload = () => {
+      let json: any = {};
+      try { json = JSON.parse(xhr.responseText || '{}'); } catch { json = {}; }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { onProgress?.(chunk.size || 0, chunk.size || 1); } catch { /* ignore */ }
+        resolve(json);
+      } else {
+        try { handlePaywall(xhr.status, json); } catch { /* ignore */ }
+        resolve({ error: (typeof json?.error === 'string' && json.error) || `Request failed with status ${xhr.status}` });
+      }
+    };
+    xhr.onabort = () => { currentUploadXHR = null; uploadCancelled = true; resolve({ error: 'Upload cancelled' }); };
+         xhr.onerror = () => { currentUploadXHR = null; resolve({ error: uploadCancelled ? 'Upload cancelled' : 'Network error' }); };
+    xhr.ontimeout = () => resolve({ error: 'Upload timed out. Check your connection and try again.' });
+    xhr.timeout = PART_TIMEOUT_MS;
     const fd = new FormData();
     fd.append('file', chunk);
-    return await request(
-      `/upload/part?uploadId=${encodeURIComponent(uploadId)}&partIndex=${partIndex}`,
-      { method: 'PUT', body: fd, signal: ctrl.signal },
-    );
-  } finally {
-    clearTimeout(timer);
-  }
+    try { xhr.send(fd); } catch (e) {
+      resolve({ error: e instanceof Error ? e.message : 'Network error' });
+    }
+  });
 }
 
 /** Chunked uploader for big files. Throws Error on failure (aborts session). */
@@ -311,6 +343,7 @@ async function uploadChunked(
   const started = init.data;
   if (!started || started.chunked !== true || !started.uploadId) {
     // Server prefers the direct path (cap changed / small file) — fall back.
+    onProgress(0, 'uploading');
     const formData = new FormData();
     formData.append('file', payload);
     if (folder) formData.append('folder', folder);
@@ -319,19 +352,24 @@ async function uploadChunked(
     return res;
   }
   const uploadId = started.uploadId;
+  currentUploadId = uploadId;
   const partSize = started.partSize || CHUNK_PART_SIZE;
   const totalParts = Math.ceil(total / partSize);
   let uploaded = 0;
   const partEtags: Array<{ partIndex: number; etag: string; size: number }> = [];  onProgress(0, 'uploading');
   try {
     for (let partIndex = 1; partIndex <= totalParts; partIndex++) {
+      if (uploadCancelled) { currentUploadId = null; throwUploadError('Upload cancelled'); }
       const start = (partIndex - 1) * partSize;
       const end = Math.min(start + partSize, total);
       const chunk = payload.slice(start, end);
       let lastErr: string | null = null;
       for (let attempt = 0; attempt < 4; attempt++) {
         try {
-          const res = await uploadOnePart(uploadId, partIndex, chunk);
+          const res = await uploadOnePart(uploadId, partIndex, chunk, (loaded) => {
+            const partLoaded = Math.min(loaded || 0, chunk.size || 0);
+            try { onProgress(start + partLoaded, 'uploading'); } catch { /* ignore */ }
+          });
           if (res.error) {
             // Session gone / quota answer — retrying cannot help.
             throwUploadError(res.error, (/UPLOAD_SESSION_GONE/.test(res.error) ? 'UPLOAD_SESSION_GONE' : undefined));
@@ -342,6 +380,7 @@ async function uploadChunked(
           break;
         } catch (e) {
           if (e instanceof Error && (e as Error & { code?: string }).code === 'UPLOAD_SESSION_GONE') throw e;
+          if (uploadCancelled || (e instanceof Error && /cancel/i.test(e.message))) throw e;
           lastErr = e instanceof Error ? e.message : 'Chunk upload failed';
           await new Promise((r) => setTimeout(r, 200 * (attempt + 1)));
         }
@@ -729,6 +768,7 @@ export const api = {
     onProgress?: (p: UploadProgress) => void,
     meta?: { duration?: number },
   ) => {
+    uploadCancelled = false;
     const step = (loaded: number, totalCount: number, phase: UploadPhase) => {
       try { onProgress?.({ loaded: Math.min(loaded, Math.max(totalCount, 1)), total: Math.max(totalCount, 1), phase }); } catch { /* observer errors never break uploads */ }
     };
@@ -786,30 +826,31 @@ export const api = {
       // (fetch has no upload progress). Keeps the bar from sticking at 1%.
       const res = await new Promise<{ data?: UploadResult; error?: string }>((resolve) => {
         const xhr = new XMLHttpRequest();
-        xhr.open('POST', `${API_BASE}/upload`, true);
+        currentUploadXHR = xhr;
+         xhr.open('POST', `${API_BASE}/upload`, true);
         const headers = authHeaders();
         for (const [k, v] of Object.entries(headers)) {
           try { xhr.setRequestHeader(k, v); } catch { /* ignore */ }
         }
         xhr.upload.onprogress = (e) => {
-          if (e.lengthComputable && e.total > 0) {
-            step(e.loaded, e.total, 'uploading');
-          } else {
-            step(0, total, 'uploading');
-          }
+          const t = (e.lengthComputable && e.total > 0) ? e.total : (total > 0 ? total : 1);
+          const loaded = Math.min(e.loaded || 0, t);
+          step(loaded, t, 'uploading');
         };
         xhr.onload = () => {
           let json: any = {};
           try { json = JSON.parse(xhr.responseText || '{}'); } catch { json = {}; }
           if (xhr.status >= 200 && xhr.status < 300) {
-            step(total, total, json?.data ? 'done' : 'uploading');
+            currentUploadXHR = null;
+             step(total, total, json?.data ? 'done' : 'uploading');
             resolve(json);
           } else {
             try { handlePaywall(xhr.status, json); } catch { /* ignore */ }
             resolve({ error: (typeof json?.error === 'string' && json.error) || `Request failed with status ${xhr.status}` });
           }
         };
-        xhr.onerror = () => resolve({ error: 'Network error' });
+        xhr.onabort = () => { currentUploadXHR = null; uploadCancelled = true; resolve({ error: 'Upload cancelled' }); };
+         xhr.onerror = () => { currentUploadXHR = null; resolve({ error: uploadCancelled ? 'Upload cancelled' : 'Network error' }); };
         xhr.ontimeout = () => resolve({ error: 'Request timed out. Check your connection and try again.' });
         xhr.timeout = REQUEST_TIMEOUT_MS.upload;
         step(0, total, 'processing');
@@ -819,7 +860,26 @@ export const api = {
       });
       return res;
     }
-    return await uploadChunked(payload, folder, meta, (loaded, phase) => step(loaded, total, phase));
+    try {
+      return await uploadChunked(payload, folder, meta, (loaded, phase) => step(loaded, total, phase));
+    } finally {
+      currentUploadId = null;
+      currentUploadXHR = null;
+    }
+  },
+
+  // Cancel the in-flight upload (if any): aborts the network request and
+  // removes any partially uploaded R2 multipart session server-side.
+  cancelUpload: async () => {
+    uploadCancelled = true;
+    try { if (currentUploadXHR) { try { currentUploadXHR.abort(); } catch { /* ignore */ } } } catch { /* ignore */ }
+    const id = currentUploadId;
+    if (id) {
+      try { await request('/upload/abort', { method: 'POST', body: JSON.stringify({ uploadId: id }) }); } catch { /* ignore */ }
+    }
+    currentUploadXHR = null;
+    currentUploadId = null;
+    return { error: null };
   },
 
   // Get user's own posts

@@ -551,6 +551,7 @@ const CreatePage = () => {
   // most once even if the button is tapped repeatedly (dup-inducing tap
   // races all happened inside the async upload window).
   const publishLockRef = useRef(false);
+  const cancelUploadRequestedRef = useRef(false);
   // Active recording container (probed mimeType) + start time.
   const recorderMimeRef = useRef('');
   const recordingStartRef = useRef(0);
@@ -1040,10 +1041,14 @@ const CreatePage = () => {
       const onProgress = (p: UploadProgress) => {
         let nextPct = 1;
         let nextPhase: UploadProgress['phase'] = p.phase;
-        if (slot.count > 1) {
+        if (p.phase === 'done') {
+          nextPct = 100;
+        } else if (slot.count > 1) {
           const span = 1 / slot.count;
           const frac = p.total > 0 ? Math.max(0, Math.min(1, p.loaded / p.total)) : 0;
-          nextPct = Math.max(1, Math.min(99, Math.round((slot.index + frac) * span * 100)));
+          // Reserve 100% for the very last file completing.
+          const cap = (slot.index === slot.count - 1) ? 99 : 99;
+          nextPct = Math.max(1, Math.min(cap, Math.round((slot.index + frac) * span * 100)));
         } else {
           nextPct = Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50));
         }
@@ -1053,11 +1058,12 @@ const CreatePage = () => {
       const doUpload = async () => {
         const { data, error } = await api.uploadFile(raw, folder, onProgress, { duration });
         if (error) throw new Error(error);
+        const isLast = slot.index === slot.count - 1;
         const donePct = slot.count > 1
-          ? Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100)))
+          ? (isLast ? 100 : Math.max(1, Math.min(99, Math.round(((slot.index + 1) / slot.count) * 100))))
           : 100;
         setUploadProgress(slot.count > 1
-          ? { phase: 'uploading', pct: donePct }
+          ? { phase: isLast ? 'done' : 'uploading', pct: donePct }
           : { phase: 'done', pct: 100 });
         try { setUploadState({ isUploading: true, progress: { pct: donePct, phase: slot.count > 1 ? 'uploading' : 'done' } }); } catch {}
         return data || null;
@@ -1070,8 +1076,17 @@ const CreatePage = () => {
           return res;
         } catch (err) {
           lastErr = err;
+          if (cancelUploadRequestedRef.current || (err instanceof Error && /cancel/i.test(err.message))) {
+            // User cancelled — do not retry or spam an error toast.
+            setUploadProgress(null);
+            return null;
+          }
           // Keep retrying transient failures; surface the last error only after all attempts.
         }
+      }
+      if (cancelUploadRequestedRef.current) {
+        setUploadProgress(null);
+        return null;
       }
       setUploadProgress(null);
       const msg = lastErr instanceof Error ? lastErr.message : 'Upload failed';
@@ -1079,6 +1094,15 @@ const CreatePage = () => {
       else showError(`${hint}: ${msg}`);
       return null;
   } catch (e) { /* outer safety */ }
+  };
+
+  const handleCancelUpload = async () => {
+    if (!window.confirm('Cancel the current upload? The uploaded part will be removed.')) return;
+    cancelUploadRequestedRef.current = true;
+    try { await api.cancelUpload(); } catch { /* ignore */ }
+    setIsUploading(false);
+    setUploadProgress(null);
+    try { setUploadState({ isUploading: false, progress: null }); } catch {}
   };
 
   // Shared helper: persist content to API, index for search, update localStorage, notify other pages
@@ -1452,6 +1476,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
       const storyContent = {
         files: storyFiles,
@@ -1471,7 +1496,14 @@ const CreatePage = () => {
             if (capErr) { setUploadProgress(null); showError(capErr); continue; }
             const up = isImageFile(file) ? await compressImage(file) : file;
             const result = await runUpload(up, 'equyvo/stories', { index: i, count: storyFiles.length });
+            if (cancelUploadRequestedRef.current) break;
             storyResults.push({ file, result });
+          }
+          if (cancelUploadRequestedRef.current) {
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
+            setUploadProgress(null);
+            publishLockRef.current = false;
+            return;
           }
           // Robust pairing: only media that actually uploaded gets persisted.
           // Failed files are left selected for retry and no orphan cover-only
@@ -1601,6 +1633,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
     const textStoryData = {
       content: storyContent,
@@ -1695,6 +1728,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
     const thoughtData = {
       content: thoughtContent,
@@ -1711,6 +1745,7 @@ const CreatePage = () => {
           try {
             const uploadFile = thoughtVideo.type.startsWith('image/') ? await compressImage(thoughtVideo) : thoughtVideo;
             const upResult = await runUpload(uploadFile, 'equyvo/thoughts', { index: 0, count: 1 });
+            if (cancelUploadRequestedRef.current) { setUploadProgress(null); return; }
             if (upResult) {
               thoughtUploadResult = { secureUrl: upResult.secureUrl, resourceType: upResult.resourceType, publicId: upResult.publicId || undefined, r2Key: upResult.r2Key || undefined, variants: upResult.variants };
             }
@@ -1840,6 +1875,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
       const photosData = {
         files: photoFiles,
@@ -1858,7 +1894,14 @@ const CreatePage = () => {
             if (capErr) { setUploadProgress(null); showError(capErr); continue; }
             const up = isImageFile(file) ? await compressImage(file) : file;
             const result = await runUpload(up, 'equyvo/photos', { index: i, count: photoFiles.length });
+            if (cancelUploadRequestedRef.current) break;
             uploadedPhotoResults.push({ file, result });
+          }
+          if (cancelUploadRequestedRef.current) {
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
+            setUploadProgress(null);
+            publishLockRef.current = false;
+            return;
           }
 
           // Only photos that actually uploaded are persisted — failed files stay
@@ -1980,6 +2023,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
       const videosData = {
         files: videoFiles,
@@ -2006,7 +2050,14 @@ const CreatePage = () => {
               continue;
             }
             const result = await runUpload(file, 'equyvo/videos', { index: i, count: videoFiles.length });
+            if (cancelUploadRequestedRef.current) break;
             uploadedVideoResults.push({ file, result, durationSec });
+          }
+          if (cancelUploadRequestedRef.current) {
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
+            setUploadProgress(null);
+            publishLockRef.current = false;
+            return;
           }
 
           // Only videos that actually uploaded are persisted — failed files are
@@ -2149,6 +2200,7 @@ const CreatePage = () => {
           return;
         }
         publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
         try {
           const newScheduledLive: ScheduledPost = {
             id: Date.now().toString(),
@@ -2173,6 +2225,7 @@ const CreatePage = () => {
           return;
         }
         publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
         try {
           const newDraftLive: DraftPost = {
             id: Date.now().toString(),
@@ -2199,6 +2252,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
       const momentsData = { files: momentFiles, content: momentContent };
 
@@ -2221,7 +2275,14 @@ const CreatePage = () => {
             }
             const up = isImageFile(file) ? await compressImage(file) : file;
             const result = await runUpload(up, 'equyvo/moments', { index: i, count: momentFiles.length });
+            if (cancelUploadRequestedRef.current) break;
             uploadedResults.push({ file, result, durationSec });
+          }
+          if (cancelUploadRequestedRef.current) {
+            setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
+            setUploadProgress(null);
+            publishLockRef.current = false;
+            return;
           }
 
           // Only moment media that actually uploaded is persisted — failed files
@@ -2370,6 +2431,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
       // CAMERA FIRST. Permission is the most likely blocker — surface it
       // before any announcement/notification exists, so a denied grant can
@@ -2576,16 +2638,21 @@ const CreatePage = () => {
     let liveUploadResult: UploadResult | null = null;
     try {
       const { data, error } = await api.uploadFile(file, 'equyvo/live', (p) => setUploadProgress({
-        phase: p.phase,
-        pct: Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50)),
+        phase: p.phase === 'done' ? 'done' : 'uploading',
+        pct: p.phase === 'done' ? 100 : Math.max(1, Math.min(99, p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 50)),
       }), { duration: secs });
       if (error) throw new Error(error);
       liveUploadResult = data || null;
+      setUploadProgress({ phase: 'done', pct: 100 });
     } catch (err) {
       showError('Live recording upload failed — the raw recording was saved to your device. Try again later.' + (err instanceof Error ? ` (${err.message})` : ''));
     }
-    setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
-    setUploadProgress(null);
+    // Keep the completed bar visible briefly so 100% is actually seen.
+    setTimeout(() => {
+      setIsUploading(false);
+      setUploadProgress(null);
+      try { setUploadState({ isUploading: false, progress: null }); } catch {}
+    }, 400);
 
     if (!liveUploadResult?.secureUrl) {
       // NEVER persist a video item without its playable URL — that is what
@@ -2801,6 +2868,7 @@ const CreatePage = () => {
   const handleCameraCapture = async () => {
     if (publishLockRef.current) return;
     publishLockRef.current = true;
+      cancelUploadRequestedRef.current = false;
     try {
       const file = await capturePhoto();
       if (file) routeCameraFile(file);
@@ -3338,6 +3406,7 @@ const CreatePage = () => {
                       : 'Almost done…'}
             </span>
             <span className="text-muted-foreground tabular-nums">{uploadProgress.pct}%</span>
+            <button type="button" onClick={handleCancelUpload} className="ml-2 rounded-md border border-destructive/40 px-2 py-0.5 text-[11px] font-medium text-destructive hover:bg-destructive/10">Cancel</button>
           </div>
           <div className="h-2 w-full overflow-hidden rounded-full bg-muted">
             <div
