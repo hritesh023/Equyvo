@@ -53,7 +53,7 @@ import { navigateToProfile } from '@/utils/profile-navigation';
 import { pickDisplayName, profilePreviewFrom, userNameOf } from '@/lib/identity';
 import { toCount, bumpCount } from '@/lib/count';
 import api from '@/lib/api';
-import { isVideoItem } from '@/lib/feed-store';
+import { isVideoItem, hideFromMyView } from '@/lib/feed-store';
 import { normalizeContentList, normalizeContentItem, resolveMediaFields, formatWatchTime } from '@/lib/media';
 
 const ownerIdOf = (post: unknown): string => {
@@ -265,6 +265,15 @@ const ProfilePage = () => {
     (userProfile as Record<string, unknown>)._placeholder === true &&
     !pickDisplayName(userProfile.name, userProfile.username);
   const [activeTab, setActiveTab] = useState<string>('posts');
+  useEffect(() => {
+    const onHidden = (e: Event) => {
+      const id = String((e as CustomEvent).detail?.id || '');
+      if (!id) return;
+      setUserProfile(prev => ({ ...prev, posts: (prev.posts || []).filter(p => String(p.id) !== id) }));
+    };
+    window.addEventListener('contentHidden', onHidden as EventListener);
+    return () => window.removeEventListener('contentHidden', onHidden as EventListener);
+  }, []);
   // History and Saved are strictly private to the owner's own profile page.
   // Another person's profile must never show or activate those tabs.
   const effectiveTab = !isSelfView && (activeTab === 'history' || activeTab === 'saved')
@@ -1212,6 +1221,15 @@ const ProfilePage = () => {
   // post disappears for every other account on every device (no delete).
   const handleHide = async (postId: string) => {
     const post = userProfile.posts.find(p => p.id === postId);
+    // Personal hide for other people's content: removes it from THIS account's
+    // view only; the content stays on Equyvo for everyone else.
+    if (!isSelfView) {
+      hideFromMyView(postId);
+      setUserProfile(prev => ({ ...prev, posts: prev.posts.filter(p => p.id !== postId) }));
+      showSuccess("Hidden from your view. You won't see it again.");
+      return;
+    }
+    // Owner: hide from public (server-side visibility → private).
     const ok = await setContentVisibility(postId, (post?.type as string) || 'post', 'private');
     if (ok) {
       setUserProfile(prev => ({

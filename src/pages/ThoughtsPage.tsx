@@ -364,6 +364,15 @@ const MediaRenderer: React.FC<{
 const ThoughtsPage = memo(() => {
   const navigate = useNavigate();
   const [thoughts, setThoughts] = useState<Thought[]>([]);
+  useEffect(() => {
+    const onHidden = (e: Event) => {
+      const id = String((e as CustomEvent).detail?.id || '');
+      if (!id) return;
+      setThoughts((prev) => (prev || []).filter((t) => String(t.id) !== id));
+    };
+    window.addEventListener('contentHidden', onHidden as EventListener);
+    return () => window.removeEventListener('contentHidden', onHidden as EventListener);
+  }, []);
   const [loading, setLoading] = useState(true);
   const [initialLoading, setInitialLoading] = useState(true);
   const [voting, setVoting] = useState<string | null>(null);

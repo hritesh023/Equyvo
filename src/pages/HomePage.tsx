@@ -20,7 +20,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import ReportModal from '@/components/ReportModal';
 import { fetchPosts, fetchMoments, fetchStories } from '@/lib/data';
 import { getThoughts } from '@/lib/thoughts';
-import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, isVideoItem, storyImageOf, storyVideoOf } from '@/lib/feed-store';
+import { allowedForSurface, creatorOf, getFollowing, hideFromMyView, isHidden, isVideoItem, storyImageOf, storyVideoOf, withoutHidden } from '@/lib/feed-store';
 import { resolveMediaFields } from '@/lib/media';
 import { bumpCount, toCount } from '@/lib/count';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
@@ -80,6 +80,17 @@ const HomePage = () => {
       window.removeEventListener('followChanged', sync);
       window.removeEventListener('storage', sync);
     };
+  }, []);
+  // Keep personally-hidden items out of the feed in real time.
+  useEffect(() => {
+    const onHidden = (e: Event) => {
+      const id = String((e as CustomEvent).detail?.id || '');
+      if (!id) return;
+      setEnhancedPosts((prev) => (prev || []).filter((p) => String(p.id) !== id));
+      setMoments((prev) => (prev || []).filter((m) => String(m.id) !== id));
+    };
+    window.addEventListener('contentHidden', onHidden as EventListener);
+    return () => window.removeEventListener('contentHidden', onHidden as EventListener);
   }, []);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');

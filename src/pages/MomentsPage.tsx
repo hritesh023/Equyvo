@@ -815,7 +815,7 @@ const MomentsPage = () => {
                   variant="ghost" 
                   size="icon" 
                   className="p-0 hover:bg-transparent text-white hover:scale-110 transition-transform"
-                  onClick={() => handleShare(moment.id)}
+                  onClick={(e) => { e.stopPropagation(); handleShare(moment.id); }}
                 >
                   <Share2 className="h-8 w-8 drop-shadow-md" />
                 </Button>

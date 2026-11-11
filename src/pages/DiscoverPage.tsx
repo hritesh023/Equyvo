@@ -385,6 +385,15 @@ const DiscoverPage = () => {
   // Strict routing: only durable media (photo/video/moment/thought/live),
   // never stories. Photos never render as videos and vice-versa.
   const [discoverItems, setDiscoverItems] = React.useState<any[]>([]);
+  React.useEffect(() => {
+    const onHidden = (e: Event) => {
+      const id = String((e as CustomEvent).detail?.id || '');
+      if (!id) return;
+      setDiscoverItems((prev) => (prev || []).filter((i) => String(i.id) !== id));
+    };
+    window.addEventListener('contentHidden', onHidden as EventListener);
+    return () => window.removeEventListener('contentHidden', onHidden as EventListener);
+  }, []);
   const [isLoadingDiscover, setIsLoadingDiscover] = React.useState(true);
 
   React.useEffect(() => {
