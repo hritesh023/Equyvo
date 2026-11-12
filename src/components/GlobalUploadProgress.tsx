@@ -6,7 +6,7 @@ const GlobalUploadProgress: React.FC = () => {
   useEffect(() => subscribeUpload(setState), []);
 
   if (!state.isUploading || !state.progress) return null;
-  const pct = Math.max(1, Math.min(99, state.progress.pct || 1));
+  const pct = Math.max(1, Math.min(100, state.progress.pct || 1));
   return (
     <div
       className="fixed top-0 left-0 right-0 z-[9999] h-1 bg-muted/40 pointer-events-none"

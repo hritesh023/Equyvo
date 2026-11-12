@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -10,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { showSuccess, showError } from '@/utils/toast';
+import { showSuccess as _showSuccess, showError } from '@/utils/toast';
 import { validateVideoDuration } from '@/lib/thoughts';
 import { compressImage } from '@/lib/utils';
 import { markHasRealContent } from '@/lib/data';
@@ -239,7 +240,14 @@ function probeVideoDuration(src: Blob): Promise<number | undefined> {
 }
 
 const CreatePage = () => {
-  const deferredSuccess = (message: string) => { setTimeout(() => showSuccess(message), 0); };
+  const deferredSuccess = (message: string) => {
+    // Clear the upload progress UI synchronously and flush it to the DOM before
+    // the success toast appears, so the progress bar / loading widget disappear
+    // as soon as (not after) the "uploaded" notification shows.
+    try { flushSync(() => { setIsUploading(false); setUploadProgress(null); }); } catch { /* ignore */ }
+    try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
+    setTimeout(() => _showSuccess(message), 100);
+  };
   // Deep-link a composer section: /app/create?tab=moment opens the Moments
   // composer directly (Moments' empty state sends users there) so tapping
   // "Create a moment" never lands on the wrong composer type.
