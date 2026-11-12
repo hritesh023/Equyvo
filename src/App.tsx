@@ -311,6 +311,7 @@ const AppContent = () => {
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
         <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
+        <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
             next navigation instead of a full-app "reload" wall. */}
@@ -352,7 +353,6 @@ const AppContent = () => {
           overlaying content. Desktop/tablet uses the top nav instead. */}
       {shouldShowNavbar && !chatOpen && !navHidden && <MobileBottomNav />}
       <Toaster />
-      <AppOpenAd />
 
     </div>
   </div>

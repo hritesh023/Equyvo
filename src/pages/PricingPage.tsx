@@ -143,7 +143,7 @@ const PricingPage: React.FC = () => {
         headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
       });
       const body = await r.json().catch(() => null);
-      if (!r.ok || !body?.data?.active || Number(body?.data?.maxUploadMB || 0) < 500) {
+      if (!r.ok || Number(body?.data?.maxUploadMB || 0) < 500) {
         throw new Error(body?.error || 'The upload boost could not be activated.');
       }
       window.dispatchEvent(new CustomEvent('rewardedUploadBoostChanged', { detail: body.data }));

@@ -4305,7 +4305,7 @@ export const onRequest = async (context) => {
       try {
         await env.EQUYVO_KV.put('rewarded:uploadBoost:' + String(actor.id), '500', { expirationTtl: 86400 });
       } catch { /* ignore */ }
-      return json({ data: { maxUploadMB: 500, expiresInSeconds: 86400 }, error: null }, 200, cors);
+      return json({ data: { active: true, maxUploadMB: 500, expiresInSeconds: 86400 }, error: null }, 200, cors);
     }
     if (path === '/api/rewards/upload-boost' && method === 'GET') {
       const actor = await getActor(request, env);
