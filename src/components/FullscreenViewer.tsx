@@ -187,11 +187,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const isPortraitOrientation = window.innerHeight > window.innerWidth;
   const isShortLandscape = window.innerWidth > window.innerHeight && window.innerHeight < 500;
 
-  // Resolve the effective type from multiple sources of truth
-  const resolvedType = actualContent?.type ||
+  // Resolve the effective type from multiple sources of truth.
+  // Normalise every legacy/alternate fullscreen type (video, post, thought,
+  // reacted) to the Discover page's canonical set (moment/image) so the whole
+  // app shares one fullscreen view. Story and moment stay distinct.
+  const _rawResolvedType = actualContent?.type ||
                         actualContent?.contentType ||
                         actualType ||
                         'image';
+  const resolvedType = (['video', 'post', 'thought', 'reacted'].includes(String(_rawResolvedType))
+    ? ((actualContent?.videoUrl || actualContent?.mediaType === 'video') ? 'moment' : 'image')
+    : _rawResolvedType);
   const resolvedContentType = actualContent?.contentType || resolvedType;
   
   // Enhanced video type detection using all available type indicators
@@ -1379,7 +1385,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           
           {/* Combined bottom overlay with video info and controls */}
           <div
-            className={`fixed bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none ${isShortLandscape ? '' : 'eq-safe-bottom'}`}
+            className={`fixed bottom-0 left-0 right-0 flex flex-col justify-end pointer-events-none bg-gradient-to-t from-black/90 via-black/60 to-transparent ${isShortLandscape ? '' : 'eq-safe-bottom'}`}
             style={{
               zIndex: 60,
               paddingBottom: isShortLandscape
@@ -1389,7 +1395,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           >
             {/* Details Section - above controls (rendered in place, no overlap) */}
             {!isSplitView && !(contentOnly || hideOverlay) && (!isVideoType || showDetailsPanel) && (
-              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-4 transition-all duration-300 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''}`}
+              <div className={`p-4 pt-4 transition-all duration-300 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''}`}
                 style={{
                   pointerEvents: 'auto'
                 }}
@@ -1541,7 +1547,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 play/pause, seek and every control above the system navbar
                 and clickable. */}
             <div 
-              className="bg-gradient-to-t from-black/90 via-black/60 to-transparent p-4 transition-opacity duration-500 pointer-events-none"
+              className="p-4 transition-opacity duration-500 pointer-events-none"
               style={{ 
                 paddingBottom: isShortLandscape
                   ? 'calc(max(0.5rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 16px)'
