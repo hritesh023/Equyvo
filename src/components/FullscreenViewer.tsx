@@ -870,7 +870,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           // PiP, visible outside the app), then push the app to the background.
           // Entering PiP before exiting is what actually creates the small
           // window; relying on onUserLeaveHint alone just closed the app.
-          try { bridge.enter(); } catch { /* ignore */ }
+          try { bridge.enter(); (window as any).__pipEntered = true; } catch { /* ignore */ }
           /* stay in PiP instead of backgrounding */
           return;
         }
@@ -892,7 +892,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       const bridge = (window as any).AndroidPiP;
       if (bridge && typeof bridge.enter === 'function') {
         /* no forced backgrounding */
-        setTimeout(() => { try { bridge.enter(); } catch { /* ignore */ } }, 550);
+        setTimeout(() => { try { bridge.enter(); (window as any).__pipEntered = true; } catch { /* ignore */ } }, 550);
         // Keep the fullscreen viewer mounted so the PiP window shows THIS
         // post (not the app shell/header). The user exits via the OS PiP
         // close affordance; do not tear the viewer down here.
