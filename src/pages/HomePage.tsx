@@ -96,17 +96,43 @@ const HomePage = () => {
   const [userAvatar, setUserAvatar] = useState<string>('');
   const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string } | null>(null);
   useEffect(() => {
-    const savedProfile = localStorage.getItem('userProfile');
-    if (savedProfile) {
-      const parsed = JSON.parse(savedProfile);
-      if (parsed.avatar) setUserAvatar(parsed.avatar);
-    }
+    const syncFromStorage = () => {
+      try {
+        const savedProfile = localStorage.getItem('userProfile');
+        if (savedProfile) {
+          const parsed = JSON.parse(savedProfile);
+          if (parsed?.avatar) setUserAvatar(parsed.avatar);
+        }
+      } catch { /* ignore */ }
+    };
+    syncFromStorage();
     const handleProfileUpdate = (e: Event) => {
       const detail = (e as CustomEvent).detail;
       if (detail?.avatar) setUserAvatar(detail.avatar);
+      else syncFromStorage();
+    };
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === 'userProfile') syncFromStorage();
     };
     window.addEventListener('profileUpdated', handleProfileUpdate);
-    return () => window.removeEventListener('profileUpdated', handleProfileUpdate);
+    window.addEventListener('storage', handleStorage);
+    // Resolve the latest profile icon from the server so an updated avatar
+    // always wins over a stale cached value.
+    (async () => {
+      try {
+        const user = await getAuthenticatedUser();
+        const id = user?.id;
+        if (id) {
+          const res: any = await api.getProfile(id);
+          const avatar = res?.data?.avatar || res?.data?.avatar_url || res?.data?.avatarUrl;
+          if (avatar) setUserAvatar(avatar);
+        }
+      } catch { /* best-effort */ }
+    })();
+    return () => {
+      window.removeEventListener('profileUpdated', handleProfileUpdate);
+      window.removeEventListener('storage', handleStorage);
+    };
   }, []);
 
 
@@ -289,6 +315,19 @@ const HomePage = () => {
 
   // Real moments data from the API.
   const [moments, setMoments] = useState<any[]>([]);
+
+  // Home story rail: only the signed-in user's own stories plus stories from
+  // accounts they follow. A global firehose of every uploader's story would
+  // make the carousel never-ending.
+  const visibleStories = stories.filter((s: any) => {
+    if (isOwnContent(s as unknown as Record<string, unknown>)) return true;
+    const keys = [ownerIdOf(s), s?.userId, s?.user_id, s?.username, s?.user]
+      .map((v: any) => String(v ?? '').trim().toLowerCase())
+      .filter(Boolean);
+    return followingAccounts.some((f: string) =>
+      keys.includes(String(f ?? '').trim().toLowerCase()),
+    );
+  });
   const [isLoadingMoments, setIsLoadingMoments] = useState(true);
 
   // Fetch moments + refresh live when a moment is uploaded
@@ -953,26 +992,69 @@ const HomePage = () => {
         <div className="relative">
           <ScrollArea className="w-full whitespace-nowrap rounded-xl">
             <div className="flex space-x-3 lg:space-x-4 p-1">
-              {/* Add Story Button */}
-              <div 
-                className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0 cursor-pointer group"
-                onClick={handleCreateStoryClick}
-              >
-                <div className="absolute inset-0 bg-secondary rounded-xl overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
-                  <div className="h-2/3 bg-primary/20 flex items-center justify-center">
-                    <Avatar className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-background">
-                      <AvatarImage src={userAvatar || ''} />
-                      <AvatarFallback className="text-xs lg:text-sm">ME</AvatarFallback>
-                    </Avatar>
-                  </div>
-                  <div className="h-1/3 bg-secondary flex flex-col items-center justify-start pt-4 lg:pt-6 relative">
-                    <div className="absolute -top-3 lg:-top-4 w-6 h-6 lg:w-8 lg:h-8 bg-primary rounded-full flex items-center justify-center border-4 border-secondary text-white shadow-lg">
-                      <Plus className="w-3 h-3 lg:w-5 lg:h-5" />
+              {/* Own story card (replaces "Create Story" once the user has
+                  uploaded a story) — one card per account, with the latest
+                  profile icon. */}
+              {(() => {
+                const ownIndex = stories.findIndex((s) => isOwnContent(s as unknown as Record<string, unknown>));
+                const ownStory = ownIndex >= 0 ? stories[ownIndex] : null;
+                if (ownStory) {
+                  const art = storyImageOf(ownStory) || (ownStory as any).image || '';
+                  const vsrc = storyVideoOf(ownStory);
+                  const avatarSrc = userAvatar || (ownStory as any).avatar || '';
+                  return (
+                    <div
+                      key={`own-story-${ownStory.id}`}
+                      className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0 cursor-pointer group"
+                      onClick={() => handleStoryClick(ownIndex)}
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-br from-purple-400 to-pink-400 rounded-xl overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
+                        <div className="absolute top-2 left-2 w-8 h-8 lg:w-10 lg:h-10 rounded-full border-2 border-primary p-0.5 z-10">
+                          <Avatar className="w-full h-full border-2 border-black cursor-pointer hover:ring-2 hover:ring-white/50 transition-all duration-200">
+                            <AvatarImage src={avatarSrc} />
+                            <AvatarFallback className="text-xs">{(ownStory.user || 'ME').substring(0, 2).toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                        </div>
+                        {art ? (
+                          <img src={art} alt={ownStory.user} className="w-full h-full object-cover" loading="lazy" />
+                        ) : vsrc ? (
+                          <video src={vsrc} className="w-full h-full object-cover" muted playsInline preload="metadata" />
+                        ) : (
+                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500 to-pink-500">
+                            <span className="text-white text-2xl font-bold">{(ownStory.user || 'M').substring(0, 1).toUpperCase()}</span>
+                          </div>
+                        )}
+                        <div className="absolute bottom-0 left-0 right-0 p-2 bg-gradient-to-t from-black/60 to-transparent">
+                          <p className="text-white text-xs font-medium truncate">Your Story</p>
+                          <p className="text-white/80 text-xs">{ownStory.time}</p>
+                        </div>
+                      </div>
                     </div>
-                    <span className="font-semibold text-xs lg:text-sm">Create Story</span>
+                  );
+                }
+                // No own story yet: keep the "Create Story" card.
+                return (
+                  <div
+                    className="relative w-28 h-44 lg:w-32 lg:h-52 flex-shrink-0 cursor-pointer group"
+                    onClick={handleCreateStoryClick}
+                  >
+                    <div className="absolute inset-0 bg-secondary rounded-xl overflow-hidden transition-transform duration-300 group-hover:scale-[1.02]">
+                      <div className="h-2/3 bg-primary/20 flex items-center justify-center">
+                        <Avatar className="w-12 h-12 lg:w-16 lg:h-16 border-4 border-background">
+                          <AvatarImage src={userAvatar || ''} />
+                          <AvatarFallback className="text-xs lg:text-sm">ME</AvatarFallback>
+                        </Avatar>
+                      </div>
+                      <div className="h-1/3 bg-secondary flex flex-col items-center justify-start pt-4 lg:pt-6 relative">
+                        <div className="absolute -top-3 lg:-top-4 w-6 h-6 lg:w-8 lg:h-8 bg-primary rounded-full flex items-center justify-center border-4 border-secondary text-white shadow-lg">
+                          <Plus className="w-3 h-3 lg:w-5 lg:h-5" />
+                        </div>
+                        <span className="font-semibold text-xs lg:text-sm">Create Story</span>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
+                );
+              })()}
 
               {/* Stories or Loading State */}
               {isLoadingStories ? (
@@ -982,7 +1064,7 @@ const HomePage = () => {
                     <div className="absolute inset-0 bg-gray-200 rounded-xl animate-pulse" />
                   </div>
                 ))
-              ) : stories.length === 0 ? (
+              ) : visibleStories.length === 0 ? (
                 // Empty state for stories
                 <div className="flex items-center justify-center w-full h-44 lg:h-52 text-muted-foreground">
                   <p className="text-xs lg:text-sm">No stories available yet</p>
@@ -993,11 +1075,13 @@ const HomePage = () => {
                 (() => {
                   const seen = new Set<string>();
                   const cards: { story: Story; index: number }[] = [];
-                  stories.forEach((s, i) => {
+                  visibleStories.forEach((s) => {
+                    if (isOwnContent(s as unknown as Record<string, unknown>)) return;
                     const k = storyOwnerKey(s);
                     if (seen.has(k)) return;
                     seen.add(k);
-                    cards.push({ story: s, index: i });
+                    const i = stories.findIndex((x) => x.id === s.id);
+                    cards.push({ story: s, index: i >= 0 ? i : 0 });
                   });
                   return cards;
                 })().map(({ story, index }) => (
