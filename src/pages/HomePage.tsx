@@ -730,12 +730,26 @@ const HomePage = () => {
   };
 
   const handleFullscreenPost = (post: any) => {
-    setFullscreenContent(post);
+    const fields = resolveMediaFields(post);
     const postType = String(post.type || post.contentType || '').toLowerCase();
     const isLive = postType === 'live' || !!post.isLive || !!post.live;
-    const isVideo = postType === 'video' || postType === 'moment' || !!post.videoUrl || String(post.mediaType || '').toLowerCase() === 'video';
-    const isAudio = !isVideo && (Boolean(post.audioUrl) || String(post.mediaType || '').toLowerCase() === 'audio');
-    setFullscreenType(isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image');
+    const isVideo = postType === 'video' || postType === 'moment' || !!fields.videoUrl || !!post.videoUrl || String(post.mediaType || '').toLowerCase() === 'video';
+    const isAudio = !isVideo && (Boolean(fields.audioUrl || post.audioUrl) || String(post.mediaType || '').toLowerCase() === 'audio');
+    const type = isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image';
+    setFullscreenContent({
+      ...post,
+      type,
+      contentType: isLive ? 'live' : isVideo ? 'video' : isAudio ? 'audio' : 'image',
+      forcePortrait: isVideo && !isLive,
+      videoUrl: fields.videoUrl || post.videoUrl,
+      audioUrl: fields.audioUrl || post.audioUrl,
+      image: fields.image || post.image,
+      thumbnail: fields.thumbnail || post.thumbnail,
+      mediaUrl: fields.videoUrl || fields.audioUrl || fields.image || post.mediaUrl,
+      avatar: post.avatar || post.user?.avatar || post.creatorAvatar || '',
+      creatorAvatar: post.avatar || post.user?.avatar || post.creatorAvatar || '',
+    });
+    setFullscreenType(type);
   };
 
   // Deep link: /app/home?post=<id> (also reached via /posts/:id). Opens the

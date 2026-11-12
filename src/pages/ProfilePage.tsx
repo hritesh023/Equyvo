@@ -1282,8 +1282,8 @@ const ProfilePage = () => {
   const handleFullscreen = (post: Post) => {
     // Track content view in history
     addToWatchHistory(post);
-    const isMoment = post.type === 'moment' || post.mediaType === 'moment';
     const media = resolveMediaFields(post as unknown as Record<string, unknown>);
+    const isMoment = post.type === 'moment' || post.mediaType === 'moment' || post.mediaType === 'video' || !!media.videoUrl || String(post.type || '').toLowerCase() === 'video';
     
     // Enhanced content structure for fullscreen viewer with complete metadata
     const mediaContent = {
