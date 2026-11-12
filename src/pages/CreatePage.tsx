@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { flushSync } from 'react-dom';
+
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -241,10 +241,12 @@ function probeVideoDuration(src: Blob): Promise<number | undefined> {
 
 const CreatePage = () => {
   const deferredSuccess = (message: string) => {
-    // Clear the upload progress UI synchronously and flush it to the DOM before
-    // the success toast appears, so the progress bar / loading widget disappear
-    // as soon as (not after) the "uploaded" notification shows.
-    try { flushSync(() => { setIsUploading(false); setUploadProgress(null); }); } catch { /* ignore */ }
+    // Clear the upload progress UI before the success toast appears, so the
+    // progress bar / loading widget disappear as soon as (not after) the
+    // "uploaded" notification shows. Reset both local and global state so
+    // every surface (Create page overlay, global top bar) hides together.
+    setIsUploading(false);
+    setUploadProgress(null);
     try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
     setTimeout(() => _showSuccess(message), 100);
   };
@@ -1697,6 +1699,7 @@ const CreatePage = () => {
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
         const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt });
         setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
+        setUploadProgress(null);
         if (textStoryErr) {
           showError('Saved locally but feed sync failed: ' + textStoryErr);
         } else {
@@ -3424,7 +3427,7 @@ const CreatePage = () => {
 
       {/* Publish progress: exact byte-level bar for every composer tab while
           one upload network is active (chunked flow reports real progress). */}
-      {isUploading && uploadProgress && (
+      {isUploading && uploadProgress && uploadProgress.phase !== 'done' && (
         <div className="fixed bottom-24 left-4 right-4 z-50 rounded-lg border border-primary/30 bg-background/95 backdrop-blur px-4 py-3 space-y-2 shadow-lg" role="status" aria-live="polite">
           <div className="flex items-center justify-between text-xs font-medium">
             <span className="text-primary">
@@ -4806,7 +4809,7 @@ const CreatePage = () => {
       )}
 
       {/* Upload Loading Overlay */}
-      {isUploading && uploadProgress && (
+      {isUploading && uploadProgress && uploadProgress.phase !== 'done' && (
         <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[99999] pointer-events-none">
           <Card className="p-4 text-center max-w-sm mx-4 shadow-2xl pointer-events-auto">
             <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />

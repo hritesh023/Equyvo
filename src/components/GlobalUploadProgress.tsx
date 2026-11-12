@@ -5,7 +5,7 @@ const GlobalUploadProgress: React.FC = () => {
   const [state, setState] = useState<UploadState>(getUploadState());
   useEffect(() => subscribeUpload(setState), []);
 
-  if (!state.isUploading || !state.progress) return null;
+  if (!state.isUploading || !state.progress || state.progress.phase === 'done') return null;
   const pct = Math.max(1, Math.min(100, state.progress.pct || 1));
   return (
     <div
