@@ -3,6 +3,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Separator } from '@/components/ui/separator';
+import { useNavigate } from 'react-router-dom';
 import { 
   Maximize2, 
   Minimize2, 
@@ -38,6 +39,7 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
   className = ''
 }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const navigate = useNavigate();
 
   const handleShare = async () => {
     if (!selectedItem) return;
@@ -204,7 +206,7 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge variant="secondary">{selectedItem.category}</Badge>
                       {selectedItem.tags.map((tag) => (
-                        <Badge key={tag} variant="outline" className="text-xs">
+                        <Badge key={tag} variant="outline" className="text-xs cursor-pointer" onClick={() => navigate(`/app/search?q=${encodeURIComponent(String(tag).replace(/^#/, ''))}`)}>
                           #{tag}
                         </Badge>
                       ))}
