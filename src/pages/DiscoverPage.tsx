@@ -988,7 +988,7 @@ avatar: m.avatar || m.user?.avatar || '',
 
     // Grid view — full-image previews (object-contain, never cropped)
     return (
-      <div className="grid grid-cols-3 gap-1 md:gap-2">
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3 px-1">
         {gridData.length === 0 ? (
           <div className="col-span-3 text-center py-12 text-muted-foreground">
             <Filter className="w-12 h-12 mx-auto mb-4 opacity-50" />

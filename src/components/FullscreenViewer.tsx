@@ -210,7 +210,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const resolvedContentType = actualContent?.contentType || resolvedType;
   
   // Enhanced video type detection using all available type indicators
-  const videoTypeValues = new Set(['video', 'live', 'story']);
+  const videoTypeValues = new Set(['live', 'story']);
   // A 'moment' is only a video when it actually carries a playable video URL.
   // Photo/GIF moments must NOT be forced into the <video> branch (a <video>
   // cannot decode a GIF/image and would render blank while the seek bar ticks).
