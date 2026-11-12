@@ -2365,8 +2365,7 @@ const ProfilePage = () => {
           content={fullscreenContent}
           type={fullscreenContent.videoUrl ? 'moment' : (fullscreenContent.type === 'story' ? 'story' : (fullscreenContent.type === 'live' || fullscreenContent.isLive || fullscreenContent.live ? 'live' : (fullscreenContent.type === 'audio' || fullscreenContent.mediaType === 'audio' || fullscreenContent.audioUrl ? 'audio' : 'image')))}
           onClose={closeFullscreen}
-          onComment={(videoId, creator) => handleComment(videoId, creator)}
-          onShare={(v) => handleShare(v as any)}
+          onExpand={() => {}}
           onContentChange={(content) => setFullscreenContent(content)}
           onFollow={handleFollow}
           followedCreators={followedCreators}

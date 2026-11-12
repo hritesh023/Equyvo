@@ -1228,9 +1228,10 @@ const HomePage = () => {
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}
+          onExpand={() => {}}
+          onContentChange={(content) => setFullscreenContent(content)}
           onFollow={handleFollow}
           followedCreators={followedCreators}
-          onContentChange={(content) => setFullscreenContent(content)}
         />
       )}
 
