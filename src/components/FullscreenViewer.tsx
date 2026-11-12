@@ -53,7 +53,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // the same viewer never reuses a stale payload (which made the second open
   // fall back to the legacy/buggy fullscreen layout).
   const currentId = (content as any)?.id ?? (content as any)?.contentId;
-  if (rawContentRef.current === null || (rawContentRef.current?.id ?? rawContentRef.current?.contentId) !== currentId) {
+  if (rawContentRef.current === null || (rawContentRef.current?.id ?? rawContentRef.current?.contentId) !== currentId || rawContentRef.current !== content) {
     const temp = (window as any).tempFullscreenContent;
     rawContentRef.current = temp || content;
     if (temp) (window as any).tempFullscreenContent = null;
@@ -85,6 +85,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setContentOnly(false);
     setShowControls(true);
   }, [actualContent?.id]);
+
+  // Reopening the same item (e.g. after minimizing) must also clear the
+  // content-only / hidden-overlay state, otherwise the second fullscreen open
+  // keeps the stale "minimized" appearance.
+  useEffect(() => {
+    setHideOverlay(false);
+    setContentOnly(false);
+    setShowControls(true);
+  }, [content]);
   // Record a view exactly once per account per item the first time it opens.
   // Server dedupes via the viewedBy ledger, so calling on every open is safe.
   useEffect(() => {

@@ -852,11 +852,11 @@ avatar: m.avatar || m.user?.avatar || '',
             gridData.map((item, i) => (
               <Card
                 key={item.id}
-                className="group cursor-pointer hover:shadow-lg transition-all duration-300"
+                className="group cursor-pointer hover:shadow-lg transition-all duration-300 overflow-hidden"
                 onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
               >
                 <CardContent className="p-4">
-                  <div className="flex gap-4">
+                  <div className="flex flex-wrap items-start gap-4">
                     <div className="w-24 h-24 flex-shrink-0 rounded-lg overflow-hidden bg-black">
                       {item.thumbnail || item.image ? (
                         <DiscoverImg
@@ -887,8 +887,8 @@ avatar: m.avatar || m.user?.avatar || '',
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2">
-                        <h3 className="font-semibold group-hover:text-primary transition-colors">
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <h3 className="font-semibold group-hover:text-primary transition-colors truncate min-w-0">
                           {item.title}
                         </h3>
                         <Badge variant="secondary" className="text-xs">
@@ -923,7 +923,7 @@ avatar: m.avatar || m.user?.avatar || '',
                       </button>
 
                     </div>
-                    <div className="flex flex-wrap gap-1 shrink-0">
+                    <div className="flex flex-wrap gap-1 shrink-0 max-w-full justify-end">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
