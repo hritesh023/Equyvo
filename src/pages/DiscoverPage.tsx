@@ -988,7 +988,7 @@ avatar: m.avatar || m.user?.avatar || '',
 
     // Grid view — full-image previews (object-contain, never cropped)
     return (
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 md:gap-3 px-1">
+      <div className="grid grid-cols-3 gap-0.5 md:gap-1">
         {gridData.length === 0 ? (
           <div className="col-span-3 text-center py-12 text-muted-foreground">
             <Filter className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -1019,12 +1019,12 @@ avatar: m.avatar || m.user?.avatar || '',
               {item.thumbnail || item.image ? (
                 <DiscoverImg
                   src={item.thumbnail || item.image}
-                  className="w-full h-full object-contain bg-black transition-transform duration-500 group-hover:scale-[1.02]"
+                  className="w-full h-full object-cover transition-transform duration-500 group-hover:scale-[1.02]"
                 />
               ) : item.videoUrl ? (
                 <video
                   src={item.videoUrl}
-                  className="w-full h-full object-contain bg-black"
+                  className="w-full h-full object-cover bg-black"
                   muted
                   playsInline
                   preload="metadata"
