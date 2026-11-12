@@ -211,7 +211,6 @@ const ProfilePage = () => {
     });
   };
   const [sharePayload, setSharePayload] = useState<any>(null);
-  const [universalMediaContent, setUniversalMediaContent] = useState<FullscreenContent | null>(null);
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [savedStories, setSavedStories] = useState<Set<string>>(new Set());
   const [watchHistory, setWatchHistory] = useState<Post[]>([]);
@@ -1345,9 +1344,6 @@ const ProfilePage = () => {
     setFullscreenContent(null);
   };
 
-  const closeUniversalMediaViewer = () => {
-    setUniversalMediaContent(null);
-  };
 
   // Video handling functions
   const handleVideoPlayPause = async (postId: string) => {
@@ -1779,20 +1775,7 @@ const ProfilePage = () => {
                       >
                         <Bookmark className={`h-3 w-3 md:h-4 md:w-4 ${savedPosts.has(post.id) ? 'fill-current' : ''}`} />
                       </Button>
-                      {post.media && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="flex items-center gap-1 text-xs md:text-sm"
-                          onClick={() => {
-                            handleFullscreen(post);
-                            addToWatchHistory(post);
-                          }}
-                          title="View in fullscreen"
-                        >
-                          <Maximize className="h-3 w-3 md:h-4 md:w-4" />
-                        </Button>
-                      )}
+
                     </div>
                   </CardContent>
                 </Card>

@@ -235,7 +235,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     const hasVideo = Boolean(vid);
     const fullscreenContent = {
       ...post,
-      type: isMomentPost ? 'moment' : (hasVideo ? ('video' as any) : (aud ? ('audio' as any) : (img ? ('image' as any) : post.type))), // Keep original type when no media
+      type: isMomentPost ? 'moment' : (hasVideo ? 'moment' : (aud ? 'audio' : (img ? 'image' : post.type))),
       videoUrl: vid,
       audioUrl: aud,
       media: vid || aud || img,
@@ -256,7 +256,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
       fallbackImage: img,
       // Ensure proper aspect ratio for images
       aspectRatio: isMomentPost ? '9/16' : (img ? '16/9' : undefined),
-      forcePortrait: isMomentPost
+      forcePortrait: hasVideo
     };
     
     
@@ -466,17 +466,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                       </div>
                     )}
                     
-                    {post.image && (
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className="flex items-center gap-1"
-                        onClick={() => onFullscreen(post)}
-                        title="View in fullscreen"
-                      >
-                        <Maximize className="h-4 w-4" />
-                      </Button>
-                    )}
+
                   </div>
                 </CardContent>
               </Card>
