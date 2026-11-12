@@ -993,7 +993,7 @@ avatar: m.avatar || m.user?.avatar || '',
 
     // Grid view — full-image previews (object-contain, never cropped)
     return (
-      <div className="grid grid-cols-3 gap-0.5 md:gap-1">
+      <div className="grid grid-cols-2 gap-0">
         {gridData.length === 0 ? (
           <div className="col-span-3 text-center py-12 text-muted-foreground">
             <Filter className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -1062,61 +1062,11 @@ avatar: m.avatar || m.user?.avatar || '',
                   className="text-white hover:text-white"
                 />
               </div>
-              {/* Bottom action bar: like / comment / share / save — always
-                  visible (mobile never had hover), overlay on desktop hover */}
-              <div className="absolute inset-x-0 bottom-0 flex items-center justify-around gap-1 bg-gradient-to-t from-black/80 via-black/50 to-transparent px-2 pb-2 pt-8 text-white">
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleLike(item.id);
-                  }}
-                  aria-label="Like"
-                  className={`flex items-center gap-1 rounded-full bg-black/50 p-2 transition-all hover:scale-110 hover:bg-black/70 ${
-                    likedPosts?.has(item.id) ? 'text-red-500' : ''
-                  }`}
-                >
-                  <ThumbsUp className={`w-4 h-4 ${likedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                  <span className="text-xs font-medium">{toCount(postLikes.get(item.id) ?? item.likes)}</span>
-                </button>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleComment(item.id, item.creator);
-                  }}
-                  aria-label="Comment"
-                  className={`flex items-center gap-1 rounded-full bg-black/50 p-2 transition-all hover:scale-110 hover:bg-black/70 ${
-                    commentedPosts?.has(item.id) ? 'text-blue-400' : ''
-                  }`}
-                >
-                  <MessageCircle className={`w-4 h-4 ${commentedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                  <span className="text-xs font-medium">{toCount(item.comments)}</span>
-                </button>
-                   <span className="flex items-center gap-1 rounded-full p-2 text-sm text-muted-foreground" title="Views">
-                     <Eye className="w-4 h-4" />
-                     <span className="text-xs">{toCount(item.views)}</span>
-                   </span>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleShare({
-                      id: item.id,
-                      title: item.title,
-                      image: item.image
-                    });
-                  }}
-                  aria-label="Share"
-                  className={`flex items-center gap-1 rounded-full bg-black/50 p-2 transition-all hover:scale-110 hover:bg-black/70 ${
-                    sharedPosts?.has(item.id) ? 'text-green-400' : ''
-                  }`}
-                >
-                  <Share2 className={`w-4 h-4 ${sharedPosts?.has(item.id) ? 'fill-current' : ''}`} />
-                </button>
-                <div
-                  className="flex items-center rounded-full bg-black/50 transition-all hover:bg-black/70"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <SaveButton postId={item.id} content={item} className="text-white hover:text-white" iconClassName="text-white" />
-                </div>
+              {/* Grid card: keep only view count (no action buttons) so the
+                  thumbnail stays fully visible */}
+              <div className="absolute bottom-2 left-2 flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-white backdrop-blur-sm">
+                <Eye className="w-3.5 h-3.5" />
+                <span className="text-xs font-medium">{toCount(item.views)}</span>
               </div>
               {toCardType(item) === 'live' && (
                 <div className="absolute top-2 right-12 flex items-center gap-1 bg-red-600 text-white text-xs px-2 py-0.5 rounded animate-pulse">
