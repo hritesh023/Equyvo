@@ -118,14 +118,15 @@ html.cap-native {
   padding-bottom: max(3.5rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) !important;
 }
 
-/* Fullscreen action buttons need a deliberate gap below the OS status/
-   notification strip. The native inset is still honoured when it is larger. */
+/* Fullscreen action buttons: a "little lower" than the very top, matching the
+   Discover page fullscreen view, while still clearing the OS notification/status
+   bar on native (via --native-safe-top) and on web (env safe-area). */
 .eq-fullscreen-top-safe {
-  padding-top: max(3.25rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
+  padding-top: max(0.75rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
 }
 
 .eq-fullscreen-close-safe {
-  top: max(3.25rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
+  top: max(0.75rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
 }
 
 /* Radix portals (dropdown menus, popovers, selects, tooltips…) append to
