@@ -852,21 +852,31 @@ const CreatePage = () => {
     return () => { alive = false; };
   }, []);
 
-   // Rewarded upload boost (500MB for 24h after watching an ad).
-   useEffect(() => {
-     let alive = true;
-     (async () => {
-       try {
-         const token = ((): string | null => { try { return localStorage.getItem('equyvo_cognito_token'); } catch { return null; } })();
-         const r = await fetch('/api/rewards/upload-boost', { method: 'GET', headers: token ? { Authorization: 'Bearer ' + token } : {} });
-         if (!r.ok) return;
-         const j = await r.json();
-         const mb = Number(j?.data?.maxUploadMB || 0);
-         if (alive && j?.data?.active && mb > 0) setUploadBoostMB(mb);
-       } catch { /* ignore */ }
-     })();
-     return () => { alive = false; };
-   }, []);
+  // Rewarded upload boost (500MB for 24h after a completed real ad).
+  useEffect(() => {
+    let alive = true;
+    const applyBoost = (boost: { active?: boolean; maxUploadMB?: number } | null | undefined) => {
+      const mb = Number(boost?.maxUploadMB || 0);
+      setUploadBoostMB(boost?.active && mb > 0 ? mb : 0);
+    };
+    const onBoostChanged = (event: Event) => {
+      if (alive) applyBoost((event as CustomEvent).detail);
+    };
+    window.addEventListener('rewardedUploadBoostChanged', onBoostChanged);
+    (async () => {
+      try {
+        const token = ((): string | null => { try { return localStorage.getItem('equyvo_cognito_token'); } catch { return null; } })();
+        const r = await fetch('/api/rewards/upload-boost', { method: 'GET', headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (alive) applyBoost(j?.data);
+      } catch { /* ignore */ }
+    })();
+    return () => {
+      alive = false;
+      window.removeEventListener('rewardedUploadBoostChanged', onBoostChanged);
+    };
+  }, []);
 
 
   // Persist scheduled/drafts across sessions (IndexedDB, survives app kills).
@@ -1075,7 +1085,7 @@ const CreatePage = () => {
       try { duration = isVideo ? (await probeVideoDuration(raw)) : undefined; } catch { duration = undefined; }
       const onProgress = (p: UploadProgress) => {
         let nextPct = 1;
-        let nextPhase: UploadProgress['phase'] = p.phase;
+        const nextPhase: UploadProgress['phase'] = p.phase;
         if (p.phase === 'done') {
           nextPct = 100;
         } else if (slot.count > 1) {

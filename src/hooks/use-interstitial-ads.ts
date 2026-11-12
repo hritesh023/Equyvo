@@ -68,7 +68,8 @@ export function useInterstitialAds(): void {
       if (vids.some((v) => !v.paused && !v.ended && !v.muted)) return;
       showingRef.current = true;
       try {
-        await prepareInterstitial();
+        // The service awaits the shared preload (or prepares on demand) and
+        // then presents that exact loaded native ad.
         await showInterstitial();
       } finally {
         showingRef.current = false;

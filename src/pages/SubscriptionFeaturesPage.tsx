@@ -5,7 +5,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { toast } from 'sonner';
 import { Crown, Lock, Sparkles, Users, Key, Store, Megaphone, BarChart3, Wand2, Gift } from 'lucide-react';
-import { showRewardedAd } from '@/lib/admob-service';
+import { isNativePlatform, prepareRewardedAd, showRewardedAd } from '@/lib/admob-service';
+import { getAuthToken, getToken } from '@/lib/auth';
 
 const API = '/api';
 
@@ -37,22 +38,44 @@ const SubscriptionFeaturesPage: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [rewardBusy, setRewardBusy] = useState(false);
+  useEffect(() => {
+    if (isNativePlatform() && (ent?.planId === 'eq_free' || !ent?.planId)) {
+      void prepareRewardedAd();
+    }
+  }, [ent?.planId]);
   const handleWatchAdRewarded = async () => {
     if (rewardBusy) return;
     setRewardBusy(true);
     try {
-      const cap = (window as any)?.Capacitor;
-      const native = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
-      let earned = false;
-      if (native) earned = await showRewardedAd();
-      else earned = window.confirm('Watch a short sponsored ad to unlock 500MB uploads for 24 hours?');
-      if (!earned) { toast.error('Ad not completed. No reward granted.'); return; }
-      const token = localStorage.getItem('equyvo_cognito_token');
-      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) } });
-      if (!r.ok) throw new Error('boost failed');
+      if (!isNativePlatform()) {
+        toast.error('Real rewarded ads are available in the Equyvo Android app. No reward was granted.');
+        return;
+      }
+      const token = (await getAuthToken().catch(() => null)) || getToken();
+      if (!token) {
+        toast.error('Sign in to earn the 500MB upload boost. No ad was shown.');
+        return;
+      }
+      const earned = await showRewardedAd();
+      if (!earned) {
+        toast.error('The real ad was not completed or is temporarily unavailable. No reward granted.');
+        return;
+      }
+      const r = await fetch('/api/rewards/upload-boost', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok || !body?.data?.active || Number(body?.data?.maxUploadMB || 0) < 500) {
+        throw new Error(body?.error || 'The upload boost could not be activated.');
+      }
+      window.dispatchEvent(new CustomEvent('rewardedUploadBoostChanged', { detail: body.data }));
       toast.success('500MB upload limit unlocked for 24 hours!');
-    } catch { toast.error('Could not unlock reward. Please try again.'); }
-    finally { setRewardBusy(false); }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not unlock reward. Please try again.');
+    } finally {
+      setRewardBusy(false);
+    }
   };
 
   const tabs = [
@@ -106,7 +129,7 @@ const SubscriptionFeaturesPage: React.FC = () => {
           <CardContent className="py-4 flex flex-col sm:flex-row items-center justify-between gap-3">
             <div className="flex items-center gap-2 text-sm">
               <Gift className="h-4 w-4 text-pink-500" />
-              <span>Watch one ad to unlock 500MB uploads for 24 hours (free plan).</span>
+              <span>Watch one real ad in the Equyvo Android app to unlock 500MB uploads for 24 hours (free plan).</span>
             </div>
             <Button size="sm" onClick={() => void handleWatchAdRewarded()} disabled={rewardBusy}>
               {rewardBusy ? 'Watching…' : 'Watch ad to earn 500MB'}

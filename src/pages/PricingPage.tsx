@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { EQUYVO_PLANS, formatINR } from '@/lib/plans';
 import { priceForCountry, CURRENCY_DISCLAIMER, getUserCountry } from '@/lib/currency';
 import { buyPlan, claimBilling, getBillingStatus } from '@/lib/billing';
-import { showRewardedAd } from '@/lib/admob-service';
+import { isNativePlatform, prepareRewardedAd, showRewardedAd } from '@/lib/admob-service';
 import { getAuthToken, getToken, getStoredUser } from '@/lib/auth';
 import { toast } from 'sonner';
 
@@ -111,25 +111,45 @@ const PricingPage: React.FC = () => {
   };
 
   const [rewardBusy, setRewardBusy] = useState(false);
+  useEffect(() => {
+    // Start the real native request before the tap. Repeated plan updates share
+    // one in-flight load inside the ad service.
+    if (isNativePlatform() && (activePlan === 'eq_free' || !activePlan)) {
+      void prepareRewardedAd();
+    }
+  }, [activePlan]);
   const handleWatchAdRewarded = async () => {
     if (rewardBusy) return;
     setRewardBusy(true);
     try {
-      const cap = (window as any)?.Capacitor;
-      const native = !!(cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform());
-      let earned = false;
-      if (native) {
-        earned = await showRewardedAd();
-      } else {
-        earned = window.confirm('Watch a short sponsored ad to unlock 500MB uploads for 24 hours?');
+      if (!isNativePlatform()) {
+        toast.error('Real rewarded ads are available in the Equyvo Android app. No reward was granted.');
+        return;
       }
-      if (!earned) { toast.error('Ad not completed. No reward granted.'); return; }
-      const token = ((): string | null => { try { return localStorage.getItem('equyvo_cognito_token'); } catch { return null; } })();
-      const r = await fetch('/api/rewards/upload-boost', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: 'Bearer ' + token } : {}) } });
-      if (!r.ok) throw new Error('boost failed');
+      // Do not make a signed-out viewer watch an ad whose server-side boost
+      // would then fail. Require the account before opening the ad.
+      const token = (await getAuthToken().catch(() => null)) || getToken();
+      if (!token) {
+        toast.error('Sign in to earn the 500MB upload boost. No ad was shown.');
+        return;
+      }
+      const earned = await showRewardedAd();
+      if (!earned) {
+        toast.error('The real ad was not completed or is temporarily unavailable. No reward granted.');
+        return;
+      }
+      const r = await fetch('/api/rewards/upload-boost', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + token },
+      });
+      const body = await r.json().catch(() => null);
+      if (!r.ok || !body?.data?.active || Number(body?.data?.maxUploadMB || 0) < 500) {
+        throw new Error(body?.error || 'The upload boost could not be activated.');
+      }
+      window.dispatchEvent(new CustomEvent('rewardedUploadBoostChanged', { detail: body.data }));
       toast.success('500MB upload limit unlocked for 24 hours!');
-    } catch {
-      toast.error('Could not unlock reward. Please try again.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not unlock reward. Please try again.');
     } finally {
       setRewardBusy(false);
     }
@@ -360,7 +380,7 @@ const PricingPage: React.FC = () => {
         <div className="mt-6 rounded-2xl border border-pink-500/40 bg-pink-500/5 p-6 text-center">
           <h3 className="font-bold text-lg">Watch ad to earn rewards</h3>
           <p className="text-sm text-muted-foreground mt-1">
-            Free plan upload limit is 150MB. Watch one ad to unlock 500MB uploads for 24 hours.
+            Free plan upload limit is 150MB. Watch one real ad in the Equyvo Android app to unlock 500MB uploads for 24 hours.
           </p>
           <Button className="mt-4" onClick={() => void handleWatchAdRewarded()} disabled={rewardBusy}>
             {rewardBusy ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}

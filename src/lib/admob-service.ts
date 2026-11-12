@@ -14,12 +14,9 @@ import type {
 } from '@capacitor-community/admob';
 import {
   AD_POLICY,
-  admobTestDevices,
   effectiveAdUnitId,
   effectiveInterstitialAdUnitId,
   effectiveRewardedAdUnitId,
-  TEST_REWARDED_AD_UNIT_ID,
-  isDevEnvironment,
   personalizedAdsEnabled,
 } from './ads-config';
 
@@ -54,7 +51,7 @@ type AdMobPlugin = {
 };
 
 let pluginPromise: Promise<{ plugin: AdMobPlugin | null }> | null = null;
-let initPromise: Promise<void> | null = null;
+let initPromise: Promise<boolean> | null = null;
 let lastImpressionAt = 0;
 
 /**
@@ -99,25 +96,27 @@ export function isNativePlatform(): boolean {
   return false;
 }
 
-/** Initialize Mobile Ads SDK once (safe to call repeatedly). */
-export function initializeAds(): Promise<void> {
+/** Initialize Mobile Ads SDK once. A failed native initialization is retryable:
+ *  caching that failure forever was why every later ad request could report
+ *  that no content was loaded, even after the Activity/WebView became ready. */
+export function initializeAds(): Promise<boolean> {
+  if (!isNativePlatform()) return Promise.resolve(false);
   if (initPromise) return initPromise;
-  initPromise = (async () => {
+  const pending = (async (): Promise<boolean> => {
     try {
       // Destructure synchronously: `plugin` itself is never awaited or
       // returned (see loadPlugin) — only real method-call promises are.
       const { plugin } = await loadPlugin();
-      if (!plugin?.initialize) return;
-      const testDevices = admobTestDevices();
+      if (!plugin?.initialize) return false;
+      // Production must never enable Google's test mode or test devices.
       const options: AdMobInitializationOptions = {
         tagForChildDirectedTreatment: false,
         tagForUnderAgeOfConsent: false,
         maxAdContentRating: 'General' as MaxAdContentRating,
-        ...(testDevices.length > 0
-          ? { testingDevices: testDevices, initializeForTesting: true }
-          : {}),
+        initializeForTesting: false,
+        testingDevices: [],
       };
-      await plugin.initialize(options as unknown as Record<string, unknown>).catch(() => undefined);
+      await plugin.initialize(options as unknown as Record<string, unknown>);
       // UMP consent (EEA/GDPR): resolves immediately where no Funding
       // Choices message is configured. Non-fatal everywhere.
       try {
@@ -125,11 +124,17 @@ export function initializeAds(): Promise<void> {
       } catch {
         /* non-fatal */
       }
-    } catch {
-      /* ads are optional — app must work without them */
+      return true;
+    } catch (e) {
+      try { console.warn('[AdMob] initialization failed (will retry):', e); } catch { /* ignore */ }
+      return false;
     }
   })();
-  return initPromise;
+  initPromise = pending;
+  void pending.then((ok) => {
+    if (!ok && initPromise === pending) initPromise = null;
+  });
+  return pending;
 }
 
 /** Session-level cooldown so impressions stay sparse (UX protection). */
@@ -183,7 +188,7 @@ export async function loadNativeAd(
     if (!isNativePlatform()) return null;
     const { plugin } = await loadPlugin();
     if (!plugin?.loadNativeAd) return null;
-    await initializeAds();
+    if (!(await initializeAds())) return null;
     const raw = await plugin
       .loadNativeAd({
         adId: effectiveAdUnitId(),
@@ -220,71 +225,86 @@ export function housePromoAd(placement: string): NativeAdData {
 
 let interstitialState: 'idle' | 'prepared' | 'showing' = 'idle';
 let interstitialAdId: string | null = null;
+let interstitialPreparePromise: Promise<boolean> | null = null;
+let rewardedState: 'idle' | 'prepared' | 'showing' = 'idle';
 let rewardedAdId: string | null = null;
+let rewardedPreparePromise: Promise<boolean> | null = null;
 let lastInterstitialShownAt = 0;
 const INTERSTITIAL_MIN_INTERVAL_MS = 90 * 1000; // 90 seconds between shows
 
-/** Prepare an interstitial ad (idempotent). */
+/** Prepare exactly one interstitial at a time. Multiple lifecycle hooks may
+ *  request a preload together; they must await the same native ad instead of
+ *  replacing each other's prepared slot. */
 export async function prepareInterstitial(): Promise<boolean> {
+  if (!isNativePlatform()) return false;
+  const configuredId = effectiveInterstitialAdUnitId();
+  if (!configuredId) return false;
+  if (interstitialState === 'prepared' && interstitialAdId === configuredId) return true;
+  if (interstitialPreparePromise) return interstitialPreparePromise;
+  const pending = (async (): Promise<boolean> => {
+    try {
+      if (!(await initializeAds())) return false;
+      const { plugin } = await loadPlugin();
+      if (!plugin?.prepareInterstitial) return false;
+      const info = await plugin.prepareInterstitial({
+        adId: configuredId,
+        isTesting: false,
+        npa: !personalizedAdsEnabled(),
+      });
+      interstitialAdId = (info && (info as { adUnitId?: string }).adUnitId) || configuredId;
+      interstitialState = 'prepared';
+      return true;
+    } catch (e) {
+      interstitialState = 'idle';
+      interstitialAdId = null;
+      try { console.warn('[AdMob] prepareInterstitial failed:', e); } catch { /* ignore */ }
+      return false;
+    }
+  })();
+  interstitialPreparePromise = pending;
   try {
-    if (!isNativePlatform()) return false;
-    const adId = effectiveInterstitialAdUnitId();
-    if (!adId) return false;
-    if (interstitialState === 'prepared' && interstitialAdId === adId) return true;
-    await initializeAds();
-    const { plugin } = await loadPlugin();
-    if (!plugin?.prepareInterstitial) return false;
-    const info = await plugin.prepareInterstitial({
-      adId,
-      isTesting: isDevEnvironment(),
-      npa: !personalizedAdsEnabled(),
-    });
-    interstitialState = 'prepared';
-    interstitialAdId = (info && (info as { adUnitId?: string }).adUnitId) || adId;
-    return true;
-  } catch (e) {
-    interstitialState = 'idle';
-    interstitialAdId = null;
-    try { console.warn('[AdMob] prepareInterstitial failed:', e); } catch { /* ignore */ }
-    return false;
+    return await pending;
+  } finally {
+    if (interstitialPreparePromise === pending) interstitialPreparePromise = null;
   }
 }
 
-/** Show a prepared interstitial if the cooldown allows. */
+/** Show the exact prepared interstitial if the cooldown allows. */
 export async function showInterstitial(): Promise<boolean> {
   try {
-    if (!isNativePlatform()) return false;
-    if (Date.now() - lastInterstitialShownAt < INTERSTITIAL_MIN_INTERVAL_MS) {
-      return false;
+    if (!isNativePlatform() || interstitialState === 'showing') return false;
+    if (Date.now() - lastInterstitialShownAt < INTERSTITIAL_MIN_INTERVAL_MS) return false;
+    if (interstitialState !== 'prepared' || !interstitialAdId) {
+      if (!(await prepareInterstitial())) return false;
     }
-    if (interstitialState !== 'prepared') {
-      const ok = await prepareInterstitial();
-      if (!ok) return false;
-    }
+    const adId = interstitialAdId;
+    if (!adId) return false;
     const { plugin } = await loadPlugin();
     if (!plugin?.showInterstitial) return false;
     interstitialState = 'showing';
     try {
-      // Target the exact prepared ad (fall back to "most recent" only if we
-      // lost track of the id). Passing the wrong/undefined id previously made
-      // the plugin resolve against an empty slot and the ad never rendered.
-      // Omit adId: let the plugin resolve against lastPreparedAdId (set during
-     // prepare). Passing a possibly-stale/wrong id previously made the plugin
-     // look up an empty slot -> "no ad content" / ad never rendered.
-      await plugin.showInterstitial();
+      // prepareInterstitial() resolves only after the native SDK's onAdLoaded
+      // callback. Passing this exact id selects that loaded object; omitting it
+      // can target an expired/dismissed "most recent" slot after navigation.
+      await plugin.showInterstitial({ adId });
     } catch (e) {
       interstitialState = 'idle';
+      interstitialAdId = null;
       try { console.warn('[AdMob] showInterstitial failed:', e); } catch { /* ignore */ }
       return false;
     }
     lastInterstitialShownAt = Date.now();
     interstitialState = 'idle';
     interstitialAdId = null;
-    // Preload the next one for the next natural break.
-    void prepareInterstitial();
+    // Do not preload a same-unit replacement while this ad is still visible:
+    // the native plugin removes a unit-id slot when the old ad is dismissed,
+    // which would otherwise delete the newly preloaded object. The next
+    // natural navigation prepares a fresh ad after dismissal.
     return true;
-  } catch {
+  } catch (e) {
     interstitialState = 'idle';
+    interstitialAdId = null;
+    try { console.warn('[AdMob] interstitial lifecycle failed:', e); } catch { /* ignore */ }
     return false;
   }
 }
@@ -295,86 +315,109 @@ export function isInterstitialConfigured(): boolean {
 
 // ── Rewarded (watch-to-earn) ────────────────────────────────────────────────
 
-/**
- * Show a rewarded ad and resolve true only when the user actually earns the
- * reward. Used by the subscription page "Watch ad to earn rewards" flow.
- */
-export async function showRewardedAd(): Promise<boolean> {
-  try {
-    if (!isNativePlatform()) {
-      // Web has no AdMob rewarded SDK; allow the reward flow to proceed so
-      // the upload boost can be granted (the page already confirms intent).
-      return true;
-    }
+/** Preload a real rewarded ad when the rewards page opens. The click handler
+ *  awaits this same request if it is still loading, then shows only the loaded
+ *  ad id returned by the native SDK. */
+export async function prepareRewardedAd(): Promise<boolean> {
+  if (!isNativePlatform()) return false;
+  const configuredId = effectiveRewardedAdUnitId();
+  if (!configuredId || rewardedState === 'showing') return false;
+  if (rewardedState === 'prepared' && rewardedAdId === configuredId) return true;
+  if (rewardedPreparePromise) return rewardedPreparePromise;
+  const pending = (async (): Promise<boolean> => {
     try {
-      if (localStorage.getItem('equyvo_ads_disabled') === 'true') return false;
-    } catch { /* ignore */ }
-    await initializeAds();
-    const { plugin } = await loadPlugin();
-    if (!plugin?.prepareRewardVideoAd || !plugin?.showRewardVideoAd) return false;
-    const adId = effectiveRewardedAdUnitId();
-    if (!adId) return false;
-    rewardedAdId = adId;
-    try {
+      if (!(await initializeAds())) return false;
+      const { plugin } = await loadPlugin();
+      if (!plugin?.prepareRewardVideoAd) return false;
       const info = await plugin.prepareRewardVideoAd({
-        adId,
-        isTesting: isDevEnvironment(),
+        adId: configuredId,
+        isTesting: false,
         npa: !personalizedAdsEnabled(),
       });
-      if (info && (info as { adUnitId?: string }).adUnitId) {
-        rewardedAdId = (info as { adUnitId?: string }).adUnitId as string;
-      }
+      rewardedAdId = (info && (info as { adUnitId?: string }).adUnitId) || configuredId;
+      rewardedState = 'prepared';
+      return true;
     } catch (e) {
-      try { console.warn('[AdMob] rewarded ad prepare failed:', e); } catch { /* ignore */ }
+      rewardedState = 'idle';
       rewardedAdId = null;
+      try { console.warn('[AdMob] rewarded ad prepare failed:', e); } catch { /* ignore */ }
       return false;
     }
-    // Wait for the actual reward (or dismissal / failure) instead of assuming
-    // a successful show() means the reward was earned. The plugin resolves
-    // showRewardVideoAd() only on reward, but it can hang on dismissal, so we
-    // race it against the Dismissed/FailedToShow events with a safety timeout.
-    return await new Promise<boolean>((resolve) => {
-      let settled = false;
-      let safety: number | undefined;
-      const finish = (value: boolean) => {
-        if (settled) return;
-        settled = true;
-        if (safety !== undefined) window.clearTimeout(safety);
-        try { handles.forEach((h) => { try { h?.remove?.(); } catch { /* ignore */ } }); } catch { /* ignore */ }
-        resolve(value);
-      };
-      const handles: Array<{ remove?: () => void }> = [];
-      const register = (event: string, cb: () => void) => {
-        try {
-          const p = plugin.addListener?.(event, cb);
-          if (p && typeof (p as Promise<unknown>).then === 'function') {
-            (p as Promise<{ remove?: () => void }>)
-              .then((h) => { if (h) handles.push(h); })
-              .catch(() => { /* ignore */ });
-          }
-        } catch { /* ignore */ }
-      };
-      register('onRewardedVideoAdReward', () => finish(true));
-      register('onRewardedVideoAdDismissed', () => finish(false));
-      register('onRewardedVideoAdFailedToShow', () => finish(false));
-      safety = window.setTimeout(() => finish(false), 120000);
-      (async () => {
-        try {
-          await plugin.showRewardVideoAd();
-          // If show resolves without a reward event, treat as earned (legacy
-          // plugin behaviour) but only if not already settled.
-          window.clearTimeout(safety);
-          finish(true);
-        } catch (e) {
-          window.clearTimeout(safety);
-          try { console.warn('[AdMob] rewarded ad show failed:', e); } catch { /* ignore */ }
-          finish(false);
-        }
-      })();
-    });
-  } catch {
-    return false;
+  })();
+  rewardedPreparePromise = pending;
+  try {
+    return await pending;
+  } finally {
+    if (rewardedPreparePromise === pending) rewardedPreparePromise = null;
   }
 }
 
+/** Resolve true only for a real native reward. Web has no rewarded-AdMob SDK,
+ *  so it must never claim a view or grant a boost without an advertisement. */
+export async function showRewardedAd(): Promise<boolean> {
+  if (!isNativePlatform()) return false;
+  if (rewardedState === 'showing') return false;
+  try {
+    if (localStorage.getItem('equyvo_ads_disabled') === 'true') return false;
+  } catch { /* ignore */ }
+  if (!(await prepareRewardedAd()) || !rewardedAdId) return false;
+  const adId = rewardedAdId;
+  const { plugin } = await loadPlugin();
+  if (!plugin?.showRewardVideoAd) {
+    rewardedState = 'idle';
+    rewardedAdId = null;
+    return false;
+  }
+
+  // showRewardVideoAd() resolves on the reward. On Android it can remain
+  // pending after an early dismissal, so dismissal/failure events also settle
+  // the result and all listener handles are always removed.
+  rewardedState = 'showing';
+  return new Promise<boolean>((resolve) => {
+    let settled = false;
+    const handles: Array<{ remove?: () => void }> = [];
+    const finish = (value: boolean) => {
+      if (settled) return;
+      settled = true;
+      window.clearTimeout(safety);
+      rewardedState = 'idle';
+      rewardedAdId = null;
+      for (const handle of handles) {
+        try { handle.remove?.(); } catch { /* ignore */ }
+      }
+      resolve(value);
+    };
+    const register = async (event: string, cb: () => void) => {
+      try {
+        const handle = await plugin.addListener?.(event, cb);
+        if (!handle) return;
+        // A fast failure can settle before addListener's promise resolves.
+        if (settled) {
+          try { handle.remove?.(); } catch { /* ignore */ }
+        } else {
+          handles.push(handle);
+        }
+      } catch { /* listener support is optional; show() still reports reward */ }
+    };
+    const registrations = [
+      register('onRewardedVideoAdReward', () => finish(true)),
+      register('onRewardedVideoAdDismissed', () => finish(false)),
+      register('onRewardedVideoAdFailedToShow', () => finish(false)),
+    ];
+    const safety = window.setTimeout(() => finish(false), 180000);
+    void (async () => {
+      await Promise.all(registrations);
+      if (settled) return;
+      try {
+        await plugin.showRewardVideoAd?.({ adId });
+        // Also true when the plugin resolves directly with AdMobRewardItem but
+        // its reward event was consumed by another native listener.
+        finish(true);
+      } catch (e) {
+        try { console.warn('[AdMob] rewarded ad show failed:', e); } catch { /* ignore */ }
+        finish(false);
+      }
+    })();
+  });
+}
 
