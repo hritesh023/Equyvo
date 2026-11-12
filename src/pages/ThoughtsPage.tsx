@@ -350,7 +350,7 @@ const MediaRenderer: React.FC<{
                   }
                   if (onFullscreen) {
                     onFullscreen({
-                      type: 'video',
+                      type: 'moment',
                       videoUrl: media.url,
                       thumbnail: media.thumbnail,
                       title: 'Video from Thought',
@@ -399,7 +399,7 @@ const ThoughtsPage = memo(() => {
   const [userReactedThoughts, setUserReactedThoughts] = useState<Thought[]>([]);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
-  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image' | 'audio' | 'thought' | 'reacted'>('image');
+  const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio' | 'story'>('image');
   const [originalVideoRef, setOriginalVideoRef] = useState<React.RefObject<HTMLVideoElement> | null>(null);
   const [originalVideoState, setOriginalVideoState] = useState<{ currentTime: number; isPlaying: boolean } | null>(null);
   const videoRefs = useRef<{ [key: string]: React.RefObject<HTMLVideoElement> }>({});
@@ -851,7 +851,7 @@ const ThoughtsPage = memo(() => {
 
   const handleFullscreen = (content: FullscreenContent, videoRef?: React.RefObject<HTMLVideoElement>) => {
     // Save original video state if it's a video
-    if (content.type === 'video' && videoRef?.current) {
+    if (content.type === 'moment' && videoRef?.current) {
       const video = videoRef.current;
       setOriginalVideoRef(videoRef);
       setOriginalVideoState({
@@ -863,12 +863,17 @@ const ThoughtsPage = memo(() => {
     }
     
     setFullscreenContent(content);
-    setFullscreenType((content.type === 'story' ? 'image' : content.type) || 'image');
+    const ct = String(content?.type || content?.contentType || '').toLowerCase();
+    const isLive = ct === 'live' || !!content?.isLive || !!content?.live;
+    const isVideo = ct === 'video' || ct === 'moment' || !!content?.videoUrl || String(content?.mediaType || '').toLowerCase() === 'video';
+    const isAudio = !isVideo && (Boolean(content?.audioUrl) || String(content?.mediaType || '').toLowerCase() === 'audio');
+    const isStory = ct === 'story' || content?.type === 'story' || content?.contentType === 'story';
+    setFullscreenType(isStory ? 'story' : isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image');
   };
 
   const handleCloseFullscreen = () => {
     // Restore original video state if it exists
-    if (originalVideoRef?.current && originalVideoState && fullscreenType === 'video') {
+    if (originalVideoRef?.current && originalVideoState && fullscreenType === 'moment') {
       const video = originalVideoRef.current;
       video.currentTime = originalVideoState.currentTime;
       if (originalVideoState.isPlaying) {

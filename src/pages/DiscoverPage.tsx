@@ -118,6 +118,10 @@ const toFullscreen = (
        videoUrl: fields.videoUrl || item.videoUrl,
        audioUrl: fields.audioUrl || undefined,
        mediaUrl: fields.videoUrl || fields.audioUrl || fields.image,
+       avatar: item.avatar || item.user?.avatar || item.creatorAvatar || '',
+       creatorAvatar: item.avatar || item.user?.avatar || '',
+       avatarUrl: item.avatar || item.user?.avatar || '',
+       profileImage: item.avatar || item.user?.avatar || '',
       likes: likes ?? item.likes,
       comments: item.comments,
       category: item.category,
@@ -318,7 +322,8 @@ const DiscoverPage = () => {
       
       // Set the new content immediately
       setFullscreenContent(content);
-      setFullscreenType(content.type || 'video');
+      const _ct = String(content?.type || content?.contentType || '').toLowerCase();
+      setFullscreenType(_ct === 'story' ? 'story' : (_ct === 'live' || content?.isLive || content?.live) ? 'live' : (content?.videoUrl ? 'moment' : (content?.audioUrl ? 'audio' : 'image')));
       
       // Clear temp content to avoid duplicate processing
       (window as any).tempFullscreenContent = null;

@@ -1,4 +1,4 @@
-export type ContentType = 'post' | 'live' | 'video' | 'moment' | 'image' | 'audio' | 'thought' | 'reacted' | 'story';
+export type ContentType = 'live' | 'moment' | 'image' | 'audio' | 'story';
 
 export interface FullscreenContent {
   id: string;

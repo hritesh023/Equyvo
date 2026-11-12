@@ -23,7 +23,7 @@ import { toCount } from '@/lib/count';
 
 interface FullscreenViewerProps {
   content: FullscreenContent;
-  type: 'post' | 'live' | 'video' | 'moment' | 'image' | 'audio' | 'thought' | 'reacted' | 'story';
+  type: 'live' | 'moment' | 'image' | 'audio' | 'story';
   onClose: () => void;
   onComment?: (videoId: string, creator: string) => void;
   onShare?: (video: FullscreenContent) => void | Promise<void>;
@@ -1807,7 +1807,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       )}
       
       {/* Split View Bottom Bar - appears inside image container */}
-      {isSplitView && !isVideoType && actualType === 'image' && (
+      {isSplitView && !isVideoType && (actualType === 'image' || actualType === 'post') && (
         <div
           className="absolute bottom-0 left-0 right-0 z-30 bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 eq-safe-bottom"
           style={{

@@ -1288,7 +1288,7 @@ const ProfilePage = () => {
     // Enhanced content structure for fullscreen viewer with complete metadata
     const mediaContent = {
       ...post,
-      type: isMoment ? 'moment' : (post.type || post.mediaType || (media.videoUrl ? 'video' : 'image')),
+      type: isMoment ? 'moment' : (media.videoUrl ? 'moment' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
       videoUrl: media.videoUrl,
       media: media.media || post.image,
       thumbnail: media.thumbnail || post.image,
@@ -1312,7 +1312,7 @@ const ProfilePage = () => {
       viewMode: isMoment ? 'fullscreen' : undefined
     };
     
-    setFullscreenContent(mediaContent);
+    setFullscreenContent(mediaContent as FullscreenContent);
   };
 
   // A Moments card needs clean media strings no matter what the source row
@@ -2380,10 +2380,10 @@ const ProfilePage = () => {
       {fullscreenContent && (
         <SafeFullscreenViewer
           content={fullscreenContent}
-          type={fullscreenContent.videoUrl ? 'video' : (fullscreenContent.type || (fullscreenContent.mediaType === 'video' ? 'video' : fullscreenContent.mediaType === 'image' ? 'image' : 'live'))}
+          type={fullscreenContent.videoUrl ? 'moment' : (fullscreenContent.type === 'story' ? 'story' : (fullscreenContent.type === 'live' || fullscreenContent.isLive || fullscreenContent.live ? 'live' : (fullscreenContent.type === 'audio' || fullscreenContent.mediaType === 'audio' || fullscreenContent.audioUrl ? 'audio' : 'image')))}
           onClose={closeFullscreen}
           onComment={(videoId, creator) => handleComment(videoId, creator)}
-          onShare={handleShare}
+          onShare={(v) => handleShare(v as any)}
           onContentChange={(content) => setFullscreenContent(content)}
           onFollow={handleFollow}
           followedCreators={followedCreators}

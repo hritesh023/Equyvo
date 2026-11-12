@@ -45,7 +45,7 @@ const SearchPage: React.FC = () => {
   const [currentPostId, setCurrentPostId] = useState<string>('');
   const [currentPostUser, setCurrentPostUser] = useState<string>('');
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
-  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image'>('image');
+  const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio'>('image');
   const [showTagBar, setShowTagBar] = useState(false);
   const [currentTag, setCurrentTag] = useState<string>('');
   const requestIdRef = useRef(0);
@@ -77,15 +77,16 @@ const SearchPage: React.FC = () => {
     }
   };
 
-  const getFullscreenType = (resultType: string): 'post' | 'live' | 'video' | 'moment' | 'image' => {
-    if (resultType === 'moment') return 'moment';
-    if (resultType === 'story') return 'story' as any;
-    if (resultType === 'video') return 'video';
-    if (resultType === 'photo') return 'image';
+  const getFullscreenType = (resultType: string): 'live' | 'moment' | 'image' | 'audio' => {
+    const t = String(resultType || '').toLowerCase();
+    if (t === 'live') return 'live';
+    if (t === 'moment' || t === 'video') return 'moment';
+    if (t === 'audio') return 'audio';
+    if (t === 'story') return 'story' as any;
     return 'image';
   };
 
-  const handleOpenFullscreen = (content: SearchItem, type: 'post' | 'live' | 'video' | 'moment' | 'image') => {
+  const handleOpenFullscreen = (content: SearchItem, type: 'live' | 'moment' | 'image' | 'audio') => {
     // Search results are content-index records; FullscreenViewer normalizes
     // every media/engagement field itself, so carry the record through as-is.
     setFullscreenContent(content as unknown as FullscreenContent);

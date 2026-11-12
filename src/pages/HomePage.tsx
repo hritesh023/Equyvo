@@ -53,7 +53,7 @@ const HomePage = () => {
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
   const [sharePayload, setSharePayload] = useState<any>(null);
-  const [fullscreenType, setFullscreenType] = useState<'post' | 'live' | 'video' | 'moment' | 'image' | 'thought' | 'reacted' | 'story'>('moment');
+  const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio' | 'story'>('moment');
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
   const [commentSectionOpen, setCommentSectionOpen] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
@@ -731,8 +731,11 @@ const HomePage = () => {
 
   const handleFullscreenPost = (post: any) => {
     setFullscreenContent(post);
-    const postType = post.type || post.contentType || 'post';
-    setFullscreenType(postType === 'moment' || postType === 'video' ? postType : 'post');
+    const postType = String(post.type || post.contentType || '').toLowerCase();
+    const isLive = postType === 'live' || !!post.isLive || !!post.live;
+    const isVideo = postType === 'video' || postType === 'moment' || !!post.videoUrl || String(post.mediaType || '').toLowerCase() === 'video';
+    const isAudio = !isVideo && (Boolean(post.audioUrl) || String(post.mediaType || '').toLowerCase() === 'audio');
+    setFullscreenType(isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image');
   };
 
   // Deep link: /app/home?post=<id> (also reached via /posts/:id). Opens the
