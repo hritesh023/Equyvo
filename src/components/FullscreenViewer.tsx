@@ -851,11 +851,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         const bridge = (window as any).AndroidPiP;
         if (bridge && typeof bridge.enter === 'function') {
           try { bridge.setFullscreenActive?.(true); } catch { /* ignore */ }
-          // First exit the app; Android then auto-enters PiP via onUserLeaveHint
-          // because fullscreenActive is true, opening the draggable small window.
-          setTimeout(() => { try { bridge.exit?.(); } catch { /* ignore */ } }, 100);
-          // Fallback: directly enter PiP in case the leave hint does not fire.
-          setTimeout(() => { try { bridge.enter(); } catch { /* ignore */ } }, 550);
+          // Convert the fullscreen into a small draggable window FIRST (system
+          // PiP, visible outside the app), then push the app to the background.
+          // Entering PiP before exiting is what actually creates the small
+          // window; relying on onUserLeaveHint alone just closed the app.
+          try { bridge.enter(); } catch { /* ignore */ }
+          setTimeout(() => { try { bridge.exit?.(); } catch { /* ignore */ } }, 250);
           return;
         }
       } catch { /* ignore */ }
