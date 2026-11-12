@@ -1387,11 +1387,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 : undefined,
             }}
           >
-            {/* Details Section - above controls */}
-            {!isSplitView && (
-              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-12 transition-all duration-500 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''} ${contentOnly || hideOverlay ? 'opacity-0 pointer-events-none' : (isVideoType ? (showDetailsPanel ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-full') : 'opacity-100 translate-y-0')}`}
+            {/* Details Section - above controls (rendered in place, no overlap) */}
+            {!isSplitView && !(contentOnly || hideOverlay) && (!isVideoType || showDetailsPanel) && (
+              <div className={`bg-gradient-to-t from-black/90 via-black/70 to-transparent p-4 pt-4 transition-all duration-300 ${isShortLandscape ? 'max-h-[45vh] overflow-y-auto' : ''}`}
                 style={{
-                  pointerEvents: (contentOnly || hideOverlay || (isVideoType && !showDetailsPanel)) ? 'none' : 'auto'
+                  pointerEvents: 'auto'
                 }}
                 onMouseEnter={() => {
                   if (isVideoType) {
@@ -1546,9 +1546,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 paddingBottom: isShortLandscape
                   ? 'calc(max(0.5rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 16px)'
                   : isPortraitMoment
-                    ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 120px)'
+                    ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 16px)'
                     : (isMobileDevice && !isPortraitMoment && !isStory)
-                      ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 80px)'
+                      ? 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 16px)'
                       : 'calc(max(1rem, var(--native-safe-bottom, 0px), env(safe-area-inset-bottom, 0px)) + 140px)',
                 display: (contentOnly || !showControls) ? 'none' : 'block'
               }}

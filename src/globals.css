@@ -122,7 +122,7 @@ html.cap-native {
    Discover page fullscreen view, while still clearing the OS notification/status
    bar on native (via --native-safe-top) and on web (env safe-area). */
 .eq-fullscreen-top-safe {
-  padding-top: max(0.75rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
+  padding-top: max(2.5rem, var(--native-safe-top, 0px), env(safe-area-inset-top, 0px)) !important;
 }
 
 .eq-fullscreen-close-safe {
