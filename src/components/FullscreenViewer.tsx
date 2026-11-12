@@ -139,6 +139,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(true);
         setShowControls(false);
       } else {
+        rawContentRef.current = null;
         setContentOnly(false);
         setHideOverlay(false);
         setShowControls(true);
