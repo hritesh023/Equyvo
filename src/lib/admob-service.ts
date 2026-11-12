@@ -315,16 +315,53 @@ export async function showRewardedAd(): Promise<boolean> {
         isTesting: isDevEnvironment(),
         npa: !personalizedAdsEnabled(),
       });
-      // Show the most recently prepared rewarded ad. Passing a stale/incorrect
-      // adId here previously prevented the ad from rendering at all (mirrors
-      // the interstitial fix).
-      await plugin.showRewardVideoAd();
-      // A successful show (no throw) counts as the reward being granted.
-      return true;
     } catch (e) {
-      try { console.warn('[AdMob] rewarded ad failed:', e); } catch { /* ignore */ }
+      try { console.warn('[AdMob] rewarded ad prepare failed:', e); } catch { /* ignore */ }
       return false;
     }
+    // Wait for the actual reward (or dismissal / failure) instead of assuming
+    // a successful show() means the reward was earned. The plugin resolves
+    // showRewardVideoAd() only on reward, but it can hang on dismissal, so we
+    // race it against the Dismissed/FailedToShow events with a safety timeout.
+    return await new Promise<boolean>((resolve) => {
+      let settled = false;
+      let safety: number | undefined;
+      const finish = (value: boolean) => {
+        if (settled) return;
+        settled = true;
+        if (safety !== undefined) window.clearTimeout(safety);
+        try { handles.forEach((h) => { try { h?.remove?.(); } catch { /* ignore */ } }); } catch { /* ignore */ }
+        resolve(value);
+      };
+      const handles: Array<{ remove?: () => void }> = [];
+      const register = (event: string, cb: () => void) => {
+        try {
+          const p = plugin.addListener?.(event, cb);
+          if (p && typeof (p as Promise<unknown>).then === 'function') {
+            (p as Promise<{ remove?: () => void }>)
+              .then((h) => { if (h) handles.push(h); })
+              .catch(() => { /* ignore */ });
+          }
+        } catch { /* ignore */ }
+      };
+      register('onRewardedVideoAdReward', () => finish(true));
+      register('onRewardedVideoAdDismissed', () => finish(false));
+      register('onRewardedVideoAdFailedToShow', () => finish(false));
+      safety = window.setTimeout(() => finish(false), 120000);
+      (async () => {
+        try {
+          await plugin.showRewardVideoAd();
+          // If show resolves without a reward event, treat as earned (legacy
+          // plugin behaviour) but only if not already settled.
+          window.clearTimeout(safety);
+          finish(true);
+        } catch (e) {
+          window.clearTimeout(safety);
+          try { console.warn('[AdMob] rewarded ad show failed:', e); } catch { /* ignore */ }
+          finish(false);
+        }
+      })();
+    });
   } catch {
     return false;
   }
