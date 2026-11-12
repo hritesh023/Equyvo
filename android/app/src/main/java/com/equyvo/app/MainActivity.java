@@ -196,7 +196,7 @@ public class MainActivity extends BridgeActivity {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                     try {
                         PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                                .setAspectRatio(new Rational(16, 9));
+                                .setAspectRatio(new Rational(9, 16));
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                             try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
                         }
@@ -234,7 +234,7 @@ public class MainActivity extends BridgeActivity {
         try {
             if (fullscreenActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode()) {
                 PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                        .setAspectRatio(new Rational(16, 9));
+                        .setAspectRatio(new Rational(9, 16));
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
                 }
