@@ -140,37 +140,10 @@ export function spacingForPlan(plan?: string | null): {
 }
 
 /** Use Google test IDs on localhost / dev builds (AdMob policy). */
+// The app must ONLY ever serve REAL ads — never Google test/sample ads.
+// Test units are disabled in all environments (dev included) per product
+// requirement: "only real ads should occur in the app, no test ads".
 export function isDevEnvironment(): boolean {
-  // Native app builds (Capacitor APK/iOS) are never "dev" for ad purposes,
-  // even though their WebView origin is https://localhost. Real ad units must
-  // be used on device; test units are only for browser/localhost development.
-  try {
-    const cap = (window as any)?.Capacitor;
-    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
-      return false;
-    }
-  } catch { /* ignore */ }
-  // Native shells identify themselves in the UA even before Capacitor is
-  // injected, so real ad units are used on device (never test units).
-  try {
-    if (typeof navigator !== 'undefined' && /EquyvoApp/i.test(navigator.userAgent || '')) {
-      return false;
-    }
-  } catch { /* ignore */ }
-  // Real mobile devices (Android/iOS WebViews or browsers) must never be
-  // treated as dev just because their origin is localhost — otherwise
-  // production builds would silently serve Google test ads instead of real
-  // ads (and AdMob would report "no ad content" for the real units).
-  try {
-    if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')) {
-      return false;
-    }
-  } catch { /* ignore */ }
-  if (import.meta.env.DEV) return true;
-  if (typeof window !== 'undefined') {
-    const h = window.location.hostname;
-    if (h === 'localhost' || h === '127.0.0.1' || h.endsWith('.local')) return true;
-  }
   return false;
 }
 
