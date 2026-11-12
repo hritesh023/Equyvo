@@ -220,6 +220,7 @@ export function housePromoAd(placement: string): NativeAdData {
 
 let interstitialState: 'idle' | 'prepared' | 'showing' = 'idle';
 let interstitialAdId: string | null = null;
+let rewardedAdId: string | null = null;
 let lastInterstitialShownAt = 0;
 const INTERSTITIAL_MIN_INTERVAL_MS = 90 * 1000; // 90 seconds between shows
 
@@ -264,9 +265,11 @@ export async function showInterstitial(): Promise<boolean> {
     if (!plugin?.showInterstitial) return false;
     interstitialState = 'showing';
     try {
-      // Show the most recently prepared interstitial (passing a stale/incorrect
-      // adId here previously prevented the ad from rendering at all).
-      await plugin.showInterstitial();
+      // Target the exact prepared ad (fall back to "most recent" only if we
+      // lost track of the id). Passing the wrong/undefined id previously made
+      // the plugin resolve against an empty slot and the ad never rendered.
+      const showOpts = interstitialAdId ? { adId: interstitialAdId } : undefined;
+      await plugin.showInterstitial(showOpts as Record<string, unknown> | undefined);
     } catch (e) {
       interstitialState = 'idle';
       try { console.warn('[AdMob] showInterstitial failed:', e); } catch { /* ignore */ }
@@ -309,14 +312,19 @@ export async function showRewardedAd(): Promise<boolean> {
     if (!plugin?.prepareRewardVideoAd || !plugin?.showRewardVideoAd) return false;
     const adId = effectiveRewardedAdUnitId();
     if (!adId) return false;
+    rewardedAdId = adId;
     try {
-      await plugin.prepareRewardVideoAd({
+      const info = await plugin.prepareRewardVideoAd({
         adId,
         isTesting: isDevEnvironment(),
         npa: !personalizedAdsEnabled(),
       });
+      if (info && (info as { adUnitId?: string }).adUnitId) {
+        rewardedAdId = (info as { adUnitId?: string }).adUnitId as string;
+      }
     } catch (e) {
       try { console.warn('[AdMob] rewarded ad prepare failed:', e); } catch { /* ignore */ }
+      rewardedAdId = null;
       return false;
     }
     // Wait for the actual reward (or dismissal / failure) instead of assuming
@@ -350,7 +358,7 @@ export async function showRewardedAd(): Promise<boolean> {
       safety = window.setTimeout(() => finish(false), 120000);
       (async () => {
         try {
-          await plugin.showRewardVideoAd();
+          await plugin.showRewardVideoAd(rewardedAdId ? { adId: rewardedAdId } : undefined);
           // If show resolves without a reward event, treat as earned (legacy
           // plugin behaviour) but only if not already settled.
           window.clearTimeout(safety);

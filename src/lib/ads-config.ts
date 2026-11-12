@@ -157,6 +157,15 @@ export function isDevEnvironment(): boolean {
       return false;
     }
   } catch { /* ignore */ }
+  // Real mobile devices (Android/iOS WebViews or browsers) must never be
+  // treated as dev just because their origin is localhost — otherwise
+  // production builds would silently serve Google test ads instead of real
+  // ads (and AdMob would report "no ad content" for the real units).
+  try {
+    if (typeof navigator !== 'undefined' && /Android|iPhone|iPad|iPod/i.test(navigator.userAgent || '')) {
+      return false;
+    }
+  } catch { /* ignore */ }
   if (import.meta.env.DEV) return true;
   if (typeof window !== 'undefined') {
     const h = window.location.hostname;
