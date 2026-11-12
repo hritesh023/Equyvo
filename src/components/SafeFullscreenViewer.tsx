@@ -1,5 +1,5 @@
 import React, { Component, ErrorInfo, ReactNode } from 'react';
-import { X, RotateCcw } from 'lucide-react';
+import { X, RotateCcw, Minimize2, Columns } from 'lucide-react';
 import FullscreenViewer from './FullscreenViewer';
 
 type ViewerProps = React.ComponentProps<typeof FullscreenViewer>;
@@ -49,13 +49,32 @@ class ViewerBoundary extends Component<BoundaryProps, BoundaryState> {
       const { onClose } = this.props;
       return (
         <div className="fixed inset-0 bg-black z-[150] flex items-center justify-center">
-          <button
-            onClick={onClose}
-            className="absolute right-4 eq-fullscreen-close-safe p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
-            aria-label="Close"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="absolute top-0 left-0 right-0 z-50 eq-fullscreen-top-safe flex justify-end gap-2 p-4">
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+              aria-label="Minimize"
+              title="Minimize"
+            >
+              <Minimize2 className="w-5 h-5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+              aria-label="Side panel"
+              title="Side panel"
+            >
+              <Columns className="w-5 h-5" />
+            </button>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+              aria-label="Escape"
+              title="Escape"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
           <div className="flex flex-col items-center gap-3 text-center px-6">
             <RotateCcw className="w-8 h-8 text-white/60" />
             <p className="text-sm text-white/80">This media couldn't be opened</p>
