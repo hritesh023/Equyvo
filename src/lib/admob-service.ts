@@ -268,8 +268,10 @@ export async function showInterstitial(): Promise<boolean> {
       // Target the exact prepared ad (fall back to "most recent" only if we
       // lost track of the id). Passing the wrong/undefined id previously made
       // the plugin resolve against an empty slot and the ad never rendered.
-      const showOpts = interstitialAdId ? { adId: interstitialAdId } : undefined;
-      await plugin.showInterstitial(showOpts as Record<string, unknown> | undefined);
+      // Omit adId: let the plugin resolve against lastPreparedAdId (set during
+     // prepare). Passing a possibly-stale/wrong id previously made the plugin
+     // look up an empty slot -> "no ad content" / ad never rendered.
+      await plugin.showInterstitial();
     } catch (e) {
       interstitialState = 'idle';
       try { console.warn('[AdMob] showInterstitial failed:', e); } catch { /* ignore */ }
@@ -358,7 +360,7 @@ export async function showRewardedAd(): Promise<boolean> {
       safety = window.setTimeout(() => finish(false), 120000);
       (async () => {
         try {
-          await plugin.showRewardVideoAd(rewardedAdId ? { adId: rewardedAdId } : undefined);
+          await plugin.showRewardVideoAd();
           // If show resolves without a reward event, treat as earned (legacy
           // plugin behaviour) but only if not already settled.
           window.clearTimeout(safety);
