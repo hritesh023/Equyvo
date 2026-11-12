@@ -205,7 +205,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                         actualContent?.contentType ||
                         actualType ||
                         'image';
-  const resolvedType = (['video', 'post', 'thought', 'reacted'].includes(String(_rawResolvedType))
+  const _canonicalFsTypes = new Set(['live', 'moment', 'image', 'audio', 'story']);
+  const resolvedType = (!_canonicalFsTypes.has(String(_rawResolvedType))
     ? ((actualContent?.videoUrl || actualContent?.mediaType === 'video') ? 'moment' : 'image')
     : _rawResolvedType);
   const resolvedContentType = actualContent?.contentType || resolvedType;
