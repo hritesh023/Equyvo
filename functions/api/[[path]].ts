@@ -5532,6 +5532,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       await Promise.all(base.slice(0, 200).map(async (it) => {
         try { const r = await kv.get(KEYS.POP(it.id)); if (r) pops[it.id] = parseInt(r, 10) || 0; } catch {}
       }));
+      const interests = viewer ? await aiGetInterests(env, viewer.id) : {};
       const weights = new Map();
       for (const it of base) {
         const tags = Array.isArray(it.tags) ? it.tags : [];
@@ -5539,7 +5540,10 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         for (const t of tags) {
           const tag = String(t || '').trim().replace(/^#+/, '');
           if (!tag) continue;
-          weights.set(tag, (weights.get(tag) || 0) + Math.max(1, engagement));
+          let w = Math.max(1, engagement);
+          const interestScore = Number(interests[tag.toLowerCase()] || interests[aiNormToken(tag)] || 0);
+          if (interestScore > 0) w += Math.min(50, interestScore * 4);
+          weights.set(tag, (weights.get(tag) || 0) + w);
         }
       }
       const sorted = [...weights.entries()].sort((a, b) => b[1] - a[1]).slice(0, limit).map(([t]) => '#' + t);

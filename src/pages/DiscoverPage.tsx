@@ -373,7 +373,14 @@ const DiscoverPage = () => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await fetch('/api/tags/trending?limit=12');
+        const headers: Record<string, string> = {};
+         try {
+           const token = localStorage.getItem('token') || localStorage.getItem('authToken') || '';
+           if (token) headers['Authorization'] = 'Bearer ' + token;
+           const id = localStorage.getItem('userId') || localStorage.getItem('user_id') || '';
+           if (id) headers['X-User-Id'] = id;
+         } catch { /* ignore */ }
+         const res = await fetch('/api/tags/trending?limit=12', { headers });
         const j = await res.json().catch(() => null);
         const tags = Array.isArray(j?.data?.tags) ? j.data.tags : [];
         if (!cancelled && tags.length) setTrendingTags(tags);
