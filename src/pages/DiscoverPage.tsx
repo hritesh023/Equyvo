@@ -21,6 +21,7 @@ import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
 import { useNavigate } from 'react-router-dom';
 import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
+import { avatarOf, avatarInitials } from '@/utils/avatar';
 import { shareItem } from '@/utils/share';
 import { isBlockedContent } from '@/utils/delete';
 import type { FullscreenContent, ContentType } from '@/types';
@@ -156,6 +157,7 @@ const DiscoverPage = () => {
   const [sortBy, setSortBy] = useState<'relevance' | 'trending' | 'newest' | 'popular'>('relevance');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
+  const [activeHashtag, setActiveHashtag] = useState<string>('');
   const [timeFilter, setTimeFilter] = useState<'today' | 'week' | 'month' | 'all'>('all');
   const [contentTypeFilter, setContentTypeFilter] = useState<string>('all');
   
@@ -417,6 +419,7 @@ const DiscoverPage = () => {
             content: t.content || '',
             creator: t.user?.username || t.creator || 'Unknown',
             creatorId: discoverCreatorId(t) || t.user?.username || '',
+avatar: t.user?.avatar || t.avatar || '',
             image: fields.image,
             thumbnail: fields.thumbnail,
             videoUrl: fields.videoUrl,
@@ -443,6 +446,7 @@ const DiscoverPage = () => {
               content: p.content || '',
               creator: creatorOf(p),
               creatorId: discoverCreatorId(p),
+avatar: p.avatar || p.user?.avatar || '',
               image: img,
               thumbnail: p.thumbnail || img,
               videoUrl: vid,
@@ -474,6 +478,7 @@ const DiscoverPage = () => {
               content: m.content || '',
               creator: creatorOf(m),
               creatorId: discoverCreatorId(m),
+avatar: m.avatar || m.user?.avatar || '',
               image: img,
               thumbnail: m.thumbnail || img,
               videoUrl: vid,
@@ -574,12 +579,21 @@ const DiscoverPage = () => {
           return Number.isFinite(t) && now - t <= windowMs;
         });
       }
+      if (activeHashtag) {
+        const tag = activeHashtag.replace(/^#/, '').toLowerCase();
+        out = out.filter((i) => {
+          const tags = Array.isArray(i.tags) ? i.tags : [];
+          if (tags.some((t: any) => String(t || '').replace(/^#/, '').toLowerCase() === tag)) return true;
+          const hay = String(i.title || '') + ' ' + String(i.content || '') + ' ' + String(i.category || '');
+          return hay.toLowerCase().includes('#' + tag);
+        });
+      }
       const num = (v: unknown) => (typeof v === 'number' ? v : parseInt(String(v || '0'), 10) || 0);
       if (sortBy === 'newest') out.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
       else if (sortBy === 'popular' || sortBy === 'trending') out.sort((a, b) => num(b.likes) + num(b.comments) * 2 - (num(a.likes) + num(a.comments) * 2));
       return out;
     },
-    [selectedCategory, contentTypeFilter, timeFilter, sortBy],
+    [selectedCategory, contentTypeFilter, timeFilter, sortBy, activeHashtag],
   );
 
   const gridData = React.useMemo(() => applyFilters(discoverItems), [discoverItems, applyFilters]);
@@ -614,10 +628,11 @@ const DiscoverPage = () => {
   }, [discoverItems]);
 
   const handleTagClick = (tag: string) => {
-    // Open fullscreen browse instead of navigating to search
-    setFullscreenBrowseOpen(true);
-    showSuccess(`Opening fullscreen browse for ${tag}`);
+    const t = String(tag || '').trim();
+    setActiveHashtag(t);
+    showSuccess(`Showing content for ${t}`);
   };
+  const clearHashtag = () => setActiveHashtag('');
 
   const handleSortChange = (value: 'relevance' | 'trending' | 'newest' | 'popular') => {
     setSortBy(value);
@@ -776,7 +791,7 @@ const DiscoverPage = () => {
   const SearchBarSection = () => (
     <div className="mb-8">
       <div className="flex items-center gap-4 max-w-2xl mx-auto">
-        <div className="flex-1">
+        <div className="flex-1 min-w-0">
           <SearchSuggest
             onSearch={handleSearch}
             placeholder="Search for content, users, tags... (Press '/' to focus)"
@@ -864,7 +879,7 @@ const DiscoverPage = () => {
                         </div>
                       )}
                     </div>
-                    <div className="flex-1">
+                    <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 mb-2">
                         <h3 className="font-semibold group-hover:text-primary transition-colors">
                           {item.title}
@@ -901,7 +916,7 @@ const DiscoverPage = () => {
                       </button>
 
                     </div>
-                    <div className="flex flex-wrap gap-1 overflow-hidden">
+                    <div className="flex flex-wrap gap-1 shrink-0">
                       <button 
                         onClick={(e) => {
                           e.stopPropagation();
@@ -991,7 +1006,7 @@ const DiscoverPage = () => {
           gridData.map((item, i) => (
             <div
               key={item.id}
-              className={`relative aspect-square bg-muted group cursor-pointer overflow-hidden ${i % 3 === 0 && i % 2 === 0 ? 'row-span-2 col-span-2' : ''}`}
+              className="relative aspect-square bg-muted group cursor-pointer overflow-hidden"
               onClick={() => { const f = toFullscreen(item, postLikes.get(item.id)); handleOpenFullscreen(f.content, f.type); }}
             >
               {item.thumbnail || item.image ? (
@@ -1169,8 +1184,8 @@ const DiscoverPage = () => {
                       }}
                       title={`${item.creator}'s Profile`}
                     >
-                      <AvatarImage src="" />
-                      <AvatarFallback>U</AvatarFallback>
+                      <AvatarImage src={avatarOf(item) || undefined} />
+                      <AvatarFallback>{avatarInitials(item.creator) || 'U'}</AvatarFallback>
                     </Avatar>
                     <div>
                       <h3 className="font-bold leading-tight group-hover:text-primary transition-colors">{item.title}</h3>
@@ -1286,8 +1301,8 @@ const DiscoverPage = () => {
                       }}
                       title={`${item.creator}'s Profile`}
                     >
-                      <AvatarImage src="" />
-                      <AvatarFallback>STR</AvatarFallback>
+                      <AvatarImage src={avatarOf(item) || undefined} />
+                      <AvatarFallback>{avatarInitials(item.creator) || 'U'}</AvatarFallback>
                     </Avatar>
                     <div>
                       <span className="font-semibold text-sm">{item.creator}</span>
@@ -1421,8 +1436,8 @@ const DiscoverPage = () => {
                   }}
                   title={`${item.creator}'s Profile`}
                 >
-                  <AvatarImage src="" />
-                  <AvatarFallback>STR</AvatarFallback>
+                  <AvatarImage src={avatarOf(item) || undefined} />
+                  <AvatarFallback>{avatarInitials(item.creator) || 'U'}</AvatarFallback>
                 </Avatar>
                 <div>
                   <span className="font-semibold text-sm">{item.creator}</span>
@@ -1508,6 +1523,11 @@ const DiscoverPage = () => {
         <div className="mb-6">
           <div className="flex items-center gap-2 flex-wrap">
             <Hash className="w-4 h-4 text-muted-foreground" />
+            {activeHashtag && (
+              <Button size="sm" variant="default" className="h-7 px-3 text-xs rounded-full" onClick={clearHashtag}>
+                #{activeHashtag.replace(/^#/, '')} ✕
+              </Button>
+            )}
             {currentTags.map((tag, index) => (
               <Button
                 key={index}

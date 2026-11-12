@@ -1468,7 +1468,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                  {contentTags.length > 0 && (
                    <div className="flex flex-wrap gap-1 mb-3">
                      {contentTags.slice(0, 6).map((tag: string, index: number) => (
-                      <Badge key={index} variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20">
+                      <Badge key={index} variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20 cursor-pointer" onClick={() => navigate(`/app/search?q=${encodeURIComponent(String(tag).replace(/^#/, ''))}`)}>
                         #{tag}
                       </Badge>
                     ))}

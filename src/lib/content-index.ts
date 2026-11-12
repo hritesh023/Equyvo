@@ -19,6 +19,9 @@ export interface ContentIndexItem {
   content?: string;
   likes?: number;
   comments?: number;
+  userId?: string;
+  user?: string;
+  ownerId?: string;
 }
 
 // In-memory cache for search index
