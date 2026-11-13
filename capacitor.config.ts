@@ -73,8 +73,7 @@ const config: CapacitorConfig = {
       resize: 'ionic'
     },
     App: {
-      appendUserAgent: 'EquyvoApp/1.0',
-      allowNavigation: ['*']
+      appendUserAgent: 'EquyvoApp/1.0'
     }
   }
 };
