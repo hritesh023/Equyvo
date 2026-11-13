@@ -48,7 +48,7 @@
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-8929153950560106~6452994138</string>
+	<string>ca-app-pub-8929153950560106~2056697900</string>
 	<key>NSUserTrackingUsageDescription</key>
 	<string>Equyvo uses the advertising identifier to show relevant sponsored cards and keep the app free. You can opt out anytime in Settings.</string>
 	<key>SKAdNetworkItems</key>
