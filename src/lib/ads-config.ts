@@ -23,7 +23,7 @@ export const TEST_INTERSTITIAL_AD_UNIT_ID = 'ca-app-pub-3940256099942544/1033173
  */
 export const ADMOB_INTERSTITIAL_AD_UNIT_ID =
   import.meta.env.VITE_ADMOB_INTERSTITIAL_AD_UNIT ||
-  'ca-app-pub-8929153950560106/6682592215';
+  'ca-app-pub-8929153950560106/9915006622';
 
 /**
  * Rewarded ad unit (watch-to-earn). Used by the "Watch ad to earn rewards"
@@ -32,7 +32,7 @@ export const ADMOB_INTERSTITIAL_AD_UNIT_ID =
  */
 export const ADMOB_REWARDED_AD_UNIT_ID =
   import.meta.env.VITE_ADMOB_REWARDED_AD_UNIT ||
-  'ca-app-pub-8929153950560106/6761046475';
+  'ca-app-pub-8929153950560106/9026410871';
 export const TEST_REWARDED_AD_UNIT_ID = 'ca-app-pub-3940256099942544/5224354917';
 
 /** Advertising test-device IDs (comma-separated) for real-device testing. */
