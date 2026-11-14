@@ -213,7 +213,9 @@ const NativeAdCard: React.FC<NativeAdCardProps> = ({
               src={ad.imageUrl}
               alt=""
               loading="lazy"
-              className="max-h-64 w-full object-cover"
+              draggable={false}
+              className="max-h-64 w-full object-cover select-none"
+              style={{ touchAction: 'manipulation', WebkitUserDrag: 'none' } as React.CSSProperties}
             />
           </div>
         )}

@@ -30,9 +30,10 @@ const AppOpenAd: React.FC = () => {
   // session and disappears permanently once dismissed.
   return (
     <div
-      className="w-full max-w-3xl mx-auto px-3 py-2"
+      className="w-full max-w-3xl mx-auto px-3 py-2 select-none"
       role="complementary"
       aria-label="Sponsored content"
+      style={{ touchAction: 'manipulation' }}
     >
       <div className="rounded-xl border border-dashed bg-background/95 shadow-sm p-2">
         <div className="mb-1 flex items-center justify-between gap-2">
