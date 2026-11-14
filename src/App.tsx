@@ -4,7 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavig
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
-import { DisplayProvider, useDisplay } from './lib/display';
+import { DisplayProvider } from './lib/display';
 import Navbar, { MobileBottomNav } from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
@@ -68,7 +68,6 @@ const AppContent = () => {
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
   useNavMode();
-  const { zoom } = useDisplay();
 
   // ── Hardware/system back wiring ────────────────────────────────────────
   // Every source navigation is mirrored into the coordinator's in-app depth:
@@ -135,159 +134,100 @@ const AppContent = () => {
       node.addEventListener('scroll', handleMainScroll, { passive: true });
     }
   }, [handleMainScroll]);
-  // Interactive, finger-following swipe paging between top-level tabs.
-  // Pages render side-by-side in a track and translate in real time with the
-  // finger, so a slow swipe keeps them adjoint and pauses when the finger
-  // holds. On release we commit (animate to completion + navigate) or snap back.
+  const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const touchStartTargetRef = useRef<EventTarget | null>(null);
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
 
-  const swipeStartRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const swipeHasStartRef = useRef<boolean>(false);
-  const swipeDraggingRef = useRef<boolean>(false);
-  const swipeDxRef = useRef<number>(0);
-  const swipeInitialTransformRef = useRef<number>(0);
-  const swipeWidthRef = useRef<number>(0);
-  const swipeTrackRef = useRef<HTMLDivElement | null>(null);
-  const swipeTargetIdxRef = useRef<number>(-1);
-  const [swipeDrag, setSwipeDrag] = useState<{ targetIdx: number; dir: -1 | 1 } | null>(null);
+  // Swipe sensitivity: balanced so a deliberate horizontal swipe changes pages
+  // (including mid-screen swipes, which still get the adjoint transition),
+  // while small drags / vertical scrolls do not trigger accidental turns.
+  const SWIPE_MIN_DX = 130;       // px of horizontal travel required
+  const SWIPE_RATIO = 2.2;        // horizontal travel must dominate vertical
 
+  // Swipe between top-level tabs (mobile-style horizontal paging).
   const handleMainTouchStart = (e: React.TouchEvent) => {
-    if (!e.touches || e.touches.length !== 1) return;
-    const t = e.touches[0];
+    const t = e.touches?.[0];
     if (!t) return;
     const target = e.target as HTMLElement | null;
+    // Never hijack swipes that begin on interactive controls.
     if (target && target.closest && target.closest('input,textarea,select,a,[role="slider"]')) {
-      swipeHasStartRef.current = false;
+      touchStartRef.current = null;
+      touchStartTargetRef.current = null;
       return;
     }
-    // Don't hijack horizontal swipes that belong to in-page horizontal
-    // scrollers (Discover tabs/carousels, chip rows, etc.).
+    // Don't hijack horizontal swipes inside in-page scrollers (tabs, carousels).
     if (target) {
-      const horizScroller = target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x');
-      if (horizScroller) { swipeHasStartRef.current = false; return; }
-      // Walk up to find a horizontally scrollable ancestor.
-      let node: HTMLElement | null = target;
+      if (target.closest && target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x')) {
+        touchStartRef.current = null;
+        touchStartTargetRef.current = null;
+        return;
+      }
+      let node = target;
       while (node && node !== document.body) {
         try {
           const st = window.getComputedStyle(node);
           if ((st.overflowX === 'auto' || st.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 4) {
-            swipeHasStartRef.current = false;
+            touchStartRef.current = null;
+            touchStartTargetRef.current = null;
             return;
           }
         } catch { /* ignore */ }
         node = node.parentElement;
       }
     }
-    const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
-    if (idx < 0) return;
-    swipeStartRef.current = { x: t.clientX, y: t.clientY };
-    swipeHasStartRef.current = true;
-    swipeDraggingRef.current = false;
-    swipeDxRef.current = 0;
-    swipeWidthRef.current = (e.currentTarget && e.currentTarget.clientWidth) || window.innerWidth;
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+    touchStartTargetRef.current = e.target;
   };
-
-  const handleMainTouchMove = (e: React.TouchEvent) => {
-    if (!e.touches || e.touches.length !== 1) return;
-    if (!swipeHasStartRef.current) return;
-    const start = swipeStartRef.current;
-    const t = e.touches[0];
+  const handleMainTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    touchStartTargetRef.current = null;
+    if (!start) return;
+    const t = e.changedTouches?.[0];
     if (!t) return;
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
+    // Low sensitivity: require substantial horizontal travel.
+    if (adx < SWIPE_MIN_DX) return;
+    // Horizontal must strongly dominate vertical (no accidental vertical scrolls).
+    if (adx < ady * SWIPE_RATIO) return;
+    const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+    if (idx < 0) return;
+    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+    if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) return;
 
-    if (!swipeDraggingRef.current) {
-      if (Math.abs(dx) < 8) return;
-      if (Math.abs(dx) < Math.abs(dy) * 1.3) { swipeHasStartRef.current = false; return; }
-      const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
-      const nextIdx = dx < 0 ? idx + 1 : idx - 1;
-      if (idx < 0 || nextIdx < 0 || nextIdx >= MAIN_TABS.length) { swipeHasStartRef.current = false; return; }
-      swipeDraggingRef.current = true;
-      swipeInitialTransformRef.current = dx < 0 ? 0 : -swipeWidthRef.current;
-      swipeTargetIdxRef.current = nextIdx;
-      swipeDxRef.current = swipeInitialTransformRef.current;
-      setSwipeDrag({ targetIdx: nextIdx, dir: dx < 0 ? -1 : 1 });
-    }
+    const targetPath = MAIN_TABS[nextIdx];
+    // Direction hint for the page-transition animation.
+    document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
 
-    if (swipeDraggingRef.current) {
-      const width = swipeWidthRef.current;
-      const clamped = Math.max(-width, Math.min(width, dx));
-      const combined = swipeInitialTransformRef.current + clamped;
-      const bounded = Math.max(-width, Math.min(0, combined));
-      swipeDxRef.current = bounded;
-      const track = swipeTrackRef.current;
-      if (track) track.style.transform = 'translateX(' + bounded + 'px)';
+    // Use the View Transitions API when available so the outgoing and incoming
+    // pages animate together (adjoint sliding) instead of a one-sided flash.
+    const vt = (document as any).startViewTransition;
+    if (typeof vt === 'function') {
+      try {
+        vt.call(document, () => {
+          flushSync(() => navigate(targetPath));
+        });
+        return;
+      } catch { /* fall through to plain navigate */ }
     }
+    navigate(targetPath);
   };
-
-  const finishSwipe = () => {
-    if (!swipeDraggingRef.current) {
-      swipeHasStartRef.current = false;
-      return;
-    }
-    const width = swipeWidthRef.current;
-    const bounded = swipeDxRef.current;
-    const track = swipeTrackRef.current;
-    const initial = swipeInitialTransformRef.current;
-    const moved = Math.abs(bounded - initial);
-    const threshold = Math.min(80, width * 0.2);
-    const targetIdx = swipeTargetIdxRef.current;
-    const commit = moved >= threshold && targetIdx >= 0;
-
-    if (commit && track) {
-      const targetTransform = initial === 0 ? -width : 0;
-      track.style.transition = 'transform 260ms cubic-bezier(0.22, 1, 0.36, 1)';
-      track.style.transform = 'translateX(' + targetTransform + 'px)';
-      window.setTimeout(() => {
-        document.documentElement.dataset.vtDir = targetTransform === -width ? 'forward' : 'back';
-        skipSlideRef.current = true;
-        if (targetIdx >= 0) navigate(MAIN_TABS[targetIdx]);
-        window.setTimeout(() => { skipSlideRef.current = false; }, 50);
-        setSwipeDrag(null);
-        swipeDraggingRef.current = false;
-        swipeHasStartRef.current = false;
-        swipeDxRef.current = 0;
-        if (track) track.style.transition = '';
-      }, 260);
-    } else if (track) {
-      track.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
-      track.style.transform = 'translateX(' + initial + 'px)';
-      window.setTimeout(() => {
-        setSwipeDrag(null);
-        swipeDraggingRef.current = false;
-        swipeHasStartRef.current = false;
-        swipeDxRef.current = 0;
-        if (track) track.style.transition = '';
-      }, 220);
-    } else {
-      setSwipeDrag(null);
-      swipeDraggingRef.current = false;
-      swipeHasStartRef.current = false;
-      swipeDxRef.current = 0;
-    }
-  };
-
-  const handleMainTouchEnd = (e: React.TouchEvent) => { finishSwipe(); };
-  const handleMainTouchCancel = () => { finishSwipe(); };
 
   useEffect(() => {
-    if (swipeDrag && swipeTrackRef.current) {
-      swipeTrackRef.current.style.transform = 'translateX(' + swipeDxRef.current + 'px)';
-    }
-  }, [swipeDrag]);
+    window.scrollTo(0, 0);
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [location.pathname]);
 
-  const skipSlideRef = useRef(false);
-
-  const currentTabIdx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
-
+  // Animate tab switches for swipe navigation (CSS fallback for browsers
+  // without the View Transitions API). When View Transitions are available the
+  // browser drives the adjoint slide, so we skip the CSS one to avoid a
+  // double animation.
   const hasViewTransitions = typeof (document as any).startViewTransition === 'function';
   useEffect(() => {
-    if (skipSlideRef.current) {
-      const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
-      if (idx >= 0) lastTabIdxRef.current = idx;
-      return;
-    }
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     const prev = lastTabIdxRef.current;
@@ -437,7 +377,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
+        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
         <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
@@ -475,27 +415,6 @@ const AppContent = () => {
          </Routes>
          </div>
         </ErrorBoundary>
-         {swipeDrag && currentTabIdx >= 0 && (
-           <div className="absolute inset-0 z-50 bg-background overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
-             <div
-               ref={swipeTrackRef}
-               className="flex h-full w-[200%]"
-               style={{ transform: 'translateX(' + (swipeDrag.dir === -1 ? 0 : -50) + '%)' }}
-             >
-               {(swipeDrag.dir === -1
-                 ? [currentTabIdx, swipeDrag.targetIdx]
-                 : [swipeDrag.targetIdx, currentTabIdx]
-               ).map((ti) => {
-                 const Comp = [HomePage, DiscoverPage, CreatePage, MomentsPage, ThoughtsPage, ProfilePage][ti];
-                 return (
-                   <div key={ti} className="w-1/2 shrink-0 h-full overflow-y-auto" style={{ touchAction: 'pan-y' }}>
-                     <Comp />
-                   </div>
-                 );
-               })}
-             </div>
-           </div>
-         )}
       </main>
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
