@@ -283,10 +283,6 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
 
     const onTouchStart = (e: TouchEvent) => {
       if ((window as any).__equyvoSwiping) return;
-      // Discover page: never pinch-zoom (its horizontal tabs/swipes are not content zoom).
-      try {
-        if (String(window.location.pathname || '').toLowerCase().includes('discover')) return;
-      } catch { /* ignore */ }
       if (e.touches.length >= 2 && pinchOnRef.current) {
         const midpoint = midpointOf(e.touches);
         gestureTarget = findZoomTarget(midpoint.x, midpoint.y);
@@ -312,9 +308,6 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
 
     const onTouchMove = (e: TouchEvent) => {
       if ((window as any).__equyvoSwiping) return;
-      try {
-        if (String(window.location.pathname || '').toLowerCase().includes('discover')) return;
-      } catch { /* ignore */ }
       if (!touching || !gestureTarget || e.touches.length < 2) return;
       const d = distanceOf(e.touches[0], e.touches[1]);
       maxDelta = Math.max(maxDelta, Math.abs(d - startDist));
