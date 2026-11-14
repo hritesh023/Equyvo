@@ -136,6 +136,14 @@ const AppContent = () => {
   }, [handleMainScroll]);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
   const touchStartTargetRef = useRef<EventTarget | null>(null);
+
+  // In-place finger-following swipe (hold pauses).
+  const swipeDraggingRef = useRef<boolean>(false);
+  const swipeDxRef = useRef<number>(0);
+  const swipeWidthRef = useRef<number>(0);
+  const swipeOriginalTransformRef = useRef<string>('');
+  const swipeTargetIdxRef = useRef<number>(-1);
+  const zoomSurfaceRef = useRef<HTMLElement | null>(null);
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
 
@@ -150,8 +158,8 @@ const AppContent = () => {
     const t = e.touches?.[0];
     if (!t) return;
     const target = e.target as HTMLElement | null;
-    // Never hijack swipes that begin on text inputs / links / sliders.
-    if (target && target.closest && target.closest('input,textarea,select,a,[role="slider"]')) {
+    // Never hijack swipes that begin on text inputs.
+    if (target && target.closest && target.closest('input,textarea')) {
       touchStartRef.current = null;
       touchStartTargetRef.current = null;
       return;
@@ -162,36 +170,122 @@ const AppContent = () => {
       touchStartTargetRef.current = null;
       return;
     }
+    const path = location.pathname === '/' ? '/app/home' : location.pathname;
+    const idx = MAIN_TABS.findIndex((p) => path === p || path.startsWith(p + '/'));
+    if (idx < 0) return;
     touchStartRef.current = { x: t.clientX, y: t.clientY };
     touchStartTargetRef.current = e.target;
+    swipeDraggingRef.current = false;
+    swipeDxRef.current = 0;
+    swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
+    (window as any).__equyvoSwiping = true;
+    const zs = document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
+    zoomSurfaceRef.current = zs;
+    if (zs) swipeOriginalTransformRef.current = zs.style.transform || '';
   };
-  const handleMainTouchEnd = (e: React.TouchEvent) => {
+  const handleMainTouchMove = (e: React.TouchEvent) => {
+    if (!e.touches || e.touches.length !== 1) return;
     const start = touchStartRef.current;
-    touchStartRef.current = null;
-    touchStartTargetRef.current = null;
     if (!start) return;
-    const t = e.changedTouches?.[0];
+    const t = e.touches[0];
     if (!t) return;
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
-    const adx = Math.abs(dx);
-    const ady = Math.abs(dy);
-    // Low sensitivity: require substantial horizontal travel.
+
+    if (!swipeDraggingRef.current) {
+      if (Math.abs(dx) < 8) return;
+      if (Math.abs(dx) < Math.abs(dy) * 1.5) { touchStartRef.current = null; (window as any).__equyvoSwiping = false; return; }
+      const path = location.pathname === '/' ? '/app/home' : location.pathname;
+      const idx = MAIN_TABS.findIndex((p) => path === p || path.startsWith(p + '/'));
+      const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+      if (idx < 0 || nextIdx < 0 || nextIdx >= MAIN_TABS.length) { touchStartRef.current = null; (window as any).__equyvoSwiping = false; return; }
+      swipeDraggingRef.current = true;
+      swipeTargetIdxRef.current = nextIdx;
+      swipeDxRef.current = dx;
+    }
+
+    if (swipeDraggingRef.current) {
+      const width = swipeWidthRef.current;
+      const clamped = Math.max(-width, Math.min(width, dx));
+      swipeDxRef.current = clamped;
+      const zs = zoomSurfaceRef.current;
+      if (zs) {
+        zs.style.transition = 'none';
+        zs.style.transform = (swipeOriginalTransformRef.current || '') + ' translateX(' + clamped + 'px)';
+      }
+    }
+  };
+
+  const handleMainTouchCancel = () => {
+    (window as any).__equyvoSwiping = false;
+    const zs = document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
+    if (zs) {
+      zs.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
+      zs.style.transform = swipeOriginalTransformRef.current || '';
+      window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
+    }
+    touchStartRef.current = null;
+    swipeDraggingRef.current = false;
+    swipeDxRef.current = 0;
+  };
+
+  const handleMainTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    const wasDragging = swipeDraggingRef.current;
+    touchStartRef.current = null;
+    touchStartTargetRef.current = null;
+    (window as any).__equyvoSwiping = false;
+
+    const zs = zoomSurfaceRef.current;
+
+    if (wasDragging) {
+      const dx = swipeDxRef.current;
+      const width = swipeWidthRef.current;
+      const targetIdx = swipeTargetIdxRef.current;
+      const threshold = Math.min(80, width * 0.2);
+      const commit = Math.abs(dx) >= threshold && targetIdx >= 0;
+
+      if (commit) {
+        if (zs) {
+          zs.style.transition = 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)';
+          zs.style.transform = (swipeOriginalTransformRef.current || '') + ' translateX(' + (dx < 0 ? -width : width) + 'px)';
+        }
+        window.setTimeout(() => {
+          if (zs) zs.style.transform = swipeOriginalTransformRef.current || '';
+          document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
+          navigate(MAIN_TABS[targetIdx]);
+        }, 200);
+      } else {
+        if (zs) {
+          zs.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
+          zs.style.transform = swipeOriginalTransformRef.current || '';
+          window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
+        }
+      }
+      swipeDraggingRef.current = false;
+      swipeDxRef.current = 0;
+      return;
+    }
+
+    // Stable swipe (no drag)
+    if (!start) return;
+    const t = e.changedTouches?.[0];
+    if (!t) return;
+    const dx2 = t.clientX - start.x;
+    const dy2 = t.clientY - start.y;
+    const adx = Math.abs(dx2);
+    const ady = Math.abs(dy2);
     if (adx < SWIPE_MIN_DX) return;
-    // Horizontal must strongly dominate vertical (no accidental vertical scrolls).
     if (adx < ady * SWIPE_RATIO) return;
     const path = location.pathname === '/' ? '/app/home' : location.pathname;
     const idx = MAIN_TABS.findIndex((p) => path === p || path.startsWith(p + '/'));
     if (idx < 0) return;
-    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+    const nextIdx = dx2 < 0 ? idx + 1 : idx - 1;
     if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) return;
 
     const targetPath = MAIN_TABS[nextIdx];
-    // Direction hint for the page-transition animation.
-    document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
+    document.documentElement.dataset.vtDir = dx2 < 0 ? 'forward' : 'back';
 
-    // Use the View Transitions API when available so the outgoing and incoming
-    // pages animate together (adjoint sliding) instead of a one-sided flash.
     const vt = (document as any).startViewTransition;
     if (typeof vt === 'function') {
       try {
@@ -365,7 +459,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
+        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y', overflowX: 'hidden' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
         <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
