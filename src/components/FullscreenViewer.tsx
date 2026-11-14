@@ -84,6 +84,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setHideOverlay(false);
     setContentOnly(false);
     setShowControls(true);
+    setMediaAspect(null);
+    setIsExpandedLandscape(false);
   }, [actualContent?.id]);
 
   // Reopening the same item (e.g. after minimizing) must also clear the
@@ -166,6 +168,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [hideOverlay, setHideOverlay] = useState(false);
   const [contentOnly, setContentOnly] = useState(false);
   const [showImageOverlay, setShowImageOverlay] = useState(false);
+  // Expanded landscape mode: converts a portrait fullscreen into landscape on
+  // mobile/tablet interfaces so 16:9 media can fill the screen.
+  const [isExpandedLandscape, setIsExpandedLandscape] = useState(false);
+  // Original media aspect ratio (width/height) detected at runtime so the
+  // viewer preserves the uploader's real ratio instead of forcing portrait.
+  const [mediaAspect, setMediaAspect] = useState<number | null>(null);
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
   const lastMouseMoveRef = useRef<number>(Date.now());
   const mouseActivityRef = useRef<boolean>(false);
@@ -235,6 +243,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const isStory = resolvedType === 'story' ||
                    actualContent?.type === 'story' ||
                    actualContent?.contentType === 'story';
+  // Original media is portrait when its detected aspect ratio is < 1, or when
+  // the uploader explicitly forced portrait. Moments/stories are always portrait.
+  const isOriginalPortrait = Boolean(actualContent?.forcePortrait) ||
+    (mediaAspect !== null && mediaAspect < 1) ||
+    isPortraitMoment ||
+    isStory;
   const isLiveStream = resolvedType === 'live' ||
                         actualContent?.type === 'live' ||
                         actualContent?.contentType === 'live' ||
@@ -432,14 +446,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       };
     }
     
-    // Desktop videos use cover
+    // Desktop videos preserve the uploader's original ratio (contain, never crop).
     return {
       position: 'absolute' as const,
       top: 0,
       left: 0,
       width: '100%',
       height: '100%',
-      objectFit: 'cover' as const,
+      objectFit: 'contain' as const,
       zIndex: 0
     };
   };
@@ -910,8 +924,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       position: fixed;
       bottom: 20px;
       right: 20px;
-      width: 320px;
-      height: 180px;
+      width: ${isOriginalPortrait ? 180 : 320}px;
+      height: ${isOriginalPortrait ? 320 : 180}px;
       background: black;
       border-radius: 8px;
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
@@ -1222,7 +1236,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   return (
     <div
       className={`fixed inset-0 bg-black z-[150] ${isSplitView ? 'flex' : ''}`}
-      style={getContainerStyle()}
+      style={isExpandedLandscape
+        ? { ...getContainerStyle(), width: '100vh', height: '100vw', transform: 'rotate(90deg)', transformOrigin: 'center center' }
+        : getContainerStyle()}
     >
       {/* Top bar with minimal controls */}
       <div
@@ -1242,6 +1258,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         }}
       >
         <div className="flex justify-end gap-2">
+          {isMobileDevice && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => setIsExpandedLandscape(prev => !prev)}
+              className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
+              title={isExpandedLandscape ? 'Collapse to portrait' : 'Expand to landscape'}
+            >
+              <Maximize2 className="h-5 w-5" />
+            </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
@@ -1371,7 +1398,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               }}
               onEnded={() => { if (effectiveLive) setLiveEnded(true); }}
               onSeeked={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
-              onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); }}
+              onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); const v = e.currentTarget; if (v.videoWidth && v.videoHeight) setMediaAspect(v.videoWidth / v.videoHeight); }}
             />
           ) : (
             <div className="absolute inset-0 w-full h-full flex items-center justify-center" style={{ zIndex: 1, pointerEvents: 'none' }}>
@@ -2052,6 +2079,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             onLoad={(e) => {
               const target = e.target as HTMLImageElement;
               target.style.imageRendering = 'auto';
+              if (target.naturalWidth && target.naturalHeight) setMediaAspect(target.naturalWidth / target.naturalHeight);
             }}
           />
           ) : (
@@ -2203,6 +2231,7 @@ void toggleFullscreen();
               const target = e.target as HTMLImageElement;
               // Enhance image quality for HD displays
               target.style.imageRendering = 'auto';
+              if (target.naturalWidth && target.naturalHeight) setMediaAspect(target.naturalWidth / target.naturalHeight);
             }}
           />
           ) : (

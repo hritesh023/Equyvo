@@ -37,7 +37,7 @@ import ResilientVideo from '@/components/ResilientVideo';
 import VotingButtons from '@/components/VotingButtons';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import WatchHistorySection from '@/components/WatchHistorySection';
-// import UniversalMediaViewer from '@/components/UniversalMediaViewer';
+
 import Moments from '@/components/Moments';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import { voteOnThought, likeThought } from '@/lib/thoughts';
