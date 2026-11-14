@@ -241,14 +241,17 @@ function probeVideoDuration(src: Blob): Promise<number | undefined> {
 
 const CreatePage = () => {
   const deferredSuccess = (message: string) => {
-    // Clear the upload progress UI before the success toast appears, so the
-    // progress bar / loading widget disappear as soon as (not after) the
-    // "uploaded" notification shows. Reset both local and global state so
+    // Make the upload widgets HONEST: clear the upload progress UI at the very
+    // moment the "content uploaded" notification appears, so the progress bar
+    // and loading widget can never linger in an uploading state after the
+    // upload has actually finished. Reset both local and global state so
     // every surface (Create page overlay, global top bar) hides together.
     setIsUploading(false);
     setUploadProgress(null);
     try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
-    setTimeout(() => _showSuccess(message), 100);
+    // Show the notification in the same frame the widgets are cleared, so they
+    // disappear exactly when (not before/after) the pop-up appears.
+    _showSuccess(message);
   };
   // Deep-link a composer section: /app/create?tab=moment opens the Moments
   // composer directly (Moments' empty state sends users there) so tapping
