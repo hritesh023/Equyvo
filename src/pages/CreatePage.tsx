@@ -345,6 +345,7 @@ const CreatePage = () => {
       const up = isImageFile(file) ? await compressImage(file) : file;
       const { data, error } = await api.uploadFile(up, 'equyvo/thumbnails');
       if (error || !data?.secureUrl) throw new Error(error || 'Thumbnail upload failed');
+      try { if (data?.publicId) uploadedKeysForCancelRef.current.push(String(data.publicId)); } catch {}
       return data.secureUrl;
     } catch {
       showError('Custom thumbnail upload failed — using auto poster instead.');
@@ -571,6 +572,9 @@ const CreatePage = () => {
   // races all happened inside the async upload window).
   const publishLockRef = useRef(false);
   const cancelUploadRequestedRef = useRef(false);
+  // Tracks publicIds of media that finished uploading in the current batch, so
+  // a cancel can purge them from R2 (not just the in-flight multipart).
+  const uploadedKeysForCancelRef = useRef<string[]>([]);
   // Active recording container (probed mimeType) + start time.
   const recorderMimeRef = useRef('');
   const recordingStartRef = useRef(0);
@@ -1114,6 +1118,7 @@ const CreatePage = () => {
           ? { phase: isLast ? 'done' : 'uploading', pct: donePct }
           : { phase: 'done', pct: 100 });
         try { setUploadState({ isUploading: true, progress: { pct: donePct, phase: slot.count > 1 ? 'uploading' : 'done' } }); } catch {}
+        try { if (data && (data as any).publicId) uploadedKeysForCancelRef.current.push(String((data as any).publicId)); } catch {}
         return data || null;
       };
       let lastErr: unknown = null;
@@ -1148,6 +1153,12 @@ const CreatePage = () => {
     if (!window.confirm('Cancel the current upload? The uploaded part will be removed.')) return;
     cancelUploadRequestedRef.current = true;
     try { await api.cancelUpload(); } catch { /* ignore */ }
+    // Purge already-completed uploads from R2/storage so cancel is honest.
+    try {
+      const ids = [...uploadedKeysForCancelRef.current];
+      if (ids.length) await api.purgeUpload({ publicIds: ids });
+    } catch { /* best-effort */ }
+    uploadedKeysForCancelRef.current = [];
     setIsUploading(false);
     setUploadProgress(null);
     try { setUploadState({ isUploading: false, progress: null }); } catch {}
@@ -1550,7 +1561,8 @@ const CreatePage = () => {
           if (cancelUploadRequestedRef.current) {
             setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
-            publishLockRef.current = false;
+            uploadedKeysForCancelRef.current = [];
+      publishLockRef.current = false;
             return;
           }
           // Robust pairing: only media that actually uploaded gets persisted.
@@ -1664,6 +1676,7 @@ const CreatePage = () => {
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
       // post/schedule/draft paths that never touched progress also clear it here.
       if (action === 'post') setUploadProgress(null);
@@ -1763,6 +1776,7 @@ const CreatePage = () => {
         break;
     }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
     }
   };
@@ -1910,6 +1924,7 @@ const CreatePage = () => {
         break;
     }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
     }
   };
@@ -1949,7 +1964,8 @@ const CreatePage = () => {
           if (cancelUploadRequestedRef.current) {
             setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
-            publishLockRef.current = false;
+            uploadedKeysForCancelRef.current = [];
+      publishLockRef.current = false;
             return;
           }
 
@@ -2057,6 +2073,7 @@ const CreatePage = () => {
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
     }
@@ -2105,7 +2122,8 @@ const CreatePage = () => {
           if (cancelUploadRequestedRef.current) {
             setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
-            publishLockRef.current = false;
+            uploadedKeysForCancelRef.current = [];
+      publishLockRef.current = false;
             return;
           }
 
@@ -2221,6 +2239,7 @@ const CreatePage = () => {
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
     }
@@ -2265,7 +2284,8 @@ const CreatePage = () => {
           setShowScheduleModal(false);
           setScheduleDateTime('');
         } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
-          publishLockRef.current = false;
+          uploadedKeysForCancelRef.current = [];
+      publishLockRef.current = false;
         }
         break;
       case 'draft':
@@ -2285,7 +2305,8 @@ const CreatePage = () => {
           setDraftPosts(prev => [...prev, newDraftLive]);
           deferredSuccess('Live stream saved as draft!');
         } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
-          publishLockRef.current = false;
+          uploadedKeysForCancelRef.current = [];
+      publishLockRef.current = false;
         }
         break;
     }
@@ -2330,7 +2351,8 @@ const CreatePage = () => {
           if (cancelUploadRequestedRef.current) {
             setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
             setUploadProgress(null);
-            publishLockRef.current = false;
+            uploadedKeysForCancelRef.current = [];
+      publishLockRef.current = false;
             return;
           }
 
@@ -2459,6 +2481,7 @@ const CreatePage = () => {
         break;
       }
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
     }
@@ -2634,6 +2657,7 @@ const CreatePage = () => {
 
       deferredSuccess('Live stream started! Followers have been notified.');
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
     }
   };
@@ -2692,6 +2716,7 @@ const CreatePage = () => {
       }), { duration: secs });
       if (error) throw new Error(error);
       liveUploadResult = data || null;
+      try { if (data?.publicId) uploadedKeysForCancelRef.current.push(String(data.publicId)); } catch {}
       setUploadProgress({ phase: 'done', pct: 100 });
     } catch (err) {
       showError('Live recording upload failed — the raw recording was saved to your device. Try again later.' + (err instanceof Error ? ` (${err.message})` : ''));
@@ -2922,6 +2947,7 @@ const CreatePage = () => {
       const file = await capturePhoto();
       if (file) routeCameraFile(file);
     } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
     }
   };

@@ -882,6 +882,14 @@ export const api = {
     return { error: null };
   },
 
+  // Purge already-completed raw uploads from R2/storage (used when an upload
+  // batch is cancelled, so finished parts don't linger as orphans).
+  purgeUpload: async (data: { publicIds?: string[]; r2Keys?: string[] }) =>
+    request<{ data: { purged: boolean }; error: null }>('/upload/purge', {
+      method: 'POST',
+      body: JSON.stringify(data || {}),
+    }),
+
   // Get user's own posts
   getUserPosts: async (userId: string, limit = 50) => {
     const res = await request<{ data: any[]; error: null }>(`/users/${userId}/posts?limit=${limit}`);

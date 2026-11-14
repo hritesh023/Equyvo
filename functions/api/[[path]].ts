@@ -6540,6 +6540,31 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       return json({ data: { aborted: true }, error: null }, 200, cors);
     }
 
+    // Purge already-completed raw uploads (cancel cleanup). Deletes the R2
+    // object + media index entry for each publicId, but only when the caller
+    // is the actor recorded at upload time (ownership check).
+    if (path === '/api/upload/purge' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let payload = {};
+      try { payload = await readJson(request); } catch { payload = {}; }
+      const publicIds = Array.isArray(payload.publicIds) ? payload.publicIds.map((x) => String(x || '').slice(0, 128)).filter(Boolean).slice(0, 50) : [];
+      for (const pid of publicIds) {
+        try {
+          const raw = await env.EQUYVO_KV.get(KEYS.MEDIA(pid));
+          if (!raw) continue;
+          const idx = JSON.parse(raw);
+          if (idx.ownerId && String(idx.ownerId) !== String(actor.id)) continue;
+          const key = idx.r2Key || '';
+          if (key && env.EQUYVO_R2) { try { await env.EQUYVO_R2.delete(key); } catch {} }
+          try { await deleteCloudinaryMedia(env, { publicId: pid, resourceType: 'image' }); } catch {}
+          try { await env.EQUYVO_KV.delete(KEYS.MEDIA(pid)); } catch {}
+        } catch { /* best-effort */ }
+      }
+      return json({ data: { purged: true }, error: null }, 200, cors);
+    }
+
     if (path === '/api/upload' && method === 'POST') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -6733,7 +6758,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       try {
         if (hash) await kv.put(KEYS.HASH(hash), JSON.stringify(payload), { expirationTtl: 60 * 60 * 24 * 90 });
         if (payload.publicId) {
-          await kv.put(KEYS.MEDIA(payload.publicId), JSON.stringify({ bytes: payload.bytes, r2Key }), { expirationTtl: 60 * 60 * 24 * 365 });
+          await kv.put(KEYS.MEDIA(payload.publicId), JSON.stringify({ bytes: payload.bytes, r2Key, ownerId: actor.id }), { expirationTtl: 60 * 60 * 24 * 365 });
         }
       } catch { /* ignore */ }
       // Human-eval fan-out: every media upload becomes a labelled preference
