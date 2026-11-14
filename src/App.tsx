@@ -113,6 +113,7 @@ const AppContent = () => {
   // Scroll to top when route changes (the unibody shell scrolls inside the
   // <main> column on phones; the window scrolls on desktop).
   const mainRef = useRef<HTMLElement | null>(null);
+  const [mainNode, setMainNode] = useState<HTMLElement | null>(null);
   const [navHidden, setNavHidden] = useState(false);
   const lastScrollTopRef = useRef(0);
   const handleMainScroll = useCallback(() => {
@@ -130,6 +131,7 @@ const AppContent = () => {
       mainRef.current.removeEventListener('scroll', handleMainScroll);
     }
     mainRef.current = node;
+    setMainNode(node);
     if (node) {
       node.addEventListener('scroll', handleMainScroll, { passive: true });
     }
@@ -166,7 +168,7 @@ const AppContent = () => {
   // Native (non-passive) touch listeners on the scroll container so we can
   // preventDefault during a horizontal drag and drive the adjoint transform.
   useEffect(() => {
-    const el = mainRef.current;
+    const el = mainNode;
     if (!el) return;
 
     const isInteractive = (target: EventTarget | null) => {
@@ -196,9 +198,9 @@ const AppContent = () => {
 
       if (!swipeDraggingRef.current) {
         // Need a bit of travel before deciding intent.
-        if (Math.abs(dx) < 12) return;
+        if (Math.abs(dx) < 8) return;
         // Vertical scroll wins.
-        if (Math.abs(dx) < Math.abs(dy) * 1.5) { swipeStartRef.current = null; return; }
+        if (Math.abs(dx) < Math.abs(dy) * 1.3) { swipeStartRef.current = null; return; }
         const idx = currentTabIdxRef.current;
         const nextIdx = dx < 0 ? idx + 1 : idx - 1;
         if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) { swipeStartRef.current = null; return; }
@@ -278,7 +280,7 @@ const AppContent = () => {
       el.removeEventListener('touchcancel', finish);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mainRef.current]);
+  }, [mainNode]);
   useEffect(() => {
     window.scrollTo(0, 0);
     if (mainRef.current) mainRef.current.scrollTop = 0;
