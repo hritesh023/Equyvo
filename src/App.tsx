@@ -164,6 +164,7 @@ const AppContent = () => {
     swipeHasStartRef.current = true;
     swipeDraggingRef.current = false;
     swipeDxRef.current = 0;
+    (window as any).__equyvoSwiping = false;
     swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
   };
 
@@ -183,6 +184,7 @@ const AppContent = () => {
       const nextIdx = dx < 0 ? idx + 1 : idx - 1;
       if (idx < 0 || nextIdx < 0 || nextIdx >= MAIN_TABS.length) { swipeHasStartRef.current = false; return; }
       swipeDraggingRef.current = true;
+      (window as any).__equyvoSwiping = true;
       swipeInitialTransformRef.current = dx < 0 ? 0 : -swipeWidthRef.current;
       swipeTargetIdxRef.current = nextIdx;
       swipeDxRef.current = swipeInitialTransformRef.current;
@@ -201,6 +203,7 @@ const AppContent = () => {
   };
 
   const finishSwipe = () => {
+    (window as any).__equyvoSwiping = false;
     if (!swipeDraggingRef.current) {
       swipeHasStartRef.current = false;
       return;
@@ -426,7 +429,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
+        <main ref={setMainRef} className={`relative flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
         <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
