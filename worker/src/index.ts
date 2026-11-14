@@ -1267,7 +1267,8 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if (usage.bytes + (file as any).size > quota.storageBytes) {
         return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
       }
-      if (usage.monthUploads >= quota.monthlyUploads) {
+      // Free users have no monthly upload-count cap.
+      if (planId !== 'eq_free' && usage.monthUploads >= quota.monthlyUploads) {
         return respond({ error: `Monthly upload limit reached for ${quota.label}`, code: 'QUOTA_MONTHLY', planId }, 402);
       }
 
@@ -1658,7 +1659,8 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if (usage.bytes + size > quota.storageBytes) {
         return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
       }
-      if (usage.monthUploads >= quota.monthlyUploads) {
+      // Free users have no monthly upload-count cap.
+      if (planId !== 'eq_free' && usage.monthUploads >= quota.monthlyUploads) {
         return respond({ error: `Monthly upload limit reached for ${quota.label}`, code: 'QUOTA_MONTHLY', planId }, 402);
       }
 
@@ -1750,7 +1752,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
        if (totalBytes > maxBytes) return respondError(`File too large for ${quota.label}`, 413);
        const usage = await getUsage(env, actor.id);
        if (usage.bytes + totalBytes > quota.storageBytes) return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
-       if (usage.monthUploads >= quota.monthlyUploads) return respond({ error: `Monthly upload limit reached for ${quota.label}`, code: 'QUOTA_MONTHLY', planId }, 402);
+       if (planId !== 'eq_free' && usage.monthUploads >= quota.monthlyUploads) return respond({ error: `Monthly upload limit reached for ${quota.label}`, code: 'QUOTA_MONTHLY', planId }, 402);
 
        try {
          const mpu = env.EQUYVO_R2.resumeMultipartUpload(session.r2Key, session.r2UploadId);

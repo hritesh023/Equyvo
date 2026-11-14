@@ -6276,7 +6276,9 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       if (usage.bytes + declaredBytes > quota.storageBytes) {
         return json({ error: `Storage quota exceeded for ${quota.label} (${Math.round(quota.storageBytes / GB)}GB). Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId, usage }, 402, cors);
       }
-      if (usage.monthUploads >= quota.monthlyUploads) {
+      // Free users have no monthly upload-count cap — only per-file size (150MB,
+      // or 500MB for 24h after watching a rewarded ad) and total storage.
+      if (planId !== 'eq_free' && usage.monthUploads >= quota.monthlyUploads) {
         return json({ error: `Monthly upload limit reached for ${quota.label}. Upgrades reset limits.`, code: 'QUOTA_MONTHLY', planId }, 402, cors);
       }
       const ext = String(payload.ext || extFromFile({ name: payload.name || '', type: contentType })).replace(/[^a-zA-Z0-9]/g, '').slice(0, 8) || 'bin';
@@ -6436,7 +6438,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       if (completeUsage.bytes + totalBytes > quota.storageBytes) {
         return json({ error: `Storage quota exceeded for ${quota.label}. Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId: livePlan, usage: completeUsage }, 402, cors);
       }
-      if (completeUsage.monthUploads >= quota.monthlyUploads) {
+      // Free users have no monthly upload-count cap.
+      if (livePlan !== 'eq_free' && completeUsage.monthUploads >= quota.monthlyUploads) {
         return json({ error: `Monthly upload limit reached for ${quota.label}. Upgrades reset limits.`, code: 'QUOTA_MONTHLY', planId: livePlan }, 402, cors);
       }
       let obj = null;
@@ -6598,7 +6601,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       if (usage.bytes + file.size > quota.storageBytes) {
         return json({ error: `Storage quota exceeded for ${quota.label} (${Math.round(quota.storageBytes / GB)}GB). Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId, usage }, 402, cors);
       }
-      if (usage.monthUploads >= quota.monthlyUploads) {
+      // Free users have no monthly upload-count cap.
+      if (planId !== 'eq_free' && usage.monthUploads >= quota.monthlyUploads) {
         return json({ error: `Monthly upload limit reached for ${quota.label}. Upgrades reset limits.`, code: 'QUOTA_MONTHLY', planId }, 402, cors);
       }
 
