@@ -222,7 +222,7 @@ const AppContent = () => {
         document.documentElement.dataset.vtDir = targetTransform === -width ? 'forward' : 'back';
         skipSlideRef.current = true;
         if (targetIdx >= 0) navigate(MAIN_TABS[targetIdx]);
-        window.setTimeout(() => { skipSlideRef.current = false; }, 50);
+        window.setTimeout(() => { skipSlideRef.current = false; }, 300);
         setSwipeDrag(null);
         swipeDraggingRef.current = false;
         swipeHasStartRef.current = false;
@@ -465,11 +465,11 @@ const AppContent = () => {
          </div>
         </ErrorBoundary>
          {swipeDrag && currentTabIdx >= 0 && (
-           <div className="absolute inset-0 z-50 bg-background overflow-hidden" style={{ transform: 'scale(' + zoom + ')', transformOrigin: 'top left' }}>
+           <div className="absolute inset-0 z-50 bg-background overflow-hidden">
              <div
                ref={swipeTrackRef}
                className="flex h-full w-[200%]"
-               style={{ transform: 'translateX(' + (swipeDrag.dir === -1 ? 0 : -50) + '%)' }}
+               style={{ transform: 'translateX(' + (swipeDrag.dir === -1 ? '0%' : '-50%') + ')' }}
              >
                {(swipeDrag.dir === -1
                  ? [currentTabIdx, swipeDrag.targetIdx]
