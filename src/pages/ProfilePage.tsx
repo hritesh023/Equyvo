@@ -1621,7 +1621,7 @@ const ProfilePage = () => {
                       postUserId={ownerIdOf(post) || (typeof post.user === 'string' ? post.user : String((post as { creator?: unknown }).creator || ''))}
                       postOwnerId={ownerIdOf(post)}
                       currentUserId={myAccountId()}
-                      contentType={String(post.type || (post as { mediaType?: string }).mediaType || 'post')}
+                      contentType={String(post.type || (post as { mediaType?: string }).mediaType || 'post')} visibility={post.visibility as string}
                       isProfilePage={true}
                       onReport={handleReport}
                       onDelete={() => handleDeletePost(post.id)}
@@ -1632,11 +1632,11 @@ const ProfilePage = () => {
                         }));
                       }}
                       onEdit={() => handleEditPost(post)}
-                      onHide={() => handleHide(post.id)}
-                      onHidden={(id) => {
+                      onHide={!isSelfView ? () => handleHide(post.id) : undefined}
+                      onHidden={(id, nextVisibility) => {
                         setUserProfile(prev => ({
                           ...prev,
-                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: (nextVisibility || p.visibility) } as Post) : p)),
                         }));
                       }}
                       onShare={handleMenuShare}
@@ -1840,7 +1840,7 @@ const ProfilePage = () => {
                         postUserId={ownerIdOf(story) || (typeof story.user === 'string' ? story.user : '')}
                         postOwnerId={ownerIdOf(story)}
                         currentUserId={myAccountId()}
-                        contentType="story"
+                        contentType="story" visibility={story.visibility as string}
                         isProfilePage={true}
                         onReport={handleReport}
                         onDelete={() => handleDeletePost(story.id)}
@@ -1851,11 +1851,11 @@ const ProfilePage = () => {
                           }));
                         }}
                         onEdit={() => handleEditPost(story)}
-                        onHide={() => handleHide(story.id)}
-                        onHidden={(id) => {
+                        onHide={!isSelfView ? () => handleHide(story.id) : undefined}
+                        onHidden={(id, nextVisibility) => {
                           setUserProfile(prev => ({
                             ...prev,
-                            posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                            posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: (nextVisibility || p.visibility) } as Post) : p)),
                           }));
                         }}
                         onShare={handleMenuShare}
@@ -1946,7 +1946,7 @@ const ProfilePage = () => {
                       postUserId={ownerIdOf(video) || (typeof video.user === 'string' ? video.user : '')}
                       postOwnerId={ownerIdOf(video)}
                       currentUserId={myAccountId()}
-                      contentType="video"
+                      contentType="video" visibility={video.visibility as string}
                       isProfilePage={true}
                       onReport={handleReport}
                       onDelete={() => handleDeletePost(video.id)}
@@ -1957,11 +1957,11 @@ const ProfilePage = () => {
                         }));
                       }}
                       onEdit={() => handleEditPost(video)}
-                      onHide={() => handleHide(video.id)}
-                      onHidden={(id) => {
+                      onHide={!isSelfView ? () => handleHide(video.id) : undefined}
+                      onHidden={(id, nextVisibility) => {
                         setUserProfile(prev => ({
                           ...prev,
-                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: (nextVisibility || p.visibility) } as Post) : p)),
                         }));
                       }}
                       onShare={handleMenuShare}
@@ -2024,7 +2024,7 @@ const ProfilePage = () => {
                       postUserId={ownerIdOf(post) || (typeof post.user === 'string' ? post.user : (post.user && typeof post.user === 'object' ? ((post.user as any).id || (post.user as any).username || '') : ''))}
                       postOwnerId={ownerIdOf(post)}
                       currentUserId={myAccountId()}
-                      contentType="thought"
+                      contentType="thought" visibility={post.visibility as string}
                       isProfilePage={true}
                       onReport={handleReport}
                       onDelete={() => handleDeletePost(post.id)}
@@ -2035,11 +2035,11 @@ const ProfilePage = () => {
                         }));
                       }}
                       onEdit={() => handleEditPost(post)}
-                      onHide={() => handleHide(post.id)}
-                      onHidden={(id) => {
+                      onHide={!isSelfView ? () => handleHide(post.id) : undefined}
+                      onHidden={(id, nextVisibility) => {
                         setUserProfile(prev => ({
                           ...prev,
-                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: 'private' } as Post) : p)),
+                          posts: prev.posts.map(p => (p.id === id ? ({ ...p, visibility: (nextVisibility || p.visibility) } as Post) : p)),
                         }));
                       }}
                       onShare={handleMenuShare}

@@ -7,7 +7,7 @@ import {
   DropdownMenuTrigger,
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
-import { MoreHorizontal, Copy, Share2, Flag, EyeOff, Edit } from 'lucide-react';
+import { MoreHorizontal, Copy, Share2, Flag, EyeOff, Eye, Edit } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import { shareItem } from '@/utils/share';
 import DeleteButton from '@/components/ui/DeleteButton';
@@ -26,6 +26,8 @@ interface StandardPostMenuProps {
   /** Content collection used for delete/visibility calls. Defaults to 'post'. */
   contentType?: string;
   isProfilePage?: boolean;
+  /** Current visibility ('public' | 'followers' | 'private') for owner toggle. */
+  visibility?: string;
   onReport?: (postId: string) => void;
   onDelete?: (postId: string) => void | Promise<void>;
   /** Fired after any successful delete (including the built-in fallback). */
@@ -34,7 +36,7 @@ interface StandardPostMenuProps {
   onShare?: (postId: string) => void | Promise<void>;
   onHide?: (postId: string) => void;
   /** Fired after a hide (either personal or from-public). */
-  onHidden?: (postId: string) => void;
+  onHidden?: (postId: string, visibility?: string) => void;
   onCopyLink?: (postId: string) => void;
   className?: string;
 }
@@ -56,6 +58,7 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
   currentUserId,
   contentType = 'post',
   isProfilePage = false,
+  visibility,
   onReport,
   onDelete,
   onDeleted,
@@ -76,6 +79,7 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
     { ownerId: postOwnerId, user: postUserId },
     { currentUserId, postOwnerId, postUserId },
   );
+  const isHiddenFromPublic = isOwnPost && String(visibility || '').toLowerCase() === 'private';
   const label = friendlyLabel(contentType);
 
   const handleCopyLink = async () => {
@@ -149,8 +153,9 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
     setIsHiding(true);
     try {
       if (isOwnPost) {
-        const ok = await setContentVisibility(postId, contentType, 'private');
-        if (ok) onHidden?.(postId);
+        const next = isHiddenFromPublic ? 'public' : 'private';
+        const ok = await setContentVisibility(postId, contentType, next);
+        if (ok) onHidden?.(postId, next);
         return;
       }
       hideFromMyView(postId);
@@ -237,8 +242,8 @@ const StandardPostMenu: React.FC<StandardPostMenuProps> = ({
               />
             </div>
             <DropdownMenuItem onClick={handleHide} disabled={isHiding} className="text-red-600 focus:text-red-600">
-              <EyeOff className="h-4 w-4 mr-2" />
-              {isHiding ? 'Hiding...' : isProfilePage ? 'Hide from public' : 'Hide from public'}
+              {isHiddenFromPublic ? <Eye className="h-4 w-4 mr-2" /> : <EyeOff className="h-4 w-4 mr-2" />}
+              {isHiding ? 'Updating...' : isHiddenFromPublic ? 'Show to public' : 'Hide from public'}
             </DropdownMenuItem>
           </>
         ) : (
