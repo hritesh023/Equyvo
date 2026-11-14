@@ -11,7 +11,7 @@ import {
   Filter, SortDesc, Clock, TrendingUp, ChevronDown, List, Monitor, Maximize2, Eye
 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
-import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import FullscreenViewer from '@/components/FullscreenViewer';
 import FullscreenBrowse from '@/components/FullscreenBrowse';
 import CommentSection from '@/components/CommentSection';
 import SearchSuggest from '@/components/SearchSuggest';
@@ -103,13 +103,17 @@ const toFullscreen = (
   const isLive = card === 'live' || !!item.isLive || !!item.live;
   const isVideo = card === 'video' || !!fields.videoUrl || String(item.mediaType || '').toLowerCase() === 'video';
   const isAudio = !isVideo && Boolean(fields.audioUrl || String(item.mediaType || '').toLowerCase() === 'audio');
+  const isMomentItem = item.type === 'moment' || item.contentType === 'moment' || item.mediaType === 'moment' || String(item.type || '').toLowerCase() === 'moment';
+  const isStoryItem = item.type === 'story' || item.contentType === 'story' || item.mediaType === 'story' || String(item.type || '').toLowerCase() === 'story';
   const type: ContentType = isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image';
   return {
     content: {
       id: item.id,
       type,
        contentType: isLive ? 'live' : isVideo ? 'video' : isAudio ? 'audio' : 'image',
-      forcePortrait: isVideo && !isLive,
+      forcePortrait: isVideo && !isLive && (isMomentItem || isStoryItem),
+      isMoment: isMomentItem,
+      isStory: isStoryItem,
       title: item.title,
       creator: item.creator,
       creatorId: discoverCreatorId(item),
@@ -1522,7 +1526,7 @@ avatar: m.avatar || m.user?.avatar || '',
       
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <SafeFullscreenViewer
+        <FullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

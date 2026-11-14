@@ -32,7 +32,7 @@ interface UserProfile {
 import EditProfileModal from '@/components/EditProfileModal';
 import EditPostModal from '@/components/EditPostModal';
 import CommentSection from '@/components/CommentSection';
-import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import FullscreenViewer from '@/components/FullscreenViewer';
 import ResilientVideo from '@/components/ResilientVideo';
 import VotingButtons from '@/components/VotingButtons';
 import StandardPostMenu from '@/components/StandardPostMenu';
@@ -1282,12 +1282,13 @@ const ProfilePage = () => {
     // Track content view in history
     addToWatchHistory(post);
     const media = resolveMediaFields(post as unknown as Record<string, unknown>);
-    const isMoment = post.type === 'moment' || post.mediaType === 'moment' || post.mediaType === 'video' || !!media.videoUrl || String(post.type || '').toLowerCase() === 'video';
+    const isMoment = post.type === 'moment' || post.mediaType === 'moment';
+    const isStory = post.type === 'story' || String(post.mediaType || '').toLowerCase() === 'story';
     
     // Enhanced content structure for fullscreen viewer with complete metadata
     const mediaContent = {
       ...post,
-      type: isMoment ? 'moment' : (media.videoUrl ? 'moment' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
+      type: isMoment ? 'moment' : (media.videoUrl ? 'image' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
       videoUrl: media.videoUrl,
       media: media.media || post.image,
       thumbnail: media.thumbnail || post.image,
@@ -1307,7 +1308,9 @@ const ProfilePage = () => {
       fallbackImage: media.thumbnail || post.image,
       // Ensure proper aspect ratio and orientation for moments
       aspectRatio: isMoment ? '9/16' : media.image ? '16/9' : undefined,
-      forcePortrait: isMoment,
+      forcePortrait: isMoment || isStory,
+      isMoment: isMoment,
+      isStory: isStory,
       viewMode: isMoment ? 'fullscreen' : undefined
     };
     
@@ -2361,7 +2364,7 @@ const ProfilePage = () => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <SafeFullscreenViewer
+        <FullscreenViewer
           content={fullscreenContent}
           type={fullscreenContent.videoUrl ? 'moment' : (fullscreenContent.type === 'story' ? 'story' : (fullscreenContent.type === 'live' || fullscreenContent.isLive || fullscreenContent.live ? 'live' : (fullscreenContent.type === 'audio' || fullscreenContent.mediaType === 'audio' || fullscreenContent.audioUrl ? 'audio' : 'image')))}
           onClose={closeFullscreen}

@@ -47,7 +47,7 @@ import { getThoughts, voteOnThought, getThoughtVotes } from '@/lib/thoughts';
 import { evalVote, evalLike } from '@/lib/human-eval';
 import { toCount, bumpCount } from '@/lib/count';
 import { Thought, ThoughtMedia } from '@/types/thoughts';
-import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import FullscreenViewer from '@/components/FullscreenViewer';
 import { showSuccess, showError } from '@/utils/toast';
 import { FullscreenContent } from '@/types';
 import { useNavigate } from 'react-router-dom';
@@ -1345,7 +1345,7 @@ const ThoughtsPage = memo(() => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <SafeFullscreenViewer
+        <FullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { showSuccess, showError } from '@/utils/toast';
 import { avatarOf } from '@/utils/avatar';
 import { useI18n } from '@/lib/i18n';
-import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { navItems } from '@/components/Navbar';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
@@ -96,6 +96,8 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
     const fields = resolveMediaFields(content);
     const isLive = content.isLive || content.live || String(content.contentType || '').toLowerCase() === 'live';
     const hasVideo = Boolean(fields.videoUrl);
+  const isMomentItem = content.type === 'moment' || content.mediaType === 'moment';
+  const isStoryItem = content.type === 'story' || content.mediaType === 'story';
     const hasAudio = Boolean(fields.audioUrl);
     const fullscreenData = {
       ...content,
@@ -110,11 +112,13 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
       verified: content.verified === true,
       published: content.published || 'Recently',
       description: content.description || `Amazing ${content.type} content by ${content.creator}`,
-      forcePortrait: hasVideo && !isLive,
+      forcePortrait: hasVideo && !isLive && isMomentItem,
+      isMoment: isMomentItem,
+      isStory: isStoryItem,
     };
 
     setFullscreenContent(fullscreenData);
-    setFullscreenType(isLive ? 'live' : hasVideo ? 'moment' : hasAudio ? 'audio' : 'image');
+    setFullscreenType(isLive ? 'live' : (hasVideo && isMomentItem) ? 'moment' : hasVideo ? 'image' : hasAudio ? 'audio' : 'image');
   };
 
   const handleCloseFullscreen = () => {
@@ -443,7 +447,7 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <SafeFullscreenViewer
+        <FullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

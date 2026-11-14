@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Repeat, Maximize, Users, Eye, MessageCircle } from 'lucide-react';
 import FollowButton from './FollowButton';
 import CommentSection from './CommentSection';
-import SafeFullscreenViewer from './SafeFullscreenViewer';
+import FullscreenViewer from './FullscreenViewer';
 import SaveButton from './SaveButton';
 import LikeButton from './LikeButton';
 import VotingButtons from './VotingButtons';
@@ -161,6 +161,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
     
     // Enhanced content structure for fullscreen viewer
     const isMomentPost = post.type === 'moment';
+    const isStoryPost = post.type === 'story';
     const resolved = resolveMediaFields(post);
     const vid = resolved.videoUrl;
     const img = resolved.image || resolved.thumbnail;
@@ -168,7 +169,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
     const hasVideo = Boolean(vid);
     const fullscreenContent = {
       ...post,
-      type: isMomentPost ? 'moment' : (hasVideo ? 'moment' : (aud ? 'audio' : (img ? 'image' : post.type))),
+      type: isMomentPost ? 'moment' : (hasVideo ? 'image' : (aud ? 'audio' : (img ? 'image' : post.type))),
       videoUrl: vid,
       audioUrl: aud,
       media: vid || aud || img,
@@ -189,7 +190,9 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
       fallbackImage: img,
       // Ensure proper aspect ratio for images
       aspectRatio: isMomentPost ? '9/16' : (img ? '16/9' : undefined),
-      forcePortrait: hasVideo
+       forcePortrait: isMomentPost || isStoryPost,
+       isMoment: isMomentPost,
+       isStory: isStoryPost
     };
     
     // Open content in fullscreen viewer

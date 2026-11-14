@@ -13,7 +13,7 @@ import SEOHead from '@/components/SEOHead';
 import SplitScreenView from '@/components/SplitScreenView';
 import CommentSection from '@/components/CommentSection';
 import StandardPostMenu from '@/components/StandardPostMenu';
-import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import FullscreenViewer from '@/components/FullscreenViewer';
 import FollowButton from '@/components/FollowButton';
 import { cn } from '@/lib/utils';
 import { formatWatchTime } from '@/lib/media';
@@ -80,7 +80,8 @@ const SearchPage: React.FC = () => {
   const getFullscreenType = (resultType: string): 'live' | 'moment' | 'image' | 'audio' => {
     const t = String(resultType || '').toLowerCase();
     if (t === 'live') return 'live';
-    if (t === 'moment' || t === 'video') return 'moment';
+    if (t === 'moment') return 'moment';
+    if (t === 'video') return 'image';
     if (t === 'audio') return 'audio';
     if (t === 'story') return 'story' as any;
     return 'image';
@@ -814,7 +815,7 @@ const SearchPage: React.FC = () => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <SafeFullscreenViewer
+        <FullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

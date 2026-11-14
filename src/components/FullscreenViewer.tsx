@@ -236,13 +236,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       actualContent?.type === 'audio' ||
                       actualContent?.mediaType === 'audio' ||
                       Boolean((actualContent as any)?.audioUrl);
-  const isPortraitMoment = resolvedType === 'moment' ||
-                            actualContent?.type === 'moment' ||
-                            actualContent?.contentType === 'moment' ||
-                            actualContent?.forcePortrait;
-  const isStory = resolvedType === 'story' ||
-                   actualContent?.type === 'story' ||
-                   actualContent?.contentType === 'story';
+  const isMomentFlag = actualContent?.isMoment === true ||
+                        actualContent?.type === 'moment' ||
+                        actualContent?.contentType === 'moment' ||
+                        actualContent?.mediaType === 'moment';
+  const isStoryFlag = actualContent?.isStory === true ||
+                       actualContent?.type === 'story' ||
+                       actualContent?.contentType === 'story' ||
+                       actualContent?.mediaType === 'story' ||
+                       resolvedType === 'story';
+  const isPortraitMoment = isMomentFlag || isStoryFlag || Boolean(actualContent?.forcePortrait);
+  const isStory = isStoryFlag;
   // Original media is portrait when its detected aspect ratio is < 1, or when
   // the uploader explicitly forced portrait. Moments/stories are always portrait.
   const isOriginalPortrait = Boolean(actualContent?.forcePortrait) ||
@@ -1237,7 +1241,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     <div
       className={`fixed inset-0 bg-black z-[150] ${isSplitView ? 'flex' : ''}`}
       style={isExpandedLandscape
-        ? { ...getContainerStyle(), width: '100vh', height: '100vw', transform: 'rotate(90deg)', transformOrigin: 'center center' }
+        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw', transform: 'translate(0, 100vh) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
         : getContainerStyle()}
     >
       {/* Top bar with minimal controls */}

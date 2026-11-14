@@ -9,7 +9,7 @@ import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import ChatSidebar from '@/components/ChatSidebar';
 import StoryViewer from '@/components/StoryViewer';
 import Moments from '@/components/Moments';
-import SafeFullscreenViewer from '@/components/SafeFullscreenViewer';
+import FullscreenViewer from '@/components/FullscreenViewer';
 import CommentSection from '@/components/CommentSection';
 import { showSuccess, showError } from '@/utils/toast';
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem } from '@/components/ui/dropdown-menu';
@@ -774,12 +774,16 @@ const HomePage = () => {
     const isLive = postType === 'live' || !!post.isLive || !!post.live;
     const isVideo = postType === 'video' || postType === 'moment' || !!fields.videoUrl || !!post.videoUrl || String(post.mediaType || '').toLowerCase() === 'video';
     const isAudio = !isVideo && (Boolean(fields.audioUrl || post.audioUrl) || String(post.mediaType || '').toLowerCase() === 'audio');
+    const isMomentPost = postType === 'moment' || post.mediaType === 'moment';
+    const isStoryPost = postType === 'story' || post.mediaType === 'story';
     const type = isLive ? 'live' : isVideo ? 'moment' : isAudio ? 'audio' : 'image';
     setFullscreenContent({
       ...post,
       type,
       contentType: isLive ? 'live' : isVideo ? 'video' : isAudio ? 'audio' : 'image',
-      forcePortrait: isVideo && !isLive,
+       forcePortrait: isVideo && !isLive && (isMomentPost || isStoryPost),
+       isMoment: isMomentPost,
+       isStory: isStoryPost,
       videoUrl: fields.videoUrl || post.videoUrl,
       audioUrl: fields.audioUrl || post.audioUrl,
       image: fields.image || post.image,
@@ -1308,7 +1312,7 @@ const HomePage = () => {
 
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
-        <SafeFullscreenViewer
+        <FullscreenViewer
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}
