@@ -316,8 +316,10 @@ const DiscoverPage = () => {
   // Handle reopening fullscreen from minimized state
   useEffect(() => {
     const handleReopenFullscreen = (event: any) => {
-      const content = event.detail;
+      const content = event.detail?.content || event.detail;
       setFullscreenContent(content);
+      const _ct = String(content?.type || content?.contentType || '').toLowerCase();
+      setFullscreenType(_ct === 'story' ? 'story' : (_ct === 'live' || content?.isLive || content?.live) ? 'live' : (content?.videoUrl ? 'moment' : (content?.audioUrl ? 'audio' : 'image')));
     };
 
     // Handle split view video selection

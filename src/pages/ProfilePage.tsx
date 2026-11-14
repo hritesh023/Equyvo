@@ -1347,6 +1347,16 @@ const ProfilePage = () => {
     setFullscreenContent(null);
   };
 
+  useEffect(() => {
+    const handler = (event: any) => {
+      const content = event?.detail?.content || event?.detail;
+      if (!content) return;
+      setFullscreenContent(content as any);
+    };
+    window.addEventListener('reopenFullscreen', handler as EventListener);
+    return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
+  }, []);
+
 
   // Video handling functions
   const handleVideoPlayPause = async (postId: string) => {

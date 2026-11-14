@@ -564,6 +564,20 @@ const HomePage = () => {
     setFullscreenContent(null);
   };
 
+  // Restore fullscreen from PiP/minimized state on any page.
+  useEffect(() => {
+    const handler = (event: any) => {
+      const content = event?.detail?.content || event?.detail;
+      if (!content) return;
+      setFullscreenContent(content);
+      const ct = String(content?.type || content?.contentType || '').toLowerCase();
+      const type = ct === 'story' ? 'story' : (ct === 'live' || content?.isLive || content?.live) ? 'live' : (content?.videoUrl ? 'moment' : (content?.audioUrl ? 'audio' : 'image'));
+      setFullscreenType(type as any);
+    };
+    window.addEventListener('reopenFullscreen', handler as EventListener);
+    return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
+  }, []);
+
   // Post action handlers
   const handleLikePost = (postId: string) => {
     const liking = !likedPosts.has(postId);

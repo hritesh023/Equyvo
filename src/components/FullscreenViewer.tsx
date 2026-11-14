@@ -55,7 +55,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const currentId = (content as any)?.id ?? (content as any)?.contentId;
   if (rawContentRef.current === null || (rawContentRef.current?.id ?? rawContentRef.current?.contentId) !== currentId || rawContentRef.current !== content) {
     const temp = (window as any).tempFullscreenContent;
-    rawContentRef.current = temp || content;
+    rawContentRef.current = temp ? { ...content, ...temp } : content;
     if (temp) (window as any).tempFullscreenContent = null;
   }
   const rawContent = rawContentRef.current;
@@ -1241,7 +1241,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     <div
       className={`fixed inset-0 bg-black z-[150] ${isSplitView ? 'flex' : ''}`}
       style={isExpandedLandscape
-        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw', transform: 'translate(0, 100vh) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
+        ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', transform: 'translate(0, 100vw) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
         : getContainerStyle()}
     >
       {/* Top bar with minimal controls */}
