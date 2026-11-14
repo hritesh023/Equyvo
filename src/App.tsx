@@ -168,7 +168,7 @@ const AppContent = () => {
   // Native (non-passive) touch listeners on the scroll container so we can
   // preventDefault during a horizontal drag and drive the adjoint transform.
   useEffect(() => {
-    const el = mainNode;
+    const el = document;
     if (!el) return;
 
     const isInteractive = (target: EventTarget | null) => {
@@ -180,12 +180,14 @@ const AppContent = () => {
       const t = e.touches?.[0];
       if (!t) return;
       if (isInteractive(e.target)) { swipeStartRef.current = null; return; }
+      const mainEl = mainRef.current;
+      if (!mainEl || !mainEl.contains(e.target as Node)) { swipeStartRef.current = null; return; }
       const idx = currentTabIdxRef.current;
       if (idx < 0) { swipeStartRef.current = null; return; }
       swipeStartRef.current = { x: t.clientX, y: t.clientY };
       swipeDraggingRef.current = false;
       swipeDxRef.current = 0;
-      swipeWidthRef.current = el.clientWidth || window.innerWidth;
+      swipeWidthRef.current = (mainRef.current?.clientWidth) || window.innerWidth;
     };
 
     const onTouchMove = (e: TouchEvent) => {
@@ -280,7 +282,7 @@ const AppContent = () => {
       el.removeEventListener('touchcancel', finish);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mainNode]);
+  }, []);
   useEffect(() => {
     window.scrollTo(0, 0);
     if (mainRef.current) mainRef.current.scrollTop = 0;
