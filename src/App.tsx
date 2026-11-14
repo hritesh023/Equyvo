@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { flushSync } from 'react-dom';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
@@ -134,48 +135,100 @@ const AppContent = () => {
     }
   }, [handleMainScroll]);
   const touchStartRef = useRef<{ x: number; y: number } | null>(null);
+  const touchStartTargetRef = useRef<EventTarget | null>(null);
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
+
+  // Swipe sensitivity: deliberately high thresholds so pages only change on a
+  // clear, intentional horizontal swipe. Small drags / vertical scrolls and
+  // mid-screen casual swipes must NOT trigger a page change.
+  const SWIPE_MIN_DX = 200;       // px of horizontal travel required
+  const SWIPE_RATIO = 3.0;        // horizontal travel must dominate vertical by 3x
+  const SWIPE_EDGE_ZONE = 72;     // px from either screen edge a swipe may start
+  const SWIPE_LONG_SWIPE = 280;   // a very deliberate long swipe anywhere counts
 
   // Swipe between top-level tabs (mobile-style horizontal paging).
   const handleMainTouchStart = (e: React.TouchEvent) => {
     const t = e.touches?.[0];
     if (!t) return;
+    const target = e.target as HTMLElement | null;
+    // Never hijack swipes that begin on interactive controls.
+    if (target && target.closest && target.closest('input,textarea,select,button,a,[role="button"],[role="slider"]')) {
+      touchStartRef.current = null;
+      touchStartTargetRef.current = null;
+      return;
+    }
     touchStartRef.current = { x: t.clientX, y: t.clientY };
+    touchStartTargetRef.current = e.target;
   };
   const handleMainTouchEnd = (e: React.TouchEvent) => {
     const start = touchStartRef.current;
     touchStartRef.current = null;
+    touchStartTargetRef.current = null;
     if (!start) return;
     const t = e.changedTouches?.[0];
     if (!t) return;
     const dx = t.clientX - start.x;
     const dy = t.clientY - start.y;
-    if (Math.abs(dx) < 120 || Math.abs(dx) < Math.abs(dy) * 2.0) return;
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
+    // Low sensitivity: require substantial horizontal travel.
+    if (adx < SWIPE_MIN_DX) return;
+    // Horizontal must strongly dominate vertical (no accidental vertical scrolls).
+    if (adx < ady * SWIPE_RATIO) return;
+    // Avoid casual mid-screen swipes turning pages: only edge-originated or
+    // very deliberate long swipes are honoured.
+    const startedAtEdge = start.x <= SWIPE_EDGE_ZONE || start.x >= window.innerWidth - SWIPE_EDGE_ZONE;
+    if (!startedAtEdge && adx < SWIPE_LONG_SWIPE) return;
+
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     const nextIdx = dx < 0 ? idx + 1 : idx - 1;
     if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) return;
-    navigate(MAIN_TABS[nextIdx]);
+
+    const targetPath = MAIN_TABS[nextIdx];
+    // Direction hint for the page-transition animation.
+    document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
+
+    // Use the View Transitions API when available so the outgoing and incoming
+    // pages animate together (adjoint sliding) instead of a one-sided flash.
+    const vt = (document as any).startViewTransition;
+    if (typeof vt === 'function') {
+      try {
+        vt.call(document, () => {
+          flushSync(() => navigate(targetPath));
+        });
+        return;
+      } catch { /* fall through to plain navigate */ }
+    }
+    navigate(targetPath);
   };
   useEffect(() => {
     window.scrollTo(0, 0);
     if (mainRef.current) mainRef.current.scrollTop = 0;
   }, [location.pathname]);
 
-  // Animate tab switches for swipe navigation.
+  // Animate tab switches for swipe navigation (CSS fallback for browsers
+  // without the View Transitions API). When View Transitions are available the
+  // browser drives the adjoint slide, so we skip the CSS one to avoid a
+  // double animation.
+  const hasViewTransitions = typeof (document as any).startViewTransition === 'function';
   useEffect(() => {
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     const prev = lastTabIdxRef.current;
     if (prev >= 0 && prev !== idx) {
-      setSlideClass(idx > prev ? 'slide-in-left' : 'slide-in-right');
-      const timer = window.setTimeout(() => setSlideClass(''), 320);
+      if (!hasViewTransitions) {
+        setSlideClass(idx > prev ? 'slide-in-left' : 'slide-in-right');
+        const timer = window.setTimeout(() => setSlideClass(''), 460);
+        lastTabIdxRef.current = idx;
+        return () => window.clearTimeout(timer);
+      }
       lastTabIdxRef.current = idx;
-      return () => window.clearTimeout(timer);
+      return;
     }
     lastTabIdxRef.current = idx;
-  }, [location.pathname]);
+  }, [location.pathname, hasViewTransitions]);
 
   useEffect(() => {
     const initAuth = async () => {

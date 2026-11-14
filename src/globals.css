@@ -13,14 +13,46 @@ input, textarea, [contenteditable="true"], select {
 }
 
 /* Swipe page transitions between top-level tabs. */
-.slide-in-right { animation: equyvo-slide-in-right 260ms ease-out; }
-.slide-in-left { animation: equyvo-slide-in-left 260ms ease-out; }
+.slide-in-right { animation: equyvo-slide-in-right 460ms cubic-bezier(0.22, 1, 0.36, 1); }
+.slide-in-left { animation: equyvo-slide-in-left 460ms cubic-bezier(0.22, 1, 0.36, 1); }
 @keyframes equyvo-slide-in-right {
-  from { transform: translateX(28%); opacity: 0.55; }
+  from { transform: translateX(34%); opacity: 0.5; }
   to { transform: translateX(0); opacity: 1; }
 }
 @keyframes equyvo-slide-in-left {
-  from { transform: translateX(-28%); opacity: 0.55; }
+  from { transform: translateX(-34%); opacity: 0.5; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+/* View Transitions: adjoint sliding of outgoing + incoming pages. */
+@supports (view-transition-name: root) {
+  html[data-vt-dir="forward"]::view-transition-old(root) {
+    animation: equyvo-vt-out-left 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  html[data-vt-dir="forward"]::view-transition-new(root) {
+    animation: equyvo-vt-in-right 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  html[data-vt-dir="back"]::view-transition-old(root) {
+    animation: equyvo-vt-out-right 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+  html[data-vt-dir="back"]::view-transition-new(root) {
+    animation: equyvo-vt-in-left 460ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+}
+@keyframes equyvo-vt-out-left {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(-34%); opacity: 0.55; }
+}
+@keyframes equyvo-vt-in-right {
+  from { transform: translateX(34%); opacity: 0.55; }
+  to { transform: translateX(0); opacity: 1; }
+}
+@keyframes equyvo-vt-out-right {
+  from { transform: translateX(0); opacity: 1; }
+  to { transform: translateX(34%); opacity: 0.55; }
+}
+@keyframes equyvo-vt-in-left {
+  from { transform: translateX(-34%); opacity: 0.55; }
   to { transform: translateX(0); opacity: 1; }
 }
 
