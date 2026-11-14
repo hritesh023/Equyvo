@@ -1230,7 +1230,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     <div
       className={`fixed inset-0 bg-black z-[150] ${isSplitView ? 'flex' : ''}`}
       style={isExpandedLandscape
-        ? { position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', transform: 'translate(0, 100vw) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
+        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw', transform: 'translate(0, 100vh) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
         : getContainerStyle()}
     >
       {/* Top bar with minimal controls */}
@@ -1251,11 +1251,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         }}
       >
         <div className="flex justify-end gap-2">
-          {isMobileDevice && (
+          {isMobileDevice && !(isPortraitMoment || isStory) && (
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => setIsExpandedLandscape(prev => !prev)}
+              onClick={(e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                setIsExpandedLandscape(prev => !prev);
+              }}
               className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
               title={isExpandedLandscape ? 'Collapse to portrait' : 'Expand to landscape'}
             >
