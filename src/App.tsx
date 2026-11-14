@@ -156,6 +156,12 @@ const AppContent = () => {
 
   const currentTabIdx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
   useEffect(() => { currentTabIdxRef.current = currentTabIdx; }, [currentTabIdx]);
+  // Ensure the track transform is applied once the overlay mounts.
+  useEffect(() => {
+    if (swipeDrag && swipeTrackRef.current) {
+      swipeTrackRef.current.style.transform = `translateX(${swipeDxRef.current}px)`;
+    }
+  }, [swipeDrag]);
 
   // Native (non-passive) touch listeners on the scroll container so we can
   // preventDefault during a horizontal drag and drive the adjoint transform.
