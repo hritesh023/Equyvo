@@ -139,13 +139,11 @@ const AppContent = () => {
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
 
-  // Swipe sensitivity: deliberately high thresholds so pages only change on a
-  // clear, intentional horizontal swipe. Small drags / vertical scrolls and
-  // mid-screen casual swipes must NOT trigger a page change.
-  const SWIPE_MIN_DX = 200;       // px of horizontal travel required
-  const SWIPE_RATIO = 3.0;        // horizontal travel must dominate vertical by 3x
-  const SWIPE_EDGE_ZONE = 72;     // px from either screen edge a swipe may start
-  const SWIPE_LONG_SWIPE = 280;   // a very deliberate long swipe anywhere counts
+  // Swipe sensitivity: balanced so a deliberate horizontal swipe changes pages
+  // (including mid-screen swipes, which still get the adjoint transition),
+  // while small drags / vertical scrolls do not trigger accidental turns.
+  const SWIPE_MIN_DX = 130;       // px of horizontal travel required
+  const SWIPE_RATIO = 2.2;        // horizontal travel must dominate vertical
 
   // Swipe between top-level tabs (mobile-style horizontal paging).
   const handleMainTouchStart = (e: React.TouchEvent) => {
@@ -176,11 +174,6 @@ const AppContent = () => {
     if (adx < SWIPE_MIN_DX) return;
     // Horizontal must strongly dominate vertical (no accidental vertical scrolls).
     if (adx < ady * SWIPE_RATIO) return;
-    // Avoid casual mid-screen swipes turning pages: only edge-originated or
-    // very deliberate long swipes are honoured.
-    const startedAtEdge = start.x <= SWIPE_EDGE_ZONE || start.x >= window.innerWidth - SWIPE_EDGE_ZONE;
-    if (!startedAtEdge && adx < SWIPE_LONG_SWIPE) return;
-
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     const nextIdx = dx < 0 ? idx + 1 : idx - 1;
