@@ -158,7 +158,9 @@ const AppContent = () => {
       swipeHasStartRef.current = false;
       return;
     }
-    const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+    const idx = (location.pathname === '/' || location.pathname === '')
+      ? 0
+      : MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     swipeStartRef.current = { x: t.clientX, y: t.clientY };
     swipeHasStartRef.current = true;
@@ -180,7 +182,9 @@ const AppContent = () => {
     if (!swipeDraggingRef.current) {
       if (Math.abs(dx) < 5) return;
       if (Math.abs(dx) < Math.abs(dy) * 1.5) { swipeHasStartRef.current = false; return; }
-      const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+      const idx = (location.pathname === '/' || location.pathname === '')
+        ? 0
+        : MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
       const nextIdx = dx < 0 ? idx + 1 : idx - 1;
       if (idx < 0 || nextIdx < 0 || nextIdx >= MAIN_TABS.length) { swipeHasStartRef.current = false; return; }
       swipeDraggingRef.current = true;
@@ -271,7 +275,9 @@ const AppContent = () => {
 
   const skipSlideRef = useRef(false);
 
-  const currentTabIdx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+  const currentTabIdx = (location.pathname === '/' || location.pathname === '')
+    ? 0
+    : MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
 
   const hasViewTransitions = typeof (document as any).startViewTransition === 'function';
   useEffect(() => {
@@ -280,7 +286,9 @@ const AppContent = () => {
       if (idx >= 0) lastTabIdxRef.current = idx;
       return;
     }
-    const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
+    const idx = (location.pathname === '/' || location.pathname === '')
+      ? 0
+      : MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     const prev = lastTabIdxRef.current;
     if (prev >= 0 && prev !== idx) {
