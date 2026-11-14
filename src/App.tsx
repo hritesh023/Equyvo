@@ -163,6 +163,17 @@ const AppContent = () => {
       swipeHasStartRef.current = false;
       return;
     }
+    const t0 = e.touches[0];
+    swipeStartRef.current = { x: t0.clientX, y: t0.clientY };
+    swipeHasStartRef.current = true;
+    swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
+
+    const isDiscover = location.pathname.toLowerCase().includes('discover');
+    if (isDiscover) {
+      // Discover: skip interactive overlay (stable swipe handled in touchend).
+      swipeDraggingRef.current = false;
+      return;
+    }
     const idx = (location.pathname === '/' || location.pathname === '')
       ? 0
       : MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
@@ -260,7 +271,37 @@ const AppContent = () => {
     }
   };
 
-  const handleMainTouchEnd = (e: React.TouchEvent) => { finishSwipe(); };
+  const handleMainTouchEnd = (e: React.TouchEvent) => {
+    const isDiscover = location.pathname.toLowerCase().includes('discover');
+    if (isDiscover) {
+      // Stable swipe on Discover.
+      const start = swipeHasStartRef.current ? swipeStartRef.current : null;
+      swipeHasStartRef.current = false;
+      if (!start) return;
+      const t = e.changedTouches?.[0];
+      if (!t) return;
+      const dx = t.clientX - start.x;
+      const dy = t.clientY - start.y;
+      const adx = Math.abs(dx);
+      const ady = Math.abs(dy);
+      if (adx < 130) return;
+      if (adx < ady * 2.2) return;
+      const idx = 1; // discover
+      const nextIdx = dx < 0 ? idx + 1 : idx - 1;
+      if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) return;
+      document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
+      const vt = (document as any).startViewTransition;
+      if (typeof vt === 'function') {
+        try {
+          vt.call(document, () => { flushSync(() => navigate(MAIN_TABS[nextIdx])); });
+          return;
+        } catch { /* fall through */ }
+      }
+      navigate(MAIN_TABS[nextIdx]);
+      return;
+    }
+    finishSwipe();
+  };
   const handleMainTouchCancel = () => { finishSwipe(); };
 
   useEffect(() => {
@@ -290,6 +331,12 @@ const AppContent = () => {
     if (skipSlideRef.current) {
       const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
       if (idx >= 0) lastTabIdxRef.current = idx;
+      return;
+    }
+    const isDiscover = location.pathname.toLowerCase().includes('discover');
+    if (isDiscover) {
+      // Discover: use stable swipe (no interactive overlay) to avoid pinch/zoom bugs.
+      swipeHasStartRef.current = false;
       return;
     }
     const idx = (location.pathname === '/' || location.pathname === '')
