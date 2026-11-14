@@ -171,7 +171,8 @@ const AppContent = () => {
     swipeHasStartRef.current = true;
     swipeDraggingRef.current = false;
     swipeDxRef.current = 0;
-    (window as any).__equyvoSwiping = false;
+    // Disable display pinch for the duration of this (possibly) swiping touch.
+    (window as any).__equyvoSwiping = true;
     swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
   };
 
