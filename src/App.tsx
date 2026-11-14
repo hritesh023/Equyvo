@@ -4,7 +4,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavig
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
-import { DisplayProvider } from './lib/display';
+import { DisplayProvider, useDisplay } from './lib/display';
 import Navbar, { MobileBottomNav } from './components/Navbar';
 import Sidebar from './components/Sidebar';
 import { Toaster } from './components/ui/sonner';
@@ -68,6 +68,7 @@ const AppContent = () => {
   const isMobile = useIsMobile();
   const isTablet = useIsTablet();
   useNavMode();
+  const { zoom } = useDisplay();
 
   // ── Hardware/system back wiring ────────────────────────────────────────
   // Every source navigation is mirrored into the coordinator's in-app depth:
@@ -475,7 +476,7 @@ const AppContent = () => {
          </div>
         </ErrorBoundary>
          {swipeDrag && currentTabIdx >= 0 && (
-           <div className="absolute inset-0 z-50 bg-background overflow-hidden">
+           <div className="absolute inset-0 z-50 bg-background overflow-hidden" style={{ transform: `scale(${zoom})`, transformOrigin: 'top left' }}>
              <div
                ref={swipeTrackRef}
                className="flex h-full w-[200%]"
