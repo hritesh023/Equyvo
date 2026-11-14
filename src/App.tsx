@@ -139,128 +139,59 @@ const AppContent = () => {
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
 
-  const SWIPE_MIN_DX = 130;
-  const SWIPE_RATIO = 2.2;
+  // Swipe sensitivity: balanced so a deliberate horizontal swipe changes pages
+  // (including mid-screen swipes, which still get the adjoint transition),
+  // while small drags / vertical scrolls do not trigger accidental turns.
+  const SWIPE_MIN_DX = 130;       // px of horizontal travel required
+  const SWIPE_RATIO = 2.2;        // horizontal travel must dominate vertical
 
-  const swipeDraggingRef = useRef<boolean>(false);
-  const swipeDxRef = useRef<number>(0);
-  const swipeWidthRef = useRef<number>(0);
-  const swipeOriginalTransformRef = useRef<string>('');
-  const swipeTargetIdxRef = useRef<number>(-1);
-  const swipeDirRef = useRef<-1 | 1>(-1);
-
-  const getZoomSurface = (): HTMLElement | null => document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
-
+  // Swipe between top-level tabs (mobile-style horizontal paging).
   const handleMainTouchStart = (e: React.TouchEvent) => {
     const t = e.touches?.[0];
     if (!t) return;
     const target = e.target as HTMLElement | null;
-    if (target && target.closest && target.closest('input,textarea')) { touchStartRef.current = null; touchStartTargetRef.current = null; return; }
-    if (target && target.closest && target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x')) { touchStartRef.current = null; touchStartTargetRef.current = null; return; }
-    const path = location.pathname === '/' ? '/app/home' : location.pathname;
-    const idx = MAIN_TABS.findIndex((p) => path === p || path.startsWith(p + '/'));
-    if (idx < 0) return;
-    touchStartRef.current = { x: t.clientX, y: t.clientY };
-    touchStartTargetRef.current = e.target;
-    swipeDraggingRef.current = false;
-    swipeDxRef.current = 0;
-    swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
-    (window as any).__equyvoSwiping = true;
-    const zs = getZoomSurface();
-    if (zs) swipeOriginalTransformRef.current = zs.style.transform || '';
-  };
-
-  const handleMainTouchMove = (e: React.TouchEvent) => {
-    if (!e.touches || e.touches.length !== 1) return;
-    const start = touchStartRef.current;
-    if (!start) return;
-    const t = e.touches[0];
-    if (!t) return;
-    const dx = t.clientX - start.x;
-    const dy = t.clientY - start.y;
-
-    if (!swipeDraggingRef.current) {
-      if (Math.abs(dx) < 8) return;
-      if (Math.abs(dx) < Math.abs(dy) * 1.5) { touchStartRef.current = null; (window as any).__equyvoSwiping = false; return; }
-      const path = location.pathname === '/' ? '/app/home' : location.pathname;
-      const idx = MAIN_TABS.findIndex((p) => path === p || path.startsWith(p + '/'));
-      const nextIdx = dx < 0 ? idx + 1 : idx - 1;
-      if (idx < 0 || nextIdx < 0 || nextIdx >= MAIN_TABS.length) { touchStartRef.current = null; (window as any).__equyvoSwiping = false; return; }
-      swipeDraggingRef.current = true;
-      swipeTargetIdxRef.current = nextIdx;
-      swipeDirRef.current = dx < 0 ? -1 : 1;
-      swipeDxRef.current = dx;
-    }
-
-    if (swipeDraggingRef.current) {
-      const width = swipeWidthRef.current;
-      const clamped = Math.max(-width, Math.min(width, dx));
-      swipeDxRef.current = clamped;
-      const zs = getZoomSurface();
-      if (zs) {
-        zs.style.transition = 'none';
-        zs.style.transform = (swipeOriginalTransformRef.current || '') + ' translateX(' + clamped + 'px)';
-      }
-    }
-  };
-
-  const handleMainTouchEnd = (e: React.TouchEvent) => {
-    const start = touchStartRef.current;
-    const wasDragging = swipeDraggingRef.current;
-    touchStartRef.current = null;
-    touchStartTargetRef.current = null;
-    (window as any).__equyvoSwiping = false;
-
-    const zs = getZoomSurface();
-
-    if (wasDragging) {
-      const dx = swipeDxRef.current;
-      const width = swipeWidthRef.current;
-      const targetIdx = swipeTargetIdxRef.current;
-      const threshold = Math.min(80, width * 0.2);
-      const commit = Math.abs(dx) >= threshold && targetIdx >= 0;
-
-      if (commit) {
-        if (zs) {
-          zs.style.transition = 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)';
-          zs.style.transform = (swipeOriginalTransformRef.current || '') + ' translateX(' + (dx < 0 ? -width : width) + 'px)';
-        }
-        window.setTimeout(() => {
-          if (zs) zs.style.transform = swipeOriginalTransformRef.current || '';
-          document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
-          navigate(MAIN_TABS[targetIdx]);
-        }, 200);
-      } else {
-        if (zs) {
-          zs.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
-          zs.style.transform = swipeOriginalTransformRef.current || '';
-          window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
-        }
-      }
-      swipeDraggingRef.current = false;
-      swipeDxRef.current = 0;
+    // Never hijack swipes that begin on text inputs / links / sliders.
+    if (target && target.closest && target.closest('input,textarea,select,a,[role="slider"]')) {
+      touchStartRef.current = null;
+      touchStartTargetRef.current = null;
       return;
     }
-
-    // Stable swipe (no drag)
+    // Don't hijack horizontal swipes inside in-page scrollers (tabs, carousels).
+    if (target && target.closest && target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x')) {
+      touchStartRef.current = null;
+      touchStartTargetRef.current = null;
+      return;
+    }
+    touchStartRef.current = { x: t.clientX, y: t.clientY };
+    touchStartTargetRef.current = e.target;
+  };
+  const handleMainTouchEnd = (e: React.TouchEvent) => {
+    const start = touchStartRef.current;
+    touchStartRef.current = null;
+    touchStartTargetRef.current = null;
     if (!start) return;
     const t = e.changedTouches?.[0];
     if (!t) return;
-    const dx2 = t.clientX - start.x;
-    const dy2 = t.clientY - start.y;
-    const adx = Math.abs(dx2);
-    const ady = Math.abs(dy2);
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const adx = Math.abs(dx);
+    const ady = Math.abs(dy);
+    // Low sensitivity: require substantial horizontal travel.
     if (adx < SWIPE_MIN_DX) return;
+    // Horizontal must strongly dominate vertical (no accidental vertical scrolls).
     if (adx < ady * SWIPE_RATIO) return;
     const path = location.pathname === '/' ? '/app/home' : location.pathname;
     const idx = MAIN_TABS.findIndex((p) => path === p || path.startsWith(p + '/'));
     if (idx < 0) return;
-    const nextIdx = dx2 < 0 ? idx + 1 : idx - 1;
+    const nextIdx = dx < 0 ? idx + 1 : idx - 1;
     if (nextIdx < 0 || nextIdx >= MAIN_TABS.length) return;
 
     const targetPath = MAIN_TABS[nextIdx];
-    document.documentElement.dataset.vtDir = dx2 < 0 ? 'forward' : 'back';
+    // Direction hint for the page-transition animation.
+    document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
 
+    // Use the View Transitions API when available so the outgoing and incoming
+    // pages animate together (adjoint sliding) instead of a one-sided flash.
     const vt = (document as any).startViewTransition;
     if (typeof vt === 'function') {
       try {
@@ -268,24 +199,20 @@ const AppContent = () => {
           flushSync(() => navigate(targetPath));
         });
         return;
-      } catch { /* fall through */ }
+      } catch { /* fall through to plain navigate */ }
     }
     navigate(targetPath);
   };
 
-  const handleMainTouchCancel = () => {
-    (window as any).__equyvoSwiping = false;
-    const zs = getZoomSurface();
-    if (zs) {
-      zs.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
-      zs.style.transform = swipeOriginalTransformRef.current || '';
-      window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
-    }
-    touchStartRef.current = null;
-    swipeDraggingRef.current = false;
-    swipeDxRef.current = 0;
-  };
+  useEffect(() => {
+    window.scrollTo(0, 0);
+    if (mainRef.current) mainRef.current.scrollTop = 0;
+  }, [location.pathname]);
 
+  // Animate tab switches for swipe navigation (CSS fallback for browsers
+  // without the View Transitions API). When View Transitions are available the
+  // browser drives the adjoint slide, so we skip the CSS one to avoid a
+  // double animation.
   const hasViewTransitions = typeof (document as any).startViewTransition === 'function';
   useEffect(() => {
     const path = location.pathname === '/' ? '/app/home' : location.pathname;
@@ -295,7 +222,7 @@ const AppContent = () => {
     if (prev >= 0 && prev !== idx) {
       if (!hasViewTransitions) {
         setSlideClass(idx > prev ? 'slide-in-left' : 'slide-in-right');
-        const timer = window.setTimeout(() => setSlideClass(''), 600);
+        const timer = window.setTimeout(() => setSlideClass(''), 520);
         lastTabIdxRef.current = idx;
         return () => window.clearTimeout(timer);
       }
@@ -438,7 +365,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={setMainRef} className={`relative flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y', overflowX: 'hidden' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
+        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
         <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
@@ -476,7 +403,7 @@ const AppContent = () => {
          </Routes>
          </div>
         </ErrorBoundary>
-            </main>
+      </main>
       {/* Mobile bottom nav: last row of the unibody — in flow, never
           overlaying content. Desktop/tablet uses the top nav instead. */}
       {shouldShowNavbar && !chatOpen && !navHidden && <MobileBottomNav />}

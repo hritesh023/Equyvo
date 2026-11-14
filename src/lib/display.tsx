@@ -282,7 +282,6 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
     let gestureOrigin: Point | undefined;
 
     const onTouchStart = (e: TouchEvent) => {
-      if ((window as any).__equyvoSwiping) return;
       if (e.touches.length >= 2 && pinchOnRef.current) {
         const midpoint = midpointOf(e.touches);
         gestureTarget = findZoomTarget(midpoint.x, midpoint.y);
@@ -307,7 +306,6 @@ export const DisplayProvider = ({ children }: { children: React.ReactNode }) => 
     };
 
     const onTouchMove = (e: TouchEvent) => {
-      if ((window as any).__equyvoSwiping) return;
       if (!touching || !gestureTarget || e.touches.length < 2) return;
       const d = distanceOf(e.touches[0], e.touches[1]);
       maxDelta = Math.max(maxDelta, Math.abs(d - startDist));
