@@ -154,18 +154,9 @@ const AppContent = () => {
     const t = e.touches[0];
     if (!t) return;
     const target = e.target as HTMLElement | null;
-    if (target && target.closest && target.closest('input,textarea,select,a,[role="slider"]')) {
+    if (target && target.closest && target.closest('input,textarea')) {
       swipeHasStartRef.current = false;
       return;
-    }
-    if (target) {
-      if (target.closest && target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x')) {
-        swipeHasStartRef.current = false;
-        return;
-      }
-      // (horizontal-scroller walk-up removed: it was too aggressive and
-      //  blocked all swipes. In-page tabs are still protected by the
-      //  role="tablist" / .overflow-x-auto check above.)
     }
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
@@ -186,8 +177,8 @@ const AppContent = () => {
     const dy = t.clientY - start.y;
 
     if (!swipeDraggingRef.current) {
-      if (Math.abs(dx) < 8) return;
-      if (Math.abs(dx) < Math.abs(dy) * 1.3) { swipeHasStartRef.current = false; return; }
+      if (Math.abs(dx) < 5) return;
+      if (Math.abs(dx) < Math.abs(dy) * 1.5) { swipeHasStartRef.current = false; return; }
       const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
       const nextIdx = dx < 0 ? idx + 1 : idx - 1;
       if (idx < 0 || nextIdx < 0 || nextIdx >= MAIN_TABS.length) { swipeHasStartRef.current = false; return; }
@@ -264,6 +255,16 @@ const AppContent = () => {
       swipeTrackRef.current.style.transform = 'translateX(' + swipeDxRef.current + 'px)';
     }
   }, [swipeDrag]);
+
+  useEffect(() => {
+    const el = mainRef.current;
+    if (!el) return;
+    const prevent = (e: TouchEvent) => {
+      if (swipeDraggingRef.current && e.cancelable) e.preventDefault();
+    };
+    el.addEventListener('touchmove', prevent, { passive: false });
+    return () => el.removeEventListener('touchmove', prevent);
+  }, []);
 
   const skipSlideRef = useRef(false);
 
