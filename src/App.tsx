@@ -177,6 +177,21 @@ const AppContent = () => {
     };
 
     const onTouchStart = (e: TouchEvent) => {
+      // Only single-finger gestures can be a page swipe. Never hijack
+      // pinch-zoom / multi-touch.
+      if (!e.touches || e.touches.length !== 1) {
+        swipeStartRef.current = null;
+        if (swipeDraggingRef.current) {
+          // cancel in-progress drag
+          const track = swipeTrackRef.current;
+          if (track) {
+            track.style.transition = 'transform 200ms ease';
+            track.style.transform = `translateX(${swipeInitialTransformRef.current}px)`;
+          }
+          window.setTimeout(() => { setSwipeDrag(null); swipeDraggingRef.current = false; }, 200);
+        }
+        return;
+      }
       const t = e.touches?.[0];
       if (!t) return;
       if (isInteractive(e.target)) { swipeStartRef.current = null; return; }
@@ -191,6 +206,13 @@ const AppContent = () => {
     };
 
     const onTouchMove = (e: TouchEvent) => {
+      // Abort swipe on multi-touch (pinch) and let the browser handle zoom.
+      if (!e.touches || e.touches.length !== 1) {
+        if (swipeDraggingRef.current) {
+          swipeStartRef.current = null;
+        }
+        return;
+      }
       const start = swipeStartRef.current;
       if (!start) return;
       const t = e.touches?.[0];
