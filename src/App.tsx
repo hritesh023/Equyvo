@@ -436,7 +436,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y pinch-zoom' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
+        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
         <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
@@ -487,7 +487,7 @@ const AppContent = () => {
                ).map((ti) => {
                  const Comp = [HomePage, DiscoverPage, CreatePage, MomentsPage, ThoughtsPage, ProfilePage][ti];
                  return (
-                   <div key={ti} className="w-1/2 shrink-0 h-full overflow-y-auto" style={{ touchAction: 'pan-y pinch-zoom' }}>
+                   <div key={ti} className="w-1/2 shrink-0 h-full overflow-y-auto" style={{ touchAction: 'pan-y' }}>
                      <Comp />
                    </div>
                  );
