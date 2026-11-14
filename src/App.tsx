@@ -158,6 +158,11 @@ const AppContent = () => {
       swipeHasStartRef.current = false;
       return;
     }
+    // Don't hijack horizontal swipes inside in-page scrollers (Discover/Profile tabs).
+    if (target && target.closest && target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x')) {
+      swipeHasStartRef.current = false;
+      return;
+    }
     const idx = (location.pathname === '/' || location.pathname === '')
       ? 0
       : MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
