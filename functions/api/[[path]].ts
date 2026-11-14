@@ -4204,7 +4204,7 @@ export const onRequest = async (context) => {
               } else if (orderEmail) {
                 // True guest (no session): park the grant under the payment
                 // email ΓÇö claim-on-signin promotes it to the account.
-                await kv.put(
+                await env.EQUYVO_KV.put(
                   localEmailGrantKey(orderEmail),
                   JSON.stringify({ plan: paidPlan, until: untilMs, paymentId: String(body.razorpay_payment_id || '').slice(0, 100) }),
                   { expirationTtl: GRANT_TTL_SEC },
