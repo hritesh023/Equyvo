@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -246,11 +247,11 @@ const CreatePage = () => {
     // and loading widget can never linger in an uploading state after the
     // upload has actually finished. Reset both local and global state so
     // every surface (Create page overlay, global top bar) hides together.
-    setIsUploading(false);
-    setUploadProgress(null);
-    try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
-    // Show the notification in the same frame the widgets are cleared, so they
-    // disappear exactly when (not before/after) the pop-up appears.
+    flushSync(() => {
+      setIsUploading(false);
+      setUploadProgress(null);
+      try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
+    });
     _showSuccess(message);
   };
   // Deep-link a composer section: /app/create?tab=moment opens the Moments
