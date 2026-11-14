@@ -163,17 +163,9 @@ const AppContent = () => {
         swipeHasStartRef.current = false;
         return;
       }
-      let node: HTMLElement | null = target;
-      while (node && node !== document.body) {
-        try {
-          const st = window.getComputedStyle(node);
-          if ((st.overflowX === 'auto' || st.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 4) {
-            swipeHasStartRef.current = false;
-            return;
-          }
-        } catch { /* ignore */ }
-        node = node.parentElement;
-      }
+      // (horizontal-scroller walk-up removed: it was too aggressive and
+      //  blocked all swipes. In-page tabs are still protected by the
+      //  role="tablist" / .overflow-x-auto check above.)
     }
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
@@ -433,7 +425,7 @@ const AppContent = () => {
             edge-fill covers curved left/right display edges. Fixed
             screen overlays (notification panel, fullscreen viewers)
             anchor themselves via .nav-top-safe/.nav-bottom-safe. */}
-        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} onTouchStart={handleMainTouchStart} onTouchEnd={handleMainTouchEnd}>
+        <main ref={setMainRef} className={`flex-1 w-full min-h-0 overflow-y-auto ${isMobile ? 'overscroll-contain pb-8' : ''} edge-fill`} style={{ touchAction: 'pan-y' }} onTouchStart={handleMainTouchStart} onTouchMove={handleMainTouchMove} onTouchEnd={handleMainTouchEnd} onTouchCancel={handleMainTouchCancel}>
         <AppOpenAd />
         {/* Page-local boundary: a failure in one route renders an inline
             recovery card (navbar/bottom nav stay usable) and resets on the
