@@ -257,6 +257,54 @@ async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number
   return out.slice(0, MAX_SAMPLES);
 }
 
+/** Sample multiple frames from an animated GIF (when the browser supports
+ *  ImageDecoder). Falls back to the first-frame sampler otherwise, so GIFs are
+ *  never silently single-framed when a better decoder is available. */
+async function sampleGif(blob: Blob): Promise<{ url: string; skinRatio: number; violenceRatio: number }[]> {
+  const out: { url: string; skinRatio: number; violenceRatio: number }[] = [];
+  try {
+    const Decoder = (window as any).ImageDecoder;
+    if (typeof Decoder === 'function') {
+      const decoder = new Decoder({ data: blob, type: blob.type || 'image/gif' });
+      await decoder.completed;
+      const track = decoder.tracks?.selectedTrack;
+      const frameCount = Math.max(1, Number(track?.frameCount) || 1);
+      const fractions = [0, 0.12, 0.25, 0.4, 0.55, 0.7, 0.82, 0.92];
+      const indices = [...new Set(fractions.map((f) => Math.min(frameCount - 1, Math.floor(f * frameCount))))];
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        for (const i of indices) {
+          if (out.length >= MAX_SAMPLES) break;
+          try {
+            const result = await decoder.decode({ frameIndex: i });
+            const img = result?.image;
+            if (!img) continue;
+            const vw = img.displayWidth || img.codedWidth || 0;
+            const vh = img.displayHeight || img.codedHeight || 0;
+            if (!vw || !vh) { try { img.close(); } catch {} continue; }
+            const scale = Math.min(1, SAMPLE_LONG_EDGE / Math.max(vw, vh));
+            canvas.width = Math.max(1, Math.round(vw * scale));
+            canvas.height = Math.max(1, Math.round(vh * scale));
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            try { img.close(); } catch {}
+            const jpeg = canvas.toDataURL('image/jpeg', SAMPLE_QUALITY);
+            if (jpeg && jpeg.length > 200) {
+              out.push({ url: jpeg, skinRatio: computeSkinRatio(ctx, canvas.width, canvas.height), violenceRatio: computeViolenceRatio(ctx, canvas.width, canvas.height) });
+            }
+          } catch { /* frame skip */ }
+        }
+      }
+      try { decoder.close(); } catch {}
+    }
+  } catch { /* fall through */ }
+  if (out.length === 0) {
+    const s = await sampleImage(blob);
+    if (s) out.push({ url: s.dataUrl, skinRatio: s.skinRatio, violenceRatio: s.violenceRatio });
+  }
+  return out.slice(0, MAX_SAMPLES);
+}
+
 /**
  * Screen one file. Returns 'allow' only when nothing trips the gate.
  * 'review' and 'block' are treated the same on the Create page: the file is
@@ -313,7 +361,10 @@ export async function screenMedia(
   const samples: string[] = [];
   const skinRatios: number[] = [];
   const violenceRatios: number[] = [];
-  if (isImage) {
+  const isGif = (file as File)?.type === 'image/gif' || /\.gif$/i.test((file as File)?.name || '');
+  if (isImage && isGif) {
+    for (const s of await sampleGif(file)) { samples.push(s.url); skinRatios.push(s.skinRatio); violenceRatios.push(s.violenceRatio); }
+  } else if (isImage) {
     const s = await sampleImage(file);
     if (s) { samples.push(s.dataUrl); skinRatios.push(s.skinRatio); violenceRatios.push(s.violenceRatio); }
   } else if (isVideo) {
@@ -347,7 +398,11 @@ export async function screenMedia(
   // values are passed to the server-side eye (with a hint) instead of
   // blocking outright, so legitimate skin-heavy footage (cooking, sports,
   // religious/cultural events) is not refused on a heuristic alone.
-  const skinHardBlock = isVideo ? 0.92 : 0.9;
+  // Only treat as a hard block when skin coverage is essentially the whole
+// frame (extreme nudity). Mid-range values (cooking, sports, religious/
+// cultural events, sand, skin-heavy but benign scenes) are forwarded as a
+// hint to the server-side AI eye instead of being refused outright.
+const skinHardBlock = 0.98;
   if (maxSkin >= skinHardBlock) {
     return {
       verdict: 'block',
@@ -364,7 +419,11 @@ export async function screenMedia(
   // colors dominate a large share of the frame.
   // Hard block only when violence colors dominate most of the frame. Mid-range
   // values are forwarded as a hint for the server-side eye.
-  if (maxViolence >= 0.45) {
+  // Only block when violence colors dominate almost the entire frame. Ordinary
+// red food, tomatoes, peppers, sand, sunsets, sports and cooking scenes can
+// trip the red-dominant heuristic at lower ratios, so they are forwarded as
+// a hint instead of being refused on color alone.
+if (maxViolence >= 0.85) {
     return {
       verdict: 'block',
       category: 'violent',
