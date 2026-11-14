@@ -48,17 +48,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // on the first render into a ref: clearing it mid-render on every pass
   // could lose the payload on a double render (StrictMode / parent state
   // update) and swap the viewer onto stale content.
-  const rawContentRef = useRef<any>(null);
-  // Reset the cached payload whenever a DIFFERENT item is opened, so reopening
-  // the same viewer never reuses a stale payload (which made the second open
-  // fall back to the legacy/buggy fullscreen layout).
-  const currentId = (content as any)?.id ?? (content as any)?.contentId;
-  if (rawContentRef.current === null || (rawContentRef.current?.id ?? rawContentRef.current?.contentId) !== currentId || rawContentRef.current !== content) {
-    const temp = (window as any).tempFullscreenContent;
-    rawContentRef.current = temp ? { ...content, ...temp } : content;
-    if (temp) (window as any).tempFullscreenContent = null;
-  }
-  const rawContent = rawContentRef.current;
+  const temp = (window as any).tempFullscreenContent;
+  if (temp) (window as any).tempFullscreenContent = null;
+  const rawContent = temp ? { ...content, ...temp } : content;
   // Normalise once: callers can hand us raw media arrays/objects/legacy
   // fields, and every renderer below expects clean strings.
   const actualContent = useMemo(
@@ -112,9 +104,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setImageFailed(true);
     hideBrokenImage(e);
   };
-  const actualType = rawContentRef.current !== content
-    ? (rawContentRef.current?.type as string) || 'video'
-    : type;
+  const actualType = (rawContent?.type as string) || type;
   const videoRef = useRef<HTMLVideoElement>(null);
 
   // Hold-to-2× scrub: long-press right = fast-forward at 2× the speed,
@@ -141,7 +131,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(true);
         setShowControls(false);
       } else {
-        rawContentRef.current = null;
         setContentOnly(false);
         setHideOverlay(false);
         setShowControls(true);
