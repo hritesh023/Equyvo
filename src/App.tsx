@@ -150,8 +150,11 @@ const AppContent = () => {
     const t = e.touches?.[0];
     if (!t) return;
     const target = e.target as HTMLElement | null;
-    // Never hijack swipes that begin on interactive controls.
-    if (target && target.closest && target.closest('input,textarea,select,button,a,[role="button"],[role="slider"]')) {
+    // Never hijack swipes that begin on text inputs / links / sliders.
+    // (Buttons are intentionally allowed: a tap stays a tap, while a
+    // 130px+ horizontal drag still pages between tabs — needed on button-heavy
+    // pages like Create where the old exclusion blocked every swipe.)
+    if (target && target.closest && target.closest('input,textarea,select,a,[role="slider"]')) {
       touchStartRef.current = null;
       touchStartTargetRef.current = null;
       return;
