@@ -160,6 +160,24 @@ const AppContent = () => {
       swipeHasStartRef.current = false;
       return;
     }
+    // Don't hijack horizontal swipes that belong to in-page horizontal
+    // scrollers (Discover tabs/carousels, chip rows, etc.).
+    if (target) {
+      const horizScroller = target.closest('[role="tablist"], [data-no-page-swipe], .overflow-x-auto, .overflow-x-scroll, .snap-x');
+      if (horizScroller) { swipeHasStartRef.current = false; return; }
+      // Walk up to find a horizontally scrollable ancestor.
+      let node: HTMLElement | null = target;
+      while (node && node !== document.body) {
+        try {
+          const st = window.getComputedStyle(node);
+          if ((st.overflowX === 'auto' || st.overflowX === 'scroll') && node.scrollWidth > node.clientWidth + 4) {
+            swipeHasStartRef.current = false;
+            return;
+          }
+        } catch { /* ignore */ }
+        node = node.parentElement;
+      }
+    }
     const idx = MAIN_TABS.findIndex((p) => location.pathname === p || location.pathname.startsWith(p + '/'));
     if (idx < 0) return;
     swipeStartRef.current = { x: t.clientX, y: t.clientY };
