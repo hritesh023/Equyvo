@@ -158,8 +158,15 @@ const AppContent = () => {
     const t = e.touches?.[0];
     if (!t) return;
     const target = e.target as HTMLElement | null;
-    // Never hijack swipes that begin on text inputs.
-    if (target && target.closest && target.closest('input,textarea')) {
+    // Never hijack touches while a fullscreen media viewer is open (seeking,
+    // tapping, etc. must not trigger page swipe or tab navigation).
+    if (document.querySelector('[data-fullscreen-viewer="true"]')) {
+      touchStartRef.current = null;
+      touchStartTargetRef.current = null;
+      return;
+    }
+    // Never hijack swipes that begin on text inputs or the seek bar.
+    if (target && target.closest && target.closest('input,textarea,[role="slider"],.touch-none')) {
       touchStartRef.current = null;
       touchStartTargetRef.current = null;
       return;
@@ -184,6 +191,7 @@ const AppContent = () => {
     if (zs) swipeOriginalTransformRef.current = zs.style.transform || '';
   };
   const handleMainTouchMove = (e: React.TouchEvent) => {
+    if (document.querySelector('[data-fullscreen-viewer="true"]')) return;
     if (!e.touches || e.touches.length !== 1) return;
     const start = touchStartRef.current;
     if (!start) return;

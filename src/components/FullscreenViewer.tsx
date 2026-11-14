@@ -1228,7 +1228,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
 
   return (
     <div
+      data-fullscreen-viewer="true"
       className={`fixed inset-0 bg-black z-[150] ${isSplitView ? 'flex' : ''}`}
+      onTouchStart={(e) => { e.stopPropagation(); }}
+      onTouchMove={(e) => { e.stopPropagation(); }}
+      onTouchEnd={(e) => { e.stopPropagation(); }}
+      onTouchCancel={(e) => { e.stopPropagation(); }}
       style={isExpandedLandscape
         ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw', transform: 'translate(0, 100vh) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
         : getContainerStyle()}
