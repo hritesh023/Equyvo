@@ -271,15 +271,15 @@ const AppContent = () => {
       }
     };
 
-    el.addEventListener('touchstart', onTouchStart, { passive: true });
-    el.addEventListener('touchmove', onTouchMove, { passive: false });
-    el.addEventListener('touchend', finish, { passive: true });
-    el.addEventListener('touchcancel', finish, { passive: true });
+    el.addEventListener('touchstart', onTouchStart, { passive: true, capture: true });
+    el.addEventListener('touchmove', onTouchMove, { passive: false, capture: true });
+    el.addEventListener('touchend', finish, { passive: true, capture: true });
+    el.addEventListener('touchcancel', finish, { passive: true, capture: true });
     return () => {
-      el.removeEventListener('touchstart', onTouchStart);
-      el.removeEventListener('touchmove', onTouchMove);
-      el.removeEventListener('touchend', finish);
-      el.removeEventListener('touchcancel', finish);
+      el.removeEventListener('touchstart', onTouchStart, { capture: true } as any);
+      el.removeEventListener('touchmove', onTouchMove, { capture: true } as any);
+      el.removeEventListener('touchend', finish, { capture: true } as any);
+      el.removeEventListener('touchcancel', finish, { capture: true } as any);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
