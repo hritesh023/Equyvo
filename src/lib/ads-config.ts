@@ -3,11 +3,11 @@
 // App ID goes in AndroidManifest / Info.plist. Ad unit is Native Advanced.
 
 export const ADMOB_APP_ID =
-  import.meta.env.VITE_ADMOB_APP_ID || 'ca-app-pub-8929153950560106~2056697900';
+  import.meta.env.VITE_ADMOB_APP_ID || 'ca-app-pub-8929153950560106~1331220851';
 
 export const ADMOB_NATIVE_AD_UNIT_ID =
   import.meta.env.VITE_ADMOB_NATIVE_AD_UNIT ||
-  'ca-app-pub-8929153950560106/9607884864';
+  'ca-app-pub-8929153950560106/2676092115';
 
 // Google test IDs — automatically used in dev / localhost so real impressions
 // are never generated during development (AdMob policy).
@@ -23,7 +23,7 @@ export const TEST_INTERSTITIAL_AD_UNIT_ID = 'ca-app-pub-3940256099942544/1033173
  */
 export const ADMOB_INTERSTITIAL_AD_UNIT_ID =
   import.meta.env.VITE_ADMOB_INTERSTITIAL_AD_UNIT ||
-  'ca-app-pub-8929153950560106/2860457776';
+  'ca-app-pub-8929153950560106/4448338785';
 
 /**
  * Rewarded ad unit (watch-to-earn). Used by the "Watch ad to earn rewards"
@@ -32,7 +32,7 @@ export const ADMOB_INTERSTITIAL_AD_UNIT_ID =
  */
 export const ADMOB_REWARDED_AD_UNIT_ID =
   import.meta.env.VITE_ADMOB_REWARDED_AD_UNIT ||
-  'ca-app-pub-8929153950560106/3463268010';
+  'ca-app-pub-8929153950560106/8918241841';
 export const TEST_REWARDED_AD_UNIT_ID = 'ca-app-pub-3940256099942544/5224354917';
 
 /** Advertising test-device IDs (comma-separated) for real-device testing. */

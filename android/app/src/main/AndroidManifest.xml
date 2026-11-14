@@ -39,11 +39,11 @@
                 android:resource="@xml/file_paths"></meta-data>
         </provider>
 
-        <!-- AdMob App ID (ca-app-pub-8929153950560106~2056697900).
+        <!-- AdMob App ID (ca-app-pub-8929153950560106~1331220851).
              Required before the Mobile Ads SDK initializes. -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-8929153950560106~2056697900" />
+            android:value="ca-app-pub-8929153950560106~1331220851" />
     </application>
 
     <!-- Permissions -->
