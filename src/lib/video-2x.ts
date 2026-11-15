@@ -36,6 +36,7 @@ interface HoldState {
   pointerId: number;
   downX: number;
   downY: number;
+  downOffsetX: number;
   timer: number;
   active: Side | null;
   wasPaused: boolean;
@@ -60,7 +61,7 @@ export function useVideo2xPress(
   useEffect(() => {
     const attached = new Set<HTMLVideoElement>();
     const st: HoldState = {
-      video: null, pointerId: -1, downX: 0, downY: 0, timer: 0,
+      video: null, pointerId: -1, downX: 0, downY: 0, downOffsetX: 0, timer: 0,
       active: null, wasPaused: false, savedRate: 1, raf: 0, last: 0,
       overlay: null, suppressUntil: 0,
     };
@@ -145,10 +146,10 @@ export function useVideo2xPress(
       const v = st.video;
       if (!v || st.active) return;
       const rect = v.getBoundingClientRect();
-      if (rect.width < 40) { disarm(); return; }
+      if (v.clientWidth < 40) { disarm(); return; }
       const finiteDur = isFinite(v.duration);
       const live = !finiteDur;
-      const side: Side = (st.downX - rect.left) < rect.width / 2 ? 'rew' : 'fwd';
+      const side: Side = st.downOffsetX < (v.clientWidth / 2) ? 'rew' : 'fwd';
       if (side === 'rew' && live) { disarm(); return; } // nothing left of live
       st.active = side;
       st.wasPaused = v.paused;
@@ -202,6 +203,7 @@ export function useVideo2xPress(
       st.pointerId = e.pointerId;
       st.downX = e.clientX;
       st.downY = e.clientY;
+      st.downOffsetX = (typeof e.offsetX === 'number') ? e.offsetX : (e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left);
       window.addEventListener('pointermove', onMove, { passive: true });
       window.addEventListener('pointerup', onUp, { passive: true });
       window.addEventListener('pointercancel', onUp, { passive: true });
