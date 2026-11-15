@@ -189,6 +189,8 @@ const AppContent = () => {
     swipeDxRef.current = 0;
     swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
     (window as any).__equyvoSwiping = true;
+    // Stop any in-flight CSS slide animation so it can't fight the swipe transform.
+    setSlideClass('');
     // Cancel any in-flight swipe commit/reset so a new gesture can't stack on
     // top of a half-finished transform animation (the source of the "stuck
     // zoomed page" glitch after repeated swipes).
