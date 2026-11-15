@@ -146,10 +146,10 @@ export function useVideo2xPress(
       const v = st.video;
       if (!v || st.active) return;
       const rect = v.getBoundingClientRect();
-      if (v.clientWidth < 40) { disarm(); return; }
+      if (rect.width < 40) { disarm(); return; }
       const finiteDur = isFinite(v.duration);
       const live = !finiteDur;
-      const side: Side = st.downOffsetX < (v.clientWidth / 2) ? 'rew' : 'fwd';
+      const side: Side = st.downOffsetX < (rect.width / 2) ? 'rew' : 'fwd';
       if (side === 'rew' && live) { disarm(); return; } // nothing left of live
       st.active = side;
       st.wasPaused = v.paused;
@@ -203,7 +203,7 @@ export function useVideo2xPress(
       st.pointerId = e.pointerId;
       st.downX = e.clientX;
       st.downY = e.clientY;
-      st.downOffsetX = (typeof e.offsetX === 'number') ? e.offsetX : (e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left);
+      st.downOffsetX = e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left;
       window.addEventListener('pointermove', onMove, { passive: true });
       window.addEventListener('pointerup', onUp, { passive: true });
       window.addEventListener('pointercancel', onUp, { passive: true });

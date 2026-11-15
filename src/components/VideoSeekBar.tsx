@@ -123,34 +123,48 @@ const VideoSeekBar: React.FC<VideoSeekBarProps> = ({
     }
   }, [safeDuration]);
 
+  // Rotation-aware geometry: when the bar is rendered inside a rotated
+  // (expanded-landscape) container it is laid out vertically on screen, so the
+  // pointer's Y axis becomes the seek axis instead of X.
+  const barRect = useCallback((): DOMRect | null => {
+    const el = barRef.current;
+    if (!el) return null;
+    return el.getBoundingClientRect();
+  }, []);
+
   const timeFromClientX = useCallback(
-    (clientX: number): { time: number; x: number } => {
-      const el = barRef.current;
-      if (!el || !safeDuration) return { time: 0, x: 0 };
-      const rect = el.getBoundingClientRect();
-      const x = Math.min(Math.max(0, clientX - rect.left), rect.width);
-      const ratio = rect.width > 0 ? x / rect.width : 0;
-      return { time: ratio * safeDuration, x };
+    (clientX: number, clientY?: number): { time: number; x: number } => {
+      const rect = barRect();
+      if (!rect || !safeDuration) return { time: 0, x: 0 };
+      const vertical = rect.height > rect.width + 4;
+      const along = vertical ? (clientY ?? 0) - rect.top : clientX - rect.left;
+      const length = vertical ? rect.height : rect.width;
+      const pos = Math.min(Math.max(0, along), length);
+      const ratio = length > 0 ? pos / length : 0;
+      return { time: ratio * safeDuration, x: pos };
     },
-    [safeDuration],
+    [barRect, safeDuration],
   );
 
   const handleMove = useCallback(
-    (clientX: number) => {
+    (clientX: number, clientY?: number) => {
       if (!safeDuration) return;
-      const { time, x } = timeFromClientX(clientX);
+      const { time, x } = timeFromClientX(clientX, clientY);
       setHoverTime(time);
       setHoverX(x);
+      // Keep bar width in sync with the (possibly rotated) layout.
+      const rect = barRect();
+      if (rect) setBarWidth(rect.width > rect.height ? rect.width : rect.height);
       captureFrame(time);
       if (scrubbing) onSeek(time);
     },
-    [captureFrame, onSeek, safeDuration, scrubbing, timeFromClientX],
+    [barRect, captureFrame, onSeek, safeDuration, scrubbing, timeFromClientX],
   );
 
   const commitSeek = useCallback(
-    (clientX: number) => {
+    (clientX: number, clientY?: number) => {
       if (!safeDuration) return;
-      const { time } = timeFromClientX(clientX);
+      const { time } = timeFromClientX(clientX, clientY);
       onSeek(time);
     },
     [onSeek, safeDuration, timeFromClientX],
@@ -201,11 +215,11 @@ const VideoSeekBar: React.FC<VideoSeekBarProps> = ({
               /* ignore */
             }
             setScrubbing(true);
-            handleMove(e.clientX);
-            commitSeek(e.clientX);
+            handleMove(e.clientX, e.clientY);
+            commitSeek(e.clientX, e.clientY);
           }}
           onPointerMove={(e) => {
-            handleMove(e.clientX);
+            handleMove(e.clientX, e.clientY);
           }}
           onPointerLeave={() => {
             if (!scrubbing) {
@@ -214,7 +228,7 @@ const VideoSeekBar: React.FC<VideoSeekBarProps> = ({
             }
           }}
           onPointerUp={(e) => {
-            commitSeek(e.clientX);
+            commitSeek(e.clientX, e.clientY);
             setScrubbing(false);
           }}
           onKeyDown={(e) => {
