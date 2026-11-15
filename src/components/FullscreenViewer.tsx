@@ -1233,7 +1233,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       onTouchEnd={(e) => { e.stopPropagation(); }}
       onTouchCancel={(e) => { e.stopPropagation(); }}
       style={isExpandedLandscape
-        ? { position: 'fixed', top: 0, left: 0, width: '100vh', height: '100vw', transform: 'translate(0, 100vh) rotate(90deg)', transformOrigin: 'top left', backgroundColor: 'black', overflow: 'hidden' }
+        ? { position: 'fixed', top: '50%', left: '50%', width: '100vh', height: '100vw', transform: 'translate(-50%, -50%) rotate(90deg)', transformOrigin: 'center center', backgroundColor: 'black', overflow: 'hidden' }
         : getContainerStyle()}
     >
       {/* Top bar with minimal controls */}

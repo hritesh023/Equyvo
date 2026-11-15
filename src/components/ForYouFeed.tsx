@@ -236,7 +236,7 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
     const hasVideo = Boolean(vid);
     const fullscreenContent = {
       ...post,
-      type: isMomentPost ? 'moment' : (hasVideo ? 'image' : (aud ? 'audio' : (img ? 'image' : post.type))),
+      type: isMomentPost ? 'moment' : (hasVideo ? 'moment' : (aud ? 'audio' : (img ? 'image' : post.type))),
       videoUrl: vid,
       audioUrl: aud,
       media: vid || aud || img,
