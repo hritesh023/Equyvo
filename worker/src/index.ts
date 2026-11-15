@@ -1264,7 +1264,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if ((file as any).size > maxBytes) return respondError(`File too large for ${quota.label} (max ${Math.min(quota.maxUploadMB, envCapMB)}MB)`, 413);
 
       const usage = await getUsage(env, actor.id);
-      if (usage.bytes + (file as any).size > quota.storageBytes) {
+      if (quota.storageBytes > 0 && usage.bytes + (file as any).size > quota.storageBytes) {
         return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
       }
       // Free users have no monthly upload-count cap.
@@ -1656,7 +1656,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       if (size > maxBytes) return respondError(`File too large for ${quota.label} (max ${Math.min(quota.maxUploadMB, envCapMB)}MB)`, 413);
 
       const usage = await getUsage(env, actor.id);
-      if (usage.bytes + size > quota.storageBytes) {
+      if (quota.storageBytes > 0 && usage.bytes + size > quota.storageBytes) {
         return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
       }
       // Free users have no monthly upload-count cap.
@@ -1751,7 +1751,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
        const maxBytes = Math.min(quota.maxUploadMB, envCapMB) * 1024 * 1024;
        if (totalBytes > maxBytes) return respondError(`File too large for ${quota.label}`, 413);
        const usage = await getUsage(env, actor.id);
-       if (usage.bytes + totalBytes > quota.storageBytes) return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
+       if (quota.storageBytes > 0 && usage.bytes + totalBytes > quota.storageBytes) return respond({ error: `Storage quota exceeded for ${quota.label}`, code: 'QUOTA_STORAGE', planId }, 402);
        if (planId !== 'eq_free' && usage.monthUploads >= quota.monthlyUploads) return respond({ error: `Monthly upload limit reached for ${quota.label}`, code: 'QUOTA_MONTHLY', planId }, 402);
 
        try {

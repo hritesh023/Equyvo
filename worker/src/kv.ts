@@ -49,7 +49,7 @@ export { KEYS };
 // --- Monetization: server-side plan catalog (source of truth) ---
 const GB = 1024 * 1024 * 1024;
 export const PLAN_CATALOG: Record<string, { id: string; label: string; priceInr: number | null; storageBytes: number; maxUploadMB: number; maxVideoSec: number; monthlyUploads: number; quality: string; ads: boolean | string; creator?: boolean; business?: boolean; verified?: boolean }> = {
-  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 100,   quality: 'auto-low',  ads: true },
+  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 0,         maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 0,     quality: 'auto-low',  ads: true },
   eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 0,  monthlyUploads: 500,   quality: 'auto-good', ads: 'light' },
   eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 0,  monthlyUploads: 2000,  quality: 'auto-best', ads: false },
   eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 0,  monthlyUploads: 5000,  quality: 'auto-best', ads: false, creator: true },
@@ -1747,8 +1747,8 @@ export async function deletePost(env: Env, postId: string): Promise<boolean> {
   const existing = await env.EQUYVO_KV.get(KEYS.POST(postId));
   if (existing) {
     const parsed = JSON.parse(existing);
-    await purgeStoredMedia(env, parsed);
     await refundStoredMedia(env, String(parsed.userId || parsed.user_id || ''), parsed);
+    await purgeStoredMedia(env, parsed);
   }
   // Remove from KV
   await env.EQUYVO_KV.delete(KEYS.POST(postId));
@@ -1771,8 +1771,8 @@ export async function deleteThought(env: Env, thoughtId: string): Promise<boolea
   const existing = await env.EQUYVO_KV.get(KEYS.THOUGHT(thoughtId));
   if (existing) {
     const parsed = JSON.parse(existing);
-    await purgeStoredMedia(env, parsed);
     await refundStoredMedia(env, String(parsed.user_id || parsed.userId || ''), parsed);
+    await purgeStoredMedia(env, parsed);
   }
   await env.EQUYVO_KV.delete(KEYS.THOUGHT(thoughtId));
   const listJson = await env.EQUYVO_KV.get(KEYS.THOUGHTS);
@@ -1792,8 +1792,8 @@ export async function deleteStory(env: Env, storyId: string): Promise<boolean> {
   const existing = await env.EQUYVO_KV.get(KEYS.STORY(storyId));
   if (existing) {
     const parsed = JSON.parse(existing);
-    await purgeStoredMedia(env, parsed);
     await refundStoredMedia(env, String(parsed.userId || parsed.user_id || ''), parsed);
+    await purgeStoredMedia(env, parsed);
   }
   await env.EQUYVO_KV.delete(KEYS.STORY(storyId));
   const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
@@ -1813,8 +1813,8 @@ export async function deleteMoment(env: Env, momentId: string): Promise<boolean>
   const existing = await env.EQUYVO_KV.get(KEYS.MOMENT(momentId));
   if (existing) {
     const parsed = JSON.parse(existing);
-    await purgeStoredMedia(env, parsed);
     await refundStoredMedia(env, String(parsed.userId || parsed.user_id || ''), parsed);
+    await purgeStoredMedia(env, parsed);
   }
   await env.EQUYVO_KV.delete(KEYS.MOMENT(momentId));
   const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);
@@ -1850,8 +1850,8 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
       if (postJson) {
         const post = JSON.parse(postJson);
         if (post.userId === userId || post.user_id === userId) {
-          await purgeStoredMedia(env, post);
           await refundStoredMedia(env, userId, post);
+          await purgeStoredMedia(env, post);
           await env.EQUYVO_KV.delete(KEYS.POST(id));
           deletedIds.add(id);
           deletedPosts++;
@@ -1873,8 +1873,8 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
       if (thoughtJson) {
         const thought = JSON.parse(thoughtJson);
         if (thought.user_id === userId || thought.userId === userId) {
-          await purgeStoredMedia(env, thought);
           await refundStoredMedia(env, userId, thought);
+          await purgeStoredMedia(env, thought);
           await env.EQUYVO_KV.delete(KEYS.THOUGHT(id));
           deletedIds.add(id);
           deletedThoughts++;
@@ -1896,8 +1896,8 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
       if (storyJson) {
         const story = JSON.parse(storyJson);
         if (story.userId === userId || story.user_id === userId) {
-          await purgeStoredMedia(env, story);
           await refundStoredMedia(env, userId, story);
+          await purgeStoredMedia(env, story);
           await env.EQUYVO_KV.delete(KEYS.STORY(id));
           deletedIds.add(id);
           deletedStories++;
@@ -1919,8 +1919,8 @@ export async function deleteUserData(env: Env, userId: string): Promise<{ delete
       if (momentJson) {
         const moment = JSON.parse(momentJson);
         if (moment.userId === userId || moment.user_id === userId) {
-          await purgeStoredMedia(env, moment);
           await refundStoredMedia(env, userId, moment);
+          await purgeStoredMedia(env, moment);
           await env.EQUYVO_KV.delete(KEYS.MOMENT(id));
           deletedIds.add(id);
           deletedMoments++;

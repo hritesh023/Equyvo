@@ -19,12 +19,12 @@ export interface PlanDef {
 }
 
 export const EQUYVO_PLANS: PlanDef[] = [
-  { id: 'eq_free', label: 'Free', priceInr: 0, tagline: 'Everyone', storageGB: 1, maxUploadMB: 150, maxVideoSec: 300, monthlyUploads: 100, features: [
+  { id: 'eq_free', label: 'Free', priceInr: 0, tagline: 'Everyone', storageGB: 0, maxUploadMB: 150, maxVideoSec: 300, monthlyUploads: 0, features: [
     'Posts, photos, videos, Moments and Thoughts',
     'Communities, messaging and Discover',
     'Basic creator tools',
-    '1 GB storage',
-    '150 MB maximum upload',
+    'Unlimited uploads',
+    '150 MB maximum upload (500 MB after watching a rewarded ad)',
     'Basic profile customization',
     'Ad-supported experience',
   ] },

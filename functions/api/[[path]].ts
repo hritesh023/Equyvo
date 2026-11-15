@@ -1962,7 +1962,7 @@ const GB = 1024 * 1024 * 1024;
 // recordings): the FILE-SIZE/LENGTH gates scale with the plan, storage
 // quota stays the primary limit. Upgrades buy storage + even bigger caps.
 const PLAN_CATALOG = {
-  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 1 * GB,    maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 100,  quality: 'auto-low',  ads: true },
+  eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 0,         maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 0,    quality: 'auto-low',  ads: true },
   eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 0,  monthlyUploads: 500,  quality: 'auto-good', ads: 'light' },
   eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 0,  monthlyUploads: 2000, quality: 'auto-best', ads: false },
   eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 0,  monthlyUploads: 5000, quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
@@ -3720,12 +3720,13 @@ async function deleteItem(context, listKey, itemKey, id, cors) {
   const rl = await rateLimit(kv, 'delete', actor.id, rateLimitFor(planId, 'delete'));
   if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
 
+  let _resolvedBytes = 0;
+  try { _resolvedBytes = (await resolveStoredMedia(env, parsed)).bytes || 0; } catch { /* ignore */ }
   await purgeStoredMedia(env, parsed);
   // Refund storage accounting so quotas stay accurate.
   try {
     const ownerId = String(owner || actor.id);
-    const { bytes } = await resolveStoredMedia(env, parsed);
-    if (bytes > 0) await subtractUsage(env, ownerId, bytes);
+    if (_resolvedBytes > 0) await subtractUsage(env, ownerId, _resolvedBytes);
   } catch { /* ignore */ }
   await kv.delete(itemKey(id));
 
@@ -6090,10 +6091,11 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           let parsed = null;
           try { parsed = JSON.parse(item); } catch { parsed = null; }
           if (parsed && itemBelongsToAccount(parsed, refs)) {
+            let _b = 0;
+            try { _b = (await resolveStoredMedia(env, parsed)).bytes || 0; } catch { /* ignore */ }
             await purgeStoredMedia(env, parsed);
             try {
-              const { bytes } = await resolveStoredMedia(env, parsed);
-              if (bytes > 0) await subtractUsage(env, userId, bytes);
+              if (_b > 0) await subtractUsage(env, userId, _b);
             } catch { /* ignore */ }
             await kv.delete(delKey(id));
             deletedIds.add(id);
@@ -6273,7 +6275,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         return json({ error: `File too large for ${quota.label} (max ${Math.min(quota.maxUploadMB, envCapMB)}MB). Upgrade for higher limits.`, code: 'QUOTA_FILE_SIZE', planId }, 413, cors);
       }
       const usage = await getUsage(env, actor.id);
-      if (usage.bytes + declaredBytes > quota.storageBytes) {
+      if (quota.storageBytes > 0 && usage.bytes + declaredBytes > quota.storageBytes) {
         return json({ error: `Storage quota exceeded for ${quota.label} (${Math.round(quota.storageBytes / GB)}GB). Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId, usage }, 402, cors);
       }
       // Free users have no monthly upload-count cap — only per-file size (150MB,
@@ -6435,7 +6437,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         return json({ error: `File too large for ${quota.label}. Upgrade for higher limits.`, code: 'QUOTA_FILE_SIZE', planId: livePlan }, 413, cors);
       }
       const completeUsage = await getUsage(env, actor.id);
-      if (completeUsage.bytes + totalBytes > quota.storageBytes) {
+      if (quota.storageBytes > 0 && completeUsage.bytes + totalBytes > quota.storageBytes) {
         return json({ error: `Storage quota exceeded for ${quota.label}. Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId: livePlan, usage: completeUsage }, 402, cors);
       }
       // Free users have no monthly upload-count cap.
@@ -6623,7 +6625,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
 
       // Storage quota + monthly upload caps: free stays affordable.
       const usage = await getUsage(env, actor.id);
-      if (usage.bytes + file.size > quota.storageBytes) {
+      if (quota.storageBytes > 0 && usage.bytes + file.size > quota.storageBytes) {
         return json({ error: `Storage quota exceeded for ${quota.label} (${Math.round(quota.storageBytes / GB)}GB). Delete media or upgrade.`, code: 'QUOTA_STORAGE', planId, usage }, 402, cors);
       }
       // Free users have no monthly upload-count cap.
