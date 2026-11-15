@@ -226,11 +226,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       actualContent?.mediaType === 'audio' ||
                       Boolean((actualContent as any)?.audioUrl);
   const isMomentFlag = actualContent?.isMoment === true ||
-                        actualContent?.type === 'moment' ||
                         actualContent?.contentType === 'moment' ||
                         actualContent?.mediaType === 'moment';
   const isStoryFlag = actualContent?.isStory === true ||
-                       actualContent?.type === 'story' ||
                        actualContent?.contentType === 'story' ||
                        actualContent?.mediaType === 'story' ||
                        resolvedType === 'story';
@@ -1256,7 +1254,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         }}
       >
         <div className="flex justify-end gap-2">
-          {isMobileDevice && !(isPortraitMoment || isStory) && (
+          {!isOriginalPortrait && !(isPortraitMoment || isStory) && Math.min(window.innerWidth, window.innerHeight) < 1024 && (
             <Button
               variant="ghost"
               size="icon"
