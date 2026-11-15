@@ -144,8 +144,11 @@ const AppContent = () => {
   const swipeOriginalTransformRef = useRef<string>('');
   const swipeTargetIdxRef = useRef<number>(-1);
   const zoomSurfaceRef = useRef<HTMLElement | null>(null);
+  const swipeCommitTimerRef = useRef<number | null>(null);
+  const swipeResetTimerRef = useRef<number | null>(null);
   const [slideClass, setSlideClass] = useState('');
   const lastTabIdxRef = useRef(-1);
+  const viewTransitionInProgressRef = useRef<boolean>(false);
 
   // Swipe sensitivity: balanced so a deliberate horizontal swipe changes pages
   // (including mid-screen swipes, which still get the adjoint transition),
@@ -186,9 +189,24 @@ const AppContent = () => {
     swipeDxRef.current = 0;
     swipeWidthRef.current = (e.currentTarget as HTMLElement)?.clientWidth || window.innerWidth;
     (window as any).__equyvoSwiping = true;
+    // Cancel any in-flight swipe commit/reset so a new gesture can't stack on
+    // top of a half-finished transform animation (the source of the "stuck
+    // zoomed page" glitch after repeated swipes).
+    if (swipeCommitTimerRef.current) { clearTimeout(swipeCommitTimerRef.current); swipeCommitTimerRef.current = null; }
+    if (swipeResetTimerRef.current) { clearTimeout(swipeResetTimerRef.current); swipeResetTimerRef.current = null; }
     const zs = document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
     zoomSurfaceRef.current = zs;
-    if (zs) swipeOriginalTransformRef.current = zs.style.transform || '';
+    if (zs) {
+      // Drop any leftover translateX a previous (interrupted) swipe may have
+      // left behind, so the captured baseline is clean.
+      if (zs.style.transform && zs.style.transform.includes('translateX')) {
+        zs.style.transform = zs.style.transform.replace(/\s*translateX\([^)]*\)/g, '').trim();
+        zs.style.transition = '';
+      }
+      swipeOriginalTransformRef.current = zs.style.transform || '';
+    } else {
+      swipeOriginalTransformRef.current = '';
+    }
   };
   const handleMainTouchMove = (e: React.TouchEvent) => {
     if (document.querySelector('[data-fullscreen-viewer="true"]')) return;
@@ -226,11 +244,14 @@ const AppContent = () => {
 
   const handleMainTouchCancel = () => {
     (window as any).__equyvoSwiping = false;
+    if (swipeCommitTimerRef.current) { clearTimeout(swipeCommitTimerRef.current); swipeCommitTimerRef.current = null; }
+    if (swipeResetTimerRef.current) { clearTimeout(swipeResetTimerRef.current); swipeResetTimerRef.current = null; }
     const zs = document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
     if (zs) {
       zs.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
       zs.style.transform = swipeOriginalTransformRef.current || '';
-      window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
+      const timer = window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
+      swipeResetTimerRef.current = timer;
     }
     touchStartRef.current = null;
     swipeDraggingRef.current = false;
@@ -238,6 +259,10 @@ const AppContent = () => {
   };
 
   const handleMainTouchEnd = (e: React.TouchEvent) => {
+    // Cancel any in-flight swipe timers from a previous gesture.
+    if (swipeCommitTimerRef.current) { clearTimeout(swipeCommitTimerRef.current); swipeCommitTimerRef.current = null; }
+    if (swipeResetTimerRef.current) { clearTimeout(swipeResetTimerRef.current); swipeResetTimerRef.current = null; }
+
     const start = touchStartRef.current;
     const wasDragging = swipeDraggingRef.current;
     touchStartRef.current = null;
@@ -258,16 +283,22 @@ const AppContent = () => {
           zs.style.transition = 'transform 200ms cubic-bezier(0.22, 1, 0.36, 1)';
           zs.style.transform = (swipeOriginalTransformRef.current || '') + ' translateX(' + (dx < 0 ? -width : width) + 'px)';
         }
-        window.setTimeout(() => {
-          if (zs) zs.style.transform = swipeOriginalTransformRef.current || '';
+        const timer = window.setTimeout(() => {
+          swipeCommitTimerRef.current = null;
+          if (zs) {
+            zs.style.transform = swipeOriginalTransformRef.current || '';
+            zs.style.transition = '';
+          }
           document.documentElement.dataset.vtDir = dx < 0 ? 'forward' : 'back';
           navigate(MAIN_TABS[targetIdx]);
         }, 200);
+        swipeCommitTimerRef.current = timer;
       } else {
         if (zs) {
           zs.style.transition = 'transform 220ms cubic-bezier(0.22, 1, 0.36, 1)';
           zs.style.transform = swipeOriginalTransformRef.current || '';
-          window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
+          const timer = window.setTimeout(() => { if (zs) zs.style.transition = ''; }, 220);
+          swipeResetTimerRef.current = timer;
         }
       }
       swipeDraggingRef.current = false;
@@ -295,11 +326,17 @@ const AppContent = () => {
     document.documentElement.dataset.vtDir = dx2 < 0 ? 'forward' : 'back';
 
     const vt = (document as any).startViewTransition;
-    if (typeof vt === 'function') {
+    if (typeof vt === 'function' && !viewTransitionInProgressRef.current) {
       try {
-        vt.call(document, () => {
+        const transition = vt.call(document, () => {
           flushSync(() => navigate(targetPath));
         });
+        viewTransitionInProgressRef.current = true;
+        if (transition && typeof transition.finished?.then === 'function') {
+          transition.finished.finally(() => { viewTransitionInProgressRef.current = false; });
+        } else {
+          window.setTimeout(() => { viewTransitionInProgressRef.current = false; }, 700);
+        }
         return;
       } catch { /* fall through to plain navigate */ }
     }
@@ -309,6 +346,13 @@ const AppContent = () => {
   useEffect(() => {
     window.scrollTo(0, 0);
     if (mainRef.current) mainRef.current.scrollTop = 0;
+    // Never leave a swipe transform behind after a route change — that is
+    // what made pages stay shifted/zoomed after repeated swipes.
+    const zs = document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
+    if (zs && zs.style.transform && zs.style.transform.includes('translateX')) {
+      zs.style.transform = zs.style.transform.replace(/\s*translateX\([^)]*\)/g, '').trim();
+      zs.style.transition = '';
+    }
   }, [location.pathname]);
 
   // Animate tab switches for swipe navigation (CSS fallback for browsers
