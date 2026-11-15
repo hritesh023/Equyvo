@@ -1289,10 +1289,11 @@ const ProfilePage = () => {
     const mediaContent = {
       ...post,
       type: isMoment ? 'moment' : (media.videoUrl ? 'moment' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
+      contentType: isMoment ? 'moment' : (media.videoUrl ? 'video' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
       videoUrl: media.videoUrl,
       media: media.media || post.image,
       thumbnail: media.thumbnail || post.image,
-      mediaType: media.videoUrl ? 'video' : 'image',
+      mediaType: media.videoUrl ? 'video' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'),
       creator: post.user || 'Unknown',
       content: post.content || '',
       likes: post.likes || 0,
