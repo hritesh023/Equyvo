@@ -160,6 +160,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // Expanded landscape mode: converts a portrait fullscreen into landscape on
   // mobile/tablet interfaces so 16:9 media can fill the screen.
   const [isExpandedLandscape, setIsExpandedLandscape] = useState(false);
+  const hiddenTapPlayedRef = useRef(false);
   // Original media aspect ratio (width/height) detected at runtime so the
   // viewer preserves the uploader's real ratio instead of forcing portrait.
   const [mediaAspect, setMediaAspect] = useState<number | null>(null);
@@ -609,6 +610,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // Reset to the full Discover control set on mount AND on reopen, so the
   // viewer never stays in the PiP/content-only appearance.
   const resetDiscoverControls = useCallback(() => {
+    hiddenTapPlayedRef.current = false;
     setHideOverlay(false);
     setContentOnly(false);
     setShowControls(true);
@@ -705,13 +707,21 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     seekTime: 10,
     onSingleTap: () => {
       if (!contentOnly) {
-        // First tap: hide overlay/controls, show only the video.
+        // 1st tap: hide overlay/controls, show only the video.
+        hiddenTapPlayedRef.current = false;
         setContentOnly(true);
         setHideOverlay(true);
         setShowControls(false);
-      } else {
-        // Second tap: pause/play the video.
+      } else if (!hiddenTapPlayedRef.current) {
+        // 2nd tap: pause/play the video (overlay stays hidden).
+        hiddenTapPlayedRef.current = true;
         togglePlay();
+      } else {
+        // 3rd tap: bring back the overlay controls.
+        hiddenTapPlayedRef.current = false;
+        setContentOnly(false);
+        setHideOverlay(false);
+        setShowControls(true);
       }
     },
     enabled: isVideoType,
