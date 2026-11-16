@@ -1354,6 +1354,8 @@ const ProfilePage = () => {
       const content = event?.detail?.content || event?.detail;
       if (!content) return;
       setFullscreenContent(content as any);
+      const ct = String(content?.type || content?.contentType || '').toLowerCase();
+      // (type is derived in FullscreenViewer via content; keep key bump for remount)
       setFullscreenKey((k) => k + 1);
     };
     window.addEventListener('reopenFullscreen', handler as EventListener);

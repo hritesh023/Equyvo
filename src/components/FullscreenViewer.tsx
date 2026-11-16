@@ -606,17 +606,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     return () => video.removeEventListener('loadedmetadata', updateDuration);
   }, []);
 
-  // Always open in the full Discover control set (details bar, 2x gesture,
-  // side panel, expand/minimize), never the PiP/content-only appearance.
-  useEffect(() => {
+  // Reset to the full Discover control set on mount AND on reopen, so the
+  // viewer never stays in the PiP/content-only appearance.
+  const resetDiscoverControls = useCallback(() => {
     setHideOverlay(false);
     setContentOnly(false);
     setShowControls(true);
     setIsExpandedLandscape(false);
     setIsSplitView(false);
     setShowDetailsPanel(true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+  useEffect(() => { resetDiscoverControls(); }, [resetDiscoverControls]);
+  useEffect(() => {
+    const handler = () => resetDiscoverControls();
+    window.addEventListener('reopenFullscreen', handler as EventListener);
+    return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
+  }, [resetDiscoverControls]);
   // Restore video state if coming from minimized viewer
   useEffect(() => {
     if (!actualContent?.isFromMinimized) return;
@@ -699,7 +704,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     videoRef,
     seekTime: 10,
     onSingleTap: () => {
-      togglePlay();
+      if (!contentOnly) {
+        // First tap: hide overlay/controls, show only the video.
+        setContentOnly(true);
+        setHideOverlay(true);
+        setShowControls(false);
+      } else {
+        // Second tap: pause/play the video.
+        togglePlay();
+      }
     },
     enabled: isVideoType,
     invert: isExpandedLandscape,
@@ -1364,12 +1377,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             }
           }}
           onClick={(e) => {
-            if (contentOnly) {
-              setContentOnly(false);
-              setHideOverlay(false);
-              setShowControls(true);
-              return;
-            }
             setHideOverlay(false);
             const target = e.target as HTMLElement | null;
             
