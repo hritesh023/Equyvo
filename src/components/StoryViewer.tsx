@@ -561,6 +561,14 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   };
 
   const chatEnabled = !!(currentStory?.chatWithAudience || (currentStory as any)?.chat_with_audience) && !isOwnStory;
+  // Box theming follows the chosen story background/text colors.
+  const storyBg = String(currentStory?.backgroundColor || currentStory?.background || '#000000');
+  const storyText = String(currentStory?.textColor || currentStory?.color || '#FFFFFF');
+  const boxColorPref = String((currentStory as any)?.boxColor || (currentStory as any)?.box_color || 'auto');
+  let storyBoxBg = storyBg;
+  let storyBoxText = storyText;
+  if (boxColorPref === 'white') { storyBoxBg = '#FFFFFF'; storyBoxText = '#000000'; }
+  else if (boxColorPref === 'black') { storyBoxBg = '#000000'; storyBoxText = '#FFFFFF'; }
   const chatPrompt = String(currentStory?.chatPrompt || (currentStory as any)?.chat_prompt || 'Chat with your creator');
 
   const handleSendChatAudience = async () => {
@@ -848,7 +856,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             >
               <div className="px-6 text-center w-full max-w-md" style={{ color: String(currentStory?.textColor || currentStory?.color || '#FFFFFF') }}>
                 {isPollStory ? (
-                  <div className="rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 p-4 space-y-3">
+                  <div className="rounded-2xl p-4 space-y-3 border" style={{ backgroundColor: storyBoxBg, color: storyBoxText, borderColor: storyBoxText + '33' }}>
                     <p className="text-xl md:text-2xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
                     <div className="space-y-2">
                       {pollOptions.map((opt, idx) => {
@@ -1000,7 +1008,8 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               <button
                 type="button"
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); setChatOpen(true); }}
-                className="w-full rounded-full bg-white/15 backdrop-blur-md border border-white/25 px-4 py-2 text-left text-sm text-white hover:bg-white/25 transition"
+                className="w-full rounded-full px-4 py-2 text-left text-sm border transition hover:opacity-90"
+                style={{ backgroundColor: storyBoxBg, color: storyBoxText, borderColor: storyBoxText + '33' }}
               >
                 {chatPrompt}
               </button>

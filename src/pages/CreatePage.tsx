@@ -279,6 +279,7 @@ const CreatePage = () => {
   const [textStoryColor, setTextStoryColor] = useState('#FFFFFF');
   const [textStoryChatWithAudience, setTextStoryChatWithAudience] = useState(false);
   const [textStoryChatPrompt, setTextStoryChatPrompt] = useState('Chat with your creator');
+  const [textStoryBoxColor, setTextStoryBoxColor] = useState<'auto' | 'white' | 'black'>('auto');
   // Poll inside text story: a poll is a text-story variant with a question + options.
   const [textStoryPollMode, setTextStoryPollMode] = useState(false);
   const [textStoryPollQuestion, setTextStoryPollQuestion] = useState('');
@@ -762,6 +763,7 @@ const CreatePage = () => {
               textColor: String(s.textColor || s.color || '#FFFFFF'),
               chatWithAudience: s.chatWithAudience === true || s.chat_with_audience === true,
               chatPrompt: String(s.chatPrompt || s.chat_prompt || 'Chat with your creator'),
+              boxColor: (s.boxColor || s.box_color) as any,
               uploadDate: at,
               isPrivate: isPriv(s),
               views: num(s.views),
@@ -1045,6 +1047,7 @@ const CreatePage = () => {
     chatPrompt?: string;
     isPoll?: boolean;
     pollOptions?: string[];
+    boxColor?: 'auto' | 'white' | 'black';
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -1735,10 +1738,11 @@ const CreatePage = () => {
             chatPrompt: (forcedChat === true || (contentVisibility !== 'private' && textStoryChatWithAudience)) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
             isPoll,
             pollOptions: isPoll ? textStoryPollOptions.map((o) => o.trim()).filter(Boolean) : undefined,
+            boxColor: textStoryBoxColor,
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
-        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt, isPoll: newUploadedTextStory.isPoll, pollOptions: newUploadedTextStory.pollOptions });
+        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt, isPoll: newUploadedTextStory.isPoll, pollOptions: newUploadedTextStory.pollOptions, boxColor: newUploadedTextStory.boxColor });
         setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         setUploadProgress(null);
         if (textStoryErr) {
@@ -1754,6 +1758,7 @@ const CreatePage = () => {
         setTextStoryPollMode(false);
         setTextStoryPollQuestion('');
         setTextStoryPollOptions(['', '']);
+        setTextStoryBoxColor('auto');
         
         // Emit event to notify HomePage that user has uploaded stories
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: [newUploadedTextStory] }));
@@ -3891,6 +3896,21 @@ const CreatePage = () => {
                     />
                   ))}
                 </div>
+              </div>
+
+              {/* Box color for poll / chat-with-creator boxes */}
+              <div>
+                <Label>Box color</Label>
+                <Select value={textStoryBoxColor} onValueChange={(v) => setTextStoryBoxColor(v as 'auto' | 'white' | 'black')}>
+                  <SelectTrigger className="mt-1">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="auto">Auto (match background)</SelectItem>
+                    <SelectItem value="white">White box</SelectItem>
+                    <SelectItem value="black">Black box</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               {/* Chat with audience (only for Everyone / Followers) */}
