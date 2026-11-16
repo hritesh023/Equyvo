@@ -202,6 +202,7 @@ const ProfilePage = () => {
   const [currentPostId, setCurrentPostId] = useState<string>('');
   const [currentPostUser, setCurrentPostUser] = useState<string>('');
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
+  const [fullscreenKey, setFullscreenKey] = useState(0);
   const [followedCreators, setFollowedCreators] = useState<Set<string>>(new Set());
   const handleFollow = (creatorId: string) => {
     setFollowedCreators(prev => {
@@ -1353,6 +1354,7 @@ const ProfilePage = () => {
       const content = event?.detail?.content || event?.detail;
       if (!content) return;
       setFullscreenContent(content as any);
+      setFullscreenKey((k) => k + 1);
     };
     window.addEventListener('reopenFullscreen', handler as EventListener);
     return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
@@ -2376,6 +2378,7 @@ const ProfilePage = () => {
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
         <FullscreenViewer
+          key={fullscreenKey}
           content={fullscreenContent}
           type={fullscreenContent.videoUrl ? 'moment' : (fullscreenContent.type === 'story' ? 'story' : (fullscreenContent.type === 'live' || fullscreenContent.isLive || fullscreenContent.live ? 'live' : (fullscreenContent.type === 'audio' || fullscreenContent.mediaType === 'audio' || fullscreenContent.audioUrl ? 'audio' : 'image')))}
           onClose={closeFullscreen}

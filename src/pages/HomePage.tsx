@@ -52,6 +52,7 @@ const HomePage = () => {
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
   const [savedPosts, setSavedPosts] = useState<Set<string>>(new Set());
   const [fullscreenContent, setFullscreenContent] = useState<FullscreenContent | null>(null);
+  const [fullscreenKey, setFullscreenKey] = useState(0);
   const [sharePayload, setSharePayload] = useState<any>(null);
   const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio' | 'story'>('moment');
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
@@ -573,6 +574,7 @@ const HomePage = () => {
       const ct = String(content?.type || content?.contentType || '').toLowerCase();
       const type = ct === 'story' ? 'story' : (ct === 'live' || content?.isLive || content?.live) ? 'live' : (content?.videoUrl ? 'moment' : (content?.audioUrl ? 'audio' : 'image'));
       setFullscreenType(type as any);
+      setFullscreenKey((k) => k + 1);
     };
     window.addEventListener('reopenFullscreen', handler as EventListener);
     return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
@@ -1327,6 +1329,7 @@ const HomePage = () => {
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
         <FullscreenViewer
+          key={fullscreenKey}
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}
