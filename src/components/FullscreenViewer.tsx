@@ -1320,6 +1320,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <Maximize2 className="h-5 w-5" />
             </Button>
           )}
+          {!(window.innerWidth > window.innerHeight) && !isExpandedLandscape && (
           <Button
             variant="ghost"
             size="icon"
@@ -1329,6 +1330,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           >
             <Minimize2 className="h-5 w-5" />
           </Button>
+          )}
           <Button
             variant="ghost"
             size="icon"
