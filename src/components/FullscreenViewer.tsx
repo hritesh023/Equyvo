@@ -1075,7 +1075,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         height: 100%;
         object-fit: cover;
       `;
-      minimizedVideo.controls = true;
+      minimizedVideo.controls = false;
       minimizedVideo.currentTime = currentTime; // Preserve current time
       if (!isPaused) {
         minimizedVideo.play().catch(() => {});
