@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1312,7 +1313,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         </div>
       </div>
     )}
-    {attachMenuOpen && (
+    {attachMenuOpen && createPortal(
       <div
         className="fixed bottom-24 left-4 z-[2147483647] w-44 rounded-lg border bg-popover p-2 shadow-lg space-y-1"
         style={{ pointerEvents: 'auto' }}
@@ -1332,7 +1333,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { folderInputRef.current?.click(); setAttachMenuOpen(false); }}>
           <Folder className="h-4 w-4" /> Folders
         </button>
-      </div>
+      </div>,
+      document.body
     )}
     </>
   );
