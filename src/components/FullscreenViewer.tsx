@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, VolumeX, Maximize2, Columns, Eye, Image, RotateCcw } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
@@ -618,7 +618,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setIsSplitView(false);
     setShowDetailsPanel(true);
   }, []);
-  useEffect(() => { resetDiscoverControls(); }, [resetDiscoverControls]);
+  useLayoutEffect(() => { resetDiscoverControls(); }, [resetDiscoverControls]);
   useEffect(() => {
     const handler = () => resetDiscoverControls();
     window.addEventListener('reopenFullscreen', handler as EventListener);
