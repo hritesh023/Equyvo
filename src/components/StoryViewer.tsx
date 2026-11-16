@@ -62,6 +62,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const [videoError, setVideoError] = useState(false);
   const [videoLoaded, setVideoLoaded] = useState(false);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const pausedRef = useRef(false);
   const lastTapRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
@@ -70,10 +71,11 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
   // Pause auto-advance while the chat box is open so typing does not close the story.
   useEffect(() => {
-    if (chatOpen) {
-      if (progressIntervalRef.current) { clearInterval(progressIntervalRef.current); progressIntervalRef.current = null; }
-      try { videoRef.current?.pause(); } catch { /* ignore */ }
-    }
+    pausedRef.current = chatOpen;
+    try {
+      if (chatOpen) videoRef.current?.pause();
+      else videoRef.current?.play().catch(() => {});
+    } catch { /* ignore */ }
   }, [chatOpen]);
 
   useEffect(() => {
@@ -348,7 +350,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       const increment = (interval / duration) * 100;
       
       progressIntervalRef.current = setInterval(() => {
-        if (chatOpenRef.current) return;
+        if (chatOpenRef.current || pausedRef.current) return;
         setProgress(prev => {
           const newProgress = prev + increment;
           
@@ -473,6 +475,14 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const [votersLoading, setVotersLoading] = useState(false);
 
   useEffect(() => {
+    pausedRef.current = showVoters;
+    try {
+      if (showVoters) videoRef.current?.pause();
+      else videoRef.current?.play().catch(() => {});
+    } catch { /* ignore */ }
+  }, [showVoters]);
+
+  useEffect(() => {
     setPollCounts([]);
     setPollTotal(0);
     setPollUserVote(null);
@@ -592,6 +602,18 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       className="story-viewer fade-in"
       onMouseMove={() => setShowControls(true)}
       onClick={() => setShowControls(true)}
+      onPointerDown={() => {
+        pausedRef.current = true;
+        try { videoRef.current?.pause(); } catch { /* ignore */ }
+      }}
+      onPointerUp={() => {
+        pausedRef.current = false;
+        try { videoRef.current?.play().catch(() => {}); } catch { /* ignore */ }
+      }}
+      onPointerLeave={() => {
+        pausedRef.current = false;
+        try { videoRef.current?.play().catch(() => {}); } catch { /* ignore */ }
+      }}
     >
       <div className="story-content">
         <div className="story-progress">
