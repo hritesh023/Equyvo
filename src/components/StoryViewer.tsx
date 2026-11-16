@@ -468,6 +468,9 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
   const [pollTotal, setPollTotal] = useState(0);
   const [pollUserVote, setPollUserVote] = useState<number | null>(null);
   const [pollVoting, setPollVoting] = useState(false);
+  const [showVoters, setShowVoters] = useState(false);
+  const [voters, setVoters] = useState<{ id: string; name: string; avatar?: string; option: number }[]>([]);
+  const [votersLoading, setVotersLoading] = useState(false);
 
   useEffect(() => {
     setPollCounts([]);
@@ -505,6 +508,29 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
       setPollTotal((t) => t + 1);
     } catch { showError('Vote failed'); }
     finally { setPollVoting(false); }
+  };
+
+  const loadVoters = async () => {
+    if (!currentStory?.id) return;
+    setShowVoters(true);
+    setVotersLoading(true);
+    try {
+      const { data } = await api.storyPoll(String(currentStory.id));
+      const d = (data as any)?.data || data;
+      const votes = d?.votes || {};
+      const entries = Object.entries(votes) as [string, number][];
+      const resolved = await Promise.all(entries.map(async ([uid, opt]) => {
+        try {
+          const { data: prof } = await api.getProfile(uid);
+          const p = (prof as any)?.data || prof;
+          return { id: uid, name: p?.name || p?.username || 'User', avatar: p?.avatar || p?.avatarUrl, option: Number(opt) };
+        } catch {
+          return { id: uid, name: 'User', avatar: undefined, option: Number(opt) };
+        }
+      }));
+      setVoters(resolved);
+    } catch { setVoters([]); }
+    finally { setVotersLoading(false); }
   };
 
   const chatEnabled = !!(currentStory?.chatWithAudience || (currentStory as any)?.chat_with_audience) && !isOwnStory;
@@ -816,6 +842,15 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                     {pollUserVote === null && (
                       <p className="text-xs opacity-70">Vote to see results</p>
                     )}
+                    {isOwnStory && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); loadVoters(); }}
+                        className="text-xs underline opacity-80 hover:opacity-100"
+                      >
+                        View voters
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <p className="text-2xl md:text-3xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
@@ -997,6 +1032,29 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
           </div>
         </div>
       </div>
+      {showVoters && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/70" onClick={() => setShowVoters(false)}>
+          <div className="w-80 max-h-[70vh] overflow-auto rounded-lg bg-card p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+            <h3 className="font-semibold">Poll voters</h3>
+            {votersLoading ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : voters.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No votes yet.</p>
+            ) : (
+              <ul className="space-y-2">
+                {voters.map((v) => (
+                  <li key={v.id} className="flex items-center gap-2 text-sm">
+                    <img src={v.avatar || ''} alt="" className="h-8 w-8 rounded-full object-cover bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                    <span className="flex-1 truncate">{v.name}</span>
+                    <span className="text-xs text-muted-foreground">Option {v.option + 1}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <Button variant="outline" size="sm" onClick={() => setShowVoters(false)}>Close</Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

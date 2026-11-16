@@ -1184,7 +1184,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   <Paperclip className="w-5 h-5" />
                 </Button>
                 {attachMenuOpen && (
-                  <div className="absolute bottom-12 left-0 z-50 w-44 rounded-lg border bg-popover p-2 shadow-lg space-y-1">
+                  <div className="fixed bottom-24 left-4 z-[2147483647] w-44 rounded-lg border bg-popover p-2 shadow-lg space-y-1" style={{ pointerEvents: 'auto' }}>
                     <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { setPollComposerOpen(true); setAttachMenuOpen(false); }}>
                       <BarChart3 className="h-4 w-4" /> Poll
                     </button>
