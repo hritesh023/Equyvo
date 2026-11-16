@@ -7531,7 +7531,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       const storyId = String(raw?.storyId || '').trim().slice(0, 128);
       const optionIndex = Number(raw?.optionIndex);
       const optionCount = Math.max(2, Number(raw?.optionCount) || 2);
-      if (!storyId || !Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= optionCount) {
+      const removing = optionIndex === -1;
+      if (!storyId || !Number.isInteger(optionIndex) || (!removing && (optionIndex < 0 || optionIndex >= optionCount))) {
         return json({ error: 'invalid vote' }, 400, cors);
       }
       const key = 'story_poll:' + storyId;
@@ -7544,7 +7545,11 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         }
       } catch { /* ignore */ }
       data.optionCount = Math.max(data.optionCount, optionCount);
-      data.votes[actor.id] = optionIndex;
+      if (removing) {
+        delete data.votes[actor.id];
+      } else {
+        data.votes[actor.id] = optionIndex;
+      }
       await env.EQUYVO_KV.put(key, JSON.stringify(data));
       return json({ data: { ok: true }, error: null }, 200, cors);
     }

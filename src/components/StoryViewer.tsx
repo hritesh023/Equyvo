@@ -510,6 +510,23 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     finally { setPollVoting(false); }
   };
 
+  const handleRemovePollVote = async () => {
+    if (pollVoting || pollUserVote === null || !currentStory?.id) return;
+    const prevVote = pollUserVote;
+    setPollVoting(true);
+    try {
+      await api.storyPollVote({ storyId: currentStory.id, optionIndex: -1, optionCount: pollOptions.length });
+      setPollUserVote(null);
+      setPollCounts((prev) => {
+        const next = prev.length ? [...prev] : Array.from({ length: pollOptions.length }, () => 0);
+        if (prevVote >= 0 && prevVote < next.length) next[prevVote] = Math.max(0, next[prevVote] - 1);
+        return next;
+      });
+      setPollTotal((t) => Math.max(0, t - 1));
+    } catch { showError('Vote removal failed'); }
+    finally { setPollVoting(false); }
+  };
+
   const loadVoters = async () => {
     if (!currentStory?.id) return;
     setShowVoters(true);
@@ -841,6 +858,16 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                     )}
                     {pollUserVote === null && (
                       <p className="text-xs opacity-70">Vote to see results</p>
+                    )}
+                    {pollUserVote !== null && (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleRemovePollVote(); }}
+                        className="text-xs underline opacity-80 hover:opacity-100"
+                        disabled={pollVoting}
+                      >
+                        Remove vote
+                      </button>
                     )}
                     {isOwnStory && (
                       <button

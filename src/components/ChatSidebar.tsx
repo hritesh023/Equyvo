@@ -122,6 +122,23 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
     } catch { showError('Vote failed'); }
     finally { setVoting(false); }
   };
+
+  const handleRemoveVote = async () => {
+    if (voting || userVote === null) return;
+    const prevVote = userVote;
+    setVoting(true);
+    try {
+      await api.storyPollVote({ storyId: msg.id, optionIndex: -1, optionCount: options.length });
+      setUserVote(null);
+      setCounts((prev) => {
+        const next = prev.length ? [...prev] : Array.from({ length: options.length }, () => 0);
+        if (prevVote >= 0 && prevVote < next.length) next[prevVote] = Math.max(0, next[prevVote] - 1);
+        return next;
+      });
+      setTotal((t) => Math.max(0, t - 1));
+    } catch { showError('Vote removal failed'); }
+    finally { setVoting(false); }
+  };
   return (
     <div className="rounded-xl bg-white/10 border border-white/20 p-3 space-y-2 min-w-[200px]">
       <p className="font-semibold text-sm">{question}</p>
@@ -149,6 +166,11 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
         })}
       </div>
       {userVote !== null && <p className="text-[11px] opacity-70">{total} vote{total === 1 ? '' : 's'}</p>}
+      {userVote !== null && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); handleRemoveVote(); }} className="text-[11px] underline opacity-80 hover:opacity-100" disabled={voting}>
+          Remove vote
+        </button>
+      )}
       {userVote === null && <p className="text-[11px] opacity-70">Vote to see results</p>}
     </div>
   );
@@ -1183,25 +1205,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 >
                   <Paperclip className="w-5 h-5" />
                 </Button>
-                {attachMenuOpen && (
-                  <div className="fixed bottom-24 left-4 z-[2147483647] w-44 rounded-lg border bg-popover p-2 shadow-lg space-y-1" style={{ pointerEvents: 'auto' }}>
-                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { setPollComposerOpen(true); setAttachMenuOpen(false); }}>
-                      <BarChart3 className="h-4 w-4" /> Poll
-                    </button>
-                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => photoInputRef.current?.click()}>
-                      <ImageIcon className="h-4 w-4" /> Photos
-                    </button>
-                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => videoInputRef.current?.click()}>
-                      <Film className="h-4 w-4" /> Videos
-                    </button>
-                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => fileInput2Ref.current?.click()}>
-                      <FileIcon className="h-4 w-4" /> Files
-                    </button>
-                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => folderInputRef.current?.click()}>
-                      <Folder className="h-4 w-4" /> Folders
-                    </button>
-                  </div>
-                )}
+                {/* menu rendered at root level (see below) */}
               </div>
               <Button
                 type="button"
@@ -1306,6 +1310,28 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             }}>Send Poll</Button>
           </div>
         </div>
+      </div>
+    )}
+    {attachMenuOpen && (
+      <div
+        className="fixed bottom-24 left-4 z-[2147483647] w-44 rounded-lg border bg-popover p-2 shadow-lg space-y-1"
+        style={{ pointerEvents: 'auto' }}
+      >
+        <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { setPollComposerOpen(true); setAttachMenuOpen(false); }}>
+          <BarChart3 className="h-4 w-4" /> Poll
+        </button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { photoInputRef.current?.click(); setAttachMenuOpen(false); }}>
+          <ImageIcon className="h-4 w-4" /> Photos
+        </button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { videoInputRef.current?.click(); setAttachMenuOpen(false); }}>
+          <Film className="h-4 w-4" /> Videos
+        </button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { fileInput2Ref.current?.click(); setAttachMenuOpen(false); }}>
+          <FileIcon className="h-4 w-4" /> Files
+        </button>
+        <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { folderInputRef.current?.click(); setAttachMenuOpen(false); }}>
+          <Folder className="h-4 w-4" /> Folders
+        </button>
       </div>
     )}
     </>
