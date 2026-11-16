@@ -1831,9 +1831,10 @@ const ProfilePage = () => {
                     ) : (
                       <div
                         className="w-full h-full flex items-center justify-center p-4 text-center cursor-pointer"
+                        style={{ backgroundColor: String(story.backgroundColor || story.background || '#000000') }}
                         onClick={() => handleFullscreen(story)}
                       >
-                        <p className="text-white text-sm line-clamp-6">{story.content || 'Story'}</p>
+                        <p className="text-sm line-clamp-6" style={{ color: String(story.textColor || story.color || '#FFFFFF') }}>{story.content || 'Story'}</p>
                       </div>
                     )}
                     <div

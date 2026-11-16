@@ -1170,8 +1170,16 @@ const HomePage = () => {
                           );
                         }
                         return (
-                          <div className="w-full h-full flex items-center justify-center bg-gradient-to-br from-purple-500 to-pink-500">
-                            <span className="text-white text-2xl font-bold">{story.user.substring(0, 1).toUpperCase()}</span>
+                          <div
+                            className="w-full h-full flex items-center justify-center"
+                            style={{ backgroundColor: String(story.backgroundColor || story.background || '#000000') }}
+                          >
+                            <span
+                              className="text-sm font-semibold px-2 text-center line-clamp-3 break-words"
+                              style={{ color: String(story.textColor || story.color || '#FFFFFF') }}
+                            >
+                              {String(story.content || 'Story')}
+                            </span>
                           </div>
                         );
                       })()}
