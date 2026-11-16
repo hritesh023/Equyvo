@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus } from 'lucide-react';
 import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
@@ -78,6 +78,14 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [attachedFile, setAttachedFile] = useState<File | null>(null);
+  const [attachMenuOpen, setAttachMenuOpen] = useState(false);
+  const [pollComposerOpen, setPollComposerOpen] = useState(false);
+  const [pollQuestion, setPollQuestion] = useState('');
+  const [pollOptions, setPollOptions] = useState<string[]>(['', '']);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+  const videoInputRef = useRef<HTMLInputElement | null>(null);
+  const fileInput2Ref = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
   const [sending, setSending] = useState(false);
   // Image-attachment preview + crop/adjust step (same editor as thumbnails).
   const [attachPreview, setAttachPreview] = useState<string | null>(null);
@@ -1073,17 +1081,40 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   aria-label="Attach file"
                   tabIndex={-1}
                 />
+                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={videoInputRef} type="file" accept="video/*" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={fileInput2Ref} type="file" accept="*/*" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={folderInputRef} type="file" {...({ webkitdirectory: '', directory: '' } as any)} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
                 <Button
                   type="button"
                   variant="ghost"
                   size="icon"
                   className="h-10 w-10 text-muted-foreground"
-                  aria-label="Attach file"
-                  title="Attach file (images, PDF, DOC, TXT up to 10MB)"
-                  onClick={() => fileInputRef.current?.click()}
+                  aria-label="Attach"
+                  title="Attach"
+                  onClick={() => setAttachMenuOpen((v) => !v)}
                 >
                   <Paperclip className="w-5 h-5" />
                 </Button>
+                {attachMenuOpen && (
+                  <div className="absolute bottom-12 left-0 z-50 w-44 rounded-lg border bg-popover p-2 shadow-lg space-y-1">
+                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { setPollComposerOpen(true); setAttachMenuOpen(false); }}>
+                      <BarChart3 className="h-4 w-4" /> Poll
+                    </button>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => photoInputRef.current?.click()}>
+                      <ImageIcon className="h-4 w-4" /> Photos
+                    </button>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => videoInputRef.current?.click()}>
+                      <Film className="h-4 w-4" /> Videos
+                    </button>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => fileInput2Ref.current?.click()}>
+                      <FileIcon className="h-4 w-4" /> Files
+                    </button>
+                    <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => folderInputRef.current?.click()}>
+                      <Folder className="h-4 w-4" /> Folders
+                    </button>
+                  </div>
+                )}
               </div>
               <Button
                 type="button"
@@ -1145,6 +1176,50 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         onKeepOriginal={() => setAttachCropSrc(null)}
         onCropComplete={handleAttachCropComplete}
       />
+    )}
+    {pollComposerOpen && (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/50 p-4">
+        <div className="w-full max-w-sm rounded-lg bg-card p-4 space-y-3">
+          <h3 className="font-semibold">Create Poll</h3>
+          <Input placeholder="Poll question" value={pollQuestion} onChange={(e) => setPollQuestion(e.target.value)} />
+          {pollOptions.map((opt, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+              <Input placeholder={`Option ${idx + 1}`} value={opt} onChange={(e) => { const n = [...pollOptions]; n[idx] = e.target.value; setPollOptions(n); }} />
+              {pollOptions.length > 2 && (
+                <Button type="button" variant="ghost" size="icon" onClick={() => setPollOptions(pollOptions.filter((_, i) => i !== idx))}>
+                  <X className="h-4 w-4" />
+                </Button>
+              )}
+            </div>
+          ))}
+          <div className="flex gap-2">
+            <Button type="button" variant="outline" size="sm" onClick={() => setPollOptions([...pollOptions, ''])}>
+              <Plus className="h-4 w-4 mr-1" /> Add option
+            </Button>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <Button type="button" variant="outline" onClick={() => setPollComposerOpen(false)}>Cancel</Button>
+            <Button type="button" onClick={async () => {
+              const q = pollQuestion.trim();
+              const opts = pollOptions.map((o) => o.trim()).filter(Boolean);
+              if (!q || opts.length < 2) { showError('Enter a question and at least 2 options'); return; }
+              if (!activeChat) return;
+              const text = `📊 Poll: ${q}\n` + opts.map((o, i) => `${i + 1}. ${o}`).join('\n');
+              setSending(true);
+              try {
+                const sent = await sendChatMessage(activeChat.id, text);
+                if (!sent) { showError('Poll could not be sent.'); return; }
+                setPollQuestion('');
+                setPollOptions(['', '']);
+                setPollComposerOpen(false);
+                refreshMsgs(activeChat.id);
+                refreshThreads();
+              } catch { showError('Poll could not be sent.'); }
+              finally { setSending(false); }
+            }}>Send Poll</Button>
+          </div>
+        </div>
+      </div>
     )}
     </>
   );

@@ -279,6 +279,10 @@ const CreatePage = () => {
   const [textStoryColor, setTextStoryColor] = useState('#FFFFFF');
   const [textStoryChatWithAudience, setTextStoryChatWithAudience] = useState(false);
   const [textStoryChatPrompt, setTextStoryChatPrompt] = useState('Chat with your creator');
+  // Poll inside text story: a poll is a text-story variant with a question + options.
+  const [textStoryPollMode, setTextStoryPollMode] = useState(false);
+  const [textStoryPollQuestion, setTextStoryPollQuestion] = useState('');
+  const [textStoryPollOptions, setTextStoryPollOptions] = useState<string[]>(['', '']);
   const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [videoFiles, setVideoFiles] = useState<File[]>([]);
   const [photoCaption, setPhotoCaption] = useState('');
@@ -1039,6 +1043,8 @@ const CreatePage = () => {
     textColor: string;
     chatWithAudience?: boolean;
     chatPrompt?: string;
+    isPoll?: boolean;
+    pollOptions?: string[];
     uploadDate: Date;
     isPrivate: boolean;
     views: number;
@@ -1689,8 +1695,14 @@ const CreatePage = () => {
       showError('A story publish is still running. One at a time, please.');
       return;
     }
-    const storyContent = (forcedContent ?? textStoryContent).trim();
-    if (!storyContent) {
+    // Poll mode: validate poll question + options instead of plain text.
+    const isPoll = textStoryPollMode && !forcedContent;
+    const storyContent = (forcedContent ?? (isPoll ? textStoryPollQuestion : textStoryContent)).trim();
+    if (isPoll) {
+      const opts = textStoryPollOptions.map((o) => o.trim()).filter(Boolean);
+      if (!storyContent) { showError('Please enter a poll question'); return; }
+      if (opts.length < 2) { showError('Please provide at least 2 poll options'); return; }
+    } else if (!storyContent) {
       showError('Please enter some text for your story');
       return;
     }
@@ -1721,10 +1733,12 @@ const CreatePage = () => {
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
             chatWithAudience: (forcedChat === true) ? true : (contentVisibility !== 'private' ? textStoryChatWithAudience : false),
             chatPrompt: (forcedChat === true || (contentVisibility !== 'private' && textStoryChatWithAudience)) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
+            isPoll,
+            pollOptions: isPoll ? textStoryPollOptions.map((o) => o.trim()).filter(Boolean) : undefined,
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
-        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt });
+        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt, isPoll: newUploadedTextStory.isPoll, pollOptions: newUploadedTextStory.pollOptions });
         setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         setUploadProgress(null);
         if (textStoryErr) {
@@ -1737,6 +1751,9 @@ const CreatePage = () => {
         setTextStoryColor('#FFFFFF');
         setTextStoryChatWithAudience(false);
         setTextStoryChatPrompt('Chat with your creator');
+        setTextStoryPollMode(false);
+        setTextStoryPollQuestion('');
+        setTextStoryPollOptions(['', '']);
         
         // Emit event to notify HomePage that user has uploaded stories
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: [newUploadedTextStory] }));
@@ -3675,6 +3692,92 @@ const CreatePage = () => {
               </p>
             </CardHeader>
             <CardContent className="space-y-4">
+              {/* Poll toggle button */}
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant={textStoryPollMode ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => {
+                    setTextStoryPollMode((v) => !v);
+                    if (!textStoryPollMode) {
+                      setTextStoryPollQuestion(textStoryContent || '');
+                      if (textStoryPollOptions.length < 2) setTextStoryPollOptions(['', '']);
+                    }
+                  }}
+                >
+                  <BarChart3 className="h-4 w-4 mr-2" />
+                  {textStoryPollMode ? 'Poll mode on' : 'Add Poll'}
+                </Button>
+                {textStoryPollMode && (
+                  <span className="text-xs text-muted-foreground">Create a poll as a text story</span>
+                )}
+              </div>
+
+              {textStoryPollMode ? (
+                <div className="space-y-3">
+                  <div>
+                    <Label>Poll description</Label>
+                    <Textarea
+                      placeholder="Ask a question..."
+                      value={textStoryPollQuestion}
+                      onChange={(e) => setTextStoryPollQuestion(e.target.value)}
+                      className="mt-1"
+                      rows={2}
+                    />
+                  </div>
+                  {textStoryPollOptions.map((opt, idx) => (
+                    <div key={idx} className="flex items-center gap-2">
+                      <Textarea
+                        placeholder={`Option ${idx + 1}`}
+                        value={opt}
+                        onChange={(e) => {
+                          const next = [...textStoryPollOptions];
+                          next[idx] = e.target.value;
+                          setTextStoryPollOptions(next);
+                        }}
+                        className="mt-1"
+                        rows={1}
+                      />
+                      {textStoryPollOptions.length > 2 && (
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          onClick={() => {
+                            const next = textStoryPollOptions.filter((_, i) => i !== idx);
+                            setTextStoryPollOptions(next.length >= 2 ? next : ['', '']);
+                          }}
+                          title="Remove option"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
+                    </div>
+                  ))}
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTextStoryPollOptions((prev) => [...prev, ''])}
+                    >
+                      <Plus className="h-4 w-4 mr-1" /> Add option
+                    </Button>
+                    {textStoryPollOptions.length > 2 && (
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setTextStoryPollOptions((prev) => prev.slice(0, -1))}
+                      >
+                        <Trash2 className="h-4 w-4 mr-1" /> Remove last
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <>
               {/* Story Preview */}
               <div
                 className="w-full h-64 rounded-lg flex items-center justify-center p-8 text-center"
@@ -3832,10 +3935,22 @@ const CreatePage = () => {
                 </div>
               )}
 
+              </>
+              )}
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
-                <Button onClick={() => handlePostTextStory('post')} disabled={isUploading || !textStoryContent.trim()} className="w-full sm:flex-1">
-                  {isUploading ? 'Posting…' : 'Post Text Story'}
+                <Button
+                  onClick={() => {
+                    if (textStoryPollMode) {
+                      const ok = window.confirm('Post this poll story?');
+                      if (!ok) return;
+                    }
+                    handlePostTextStory('post');
+                  }}
+                  disabled={isUploading}
+                  className="w-full sm:flex-1"
+                >
+                  {isUploading ? 'Posting…' : (textStoryPollMode ? 'Post Poll Story' : 'Post Text Story')}
                 </Button>
                 <Button
                   onClick={() => {
