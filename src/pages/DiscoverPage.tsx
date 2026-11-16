@@ -159,6 +159,7 @@ const DiscoverPage = () => {
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [fullscreenBrowseOpen, setFullscreenBrowseOpen] = useState(false);
+  const [fullscreenKey, setFullscreenKey] = useState(0);
   const [sharePayload, setSharePayload] = useState<any>(null);
   
   // New state for filtering and sorting
@@ -320,6 +321,7 @@ const DiscoverPage = () => {
       setFullscreenContent(content);
       const _ct = String(content?.type || content?.contentType || '').toLowerCase();
       setFullscreenType(_ct === 'story' ? 'story' : (_ct === 'live' || content?.isLive || content?.live) ? 'live' : (content?.videoUrl ? 'moment' : (content?.audioUrl ? 'audio' : 'image')));
+      setFullscreenKey((k) => k + 1);
     };
 
     // Handle split view video selection
@@ -1529,6 +1531,7 @@ avatar: m.avatar || m.user?.avatar || '',
       {/* Fullscreen Viewer */}
       {fullscreenContent && (
         <FullscreenViewer
+          key={fullscreenKey}
           content={fullscreenContent}
           type={fullscreenType}
           onClose={handleCloseFullscreen}

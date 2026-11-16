@@ -703,7 +703,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       togglePlay();
     },
     enabled: isVideoType,
-    invert: isExpandedLandscape,
   });
 
   const HIDE_DELAY = 5000;
