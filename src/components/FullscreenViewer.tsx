@@ -184,6 +184,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     onClose();
     return true;
   }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose]);
+  // Reopening a minimized viewer must peel the content-only state off so
+  // the full control set (details bar, 2x gesture, side panel, expand/minimize)
+  // is restored instead of staying in the PiP-only appearance.
+  useEffect(() => {
+    const handler = () => {
+      setHideOverlay(false);
+      setContentOnly(false);
+      setShowControls(true);
+      setIsExpandedLandscape(false);
+      setIsSplitView(false);
+      setShowDetailsPanel(true);
+    };
+    window.addEventListener('reopenFullscreen', handler as EventListener);
+    return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
+  }, []);
+
   useBackOverlay(true, handleBackInViewer);
 
   // Detect mobile device and orientation. Use the SHORTER side so a phone/tablet
