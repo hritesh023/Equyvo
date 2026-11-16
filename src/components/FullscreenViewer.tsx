@@ -606,6 +606,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     return () => video.removeEventListener('loadedmetadata', updateDuration);
   }, []);
 
+  // Reopening a minimized viewer must restore the FULL Discover control set
+  // (details bar, 2x gesture, side panel, expand/minimize) instead of the
+  // PiP/content-only appearance. Reset UI state whenever we reopen.
+  useEffect(() => {
+    if (!actualContent?.isFromMinimized) return;
+    setHideOverlay(false);
+    setContentOnly(false);
+    setShowControls(true);
+    setIsExpandedLandscape(false);
+    setIsSplitView(false);
+    setShowDetailsPanel(true);
+  }, [actualContent?.isFromMinimized]);
   // Restore video state if coming from minimized viewer
   useEffect(() => {
     if (!actualContent?.isFromMinimized) return;
@@ -691,6 +703,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       togglePlay();
     },
     enabled: isVideoType,
+    invert: isExpandedLandscape,
   });
 
   const HIDE_DELAY = 5000;

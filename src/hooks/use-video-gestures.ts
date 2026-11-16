@@ -5,6 +5,8 @@ interface UseVideoGesturesOptions {
   seekTime?: number;
   onSingleTap?: () => void;
   enabled?: boolean;
+  /** Invert left/right seek (e.g. rotated/expanded landscape). */
+  invert?: boolean;
 }
 
 export function useVideoGestures({
@@ -12,6 +14,7 @@ export function useVideoGestures({
   seekTime = 10,
   onSingleTap,
   enabled = true,
+  invert = false,
 }: UseVideoGesturesOptions) {
   const lastTapRef = useRef(0);
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -34,7 +37,9 @@ export function useVideoGestures({
 
       const rect = e.currentTarget.getBoundingClientRect();
       const x = e.clientX - rect.left;
-      if (x > rect.width / 2) {
+      const isRight = x > rect.width / 2;
+      const goForward = invert ? !isRight : isRight;
+      if (goForward) {
         video.currentTime = Math.min(video.duration || Infinity, video.currentTime + seekTime);
       } else {
         video.currentTime = Math.max(0, video.currentTime - seekTime);
@@ -46,7 +51,7 @@ export function useVideoGestures({
       tapTimerRef.current = null;
       onSingleTap?.();
     }, 400);
-  }, [enabled, videoRef, seekTime, onSingleTap]);
+  }, [enabled, videoRef, seekTime, onSingleTap, invert]);
 
   useEffect(() => {
     return () => {
