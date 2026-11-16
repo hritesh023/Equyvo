@@ -621,6 +621,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setIsMinimized(false);
   }, []);
   useLayoutEffect(() => { resetDiscoverControls(); }, [resetDiscoverControls]);
+  useLayoutEffect(() => { resetDiscoverControls(); }, [actualContent?.id, actualContent?.videoUrl]);
   useEffect(() => {
     const handler = () => resetDiscoverControls();
     window.addEventListener('reopenFullscreen', handler as EventListener);
