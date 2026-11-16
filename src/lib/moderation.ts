@@ -54,7 +54,7 @@ const NAME_BLOCK_PATTERNS: RegExp[] = [
   /(\.exe|\.apk|\.bat|\.msi|\.scr|\.js|\.html)$/i,
 ];
 
-const MAX_SAMPLES = 8;
+const MAX_SAMPLES = 12;
 const SAMPLE_LONG_EDGE = 640;
 const SAMPLE_QUALITY = 0.72;
 const SAMPLE_TIMEOUT_MS = 9000;
@@ -218,11 +218,23 @@ async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number
       signal.addEventListener('abort', () => reject(new Error('timeout')));
     }), SAMPLE_TIMEOUT_MS);
     if (!dur || !isFinite(dur)) return out;
-    const fractions = [0.02, 0.12, 0.25, 0.4, 0.55, 0.7, 0.82, 0.92];
+    // Dense sampling so even a 1-second explicit segment is captured. For
+    // short clips sample every ~0.4s; for long clips use spread-out fractions.
+    // More frames = better chance of catching brief explicit content.
+    let times: number[];
+    if (dur <= 8) {
+      times = [];
+      for (let t = 0; t < dur; t += Math.max(0.35, dur / 12)) times.push(Math.min(dur - 0.05, t));
+      if (times.length === 0) times.push(0);
+    } else {
+      const fractions = [0, 0.05, 0.1, 0.2, 0.3, 0.45, 0.6, 0.72, 0.82, 0.9, 0.96, 0.99];
+      times = fractions.map((f) => Math.min(dur - 0.05, dur * f));
+    }
+    times = [...new Set(times.map((t) => Math.round(t * 100) / 100))].slice(0, MAX_SAMPLES);
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
     if (!ctx) return out;
-    for (const f of fractions) {
+    for (const t of times) {
       if (out.length >= MAX_SAMPLES) break;
       try {
         await withTimeout((signal) => new Promise<void>((resolve, reject) => {
@@ -236,7 +248,7 @@ async function sampleVideo(blob: Blob): Promise<{ url: string; skinRatio: number
           signal.addEventListener('abort', onErr);
           video.addEventListener('seeked', onSeeked);
           video.addEventListener('error', onErr);
-          video.currentTime = Math.min(dur * f, Math.max(0, dur - 0.05));
+          video.currentTime = Math.max(0, Math.min(dur - 0.05, t));
         }), SAMPLE_TIMEOUT_MS);
         const vw = video.videoWidth || 0, vh = video.videoHeight || 0;
         if (!vw || !vh) continue;
@@ -269,7 +281,7 @@ async function sampleGif(blob: Blob): Promise<{ url: string; skinRatio: number; 
       await decoder.completed;
       const track = decoder.tracks?.selectedTrack;
       const frameCount = Math.max(1, Number(track?.frameCount) || 1);
-      const fractions = [0, 0.12, 0.25, 0.4, 0.55, 0.7, 0.82, 0.92];
+      const fractions = [0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 0.95, 0.99];
       const indices = [...new Set(fractions.map((f) => Math.min(frameCount - 1, Math.floor(f * frameCount))))];
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
@@ -385,52 +397,14 @@ export async function screenMedia(
   if (isImage && samples.length === 0) {
     return { verdict: 'allow', checked: false };
   }
-  // Heuristic nudity guard: a HIGH skin-tone ratio indicates likely 18+
-  // content. Thresholds are deliberately conservative to avoid false
-  // positives on ordinary footage (crowds, religious/cultural events,
-  // outdoor scenes) while still catching overt nudity. Videos need a higher
-  // bar because a single skin-heavy frame is common in legitimate footage.
+  // Visual heuristics (skin-tone / red-fire colors) are ADVISORY ONLY. Crude
+  // color heuristics cannot tell sand from skin, or tomatoes from blood, so
+  // they must never hard-block. They are forwarded to the server-side AI eye
+  // as hints; the AI (human-like) makes the final call. This fixes false
+  // positives on sand, red food, sand art, educational/cultural/traditional
+  // and other benign content.
   const maxSkin = skinRatios.length ? Math.max(...skinRatios) : 0;
-  // Raised thresholds: nudity is usually >0.8 skin coverage; ordinary crowds,
-  // religious/cultural events and outdoor scenes can hit 0.5-0.7. Only block
-  // when skin dominates the frame.
-  // Only treat as a hard block when skin coverage is extreme. Mid-range
-  // values are passed to the server-side eye (with a hint) instead of
-  // blocking outright, so legitimate skin-heavy footage (cooking, sports,
-  // religious/cultural events) is not refused on a heuristic alone.
-  // Only treat as a hard block when skin coverage is essentially the whole
-// frame (extreme nudity). Mid-range values (cooking, sports, religious/
-// cultural events, sand, skin-heavy but benign scenes) are forwarded as a
-// hint to the server-side AI eye instead of being refused outright.
-const skinHardBlock = 0.98;
-  if (maxSkin >= skinHardBlock) {
-    return {
-      verdict: 'block',
-      category: 'adult',
-      message: 'This content looks like adult (18+) material and is not allowed on Equyvo.',
-      checked: true,
-    };
-  }
-  // Violence/terrorism heuristic: concentrated red/fire regions indicate
-  // blood, explosions or weapons. Block such content outright.
   const maxViolence = violenceRatios.length ? Math.max(...violenceRatios) : 0;
-  // Raised threshold: ordinary cooking (fire, red meat/tomatoes) and sports
-  // can trigger the red/fire heuristic at ~0.1-0.25. Only block when violence
-  // colors dominate a large share of the frame.
-  // Hard block only when violence colors dominate most of the frame. Mid-range
-  // values are forwarded as a hint for the server-side eye.
-  // Only block when violence colors dominate almost the entire frame. Ordinary
-// red food, tomatoes, peppers, sand, sunsets, sports and cooking scenes can
-// trip the red-dominant heuristic at lower ratios, so they are forwarded as
-// a hint instead of being refused on color alone.
-if (maxViolence >= 0.85) {
-    return {
-      verdict: 'block',
-      category: 'violent',
-      message: 'This content looks like violent or otherwise prohibited material and is not allowed on Equyvo.',
-      checked: true,
-    };
-  }
 
   // Ask the shared safety gate. Network failures fail OPEN (allow) — the
   // server still runs its full check again at publish time and quarantines.

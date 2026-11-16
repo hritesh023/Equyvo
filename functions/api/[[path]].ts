@@ -1339,11 +1339,12 @@ async function brainSafetyCheck(env, text) {
     if (data && typeof data === 'object') {
       const cats = Array.isArray(data.categories) ? data.categories.map((c) => String(c).toLowerCase()) : [];
       const catStr = cats.join(' ');
-      const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog|medical|fitness|body/.test(catStr);
+      const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog|medical|fitness|body|document|paper|page|text|office|white/.test(catStr);
       const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|nsfw|genital|intercourse/.test(catStr) && !benign;
       const severe = /child|csam|minor|terror|non-?consensual|assault|self[- ]?harm|suicide|weapon|bomb/.test(catStr);
       if (severe) return 'block';
-      if (adultish) return 'block';
+      if (data.safe === true || data.safe === 1 || data.safe === 'true' || data.verdict === 'allow' || data.verdict === 'safe') return 'allow';
+      if (adultish && !benign) return 'block';
       if (data.block === true && !benign) return 'block';
       if (data.safe === false && !benign) return 'block';
       if (data.review === true || data.quarantine === true) return benign ? 'allow' : 'review';
@@ -1427,7 +1428,7 @@ function uint8ToBase64(bytes) {
   return btoa(binary);
 }
 
-const UPLOAD_VISION_PROMPT = 'You are a human-like content-safety reviewer for a public, all-ages social app. BLOCK only if an image CLEARLY contains: child exploitation/CSAM, non-consensual sexual content, explicit nudity or sexual acts, graphic gore/blood used to harm, real-world violence or weapons used to harm, terrorism/extremism, or self-harm/suicide. DO NOT block benign contexts even when they contain red colors, fire, knives, meat, thin/skinny people, or skin: ordinary cooking/food preparation, religious or cultural events and clothing, educational or medical content, sports/fitness, news, art, comedy/entertainment/humor, music, dance, travel, nature, family/vlog, or everyday scenes. A red image of food or cooking is NOT violence: tomatoes, peppers, meat, strawberries, red sauces and other red foods are safe. Sand, beaches, deserts, sunsets and brown/tan skin tones are NOT nudity and NOT violence. A thin person or visible skin in sports/fitness/medical/educational/art/religious/cultural contexts is NOT nudity. Each image may be a single photo or one frame sampled from a video/GIF: if ANY frame clearly shows explicit/unsafe content, block; otherwise allow. When in doubt between any benign context and unsafe, mark safe:true. Return JSON: {"safe":true|false,"review":bool,"block":bool,"categories":[...]} where safe:true for clearly safe or benign content.';
+const UPLOAD_VISION_PROMPT = 'You are a human-like content-safety reviewer for a public, all-ages social app. Judge like a careful human moderator, not a keyword matcher. BLOCK only if an image CLEARLY contains: child exploitation/CSAM or any sexual content involving minors; non-consensual sexual content; explicit nudity or sexual acts intended to arouse; graphic gore/blood used to harm; real-world violence or weapons used to harm; terrorism/extremism; or self-harm/suicide. DO NOT block benign contexts, even when they contain red colors, fire, knives, meat, thin/skinny people, or skin: ordinary cooking/food preparation and red foods (tomatoes, peppers, meat, strawberries, sauces); religious, cultural and traditional events, clothing, art and sculptures (including sand art, sand sculptures, clay/stone/wood art); educational or medical content; sports/fitness; news; art, comedy/entertainment/humor, music, dance; travel, nature, beaches, deserts, sand, sunsets; family/vlog/everyday scenes. Sand, beaches, deserts, sunsets and brown/tan skin tones are NOT nudity and NOT violence. A thin person or visible skin in sports/fitness/medical/educational/art/religious/cultural/traditional contexts is NOT nudity. Nudity in a non-sexual artistic, medical or cultural context is safe. Red food or cooking fire is NOT violence. You will receive one or more frames sampled from a photo, video or GIF. Analyze EVERY frame independently; if ANY single frame clearly shows explicit/unsafe content, block; otherwise allow. Consider the whole context and intent like a human. When in doubt between benign and unsafe, mark safe:true. Return JSON: {"safe":true|false,"review":bool,"block":bool,"categories":[...]} where safe:true for clearly safe or benign content.';
 
 async function screenUploadedImage(env, bytes, mime, filename) {
   const b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
@@ -1445,13 +1446,15 @@ async function screenUploadedImage(env, bytes, mime, filename) {
     if (!data || typeof data !== 'object') return 'allow'; // fail-open on infra
     const cats = (data.categories || data.labels || []);
     const catStr = Array.isArray(cats) ? cats.join(' ').toLowerCase() : String(cats).toLowerCase();
-    const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog|medical|fitness|body/.test(catStr);
+    const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog|medical|fitness|body|document|paper|page|text|office|white/.test(catStr);
     const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|nsfw|genital|intercourse/.test(catStr) && !benign;
+    const explicitlySafe = (data.safe === true || data.safe === 1 || data.safe === 'true');
     const severe = /child|csam|minor|terror|non-?consensual|assault|self[- ]?harm|suicide|weapon|bomb/.test(catStr);
     if (severe) return 'block';
-    if (adultish) return 'block';
-    if (data.block === true && !benign) return 'block';
-    if (data.safe === false && !benign) return 'block';
+    if (explicitlySafe) return 'allow';
+    if (adultish && !benign) return 'block';
+    if (data.block === true && !benign && !explicitlySafe) return 'block';
+    if (data.safe === false && !benign && !explicitlySafe) return 'block';
     if (data.review === true || data.quarantine === true) return benign ? 'allow' : 'review';
     return 'allow';
   } catch {
@@ -4640,13 +4643,8 @@ export const onRequest = async (context) => {
       // Client-side visual heuristics (skin + violence color) are treated as
       // authoritative hints when the server eye is unavailable. Thresholds
       // aligned with the relaxed client values.
-      try {
-        const hints = (payload as any).clientHints || {};
-        const mv = Number(hints.maxViolence || 0);
-        const ms = Number(hints.maxSkin || 0);
-        if (Number.isFinite(mv) && mv >= 0.85) { verdict = 'block'; category = 'violent'; }
-        else if (Number.isFinite(ms) && ms >= 0.98) { verdict = 'block'; category = 'adult'; }
-      } catch { /* ignore */ }
+      // Visual color heuristics are advisory only; never hard-block on them.
+      try { void (payload as any).clientHints; } catch { /* ignore */ }
       // Brain check runs regardless of local verdict so clean content that
       // tripped a keyword can be downgraded to allow.
       try {
@@ -4661,31 +4659,31 @@ export const onRequest = async (context) => {
           const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ images: samples, task: 'moderate', prompt: 'You are a human-like content-safety reviewer for a public, all-ages social app. BLOCK only if an image CLEARLY contains: child exploitation/CSAM, non-consensual sexual content, explicit nudity or sexual acts, graphic gore/blood used to harm, real-world violence or weapons used to harm, terrorism/extremism, or self-harm/suicide. DO NOT block benign contexts even when they contain red colors, fire, knives, meat, thin/skinny people, or skin: ordinary cooking/food preparation, religious or cultural events and clothing, educational or medical content, sports/fitness, news, art, comedy/entertainment/humor, music, dance, travel, nature, family/vlog, or everyday scenes. A red image of food or cooking is NOT violence: tomatoes, peppers, meat, strawberries, red sauces and other red foods are safe. Sand, beaches, deserts, sunsets and brown/tan skin tones are NOT nudity and NOT violence. A thin person or visible skin in sports/fitness/medical/educational/art/religious/cultural contexts is NOT nudity. Each image may be a single photo or one frame sampled from a video/GIF: if ANY frame clearly shows explicit/unsafe content, block; otherwise allow. When in doubt between any benign context and unsafe, mark safe:true. Return JSON: {"safe":true|false,"review":bool,"block":bool,"categories":[...]} where safe:true for clearly safe or benign content.', source: 'equyvo-upload-gate' }),
+            body: JSON.stringify({ images: samples, task: 'moderate', prompt: UPLOAD_VISION_PROMPT, source: 'equyvo-upload-gate' }),
           }, 8000);
           if (data && typeof data === 'object') {
             confirmed = true;
-            const explicitlySafe = (data.safe === true || data.safe === 1 || data.safe === 'true');
+            const explicitlySafe = (data.safe === true || data.safe === 1 || data.safe === 'true' || data.verdict === 'allow' || data.verdict === 'safe');
             const cats = (data.categories || data.labels || []);
             const catStr = Array.isArray(cats) ? cats.join(' ').toLowerCase() : String(cats).toLowerCase();
-            const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog/.test(catStr);
+            const benign = /cooking|food|recipe|religious|culture|education|sport|news|science|art|everyday|comedy|humor|funny|entertainment|music|dance|travel|nature|family|vlog|document|paper|page|text|office|white/.test(catStr);
 const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|nsfw|genital|intercourse/.test(catStr) && !benign;
             const severe = /child|csam|minor|terror|non-?consensual|assault|self[- ]?harm|suicide/.test(catStr);
             if (severe) verdict = 'block';
-            else if (adultish) verdict = 'block';
-            else if (data.block === true && !benign) verdict = 'block';
-            else if (data.safe === false && !benign) verdict = 'block';
+            else if (explicitlySafe) verdict = 'allow';
+            else if (adultish && !benign) verdict = 'block';
+            else if (data.block === true && !benign && !explicitlySafe) verdict = 'block';
+            else if (data.safe === false && !benign && !explicitlySafe) verdict = 'block';
             else if (data.review === true || data.quarantine === true) {
               verdict = benign ? 'allow' : 'review';
             }
             else if (!explicitlySafe) {
-              verdict = benign ? 'allow' : 'review';
+              const unsafeKw = /nudity|porn|xxx|sexual|erotica|hentai|nsfw|genital|gore|weapon|violence/i.test(catStr);
+              verdict = (benign || !unsafeKw) ? 'allow' : 'review';
             }
             else {
-              // explicitly safe
-              if (Array.isArray(cats) && cats.some((c) => /child|csam|minor|terror|non-?consensual|assault|weapon|bomb|explosion|self[- ]?harm|suicide/i.test(String(c)))) verdict = 'block';
-              else if (Array.isArray(cats) && cats.some((c) => /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|nsfw|genital/i.test(String(c))) && !benign) verdict = 'block';
-               else verdict = 'allow';
+              // explicitly safe: trust the AI, only severe overrides already handled.
+              verdict = 'allow';
             }
             if (!category && verdict !== 'allow') category = severe ? 'exploitative' : 'adult';
           }
@@ -4694,8 +4692,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         // not actually run, do NOT let it through unaudited.
         const isImageFile = /\.(jpe?g|png|gif|webp|bmp)$/i.test(filename);
         if (!confirmed && samples.length > 0 && isImageFile) {
-          verdict = 'review';
-          if (!category) category = 'unspecified';
+          // Fail open: don't block clean images when the AI eye is unavailable.
+          verdict = 'allow';
         }
       }
       const isMediaFile = /\.(jpe?g|png|gif|webp|bmp|mp4|mov|webm|avi|mkv|m4v)$/i.test(filename);
