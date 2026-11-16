@@ -160,6 +160,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // Expanded landscape mode: converts a portrait fullscreen into landscape on
   // mobile/tablet interfaces so 16:9 media can fill the screen.
   const [isExpandedLandscape, setIsExpandedLandscape] = useState(false);
+  const [isMinimized, setIsMinimized] = useState(false);
   const hiddenTapPlayedRef = useRef(false);
   // Original media aspect ratio (width/height) detected at runtime so the
   // viewer preserves the uploader's real ratio instead of forcing portrait.
@@ -617,6 +618,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setIsExpandedLandscape(false);
     setIsSplitView(false);
     setShowDetailsPanel(true);
+    setIsMinimized(false);
   }, []);
   useLayoutEffect(() => { resetDiscoverControls(); }, [resetDiscoverControls]);
   useEffect(() => {
@@ -918,6 +920,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setContentOnly(true);
     setHideOverlay(true);
     setShowControls(false);
+    setIsMinimized(true);
     // On native, skip the unreliable WebView PiP and use the native bridge.
     if (isNative) {
       try {
@@ -1124,6 +1127,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       minimizedViewer.removeEventListener('touchmove', touchMove);
       minimizedViewer.removeEventListener('touchend', touchEnd);
       document.body.removeChild(minimizedViewer);
+      setIsMinimized(false);
+      try { onClose(); } catch {}
     };
     
     // Add expand button
@@ -1183,17 +1188,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       // Set temp content for restoration with proper flags
       (window as any).tempFullscreenContent = restoredContent;
       
-      // Trigger a custom event to notify parent to reopen fullscreen
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent('reopenFullscreen', { 
-          detail: { 
-            content: restoredContent,
-            currentTime, 
-            isPaused,
-            isFromMinimized: true 
-          } 
-        }));
-      }, 100);
+      // Restore in place (no unmount) so the Discover control set is preserved.
+      try { (window as any).restoreVideoState = { currentTime, isPaused }; } catch {}
+      setIsMinimized(false);
+      try { onContentChange?.(restoredContent as any); } catch {}
+      resetDiscoverControls();
     };
     
     minimizedViewer.appendChild(expandBtn);
@@ -1224,7 +1223,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     
     document.body.appendChild(minimizedViewer);
     
-    onClose();
+    // Keep the FullscreenViewer mounted (hidden) so reopen is instant and the
+    // Discover control set is preserved; do not unmount.
   };
 
 
@@ -1283,9 +1283,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       onTouchMove={(e) => { e.stopPropagation(); }}
       onTouchEnd={(e) => { e.stopPropagation(); }}
       onTouchCancel={(e) => { e.stopPropagation(); }}
-      style={isExpandedLandscape
-        ? { position: 'fixed', top: '50%', left: '50%', width: '100vh', height: '100vw', transform: 'translate(-50%, -50%) rotate(90deg)', transformOrigin: 'center center', backgroundColor: 'black', overflow: 'hidden' }
-        : getContainerStyle()}
+      style={isMinimized
+        ? { display: 'none' }
+        : (isExpandedLandscape
+          ? { position: 'fixed', top: '50%', left: '50%', width: '100vh', height: '100vw', transform: 'translate(-50%, -50%) rotate(90deg)', transformOrigin: 'center center', backgroundColor: 'black', overflow: 'hidden' }
+          : getContainerStyle())}
     >
       {/* Top bar with minimal controls */}
       <div
