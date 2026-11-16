@@ -1081,10 +1081,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   aria-label="Attach file"
                   tabIndex={-1}
                 />
-                <input ref={photoInputRef} type="file" accept="image/*" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
-                <input ref={videoInputRef} type="file" accept="video/*" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
-                <input ref={fileInput2Ref} type="file" accept="*/*" className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
-                <input ref={folderInputRef} type="file" {...({ webkitdirectory: '', directory: '' } as any)} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={photoInputRef} type="file" accept="image/*" multiple className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={videoInputRef} type="file" accept="video/*" multiple className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={fileInput2Ref} type="file" accept="*/*" multiple className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
+                <input ref={folderInputRef} type="file" multiple {...({ webkitdirectory: '', directory: '' } as any)} className="sr-only" onChange={(e) => { const f = e.target.files?.[0]; e.target.value=''; if (f) { attachFile(f); setAttachMenuOpen(false); } }} />
                 <Button
                   type="button"
                   variant="ghost"
