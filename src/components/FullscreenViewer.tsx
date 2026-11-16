@@ -161,6 +161,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // mobile/tablet interfaces so 16:9 media can fill the screen.
   const [isExpandedLandscape, setIsExpandedLandscape] = useState(false);
   const [isMinimized, setIsMinimized] = useState(false);
+  const [isNativePip, setIsNativePip] = useState(false);
   const hiddenTapPlayedRef = useRef(false);
   // Original media aspect ratio (width/height) detected at runtime so the
   // viewer preserves the uploader's real ratio instead of forcing portrait.
@@ -917,6 +918,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const handleMinimize = () => {
     const video = videoRef.current;
     const isNative = !!(window as any)?.Capacitor?.isNativePlatform?.();
+    setIsNativePip(isNative);
     // Hide everything except the content so the PiP window shows only media.
     setContentOnly(true);
     setHideOverlay(true);
@@ -970,8 +972,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       position: fixed;
       bottom: 20px;
       right: 20px;
-      width: ${isOriginalPortrait ? 180 : 320}px;
-      height: ${isOriginalPortrait ? 320 : 180}px;
+      width: ${((mediaAspect !== null && mediaAspect >= 1) || (!isPortraitMoment && !isStory && !actualContent?.forcePortrait)) ? 320 : 180}px;
+      height: ${((mediaAspect !== null && mediaAspect >= 1) || (!isPortraitMoment && !isStory && !actualContent?.forcePortrait)) ? 180 : 320}px;
       background: black;
       border-radius: 8px;
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
@@ -1284,7 +1286,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       onTouchMove={(e) => { e.stopPropagation(); }}
       onTouchEnd={(e) => { e.stopPropagation(); }}
       onTouchCancel={(e) => { e.stopPropagation(); }}
-      style={isMinimized
+      style={isMinimized && !isNativePip
         ? { display: 'none' }
         : (isExpandedLandscape
           ? { position: 'fixed', top: '50%', left: '50%', width: '100vh', height: '100vw', transform: 'translate(-50%, -50%) rotate(90deg)', transformOrigin: 'center center', backgroundColor: 'black', overflow: 'hidden' }
