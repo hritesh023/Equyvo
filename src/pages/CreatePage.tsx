@@ -280,6 +280,8 @@ const CreatePage = () => {
   const [textStoryChatWithAudience, setTextStoryChatWithAudience] = useState(false);
   const [textStoryChatPrompt, setTextStoryChatPrompt] = useState('Chat with your creator');
   const [textStoryBoxColor, setTextStoryBoxColor] = useState<'auto' | 'white' | 'black'>('auto');
+  const [textStoryThumbFile, setTextStoryThumbFile] = useState<File | null>(null);
+  const [textStoryThumbPreview, setTextStoryThumbPreview] = useState<string>('');
   // Poll inside text story: a poll is a text-story variant with a question + options.
   const [textStoryPollMode, setTextStoryPollMode] = useState(false);
   const [textStoryPollQuestion, setTextStoryPollQuestion] = useState('');
@@ -764,6 +766,7 @@ const CreatePage = () => {
               chatWithAudience: s.chatWithAudience === true || s.chat_with_audience === true,
               chatPrompt: String(s.chatPrompt || s.chat_prompt || 'Chat with your creator'),
               boxColor: (s.boxColor || s.box_color) as any,
+              thumbnail: String(s.thumbnail || s.image || ''),
               uploadDate: at,
               isPrivate: isPriv(s),
               views: num(s.views),
@@ -1043,6 +1046,7 @@ const CreatePage = () => {
     content: string;
     backgroundColor: string;
     textColor: string;
+    thumbnail?: string;
     chatWithAudience?: boolean;
     chatPrompt?: string;
     isPoll?: boolean;
@@ -1721,12 +1725,21 @@ const CreatePage = () => {
     switch (action) {
       case 'post':
         setIsUploading(true);
+        // Upload text story thumbnail (optional) before persisting.
+        let textStoryThumbUrl = '';
+        if (textStoryThumbFile) {
+          try {
+            const up = await runUpload(textStoryThumbFile, 'equyvo/stories/thumbnails', { index: 0, count: 1 });
+            textStoryThumbUrl = up?.secureUrl || '';
+          } catch { /* optional */ }
+        }
         // Add text story to uploaded text stories list with analytics
         const newUploadedTextStory: UploadedTextStory = {
           id: Date.now().toString(),
           content: storyContent,
           backgroundColor: textStoryBackground,
           textColor: textStoryColor,
+          thumbnail: textStoryThumbUrl,
           uploadDate: new Date(),
           isPrivate: contentVisibility !== 'public',
           views: 0,
@@ -1742,7 +1755,7 @@ const CreatePage = () => {
         };
 
         setUploadedTextStories(prev => [...prev, newUploadedTextStory]);
-        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: '', image: '', background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt, isPoll: newUploadedTextStory.isPoll, pollOptions: newUploadedTextStory.pollOptions, boxColor: newUploadedTextStory.boxColor });
+        const textStoryErr = await persistContent({ id: newUploadedTextStory.id, type: 'text-story', content: newUploadedTextStory.content, thumbnail: textStoryThumbUrl, image: textStoryThumbUrl, background: newUploadedTextStory.backgroundColor, color: newUploadedTextStory.textColor, backgroundColor: newUploadedTextStory.backgroundColor, textColor: newUploadedTextStory.textColor, chatWithAudience: newUploadedTextStory.chatWithAudience, chatPrompt: newUploadedTextStory.chatPrompt, isPoll: newUploadedTextStory.isPoll, pollOptions: newUploadedTextStory.pollOptions, boxColor: newUploadedTextStory.boxColor });
         setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
         setUploadProgress(null);
         if (textStoryErr) {
@@ -1759,6 +1772,8 @@ const CreatePage = () => {
         setTextStoryPollQuestion('');
         setTextStoryPollOptions(['', '']);
         setTextStoryBoxColor('auto');
+        setTextStoryThumbFile(null);
+        setTextStoryThumbPreview('');
         
         // Emit event to notify HomePage that user has uploaded stories
         window.dispatchEvent(new CustomEvent('storyUploaded', { detail: [newUploadedTextStory] }));
@@ -3956,6 +3971,42 @@ const CreatePage = () => {
 
               </>
               )}
+              {/* Text Story Thumbnail */}
+              <div>
+                <Label>Thumbnail (optional)</Label>
+                <p className="text-xs text-muted-foreground mb-2">Shown as the story cover in feeds.</p>
+                <div className="mt-1 flex items-center gap-4">
+                  {textStoryThumbPreview ? (
+                    <div className="flex items-center gap-2">
+                      <div className="relative w-24 h-16 rounded-lg overflow-hidden border">
+                        <img src={textStoryThumbPreview} alt="Thumbnail preview" className="w-full h-full object-cover" />
+                        <Button type="button" variant="ghost" size="icon" className="absolute top-1 right-1 h-6 w-6 bg-black/50 hover:bg-black/70 text-white" onClick={() => { if (textStoryThumbPreview.startsWith('blob:')) URL.revokeObjectURL(textStoryThumbPreview); setTextStoryThumbFile(null); setTextStoryThumbPreview(''); }}>
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="outline" size="sm" onClick={() => {
+                        const input = document.createElement('input');
+                        input.type = 'file'; input.accept = 'image/*';
+                        input.onchange = (e: any) => {
+                          const file = e.target.files?.[0];
+                          if (!file) return;
+                          if (!isImageFile(file)) { showError('Please select an image'); return; }
+                          if (file.size > 5 * 1024 * 1024) { showError('Thumbnail must be less than 5MB'); return; }
+                          setTextStoryThumbFile(file);
+                          setTextStoryThumbPreview(URL.createObjectURL(file));
+                        };
+                        input.click();
+                      }}>
+                        <Upload className="h-4 w-4 mr-2" /> Upload Thumbnail
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               {/* Action Buttons */}
               <div className="flex flex-col sm:flex-row gap-2">
                 <Button
