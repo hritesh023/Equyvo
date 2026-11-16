@@ -104,7 +104,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
         next.delete(id);
       } else {
         next.add(id);
-        showSuccess('❤️ Story liked');
+        showSuccess('Story liked');
       }
       try {
         localStorage.setItem(LIKED_STORIES_KEY, JSON.stringify([...next]));
@@ -459,6 +459,54 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   };
 
+  // ── Poll state (Instagram-style story polls) ─────────────────────────────
+  const pollOptions: string[] = Array.isArray((currentStory as any)?.pollOptions)
+    ? (currentStory as any).pollOptions
+    : (Array.isArray((currentStory as any)?.poll_options) ? (currentStory as any).poll_options : []);
+  const isPollStory = !!((currentStory as any)?.isPoll || (currentStory as any)?.is_poll) && pollOptions.length >= 2;
+  const [pollCounts, setPollCounts] = useState<number[]>([]);
+  const [pollTotal, setPollTotal] = useState(0);
+  const [pollUserVote, setPollUserVote] = useState<number | null>(null);
+  const [pollVoting, setPollVoting] = useState(false);
+
+  useEffect(() => {
+    setPollCounts([]);
+    setPollTotal(0);
+    setPollUserVote(null);
+    if (!isPollStory || !currentStory?.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.storyPoll(String(currentStory.id));
+        if (cancelled) return;
+        const d = (data as any)?.data || data;
+        if (d) {
+          setPollCounts(Array.isArray(d.counts) ? d.counts : []);
+          setPollTotal(Number(d.total) || 0);
+          setPollUserVote(d.userVote === null || d.userVote === undefined ? null : Number(d.userVote));
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [currentStory?.id, isPollStory]);
+
+  const handlePollVote = async (idx: number) => {
+    if (pollVoting || pollUserVote !== null || !currentStory?.id) return;
+    setPollVoting(true);
+    try {
+      await api.storyPollVote({ storyId: currentStory.id, optionIndex: idx, optionCount: pollOptions.length });
+      // Optimistically update.
+      setPollUserVote(idx);
+      setPollCounts((prev) => {
+        const next = prev.length ? [...prev] : Array.from({ length: pollOptions.length }, () => 0);
+        if (idx >= 0 && idx < next.length) next[idx] += 1;
+        return next;
+      });
+      setPollTotal((t) => t + 1);
+    } catch { showError('Vote failed'); }
+    finally { setPollVoting(false); }
+  };
+
   const chatEnabled = !!(currentStory?.chatWithAudience || (currentStory as any)?.chat_with_audience) && !isOwnStory;
   const chatPrompt = String(currentStory?.chatPrompt || (currentStory as any)?.chat_prompt || 'Chat with your creator');
 
@@ -733,8 +781,45 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               className="story-image flex items-center justify-center"
               style={{ backgroundColor: String(currentStory?.backgroundColor || currentStory?.background || '#000000') }}
             >
-              <div className="px-6 text-center" style={{ color: String(currentStory?.textColor || currentStory?.color || '#FFFFFF') }}>
-                <p className="text-2xl md:text-3xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
+              <div className="px-6 text-center w-full max-w-md" style={{ color: String(currentStory?.textColor || currentStory?.color || '#FFFFFF') }}>
+                {isPollStory ? (
+                  <div className="rounded-2xl bg-white/10 backdrop-blur-md border border-white/20 p-4 space-y-3">
+                    <p className="text-xl md:text-2xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
+                    <div className="space-y-2">
+                      {pollOptions.map((opt, idx) => {
+                        const count = pollCounts[idx] || 0;
+                        const pct = pollTotal > 0 ? Math.round((count / pollTotal) * 100) : 0;
+                        const voted = pollUserVote === idx;
+                        const showResults = pollUserVote !== null;
+                        return (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); handlePollVote(idx); }}
+                            disabled={pollUserVote !== null || pollVoting}
+                            className={`relative w-full text-left rounded-full border px-4 py-2 overflow-hidden transition ${voted ? 'border-blue-400 bg-blue-500/30' : 'border-white/30 bg-white/5 hover:bg-white/15'}`}
+                          >
+                            {showResults && (
+                              <div className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${pct}%` }} />
+                            )}
+                            <span className="relative flex items-center justify-between gap-2">
+                              <span className="truncate">{opt}</span>
+                              {showResults && <span className="text-sm opacity-80">{pct}%</span>}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {pollUserVote !== null && (
+                      <p className="text-xs opacity-70">{pollTotal} vote{pollTotal === 1 ? '' : 's'}</p>
+                    )}
+                    {pollUserVote === null && (
+                      <p className="text-xs opacity-70">Vote to see results</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-2xl md:text-3xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
+                )}
               </div>
             </div>
           ) : (

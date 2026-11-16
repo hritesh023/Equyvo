@@ -470,10 +470,10 @@ const HomePage = () => {
       const newSet = new Set(prev);
       if (newSet.has(storyId)) {
         newSet.delete(storyId);
-        showSuccess('🗑️ Story removed from saved');
+        showSuccess('️ Story removed from saved');
       } else {
         newSet.add(storyId);
-        showSuccess('📌 Story saved successfully!');
+        showSuccess(' Story saved successfully!');
       }
       return newSet;
     });
@@ -538,10 +538,10 @@ const HomePage = () => {
       const newSet = new Set(prev);
       if (newSet.has(momentId)) {
         newSet.delete(momentId);
-        showSuccess('💔 Moment unliked');
+        showSuccess(' Moment unliked');
       } else {
         newSet.add(momentId);
-        showSuccess('❤️ Moment liked!');
+        showSuccess('️ Moment liked!');
         teachBrain(`moment:${momentId}`);
       }
       return newSet;
@@ -589,10 +589,10 @@ const HomePage = () => {
       const newSet = new Set(prev);
       if (newSet.has(postId)) {
         newSet.delete(postId);
-        showSuccess('💔 Post unliked');
+        showSuccess(' Post unliked');
       } else {
         newSet.add(postId);
-        showSuccess('❤️ Post liked!');
+        showSuccess('️ Post liked!');
         teachBrain(snapshot);
       }
       return newSet;
@@ -753,7 +753,7 @@ const HomePage = () => {
 
       if (newSet.has(postId)) {
         newSet.delete(postId);
-        showSuccess('🗑️ Post removed from saved');
+        showSuccess('️ Post removed from saved');
         
         // Dispatch event to notify profile page
         window.dispatchEvent(new CustomEvent('contentUnsaved', { 
@@ -761,7 +761,7 @@ const HomePage = () => {
         }));
       } else {
         newSet.add(postId);
-        showSuccess('📌 Post saved successfully!');
+        showSuccess(' Post saved successfully!');
         teachBrain(post?.content?.slice(0, 120) || post?.type || postId, { feedback: 0.9 });
         
         // Store full content data when saving

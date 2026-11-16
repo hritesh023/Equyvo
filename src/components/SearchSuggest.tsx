@@ -521,7 +521,7 @@ const SearchSuggest: React.FC<SearchSuggestProps> = ({
                         <div className="flex-1 min-w-0">
                           <div className="font-medium text-sm group-hover:text-primary truncate">
                             {p.username || p.name || 'User'}
-                            {p.verified && <span className="ml-1 text-primary">✓</span>}
+                            {p.verified && <span className="ml-1 text-primary"></span>}
                           </div>
                           {p.bio && (
                             <div className="text-xs text-muted-foreground truncate">{p.bio}</div>

@@ -267,7 +267,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                         // Shared links open the exact post in the feed.
                         const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
                         navigator.clipboard.writeText(shareUrl)
-                          .then(() => showSuccess('🔗 Link copied to clipboard!'))
+                          .then(() => showSuccess(' Link copied to clipboard!'))
                           .catch(() => showError("Couldn't copy the link."));
                       }}
                     />

@@ -232,7 +232,7 @@ const DiscoverPage = () => {
 
       if (isCurrentlyLiked) {
         newSet.delete(contentId);
-        showSuccess('💔 Post unliked');
+        showSuccess(' Post unliked');
         // Decrement likes (from the true base count, not 0)
         setPostLikes(prevLikes => {
           const newLikes = new Map(prevLikes);
@@ -242,7 +242,7 @@ const DiscoverPage = () => {
         });
       } else {
         newSet.add(contentId);
-        showSuccess('❤️ Post liked!');
+        showSuccess('️ Post liked!');
         // Increment likes (from the true base count, not 0)
         setPostLikes(prevLikes => {
           const newLikes = new Map(prevLikes);
@@ -310,7 +310,7 @@ const DiscoverPage = () => {
   const handleCopyLink = (postId: string) => {
     const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
     navigator.clipboard.writeText(shareUrl)
-      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .then(() => showSuccess(' Link copied to clipboard!'))
       .catch(() => showError("Couldn't copy the link."));
   };
 
@@ -918,9 +918,9 @@ avatar: m.avatar || m.user?.avatar || '',
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground mb-3">
-                        {item.contentType === 'live' ? `🔴 Live streaming by ${item.creator} - join now!` :
+                        {item.contentType === 'live' ? ` Live streaming by ${item.creator} - join now!` :
                          item.contentType === 'video' ? `▶️ Video content from ${item.creator} - watch this amazing video` :
-                         `📷 Photo by ${item.creator} - stunning visual content`}
+                         ` Photo by ${item.creator} - stunning visual content`}
                       </p>
                       <button
                         type="button"
@@ -1418,7 +1418,7 @@ avatar: m.avatar || m.user?.avatar || '',
                 <div className="hidden sm:block text-sm text-muted-foreground space-y-1">
                   <div className="flex items-center gap-2">
                     <span className="text-muted-foreground/80">{item.creator}</span>
-                    <Badge variant="secondary" className="h-4 px-1 text-[10px]">✓</Badge>
+                    <Badge variant="secondary" className="h-4 px-1 text-[10px]"></Badge>
                   </div>
                   <div className="flex items-center gap-1">
                     <span className="flex items-center gap-1"><Eye className="w-3 h-3" /> {item.views} views</span>
@@ -1495,7 +1495,7 @@ avatar: m.avatar || m.user?.avatar || '',
             <Hash className="w-4 h-4 text-muted-foreground" />
             {activeHashtag && (
               <Button size="sm" variant="default" className="h-7 px-3 text-xs rounded-full" onClick={clearHashtag}>
-                #{activeHashtag.replace(/^#/, '')} ✕
+                #{activeHashtag.replace(/^#/, '')} 
               </Button>
             )}
             {currentTags.map((tag, index) => (

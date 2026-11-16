@@ -69,6 +69,91 @@ function VoiceBubble({ msg }: { msg: ChatMessage }) {
   );
 }
 
+function isPollText(text: string): boolean {
+  return typeof text === 'string' && text.trim().startsWith('[Poll]:');
+}
+
+function parsePollText(text: string): { question: string; options: string[] } | null {
+  if (!isPollText(text)) return null;
+  const lines = text.split('\\n');
+  const question = lines[0].replace('[Poll]:', '').trim();
+  const options = lines.slice(1).map((l) => l.replace(/^\\d+\\.\\s*/, '').trim()).filter(Boolean);
+  if (!question || options.length < 2) return null;
+  return { question, options };
+}
+
+const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
+  const parsed = parsePollText(msg.text);
+  const [counts, setCounts] = useState<number[]>([]);
+  const [total, setTotal] = useState(0);
+  const [userVote, setUserVote] = useState<number | null>(null);
+  const [voting, setVoting] = useState(false);
+  useEffect(() => {
+    if (!parsed || !msg.id) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const { data } = await api.storyPoll(String(msg.id));
+        if (cancelled) return;
+        const d = (data as any)?.data || data;
+        if (d) {
+          setCounts(Array.isArray(d.counts) ? d.counts : []);
+          setTotal(Number(d.total) || 0);
+          setUserVote(d.userVote === null || d.userVote === undefined ? null : Number(d.userVote));
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, [msg.id]);
+  if (!parsed) return <p className="whitespace-pre-wrap break-words">{msg.text}</p>;
+  const { question, options } = parsed;
+  const handleVote = async (idx: number) => {
+    if (voting || userVote !== null) return;
+    setVoting(true);
+    try {
+      await api.storyPollVote({ storyId: msg.id, optionIndex: idx, optionCount: options.length });
+      setUserVote(idx);
+      setCounts((prev) => {
+        const next = prev.length ? [...prev] : Array.from({ length: options.length }, () => 0);
+        if (idx >= 0 && idx < next.length) next[idx] += 1;
+        return next;
+      });
+      setTotal((t) => t + 1);
+    } catch { showError('Vote failed'); }
+    finally { setVoting(false); }
+  };
+  return (
+    <div className="rounded-xl bg-white/10 border border-white/20 p-3 space-y-2 min-w-[200px]">
+      <p className="font-semibold text-sm">{question}</p>
+      <div className="space-y-1.5">
+        {options.map((opt, idx) => {
+          const count = counts[idx] || 0;
+          const pct = total > 0 ? Math.round((count / total) * 100) : 0;
+          const voted = userVote === idx;
+          const showResults = userVote !== null;
+          return (
+            <button
+              key={idx}
+              type="button"
+              onClick={(e) => { e.stopPropagation(); handleVote(idx); }}
+              disabled={userVote !== null || voting}
+              className={`relative w-full text-left rounded-full border px-3 py-1.5 overflow-hidden text-sm transition ${voted ? 'border-blue-400 bg-blue-500/30' : 'border-white/30 bg-white/5 hover:bg-white/15'}`}
+            >
+              {showResults && <div className="absolute inset-y-0 left-0 bg-white/20" style={{ width: `${pct}%` }} />}
+              <span className="relative flex items-center justify-between gap-2">
+                <span className="truncate">{opt}</span>
+                {showResults && <span className="text-xs opacity-80">{pct}%</span>}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+      {userVote !== null && <p className="text-[11px] opacity-70">{total} vote{total === 1 ? '' : 's'}</p>}
+      {userVote === null && <p className="text-[11px] opacity-70">Vote to see results</p>}
+    </div>
+  );
+};
+
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const { t } = useI18n();
   const [tab, setTab] = useState<'followers' | 'following'>('followers');
@@ -895,6 +980,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                             {msg.text && <p className="text-xs opacity-80">{msg.text}</p>}
                           </div>
                         </div>
+                      ) : isPollText(msg.text) ? (
+                        <ChatPollBox msg={msg} />
                       ) : (
                         <p className="whitespace-pre-wrap break-words">{msg.text}</p>
                       )}
@@ -1204,7 +1291,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               const opts = pollOptions.map((o) => o.trim()).filter(Boolean);
               if (!q || opts.length < 2) { showError('Enter a question and at least 2 options'); return; }
               if (!activeChat) return;
-              const text = `📊 Poll: ${q}\n` + opts.map((o, i) => `${i + 1}. ${o}`).join('\n');
+              const text = `[Poll]: ${q}\n` + opts.map((o, i) => `${i + 1}. ${o}`).join('\n');
               setSending(true);
               try {
                 const sent = await sendChatMessage(activeChat.id, text);

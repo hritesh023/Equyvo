@@ -152,7 +152,7 @@ const MediaRenderer: React.FC<{
       return (
         <div className="mt-3 rounded-lg overflow-hidden bg-muted border border-border flex items-center justify-center h-64">
           <div className="text-center p-4">
-            <div className="text-muted-foreground text-sm mb-2">🖼️ Image failed to load</div>
+            <div className="text-muted-foreground text-sm mb-2">️ Image failed to load</div>
             <button 
               onClick={() => setImageError(false)}
               className="text-xs text-primary hover:underline"
@@ -199,7 +199,7 @@ const MediaRenderer: React.FC<{
       return (
         <div className="mt-3 rounded-lg overflow-hidden bg-muted border border-border flex items-center justify-center h-64">
           <div className="text-center p-4">
-            <div className="text-muted-foreground text-sm mb-2">🎬 GIF failed to load</div>
+            <div className="text-muted-foreground text-sm mb-2"> GIF failed to load</div>
             <button 
               onClick={() => setImageError(false)}
               className="text-xs text-primary hover:underline"
@@ -251,7 +251,7 @@ const MediaRenderer: React.FC<{
       return (
         <div className="mt-3 rounded-lg overflow-hidden bg-muted border border-border flex items-center justify-center h-64">
           <div className="text-center p-4">
-            <div className="text-muted-foreground text-sm mb-2">🎥 Video failed to load</div>
+            <div className="text-muted-foreground text-sm mb-2"> Video failed to load</div>
             <button
               onClick={() => setVideoError(false)}
               className="text-xs text-primary hover:underline"
@@ -652,7 +652,7 @@ const ThoughtsPage = memo(() => {
       
       if (newSavedThoughts.has(thoughtId)) {
         newSavedThoughts.delete(thoughtId);
-        showSuccess('🗑️ Thought removed from saved');
+        showSuccess('️ Thought removed from saved');
         
         // Dispatch event to notify profile page
         window.dispatchEvent(new CustomEvent('contentUnsaved', { 
@@ -660,7 +660,7 @@ const ThoughtsPage = memo(() => {
         }));
       } else {
         newSavedThoughts.add(thoughtId);
-        showSuccess('📌 Thought saved successfully!');
+        showSuccess(' Thought saved successfully!');
         
         // Store full content data when saving
         if (thought) {
@@ -814,7 +814,7 @@ const ThoughtsPage = memo(() => {
             username: author.username,
             avatar_url: realAuthorAvatar(),
           },
-          content: `🔄 Reacted to: ${thought.content}`,
+          content: ` Reacted to: ${thought.content}`,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           likes_count: thought.likes_count,
@@ -838,7 +838,7 @@ const ThoughtsPage = memo(() => {
           detail: { thoughtId, userReactedThought: userReactedThought, userReactedThoughts: updatedUserReactedThoughts } 
         }));
       }
-      showSuccess('🔄 Thought reacted! This thought is now yours too!');
+      showSuccess(' Thought reacted! This thought is now yours too!');
     }
 
     setReactedThoughts(newReactedThoughts);

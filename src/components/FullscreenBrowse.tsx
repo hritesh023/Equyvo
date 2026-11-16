@@ -52,10 +52,10 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
       const newSet = new Set(prev);
       if (newSet.has(itemId)) {
         newSet.delete(itemId);
-        showSuccess('💔 Removed from liked');
+        showSuccess(' Removed from liked');
       } else {
         newSet.add(itemId);
-        showSuccess('❤️ Added to liked');
+        showSuccess('️ Added to liked');
       }
       return newSet;
     });
@@ -130,10 +130,10 @@ const FullscreenBrowse: React.FC<FullscreenBrowseProps> = ({ isOpen, onClose, it
       const newSet = new Set(prev);
       if (newSet.has(itemId)) {
         newSet.delete(itemId);
-        showSuccess('📁 Removed from saved');
+        showSuccess(' Removed from saved');
       } else {
         newSet.add(itemId);
-        showSuccess('📁 Added to saved');
+        showSuccess(' Added to saved');
       }
       return newSet;
     });

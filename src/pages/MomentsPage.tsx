@@ -643,7 +643,7 @@ const MomentsPage = () => {
   const handleCopyLink = (momentId: string) => {
     const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(momentId)}`;
     navigator.clipboard.writeText(shareUrl)
-      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .then(() => showSuccess(' Link copied to clipboard!'))
       .catch(() => showError("Couldn't copy the link."));
   };
 
@@ -935,7 +935,7 @@ const MomentsPage = () => {
                 <Music2 className="h-3 w-3" />
                 <p className="text-xs font-medium truncate max-w-[150px]">{moment.song}</p>
                 {!isMuted && index === activeVideoIndex && (
-                  <span className="text-xs text-green-400 ml-2 animate-pulse">🔊 Unmuted</span>
+                  <span className="text-xs text-green-400 ml-2 animate-pulse"> Unmuted</span>
                 )}
               </div>
             </div>

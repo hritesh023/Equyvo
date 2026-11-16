@@ -485,6 +485,17 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  storyPollVote: (data: any) =>
+    request<{ data: any; error: null }>('/story-poll-vote', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  storyPoll: (storyId: string) =>
+    request<{ data: any; error: null }>('/story-poll?storyId=' + encodeURIComponent(storyId), {
+      method: 'GET',
+    }),
+
   // Moments
   getMoments: async (limit = 20) => {
     const res = await request<{ data: any[]; error: null }>(`/moments?limit=${limit}`);

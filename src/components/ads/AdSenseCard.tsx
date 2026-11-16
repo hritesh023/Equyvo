@@ -91,7 +91,7 @@ const AdSenseCard: React.FC<AdSenseCardProps> = ({ placement, className = '' }) 
             className="text-xs text-muted-foreground hover:text-foreground"
             aria-label="Dismiss ad"
           >
-            Hide this ad ✕
+            Hide this ad 
           </button>
         </div>
         <div className="mt-3 min-h-[120px]">

@@ -3739,20 +3739,19 @@ const CreatePage = () => {
                         className="mt-1"
                         rows={1}
                       />
-                      {textStoryPollOptions.length > 2 && (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="icon"
-                          onClick={() => {
-                            const next = textStoryPollOptions.filter((_, i) => i !== idx);
-                            setTextStoryPollOptions(next.length >= 2 ? next : ['', '']);
-                          }}
-                          title="Remove option"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        disabled={textStoryPollOptions.length <= 2}
+                        onClick={() => {
+                          const next = textStoryPollOptions.filter((_, i) => i !== idx);
+                          setTextStoryPollOptions(next.length >= 2 ? next : ['', '']);
+                        }}
+                        title="Remove option"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
                     </div>
                   ))}
                   <div className="flex items-center gap-2">

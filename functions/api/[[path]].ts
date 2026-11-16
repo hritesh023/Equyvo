@@ -7522,6 +7522,56 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       return json({ data: { ok: true }, error: null }, 200, cors);
     }
 
+    // ── STORY POLL VOTE ────────────────────────────────────────────────────
+    if (path === '/api/story-poll-vote' && method === 'POST') {
+      const actor = await getActor(request, env, null);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      let raw; try { raw = await readJson(request); } catch { raw = {}; }
+      const storyId = String(raw?.storyId || '').trim().slice(0, 128);
+      const optionIndex = Number(raw?.optionIndex);
+      const optionCount = Math.max(2, Number(raw?.optionCount) || 2);
+      if (!storyId || !Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= optionCount) {
+        return json({ error: 'invalid vote' }, 400, cors);
+      }
+      const key = 'story_poll:' + storyId;
+      let data = { optionCount, votes: {} };
+      try {
+        const r = await env.EQUYVO_KV.get(key);
+        if (r) {
+          const parsed = JSON.parse(r);
+          data = { optionCount: parsed?.optionCount || optionCount, votes: parsed?.votes || {} };
+        }
+      } catch { /* ignore */ }
+      data.optionCount = Math.max(data.optionCount, optionCount);
+      data.votes[actor.id] = optionIndex;
+      await env.EQUYVO_KV.put(key, JSON.stringify(data));
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    if (path === '/api/story-poll' && method === 'GET') {
+      const actor = await getActor(request, env, null);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const url = new URL(request.url);
+      const storyId = String(url.searchParams.get('storyId') || '').trim().slice(0, 128);
+      if (!storyId) return json({ error: 'storyId required' }, 400, cors);
+      const key = 'story_poll:' + storyId;
+      let data = { optionCount: 0, votes: {} };
+      try {
+        const r = await env.EQUYVO_KV.get(key);
+        if (r) {
+          const parsed = JSON.parse(r);
+          data = { optionCount: parsed?.optionCount || 0, votes: parsed?.votes || {} };
+        }
+      } catch { /* ignore */ }
+      const counts = Array.from({ length: data.optionCount || 0 }, () => 0);
+      Object.values(data.votes).forEach((idx) => {
+        if (typeof idx === 'number' && idx >= 0 && idx < counts.length) counts[idx] += 1;
+      });
+      const userVote = (actor && actor.id && Object.prototype.hasOwnProperty.call(data.votes, actor.id)) ? data.votes[actor.id] : null;
+      return json({ data: { optionCount: data.optionCount, counts, total: Object.keys(data.votes).length, userVote, votes: data.votes }, error: null }, 200, cors);
+    }
     // ΓöÇΓöÇ NOTIFICATIONS ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // GET /api/notifications ΓÇö pending follow requests (as items) + stored
     // per-user items (accepts, chat nudges, uploads, live). Bounded Γëñ100.

@@ -1136,7 +1136,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     
     // Add expand button
     const expandBtn = document.createElement('button');
-    expandBtn.innerHTML = '⛶';
+    expandBtn.innerHTML = '';
     expandBtn.style.cssText = `
       position: absolute;
       top: 8px;

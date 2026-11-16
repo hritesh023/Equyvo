@@ -142,7 +142,7 @@ const SearchPage: React.FC = () => {
   const handleCopyLink = (postId: string) => {
     const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
     navigator.clipboard.writeText(shareUrl)
-      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .then(() => showSuccess(' Link copied to clipboard!'))
       .catch(() => showError("Couldn't copy the link."));
   };
 
@@ -447,7 +447,7 @@ const SearchPage: React.FC = () => {
                           onClick={() => handleOpenProfile(u)}
                         >
                           {u.username || u.name || 'User'}
-                          {u.verified && <span className="ml-1 text-primary">✓</span>}
+                          {u.verified && <span className="ml-1 text-primary"></span>}
                         </div>
                         {u.name && u.username && u.name !== u.username && (
                           <div className="text-sm text-muted-foreground truncate">{u.name}</div>

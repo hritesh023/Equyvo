@@ -128,7 +128,7 @@ try {
 try {
   const rootElement = document.getElementById("root");
   if (!rootElement) {
-    document.body.innerHTML = '<div style="color: red; padding: 20px;">❌ Root element not found</div>';
+    document.body.innerHTML = '<div style="color: red; padding: 20px;"> Root element not found</div>';
     throw new Error("Root element not found");
   }
 
@@ -183,7 +183,7 @@ try {
 } catch (error) {
   document.body.innerHTML = `
     <div style="padding: 20px; background: #ff4444; color: white; font-family: monospace;">
-      <h1>❌ App Failed to Start</h1>
+      <h1> App Failed to Start</h1>
       <p>Error: ${error instanceof Error ? error.message : String(error)}</p>
       <details>
         <summary>Stack Trace</summary>

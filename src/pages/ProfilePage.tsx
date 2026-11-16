@@ -821,7 +821,7 @@ const ProfilePage = () => {
           user: displayName,
           avatar: userProfile.avatar || '',
           time: 'Just now',
-          content: `🔄 Reacted to: ${post.content}`,
+          content: ` Reacted to: ${post.content}`,
           likes: post.likes,
           reacts: (post.reacts || 0) + 1,
           comments: post.comments,
@@ -834,7 +834,7 @@ const ProfilePage = () => {
         };
         setUserReactedPosts(prev => [userReactedPost as Post, ...prev] as Post[]);
       }
-      showSuccess('🔄 Post reacted! This post is now yours too!');
+      showSuccess(' Post reacted! This post is now yours too!');
     }
 
     setReactedPosts(newReactedPosts);
@@ -1262,7 +1262,7 @@ const ProfilePage = () => {
   const handleCopyLink = (postId: string) => {
     const shareUrl = `${window.location.origin}/app/home?post=${encodeURIComponent(postId)}`;
     navigator.clipboard.writeText(shareUrl)
-      .then(() => showSuccess('🔗 Link copied to clipboard!'))
+      .then(() => showSuccess(' Link copied to clipboard!'))
       .catch(() => showError("Couldn't copy the link."));
   };
 

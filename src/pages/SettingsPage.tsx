@@ -67,7 +67,7 @@ const LanguagePickerCard = () => {
         <span className="font-medium">{l.native}</span>
         <span className="truncate text-xs text-muted-foreground">{l.english}</span>
       </span>
-      {language === l.code && <span className="text-xs font-semibold">✓</span>}
+      {language === l.code && <span className="text-xs font-semibold"></span>}
     </button>
   );
 
