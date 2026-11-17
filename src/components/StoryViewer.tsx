@@ -505,18 +505,28 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
 
   const handlePollVote = async (idx: number) => {
     if (pollVoting || pollUserVote !== null || !currentStory?.id) return;
+    // Optimistic: show remove option immediately.
+    setPollUserVote(idx);
+    setPollCounts((prev) => {
+      const next = prev.length ? [...prev] : Array.from({ length: pollOptions.length }, () => 0);
+      if (idx >= 0 && idx < next.length) next[idx] += 1;
+      return next;
+    });
+    setPollTotal((t) => t + 1);
     setPollVoting(true);
     try {
       await api.storyPollVote({ storyId: currentStory.id, optionIndex: idx, optionCount: pollOptions.length });
-      // Optimistically update.
-      setPollUserVote(idx);
+    } catch {
+      // Revert on failure.
+      showError('Vote failed');
+      setPollUserVote(null);
       setPollCounts((prev) => {
         const next = prev.length ? [...prev] : Array.from({ length: pollOptions.length }, () => 0);
-        if (idx >= 0 && idx < next.length) next[idx] += 1;
+        if (idx >= 0 && idx < next.length) next[idx] = Math.max(0, next[idx] - 1);
         return next;
       });
-      setPollTotal((t) => t + 1);
-    } catch { showError('Vote failed'); }
+      setPollTotal((t) => Math.max(0, t - 1));
+    }
     finally { setPollVoting(false); }
   };
 
@@ -856,7 +866,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
             >
               <div className="px-6 text-center w-full max-w-md" style={{ color: String(currentStory?.textColor || currentStory?.color || '#FFFFFF') }}>
                 {isPollStory ? (
-                  <div className="rounded-2xl p-4 space-y-3 border" style={{ backgroundColor: storyBoxBg, color: storyBoxText, borderColor: storyBoxText + '33' }}>
+                  <div className="relative z-10 rounded-2xl p-4 space-y-3 border" style={{ backgroundColor: storyBoxBg, color: storyBoxText, borderColor: storyBoxText + '33', pointerEvents: 'auto' }}>
                     <p className="text-xl md:text-2xl font-bold whitespace-pre-wrap break-words">{String(currentStory?.content || '')}</p>
                     <div className="space-y-2">
                       {pollOptions.map((opt, idx) => {
@@ -893,10 +903,11 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); handleRemovePollVote(); }}
-                        className="text-xs underline opacity-80 hover:opacity-100"
+                        className="mt-1 rounded-full border border-white/40 bg-white/10 px-3 py-1 text-xs font-medium hover:bg-white/20 disabled:opacity-50"
                         disabled={pollVoting}
+                        style={{ pointerEvents: 'auto', position: 'relative', zIndex: 10 }}
                       >
-                        Remove vote
+                        {pollVoting ? 'Removing...' : 'Remove vote'}
                       </button>
                     )}
                     {isOwnStory && (

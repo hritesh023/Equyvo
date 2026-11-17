@@ -110,17 +110,27 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
   const { question, options } = parsed;
   const handleVote = async (idx: number) => {
     if (voting || userVote !== null) return;
+    // Optimistic so Remove vote appears immediately.
+    setUserVote(idx);
+    setCounts((prev) => {
+      const next = prev.length ? [...prev] : Array.from({ length: options.length }, () => 0);
+      if (idx >= 0 && idx < next.length) next[idx] += 1;
+      return next;
+    });
+    setTotal((t) => t + 1);
     setVoting(true);
     try {
       await api.storyPollVote({ storyId: msg.id, optionIndex: idx, optionCount: options.length });
-      setUserVote(idx);
+    } catch {
+      showError('Vote failed');
+      setUserVote(null);
       setCounts((prev) => {
         const next = prev.length ? [...prev] : Array.from({ length: options.length }, () => 0);
-        if (idx >= 0 && idx < next.length) next[idx] += 1;
+        if (idx >= 0 && idx < next.length) next[idx] = Math.max(0, next[idx] - 1);
         return next;
       });
-      setTotal((t) => t + 1);
-    } catch { showError('Vote failed'); }
+      setTotal((t) => Math.max(0, t - 1));
+    }
     finally { setVoting(false); }
   };
 
@@ -169,8 +179,8 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
       </div>
       {userVote !== null && <p className="text-[11px] opacity-70">{total} vote{total === 1 ? '' : 's'}</p>}
       {userVote !== null && (
-        <button type="button" onClick={(e) => { e.stopPropagation(); handleRemoveVote(); }} className="text-[11px] underline opacity-80 hover:opacity-100" disabled={voting}>
-          Remove vote
+        <button type="button" onClick={(e) => { e.stopPropagation(); handleRemoveVote(); }} className="rounded-full border border-white/30 bg-white/10 px-3 py-1 text-[11px] font-medium hover:bg-white/20 disabled:opacity-50" disabled={voting} style={{ pointerEvents: 'auto' }}>
+          {voting ? 'Removing...' : 'Remove vote'}
         </button>
       )}
       {userVote === null && <p className="text-[11px] opacity-70">Tap an option to vote</p>}
