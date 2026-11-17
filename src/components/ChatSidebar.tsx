@@ -89,6 +89,31 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
   const [total, setTotal] = useState(0);
   const [userVote, setUserVote] = useState<number | null>(null);
   const [voting, setVoting] = useState(false);
+  const [showVoters, setShowVoters] = useState(false);
+  const [voters, setVoters] = useState<{ id: string; name: string; avatar?: string; option: number }[]>([]);
+  const [votersLoading, setVotersLoading] = useState(false);
+  const loadVoters = async () => {
+    if (!msg.id) return;
+    setShowVoters(true);
+    setVotersLoading(true);
+    try {
+      const { data } = await api.storyPoll(String(msg.id));
+      const d = (data as any)?.data || data;
+      const votes = d?.votes || {};
+      const entries = Object.entries(votes) as [string, number][];
+      const resolved = await Promise.all(entries.map(async ([uid, opt]) => {
+        try {
+          const { data: prof } = await api.getProfile(uid);
+          const p = (prof as any)?.data || prof;
+          return { id: uid, name: p?.name || p?.username || 'User', avatar: p?.avatar || p?.avatarUrl, option: Number(opt) };
+        } catch {
+          return { id: uid, name: 'User', avatar: undefined, option: Number(opt) };
+        }
+      }));
+      setVoters(resolved);
+    } catch { setVoters([]); }
+    finally { setVotersLoading(false); }
+  };
   useEffect(() => {
     if (!parsed || !msg.id) return;
     let cancelled = false;
@@ -151,8 +176,9 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
     finally { setVoting(false); }
   };
   return (
-    <div className="rounded-xl bg-white/10 border border-white/20 p-3 space-y-2 min-w-[200px]">
-      <p className="font-semibold text-sm">{question}</p>
+    <>
+      <div className="rounded-xl bg-white/10 border border-white/20 p-3 space-y-2 min-w-[200px]">
+        <p className="font-semibold text-sm">{question}</p>
       <div className="space-y-1.5">
         {options.map((opt, idx) => {
           const count = counts[idx] || 0;
@@ -183,8 +209,37 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
           {voting ? 'Removing...' : 'Remove vote'}
         </button>
       )}
+      {msg.fromMe && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); void loadVoters(); }} className="text-[11px] underline opacity-80 hover:opacity-100">
+          View voters
+        </button>
+      )}
       {userVote === null && <p className="text-[11px] opacity-70">Tap an option to vote</p>}
     </div>
+    {showVoters && (
+      <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/70" onClick={(e) => { e.stopPropagation(); setShowVoters(false); }}>
+        <div className="w-80 max-h-[70vh] overflow-auto rounded-lg bg-card p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+          <h3 className="font-semibold">Poll voters</h3>
+          {votersLoading ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : voters.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No votes yet.</p>
+          ) : (
+            <ul className="space-y-2">
+              {voters.map((v) => (
+                <li key={v.id} className="flex items-center gap-2 text-sm">
+                  <img src={v.avatar || ''} alt="" className="h-8 w-8 rounded-full object-cover bg-muted" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
+                  <span className="flex-1 truncate">{v.name}</span>
+                  <span className="text-xs text-muted-foreground">Option {v.option + 1}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Button variant="outline" size="sm" onClick={(e) => { e.stopPropagation(); setShowVoters(false); }}>Close</Button>
+        </div>
+      </div>
+    )}
+    </>
   );
 };
 
