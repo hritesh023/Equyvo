@@ -1059,6 +1059,8 @@ export const api = {
     request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/pin`, { method: 'POST', body: JSON.stringify({ id: msgId, pinned }) }),
   groupDeleteMsg: (id: string, msgId: string, forEveryone?: boolean) =>
     request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/delete`, { method: 'POST', body: JSON.stringify({ id: msgId, forEveryone: !!forEveryone }) }),
+  groupSettings: (id: string, replyPermission: string) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify({ replyPermission }) }),
 
   // Health check
   health: () => request<{ status: string }>('/health'),

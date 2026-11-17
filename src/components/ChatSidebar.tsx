@@ -252,6 +252,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [groups, setGroups] = useState<any[]>([]);
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [isGroupChat, setIsGroupChat] = useState(false);
+  const [groupMuted, setGroupMuted] = useState(false);
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
@@ -340,6 +341,11 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const navigate = useNavigate();
 
   const activeGroupObj = isGroupChat ? (groups.find((g: any) => g.id === activeGroupId) || null) : null;
+  const meId = String(getStoredUser()?.id || '');
+  const isGroupLeader = !!activeGroupObj && activeGroupObj.leaderId === meId;
+  const isGroupCoLeader = !!activeGroupObj && Array.isArray(activeGroupObj.coLeaders) && activeGroupObj.coLeaders.includes(meId);
+  const groupReplyPerm = activeGroupObj?.settings?.replyPermission || 'all';
+  const canGroupReply = !isGroupChat || groupReplyPerm === 'all' || (groupReplyPerm === 'leaders' && (isGroupLeader || isGroupCoLeader)) || (groupReplyPerm === 'leader' && isGroupLeader);
   const selectionMode = selectedMsgIds.size > 0;
   const activeChat = isGroupChat && activeGroupObj
     ? ({ id: activeGroupObj.id, peerId: activeGroupObj.id, peerName: activeGroupObj.name, peerAvatar: '', relation: 'group', online: false, lastMessage: '', timestamp: '', unread: 0 } as any)
@@ -494,6 +500,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
   useEffect(() => {
     if (activeGroupId && isGroupChat) {
+      try { setGroupMuted(localStorage.getItem('equyvo_mute_group_' + activeGroupId) === '1'); } catch { setGroupMuted(false); }
       void refreshGroupMsgs(activeGroupId);
     }
   }, [activeGroupId]);
@@ -1156,6 +1163,40 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             >
               <Eraser className="w-4 h-4" />
             </Button>
+            {isGroupChat && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label={groupMuted ? 'Unmute group' : 'Mute group'}
+                title={groupMuted ? 'Unmute group' : 'Mute group'}
+                onClick={() => {
+                  const next = !groupMuted;
+                  setGroupMuted(next);
+                  try {
+                    if (next) localStorage.setItem('equyvo_mute_group_' + activeGroupId, '1');
+                    else localStorage.removeItem('equyvo_mute_group_' + activeGroupId);
+                  } catch { /* ignore */ }
+                }}
+              >
+                <Volume2 className="w-4 h-4" />
+              </Button>
+            )}
+            {isGroupChat && isGroupLeader && (
+              <select
+                className="h-8 rounded-md border bg-background px-2 text-xs"
+                value={groupReplyPerm}
+                onChange={async (e) => {
+                  try { await api.groupSettings(activeGroupId!, e.target.value); await refreshGroups(); } catch { /* ignore */ }
+                }}
+                aria-label="Reply permission"
+                title="Who can reply"
+              >
+                <option value="all">All can reply</option>
+                <option value="leaders">Leaders can reply</option>
+                <option value="leader">Only leader</option>
+              </select>
+            )}
             <ChatThemeSelector>
               <Button
                 variant="ghost"
@@ -1426,6 +1467,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 )}
               </div>
             )}
+            {!canGroupReply && (
+              <p className="mb-2 text-xs text-muted-foreground">Only leaders can reply in this group.</p>
+            )}
             <form
               className="flex gap-2"
               onSubmit={(e) => {
@@ -1513,13 +1557,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 aria-label={`${t('chat.message')} ${activeChat.peerName}`}
                 className="bg-secondary/50"
                 maxLength={2000}
-                disabled={sending}
+                disabled={sending || !canGroupReply}
               />
               <Button
                 type="submit"
                 size="icon"
                 className="h-10 w-10 rounded-full bg-purple-600 hover:bg-purple-500"
-                disabled={(!message.trim() && !attachedFile) || sending}
+                disabled={(!message.trim() && !attachedFile) || sending || !canGroupReply}
                 aria-label={sending ? 'Sending…' : 'Send message'}
                 title={sending ? 'Sending…' : 'Send message (Enter)'}
               >

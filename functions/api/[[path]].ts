@@ -9078,6 +9078,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         const id = 'grp_' + generateId();
         const group = {
           id, name, leaderId: actor.id, coLeaders: [], members: [...canonicalMembers],
+          settings: { replyPermission: 'all' },
           createdAt: new Date().toISOString(),
         };
         await writeGroup(group);
@@ -9138,6 +9139,21 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           } else {
             return json({ error: 'Invalid role' }, 400, cors);
           }
+          await writeGroup(group);
+          return json({ data: { group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/settings  { replyPermission }  (leader only)
+        if (sub === 'settings' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (group.leaderId !== actor.id) return json({ error: 'Only the group leader can change settings.' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const rp = String(clean.replyPermission || '').trim();
+          if (!['all', 'leaders', 'leader'].includes(rp)) return json({ error: 'Invalid replyPermission' }, 400, cors);
+          group.settings = { ...(group.settings || {}), replyPermission: rp };
           await writeGroup(group);
           return json({ data: { group }, error: null }, 200, cors);
         }
