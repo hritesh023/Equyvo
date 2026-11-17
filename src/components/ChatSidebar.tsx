@@ -148,7 +148,8 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
           const count = counts[idx] || 0;
           const pct = total > 0 ? Math.round((count / total) * 100) : 0;
           const voted = userVote === idx;
-          const showResults = userVote !== null;
+          // Chat polls allow previewing results before voting (unlike story polls).
+          const showResults = true;
           return (
             <button
               key={idx}
@@ -172,7 +173,7 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
           Remove vote
         </button>
       )}
-      {userVote === null && <p className="text-[11px] opacity-70">Vote to see results</p>}
+      {userVote === null && <p className="text-[11px] opacity-70">Tap an option to vote</p>}
     </div>
   );
 };
