@@ -76,9 +76,9 @@ function isPollText(text: string): boolean {
 
 function parsePollText(text: string): { question: string; options: string[] } | null {
   if (!isPollText(text)) return null;
-  const lines = text.split('\\n');
+  const lines = text.split('\n');
   const question = lines[0].replace('[Poll]:', '').trim();
-  const options = lines.slice(1).map((l) => l.replace(/^\\d+\\.\\s*/, '').trim()).filter(Boolean);
+  const options = lines.slice(1).map((l) => l.replace(/^\d+\.\s*/, '').trim()).filter(Boolean);
   if (!question || options.length < 2) return null;
   return { question, options };
 }
