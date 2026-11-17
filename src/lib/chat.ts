@@ -28,6 +28,8 @@ export interface ChatMessage {
   replyTo?: string;
   deletedForEveryone?: boolean;
   deletedFor?: string[];
+  forwarded?: boolean;
+  pinned?: boolean;
   e2e?: boolean;
 }
 
@@ -331,7 +333,7 @@ function patchMessage(threadId: string, id: string, patch: Partial<ChatMessage>)
 export async function sendChatMessage(
   threadId: string,
   text: string,
-  attach?: { fileUrl: string; fileName: string; type: 'text' | 'image' | 'file' | 'audio' | 'video' | 'gif'; durationSec?: number; replyTo?: string },
+  attach?: { fileUrl: string; fileName: string; type: 'text' | 'image' | 'file' | 'audio' | 'video' | 'gif'; durationSec?: number; replyTo?: string; forwarded?: boolean },
 ): Promise<ChatMessage | null> {
   const clean = String(text || '').trim();
   if ((!clean && !attach) || !threadId) return null;
@@ -350,6 +352,7 @@ export async function sendChatMessage(
     fileName: attach?.fileName,
     durationSec: attach?.durationSec,
     replyTo: attach?.replyTo,
+    forwarded: attach?.forwarded === true,
     e2e: !!clean,
   };
   appendMessage(msg);

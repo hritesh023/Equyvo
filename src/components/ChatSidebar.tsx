@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin } from 'lucide-react';
 import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
@@ -245,9 +245,19 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
 
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const { t } = useI18n();
-  const [tab, setTab] = useState<'followers' | 'following'>('followers');
+  const [tab, setTab] = useState<'followers' | 'following' | 'groups'>('followers');
   const [threads, setThreads] = useState<ChatThread[]>(() => listThreads());
   const [activeId, setActiveId] = useState<string | null>(null);
+  // Groups
+  const [groups, setGroups] = useState<any[]>([]);
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [isGroupChat, setIsGroupChat] = useState(false);
+  const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
+  const [groupSearch, setGroupSearch] = useState('');
+  const [groupSearchResults, setGroupSearchResults] = useState<any[]>([]);
+  const [groupMsgs, setGroupMsgs] = useState<any[]>([]);
   const [message, setMessage] = useState('');
   const [replyTo, setReplyTo] = useState<ChatMessage | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -267,6 +277,20 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [cameraOpen, setCameraOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [menuMsgId, setMenuMsgId] = useState<string | null>(null);
+  // Message selection (long-press) state
+  const [selectedMsgIds, setSelectedMsgIds] = useState<Set<string>>(new Set());
+  const [pinnedMsgId, setPinnedMsgId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!activeId) { setPinnedMsgId(null); return; }
+    try { setPinnedMsgId(localStorage.getItem('equyvo_pinned_' + activeId) || null); } catch { setPinnedMsgId(null); }
+  }, [activeId]);
+  useEffect(() => {
+    if (!activeId) return;
+    try {
+      if (pinnedMsgId) localStorage.setItem('equyvo_pinned_' + activeId, pinnedMsgId);
+      else localStorage.removeItem('equyvo_pinned_' + activeId);
+    } catch { /* ignore */ }
+  }, [activeId, pinnedMsgId]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const chatLongPressRef = useRef<{ timer: number | null; triggered: boolean }>({ timer: null, triggered: false });
@@ -315,20 +339,45 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const { chatTheme } = useChatTheme();
   const navigate = useNavigate();
 
-  const activeChat = threads.find((t) => t.id === activeId) || null;
+  const activeGroupObj = isGroupChat ? (groups.find((g: any) => g.id === activeGroupId) || null) : null;
+  const selectionMode = selectedMsgIds.size > 0;
+  const activeChat = isGroupChat && activeGroupObj
+    ? ({ id: activeGroupObj.id, peerId: activeGroupObj.id, peerName: activeGroupObj.name, peerAvatar: '', relation: 'group', online: false, lastMessage: '', timestamp: '', unread: 0 } as any)
+    : (threads.find((t) => t.id === activeId) || null);
   const [msgs, setMsgs] = useState<ChatMessage[]>([]);
 
   // Notify the app shell (bottom nav) whenever a conversation is open so the
   // nav can step out of the way of the pinned composer (WhatsApp-style).
   useEffect(() => {
-    window.dispatchEvent(new CustomEvent('equyvo:chat-open', { detail: { open: !!activeId } }));
+    window.dispatchEvent(new CustomEvent('equyvo:chat-open', { detail: { open: !!(activeId || activeGroupId) } }));
     return () => {
       window.dispatchEvent(new CustomEvent('equyvo:chat-open', { detail: { open: false } }));
     };
-  }, [activeId]);
+  }, [activeId, activeGroupId]);
 
   const refreshThreads = () => setThreads(listThreads());
   const refreshMsgs = (id: string | null) => setMsgs(id ? listMessages(id) : []);
+  const refreshGroups = async () => {
+    try {
+      const res: any = await api.groupsList();
+      setGroups(Array.isArray(res?.data?.groups) ? res.data.groups : []);
+    } catch { setGroups([]); }
+  };
+  const openGroupChat = async (id: string) => {
+    setActiveGroupId(id);
+    setIsGroupChat(true);
+    setActiveId(null);
+    await refreshGroupMsgs(id);
+  };
+  const refreshGroupMsgs = async (id: string | null) => {
+    if (!id) { setGroupMsgs([]); setMsgs([]); return; }
+    try {
+      const res: any = await api.groupMessages(id, 200);
+      const list = Array.isArray(res?.data?.messages) ? res.data.messages : [];
+      setGroupMsgs(list);
+      setMsgs(list);
+    } catch { setGroupMsgs([]); setMsgs([]); }
+  };
 
   // Presence heartbeat: keep this account's lastSeen fresh so followers/following
   // see an accurate online indicator in their chats.
@@ -364,6 +413,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
      
   }, []);
 
+  useEffect(() => { void refreshGroups(); }, []);
   useEffect(() => {
     let cancelled = false;
     const syncSocial = async () => {
@@ -443,10 +493,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   }, [msgs.length]);
 
   useEffect(() => {
+    if (activeGroupId && isGroupChat) {
+      void refreshGroupMsgs(activeGroupId);
+    }
+  }, [activeGroupId]);
+  useEffect(() => {
     if (stickToBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
-  }, [msgs.length, activeId]);
+  }, [msgs.length, activeId, activeGroupId]);
 
   const visibleThreads = threads
     .filter((t) => (tab === 'followers' ? t.relation === 'follower' || t.relation === 'mutual' : t.relation === 'following' || t.relation === 'mutual'))
@@ -487,6 +542,29 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
   const handleSendMessage = async () => {
     if (recording || (!message.trim() && !attachedFile) || !activeChat || sending) return;
+    if (isGroupChat && activeGroupId) {
+      // Group send
+      setSending(true);
+      try {
+        const textToSend = message.trim();
+        let fileUrl = '', fileName = '', type: any = 'text';
+        if (attachedFile) {
+          const up = await api.uploadFile(attachedFile, 'equyvo/chat/attachments');
+          if (up.error || !up?.data?.secureUrl) throw new Error('attachment-upload-failed');
+          fileUrl = up.data.secureUrl;
+          fileName = attachedFile.name;
+          const mime = String(attachedFile.type || '').toLowerCase();
+          type = mime === 'image/gif' ? 'gif' : mime.startsWith('image/') ? 'image' : mime.startsWith('video/') ? 'video' : mime.startsWith('audio/') ? 'audio' : 'file';
+        }
+        await api.groupSend(activeGroupId, { text: textToSend, type, fileUrl, fileName, replyTo: replyTo?.id });
+        setMessage('');
+        clearAttachment();
+        setReplyTo(null);
+        await refreshGroupMsgs(activeGroupId);
+      } catch { showError('Message could not be sent. Try again.'); }
+      finally { setSending(false); }
+      return;
+    }
     const threadId = activeChat.id;
     const textToSend = message.trim();
     const fileToSend = attachedFile;
@@ -597,17 +675,22 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           const data = up?.data;
           const error = up?.error;
           if (error || !data?.secureUrl) throw new Error('voice-upload-failed');
-          const sent = await sendChatMessage(threadId, '', {
-            fileUrl: data.secureUrl,
-            fileName: 'Voice message',
-            type: 'audio',
-            durationSec: Math.max(1, secs || 0),
-            replyTo: replyTo?.id,
-          });
           setReplyTo(null);
-          if (!sent) throw new Error('voice-send-failed');
-          refreshMsgs(threadId);
-          refreshThreads();
+          if (isGroupChat && activeGroupId) {
+            await api.groupSend(activeGroupId, { text: '', type: 'audio', fileUrl: data.secureUrl, fileName: 'Voice message', durationSec: Math.max(1, secs || 0) });
+            await refreshGroupMsgs(activeGroupId);
+          } else {
+            const sent = await sendChatMessage(threadId, '', {
+              fileUrl: data.secureUrl,
+              fileName: 'Voice message',
+              type: 'audio',
+              durationSec: Math.max(1, secs || 0),
+              replyTo: replyTo?.id,
+            });
+            if (!sent) throw new Error('voice-send-failed');
+            refreshMsgs(threadId);
+            refreshThreads();
+          }
         } catch (err: unknown) {
           const e = err as { name?: string; message?: string };
           showError(e?.name === 'ContentBlockedError' ? String(e.message) : 'Voice message could not be sent. Try again.');
@@ -758,6 +841,57 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     setReplyTo(msg);
   };
 
+  const toggleSelectMsg = (id: string) => {
+    setSelectedMsgIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const clearSelection = () => setSelectedMsgIds(new Set());
+  const deleteSelectedMsgs = async () => {
+    if (!activeChat) return;
+    for (const id of selectedMsgIds) {
+      if (isGroupChat && activeGroupId) {
+        try { await api.groupDeleteMsg(activeGroupId, id, false); } catch { /* ignore */ }
+      } else {
+        try { await deleteChatMessage(activeChat.id, id, false); } catch { /* ignore */ }
+      }
+    }
+    clearSelection();
+    if (isGroupChat && activeGroupId) await refreshGroupMsgs(activeGroupId);
+    else refreshMsgs(activeChat.id);
+  };
+  const forwardSelectedMsgs = async () => {
+    const target = window.prompt('Forward to chat peer id or group id:');
+    if (!target) return;
+    const selected = msgs.filter((m: any) => selectedMsgIds.has(m.id));
+    for (const m of selected) {
+      const text = String(m.text || m.fileName || '');
+      try {
+        if (String(target).startsWith('grp_')) {
+          await api.groupSend(String(target), { text, type: m.type || 'text', fileUrl: m.fileUrl || '', fileName: m.fileName || '', forwarded: true });
+        } else {
+          await sendChatMessage(String(target), text, { fileUrl: m.fileUrl || '', fileName: m.fileName || '', type: (m.type || 'text') as any, forwarded: true });
+        }
+      } catch { /* best-effort */ }
+    }
+    clearSelection();
+    showSuccess('Forwarded');
+  };
+  const pinSelectedMsg = async () => {
+    const first = [...selectedMsgIds][0];
+    if (!first) return;
+    if (pinnedMsgId === first) {
+      setPinnedMsgId(null);
+      if (isGroupChat && activeGroupId) { try { await api.groupPin(activeGroupId, first, false); } catch {} }
+    } else {
+      setPinnedMsgId(first);
+      if (isGroupChat && activeGroupId) { try { await api.groupPin(activeGroupId, first, true); } catch {} }
+    }
+    clearSelection();
+  };
+
   const isAttachedImage = !!attachedFile && attachedFile.type.startsWith('image/');
   const isAttachedGif = !!attachedFile && attachedFile.type === 'image/gif';
 
@@ -779,10 +913,11 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             </Button>
           </ChatThemeSelector>
         </div>
-        <Tabs value={tab} onValueChange={(v) => { setTab(v as 'followers' | 'following'); setSearchQuery(''); }} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+        <Tabs value={tab} onValueChange={(v) => { setTab(v as 'followers' | 'following' | 'groups'); setSearchQuery(''); }} className="w-full">
+          <TabsList className="grid w-full grid-cols-3">
             <TabsTrigger value="followers">Followers</TabsTrigger>
             <TabsTrigger value="following">Following</TabsTrigger>
+            <TabsTrigger value="groups">Groups</TabsTrigger>
           </TabsList>
         </Tabs>
         <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
@@ -815,10 +950,44 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         )}
       </div>
 
-      {!activeChat && (
+      {!activeChat && !activeGroupId && (
         <ScrollArea className="flex-1">
           <div className="divide-y divide-border/20">
-            {loading && threads.length === 0 ? (
+            {tab === 'groups' ? (
+              <>
+                <div className="p-3 flex items-center justify-between gap-2">
+                  <p className="text-sm font-medium">Groups</p>
+                  <Button size="sm" variant="outline" onClick={() => setCreateGroupOpen(true)}>
+                    <Plus className="h-4 w-4 mr-1" /> New group
+                  </Button>
+                </div>
+                <div className="p-3">
+                  <Input placeholder="Search groups…" value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} />
+                </div>
+                {groups.length === 0 ? (
+                  <div className="p-8 text-center text-muted-foreground">
+                    <MessageCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p className="text-sm font-medium">No groups yet</p>
+                    <p className="mt-1 text-xs opacity-80">Create a group to chat with multiple people.</p>
+                    <Button className="mt-3" size="sm" onClick={() => setCreateGroupOpen(true)}>Create group</Button>
+                  </div>
+                ) : (
+                  groups
+                    .filter((g: any) => !groupSearch.trim() || String(g.name || '').toLowerCase().includes(groupSearch.trim().toLowerCase()))
+                    .map((g: any) => (
+                      <div key={g.id} role="button" tabIndex={0} className="flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors"
+                        onClick={() => { setIsGroupChat(true); void openGroupChat(g.id); }}
+                      >
+                        <Avatar><AvatarFallback>{String(g.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium text-sm truncate">{g.name}</p>
+                          <p className="text-xs text-muted-foreground truncate">{(g.members || []).length} members</p>
+                        </div>
+                      </div>
+                    ))
+                )}
+              </>
+            ) : loading && threads.length === 0 ? (
               <div className="p-8 text-center text-muted-foreground text-sm">Loading your people…</div>
             ) : visibleThreads.length > 0 ? (
               visibleThreads.map((contact) => (
@@ -912,7 +1081,26 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           : 'absolute inset-0 bg-background z-10 flex flex-col'}
         >
           <div className="p-3 border-b flex items-center gap-3 bg-white/95 dark:bg-secondary/30 backdrop-blur-md shrink-0">
-            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); refreshThreads(); }} aria-label="Back to chat list" title="Back to chat list">
+            {selectionMode ? (
+              <>
+                <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={clearSelection} aria-label="Clear selection" title="Clear selection">
+                  <X className="w-4 h-4" />
+                </Button>
+                <span className="font-semibold text-sm">{selectedMsgIds.size} selected</span>
+                <div className="flex-1" />
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => void deleteSelectedMsgs()} aria-label="Delete selected" title="Delete selected">
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => void forwardSelectedMsgs()} aria-label="Forward selected" title="Forward selected">
+                  <ArrowRight className="w-4 h-4" />
+                </Button>
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => void pinSelectedMsg()} aria-label="Pin/unpin selected" title="Pin/unpin selected">
+                  <Pin className="w-4 h-4" />
+                </Button>
+              </>
+            ) : (
+            <>
+            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
               <ArrowLeft className="w-4 h-4" />
             </Button>
             <button
@@ -979,6 +1167,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 <Palette className="w-4 h-4" />
               </Button>
             </ChatThemeSelector>
+            </>
+            )}
           </div>
 
           {/* WhatsApp-style message area. Background is a sibling layer of the
@@ -1008,10 +1198,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               )}
               {msgs.map((msg) => {
                 if (msg.deletedForEveryone) {
+                  const sel = selectedMsgIds.has(msg.id);
                   return (
                     <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className="max-w-[80%]">
-                        <div className="px-3 py-1.5 rounded-xl text-sm shadow-sm italic opacity-70 bg-slate-800/60 text-slate-300 rounded-tl-none">
+                      <div className={`max-w-[80%] relative group ${sel ? 'ring-2 ring-purple-500/60 rounded-xl' : ''}`}>
+                        {selectionMode && (
+                          <div className={`absolute ${msg.fromMe ? '-left-7' : '-right-7'} top-1/2 -translate-y-1/2`}>
+                            <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${sel ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400'}`}>
+                              {sel && <Check className="h-3 w-3" />}
+                            </div>
+                          </div>
+                        )}
+                        <div
+                          className={`px-3 py-1.5 rounded-xl text-sm shadow-sm italic opacity-70 bg-slate-800/60 text-slate-300 rounded-tl-none ${sel ? 'bg-purple-500/20' : ''}`}
+                          onContextMenu={(e) => { e.preventDefault(); setMenuMsgId(msg.id); }}
+                          onTouchStart={() => { const t = window.setTimeout(() => toggleSelectMsg(msg.id), 500); (msg as any)._t = t; }}
+                          onTouchEnd={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
+                          onTouchMove={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
+                          onClick={() => { if (selectionMode) toggleSelectMsg(msg.id); }}
+                        >
                           This message was deleted
                           <div className={`mt-0.5 flex items-center justify-end gap-1 text-[11px] text-slate-400`}>
                             <span>{new Date(msg.createdAt || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
@@ -1021,9 +1226,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     </div>
                   );
                 }
+                const msgSelected = selectedMsgIds.has(msg.id);
                 return (
                 <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                  <div className="max-w-[80%] relative group">
+                  <div className={`max-w-[80%] relative group ${msgSelected ? 'ring-2 ring-purple-500/60 rounded-xl' : ''}`}>
+                    {selectionMode && (
+                      <div className={`absolute ${msg.fromMe ? '-left-7' : '-right-7'} top-1/2 -translate-y-1/2 z-30`}>
+                        <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${msgSelected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400 bg-slate-900/60'}`}>
+                          {msgSelected && <Check className="h-3 w-3" />}
+                        </div>
+                      </div>
+                    )}
                     <button
                       type="button"
                       aria-label="Message actions"
@@ -1037,12 +1250,19 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         msg.fromMe
                           ? 'bg-purple-600 text-white rounded-tr-none'
                           : 'bg-slate-700 text-slate-100 rounded-tl-none dark:bg-slate-700'
-                      }`}
+                      } ${msgSelected ? 'bg-purple-500/30' : ''}`}
                       onContextMenu={(e) => { e.preventDefault(); setMenuMsgId(msg.id); }}
-                      onTouchStart={() => { const t = window.setTimeout(() => setMenuMsgId(msg.id), 500); (msg as any)._t = t; }}
+                      onTouchStart={() => { const t = window.setTimeout(() => toggleSelectMsg(msg.id), 500); (msg as any)._t = t; }}
                       onTouchEnd={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
                       onTouchMove={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
+                      onClick={() => { if (selectionMode) toggleSelectMsg(msg.id); }}
                     >
+                      {msg.forwarded && (
+                        <p className="text-[11px] italic opacity-70 mb-1">Forwarded</p>
+                      )}
+                      {pinnedMsgId === msg.id && (
+                        <p className="text-[11px] opacity-70 mb-1 flex items-center gap-1"><Pin className="h-3 w-3" /> Pinned</p>
+                      )}
                       {msg.replyTo && (
                         <div className="mb-1 border-l-2 border-white/40 pl-2 text-xs opacity-80">
                           {msgs.find((m) => m.id === msg.replyTo)?.text || msgs.find((m) => m.id === msg.replyTo)?.fileName || 'Message'}
@@ -1399,6 +1619,54 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         <button type="button" className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent" onClick={() => { folderInputRef.current?.click(); setAttachMenuOpen(false); }}>
           <Folder className="h-4 w-4" /> Folders
         </button>
+      </div>,
+      document.body
+    )}
+    {createGroupOpen && createPortal(
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70" onClick={() => setCreateGroupOpen(false)}>
+        <div className="w-96 max-h-[80vh] overflow-auto rounded-lg bg-card p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+          <h3 className="font-semibold">Create group</h3>
+          <Input placeholder="Group name" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+          <div>
+            <p className="text-xs text-muted-foreground mb-1">Add members (search profiles)</p>
+            <Input placeholder="Search profile name…" value={groupSearch} onChange={async (e) => {
+              const q = e.target.value; setGroupSearch(q);
+              if (q.trim().length < 2) { setGroupSearchResults([]); return; }
+              try {
+                const res: any = await api.search(q, 10);
+                const users = res?.data?.users || res?.data?.results || [];
+                setGroupSearchResults(Array.isArray(users) ? users : []);
+              } catch { setGroupSearchResults([]); }
+            }} />
+            {groupSearchResults.length > 0 && (
+              <div className="mt-2 max-h-40 overflow-auto space-y-1">
+                {groupSearchResults.map((u: any) => (
+                  <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={newGroupMembers.includes(String(u.id))} onChange={(e) => {
+                      const id = String(u.id);
+                      setNewGroupMembers((prev) => e.target.checked ? [...prev, id] : prev.filter((x) => x !== id));
+                    }} />
+                    <span>{u.name || u.username || u.id}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setCreateGroupOpen(false)}>Cancel</Button>
+            <Button size="sm" onClick={async () => {
+              if (!newGroupName.trim()) { showError('Group name required'); return; }
+              try {
+                const res: any = await api.groupCreate({ name: newGroupName.trim(), members: newGroupMembers });
+                if (res?.error) { showError(res.error); return; }
+                setNewGroupName(''); setNewGroupMembers([]); setGroupSearch(''); setGroupSearchResults([]);
+                setCreateGroupOpen(false);
+                await refreshGroups();
+                showSuccess('Group created');
+              } catch { showError('Could not create group'); }
+            }}>Create</Button>
+          </div>
+        </div>
       </div>,
       document.body
     )}

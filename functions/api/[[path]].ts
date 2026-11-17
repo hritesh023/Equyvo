@@ -1524,6 +1524,8 @@ function normChatMsg(m) {
     deletedFor: Array.isArray(m.deletedFor)
       ? m.deletedFor.filter((x) => typeof x === 'string').slice(0, 10)
       : [],
+    forwarded: m.forwarded === true,
+    pinned: m.pinned === true,
   };
 }
 
@@ -7289,6 +7291,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         // Voice notes: recording length in seconds (display-only metadata).
         durationSec: Math.min(600, Math.max(0, Math.round(Number(clean.durationSec) || 0))),
         replyTo: clean.replyTo ? String(clean.replyTo).slice(0, 64) : undefined,
+        forwarded: clean.forwarded === true,
+        pinned: false,
         status: 'sent', createdAt: new Date().toISOString(),
       };
       // Event-sourced store: per-message key + per-sender index append. Two
@@ -7366,6 +7370,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         replyTo: m.replyTo || undefined,
         deletedForEveryone: !!m.deletedForEveryone,
         deletedFor: Array.isArray(m.deletedFor) ? m.deletedFor : [],
+        forwarded: !!m.forwarded,
+        pinned: !!m.pinned,
       }));
       return json({ data: { messages: out }, error: null }, 200, cors);
     }
@@ -9000,6 +9006,295 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         await kv.put('modq:list', JSON.stringify(list.slice(0, 500)));
       } catch {}
       return json({ data: { enqueued: true }, error: null }, 200, cors);
+    }
+
+    // ── GROUP CHATS (WhatsApp-style groups) ────────────────────────────────
+    // Groups are stored under `group:<id>` with a leader, co-leaders and
+    // members. Membership is indexed per account (`usergroups:<userId>`) so
+    // listing is bounded. Messages reuse the event-sourced per-sender index
+    // pattern (`groupmsg:` + `groupidx:<groupId>:<sender>`) so concurrent
+    // senders can never clobber each other's history.
+     const groupMatch = path.match(/^\/api\/groups(?:\/(.*))?$/);
+    if (groupMatch) {
+      const rest = (groupMatch[1] || '').split('?')[0];
+      const segments = rest.split('/').filter(Boolean);
+      const groupId = segments[0] || '';
+      const sub = segments[1] || '';
+
+      const readGroup = async (id) => {
+        try {
+          const raw = await kv.get('group:' + id);
+          return raw ? JSON.parse(raw) : null;
+        } catch { return null; }
+      };
+      const writeGroup = async (g) => {
+        try { await kv.put('group:' + g.id, JSON.stringify(g)); } catch {}
+      };
+      const userGroupsKey = (uid) => 'usergroups:' + uid;
+      const readUserGroups = async (uid) => {
+        try {
+          const raw = await kv.get(userGroupsKey(uid));
+          const arr = raw ? JSON.parse(raw) : [];
+          return Array.isArray(arr) ? arr : [];
+        } catch { return []; }
+      };
+      const addUserGroup = async (uid, gid) => {
+        const list = await readUserGroups(uid);
+        if (!list.includes(gid)) { list.unshift(gid); await kv.put(userGroupsKey(uid), JSON.stringify(list.slice(0, 200))); }
+      };
+      const removeUserGroup = async (uid, gid) => {
+        const list = (await readUserGroups(uid)).filter((x) => x !== gid);
+        await kv.put(userGroupsKey(uid), JSON.stringify(list));
+      };
+
+      // GET /api/groups  (list my groups)
+      if (!groupId && method === 'GET') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        const ids = await readUserGroups(actor.id);
+        const groups = [];
+        for (const id of ids.slice(0, 100)) {
+          const g = await readGroup(id);
+          if (g) groups.push({ id: g.id, name: g.name, leaderId: g.leaderId, coLeaders: g.coLeaders || [], members: g.members || [], createdAt: g.createdAt });
+        }
+        return json({ data: { groups }, error: null }, 200, cors);
+      }
+
+      // POST /api/groups  (create)
+      if (!groupId && method === 'POST') {
+        const actor = await getActor(request, env);
+        const denied = actorResponse(actor, env, cors);
+        if (denied) return denied;
+        let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+        const clean = sanitizeBody(raw);
+        const name = String(clean.name || '').trim().slice(0, 80);
+        if (!name) return json({ error: 'Group name required' }, 400, cors);
+        const memberIds = Array.isArray(clean.members) ? clean.members.map((x) => String(x).trim()).filter(Boolean).slice(0, 200) : [];
+        const canonicalMembers = new Set([actor.id]);
+        for (const m of memberIds) {
+          try { canonicalMembers.add(await canonicalAccountId(env, m)); } catch { canonicalMembers.add(m); }
+        }
+        const id = 'grp_' + generateId();
+        const group = {
+          id, name, leaderId: actor.id, coLeaders: [], members: [...canonicalMembers],
+          createdAt: new Date().toISOString(),
+        };
+        await writeGroup(group);
+        for (const m of group.members) await addUserGroup(m, id);
+        return json({ data: { group }, error: null }, 201, cors);
+      }
+
+      if (groupId) {
+        const group = await readGroup(groupId);
+        if (!group) return json({ error: 'Group not found' }, 404, cors);
+        const isMember = Array.isArray(group.members) && group.members.includes(actor.id ?? '');
+        // actor may be null for some reads; resolve below per route.
+
+        // GET /api/groups/:id
+        if (!sub && method === 'GET') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          return json({ data: { group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/members  { userId }  (leader only)
+        if (sub === 'members' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (group.leaderId !== actor.id) return json({ error: 'Only the group leader can add members.' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const uid = await canonicalAccountId(env, String(clean.userId || '').trim());
+          if (!uid) return json({ error: 'Invalid user' }, 400, cors);
+          if (!group.members.includes(uid)) {
+            group.members.push(uid);
+            await writeGroup(group);
+            await addUserGroup(uid, groupId);
+          }
+          return json({ data: { group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/role  { userId, role }  (leader only)
+        if (sub === 'role' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (group.leaderId !== actor.id) return json({ error: 'Only the group leader can change roles.' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const uid = await canonicalAccountId(env, String(clean.userId || '').trim());
+          const role = String(clean.role || '').trim();
+          if (!uid || uid === actor.id) return json({ error: 'Invalid user' }, 400, cors);
+          if (!group.members.includes(uid)) return json({ error: 'Not a member' }, 400, cors);
+          group.coLeaders = Array.isArray(group.coLeaders) ? group.coLeaders : [];
+          if (role === 'coleader') {
+            if (!group.coLeaders.includes(uid)) group.coLeaders.push(uid);
+          } else if (role === 'member') {
+            group.coLeaders = group.coLeaders.filter((x) => x !== uid);
+          } else {
+            return json({ error: 'Invalid role' }, 400, cors);
+          }
+          await writeGroup(group);
+          return json({ data: { group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/remove  { userId }  (leader only; or self leave)
+        if (sub === 'remove' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const uid = await canonicalAccountId(env, String(clean.userId || '').trim());
+          if (!uid) return json({ error: 'Invalid user' }, 400, cors);
+          if (uid !== actor.id && group.leaderId !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
+          if (uid === group.leaderId) return json({ error: 'Leader cannot be removed.' }, 400, cors);
+          group.members = (group.members || []).filter((x) => x !== uid);
+          group.coLeaders = (group.coLeaders || []).filter((x) => x !== uid);
+          await writeGroup(group);
+          await removeUserGroup(uid, groupId);
+          return json({ data: { group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/send
+        if (sub === 'send' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const text = String(clean.text || '').slice(0, 2000);
+          const allowedTypes = ['text', 'image', 'file', 'audio', 'video', 'gif'];
+          const type = allowedTypes.includes(String(clean.type || '')) ? String(clean.type) : (clean.fileUrl ? 'file' : 'text');
+          if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
+          if (text.trim()) {
+            try {
+              const verdict = await moderateContent(env, { text });
+              if (verdict !== 'allow') return json({ error: 'Message violates community guidelines.', code: 'CONTENT_BLOCKED' }, 400, cors);
+            } catch (e) {
+              return json({ error: (e && e.message) || 'Message violates community guidelines.', code: 'CONTENT_BLOCKED' }, (e && e.status) || 400, cors);
+            }
+          }
+          const clientId = String(clean.id || '').slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '');
+          const msg = {
+            id: clientId || generateId(), groupId, from: actor.id, text, type,
+            fileUrl: String(clean.fileUrl || '').slice(0, 2000),
+            fileName: String(clean.fileName || '').slice(0, 200),
+            durationSec: Math.min(600, Math.max(0, Math.round(Number(clean.durationSec) || 0))),
+            replyTo: clean.replyTo ? String(clean.replyTo).slice(0, 64) : undefined,
+            forwarded: clean.forwarded === true,
+            pinned: false,
+            status: 'sent', createdAt: new Date().toISOString(),
+          };
+          // per-sender index
+          const pair = groupId;
+          const msgKey = 'groupmsg:' + groupId + ':' + msg.id;
+          try { await kv.put(msgKey, JSON.stringify(msg)); } catch {}
+          try {
+            const idxKey = 'groupidx:' + groupId + ':' + actor.id;
+            const rawIdx = await kv.get(idxKey);
+            const arr = rawIdx ? JSON.parse(rawIdx) : [];
+            const list = Array.isArray(arr) ? arr : [];
+            if (!list.some((x) => x && x.id === msg.id)) {
+              list.push({ id: msg.id, ts: Date.now() });
+              await kv.put(idxKey, JSON.stringify(list.slice(-300)));
+            }
+          } catch {}
+          return json({ data: { id: msg.id }, error: null }, 200, cors);
+        }
+
+        // GET /api/groups/:id/messages
+        if (sub === 'messages' && method === 'GET') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          // read all member indexes
+          const out = new Map();
+          for (const m of group.members) {
+            try {
+              const rawIdx = await kv.get('groupidx:' + groupId + ':' + m);
+              const arr = rawIdx ? JSON.parse(rawIdx) : [];
+              const list = Array.isArray(arr) ? arr : [];
+              for (const e of list) {
+                if (!e || !e.id) continue;
+                if (out.has(e.id)) continue;
+                try {
+                  const rawMsg = await kv.get('groupmsg:' + groupId + ':' + e.id);
+                  if (rawMsg) {
+                    const mm = JSON.parse(rawMsg);
+                    out.set(e.id, mm);
+                  }
+                } catch {}
+              }
+            } catch {}
+          }
+          const merged = [...out.values()].sort((x, y) => (new Date(x.createdAt).getTime() || 0) - (new Date(y.createdAt).getTime() || 0));
+          const limit = Math.min(300, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
+          const visible = merged.slice(-limit).map((m) => ({
+            id: m.id, threadId: groupId, text: m.text, fromMe: m.from === actor.id,
+            senderId: m.from, status: 'sent',
+            timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
+            createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
+            type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
+            durationSec: Number(m.durationSec) || 0,
+            replyTo: m.replyTo || undefined,
+            deletedForEveryone: !!m.deletedForEveryone,
+            forwarded: !!m.forwarded,
+            pinned: !!m.pinned,
+          })).filter((m) => !(Array.isArray(m.deletedFor) && m.deletedFor.includes(actor.id)));
+          return json({ data: { messages: visible, group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/pin  { id, pinned }
+        if (sub === 'pin' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const mid = String(clean.id || '').slice(0, 64);
+          const pinned = clean.pinned !== false;
+          try {
+            const rawMsg = await kv.get('groupmsg:' + groupId + ':' + mid);
+            if (rawMsg) {
+              const m = JSON.parse(rawMsg);
+              m.pinned = pinned;
+              await kv.put('groupmsg:' + groupId + ':' + mid, JSON.stringify(m));
+            }
+          } catch {}
+          return json({ data: { ok: true }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/delete  { id, forEveryone? }
+        if (sub === 'delete' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          const mid = String(clean.id || '').slice(0, 64);
+          const forEveryone = !!clean.forEveryone;
+          try {
+            const rawMsg = await kv.get('groupmsg:' + groupId + ':' + mid);
+            if (rawMsg) {
+              const m = JSON.parse(rawMsg);
+              if (forEveryone && m.from !== actor.id) return json({ error: 'Forbidden' }, 403, cors);
+              if (forEveryone) { m.deletedForEveryone = true; m.text = ''; m.fileUrl = ''; m.fileName = ''; }
+              else { m.deletedFor = Array.isArray(m.deletedFor) ? m.deletedFor : []; if (!m.deletedFor.includes(actor.id)) m.deletedFor.push(actor.id); }
+              await kv.put('groupmsg:' + groupId + ':' + mid, JSON.stringify(m));
+            }
+          } catch {}
+          return json({ data: { ok: true }, error: null }, 200, cors);
+        }
+      }
     }
 
   return json({ error: 'Not found: ' + method + ' ' + path }, 404, cors);

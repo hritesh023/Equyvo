@@ -635,7 +635,7 @@ export const api = {
 
   // Chat transport. Ticks: sent = reached server, delivered/seen via polling.
   // Gating (followers ↔ following) is enforced server-side; strangers get 403.
-  chatSend: (peer: string, data: { id?: string; text?: string; type?: string; fileUrl?: string; fileName?: string; durationSec?: number; replyTo?: string }) =>
+  chatSend: (peer: string, data: { id?: string; text?: string; type?: string; fileUrl?: string; fileName?: string; durationSec?: number; replyTo?: string; forwarded?: boolean }) =>
     request<{ data: { id: string; delivered: boolean }; error: null }>(`/chat/${encodeURIComponent(peer)}/send`, {
       method: 'POST',
       body: JSON.stringify(data),
@@ -1037,6 +1037,28 @@ export const api = {
   // following can see an online indicator in chats.
   presence: () =>
     request<{ data: { ok: boolean }; error: null }>('/presence', { method: 'POST' }),
+
+  // Groups
+  groupsList: () =>
+    request<{ data: { groups: any[] }; error: null }>('/groups'),
+  groupCreate: (data: { name: string; members?: string[] }) =>
+    request<{ data: { group: any }; error: null }>('/groups', { method: 'POST', body: JSON.stringify(data) }),
+  groupGet: (id: string) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}`),
+  groupAddMember: (id: string, userId: string) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/members`, { method: 'POST', body: JSON.stringify({ userId }) }),
+  groupSetRole: (id: string, userId: string, role: string) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/role`, { method: 'POST', body: JSON.stringify({ userId, role }) }),
+  groupRemoveMember: (id: string, userId: string) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/remove`, { method: 'POST', body: JSON.stringify({ userId }) }),
+  groupSend: (id: string, data: any) =>
+    request<{ data: { id: string }; error: null }>(`/groups/${encodeURIComponent(id)}/send`, { method: 'POST', body: JSON.stringify(data) }),
+  groupMessages: (id: string, limit = 100) =>
+    request<{ data: { messages: any[]; group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/messages?limit=${limit}`),
+  groupPin: (id: string, msgId: string, pinned: boolean) =>
+    request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/pin`, { method: 'POST', body: JSON.stringify({ id: msgId, pinned }) }),
+  groupDeleteMsg: (id: string, msgId: string, forEveryone?: boolean) =>
+    request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/delete`, { method: 'POST', body: JSON.stringify({ id: msgId, forEveryone: !!forEveryone }) }),
 
   // Health check
   health: () => request<{ status: string }>('/health'),
