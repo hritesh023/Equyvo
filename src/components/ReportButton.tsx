@@ -9,7 +9,8 @@ import {
   DropdownMenuSeparator,
 } from '@/components/ui/dropdown-menu';
 import ReportModal from '@/components/ReportModal';
-import { showSuccess } from '@/utils/toast';
+import api from '@/lib/api';
+import { showSuccess, showError } from '@/utils/toast';
 
 interface ReportButtonProps {
   contentId: string;
@@ -34,9 +35,28 @@ const ReportButton: React.FC<ReportButtonProps> = ({
     setShowReportModal(true);
   };
 
-  const handleQuickReport = (reason: string) => {
-    showSuccess(`Report submitted for ${contentType}: ${reason}`);
-    setShowReportModal(false);
+  const [quickReporting, setQuickReporting] = useState(false);
+
+  const handleQuickReport = async (reason: string) => {
+    if (quickReporting) return;
+    setQuickReporting(true);
+    try {
+      const kind = contentType === 'video' ? 'post' : contentType === 'comment' ? 'post' : contentType === 'story' ? 'story' : contentType;
+      const { error } = await api.reportContent({
+        kind,
+        id: contentId,
+        reason,
+        reasons: [reason],
+        details: `Quick report from menu (${contentType})`,
+      });
+      if (error) throw new Error(error);
+      setShowReportModal(false);
+      showSuccess('Report submitted. Our team will review it in the Acronous dashboard.');
+    } catch {
+      showError('Failed to submit report. Please try again.');
+    } finally {
+      setQuickReporting(false);
+    }
   };
 
   const getButtonSize = () => {
