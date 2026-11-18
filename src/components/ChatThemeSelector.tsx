@@ -368,7 +368,7 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
       <DialogTrigger asChild>
         {children}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-[425px]" aria-describedby={undefined}>
+      <DialogContent className="sm:max-w-[425px] max-h-[85vh] overflow-y-auto" aria-describedby={undefined}>
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Palette className="w-5 h-5" />

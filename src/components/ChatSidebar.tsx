@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin, Archive } from 'lucide-react';
 import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
@@ -257,9 +257,18 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [forwardTarget, setForwardTarget] = useState<string>('');
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [groupEditOpen, setGroupEditOpen] = useState(false);
+  const [groupEditName, setGroupEditName] = useState('');
+  const [groupEditDesc, setGroupEditDesc] = useState('');
+  const [groupEditImage, setGroupEditImage] = useState('');
   const [groupProfileImageOpen, setGroupProfileImageOpen] = useState(false);
+  const [memberNames, setMemberNames] = useState<Record<string, string>>({});
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupSelectionMode, setGroupSelectionMode] = useState(false);
+  const [archivedThreadIds, setArchivedThreadIds] = useState<Set<string>>(() => {
+    try { const raw = localStorage.getItem('equyvo_archived_threads'); return new Set(raw ? JSON.parse(raw) : []); } catch { return new Set(); }
+  });
+  const [showArchived, setShowArchived] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
   const [followCandidates, setFollowCandidates] = useState<any[]>([]);
@@ -537,12 +546,41 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     }
   }, [activeGroupId]);
   useEffect(() => {
+    if (!activeGroupObj) return;
+    const members = Array.isArray(activeGroupObj.members) ? activeGroupObj.members : [];
+    const missing = members.filter((m: string) => !memberNames[m]);
+    if (missing.length === 0) return;
+    let cancelled = false;
+    (async () => {
+      const next = { ...memberNames };
+      for (const m of missing) {
+        try {
+          const { data } = await api.getProfile(m);
+          const p = (data as any)?.data || data;
+          next[m] = p?.name || p?.username || m;
+        } catch {
+          next[m] = m;
+        }
+      }
+      if (!cancelled) setMemberNames(next);
+    })();
+    return () => { cancelled = true; };
+  }, [activeGroupObj, groupSettingsOpen]);
+  useEffect(() => {
+    if (groupEditOpen && activeGroupObj) {
+      setGroupEditName(activeGroupObj.name || '');
+      setGroupEditDesc(activeGroupObj.description || '');
+      setGroupEditImage(activeGroupObj.avatar || '');
+    }
+  }, [groupEditOpen]);
+  useEffect(() => {
     if (stickToBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [msgs.length, activeId, activeGroupId]);
 
   const visibleThreads = threads
+    .filter((t) => !archivedThreadIds.has(t.id))
     .filter((t) => (tab === 'followers' ? t.relation === 'follower' || t.relation === 'mutual' : t.relation === 'following' || t.relation === 'mutual'))
     .filter((t) => {
       if (!searchQuery.trim()) return true;
@@ -893,6 +931,16 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     });
   };
   const clearSelection = () => setSelectedMsgIds(new Set());
+  const persistArchived = (next: Set<string>) => {
+    try { localStorage.setItem('equyvo_archived_threads', JSON.stringify([...next])); } catch {}
+  };
+  const archiveThread = (id: string) => {
+    setArchivedThreadIds((prev) => { const next = new Set(prev); next.add(id); persistArchived(next); return next; });
+    if (activeId === id) { setActiveId(null); setMsgs([]); }
+  };
+  const unarchiveThread = (id: string) => {
+    setArchivedThreadIds((prev) => { const next = new Set(prev); next.delete(id); persistArchived(next); return next; });
+  };
   const deleteSelectedMsgs = async () => {
     if (!activeChat) return;
     for (const id of selectedMsgIds) {
@@ -956,6 +1004,11 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           <h2 className="font-bold text-lg flex items-center gap-2">
             <MessageCircle className="w-5 h-5 text-primary" /> Chats
           </h2>
+          {(archivedThreadIds.size > 0 || groups.some((g: any) => g.archived)) && (
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Archived" title="Archived" onClick={() => setShowArchived(true)}>
+              <Archive className="w-4 h-4" />
+            </Button>
+          )}
           <ChatThemeSelector>
             <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Customize chat background" title="Customize chat background">
               <Palette className="w-4 h-4" />
@@ -972,7 +1025,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
           {tab === 'followers'
             ? 'Followers — accounts that follow you can message you here.'
-            : 'Following — accounts you follow; you can message them here.'}
+            : tab === 'following'
+            ? 'Following — accounts you follow; you can message them here.'
+            : 'Groups — create groups and chat with multiple people at once.'}
         </p>
       </div>
 
@@ -1037,12 +1092,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     <Button size="sm" variant="ghost" onClick={() => { setGroupSelectionMode(false); setSelectedGroupId(null); }}>Cancel</Button>
                   </div>
                 )}
-                {groups.length === 0 ? (
+                {groups.filter((g: any) => !g.archived).filter((g: any) => !groupSearch.trim() || String(g.name || '').toLowerCase().includes(groupSearch.trim().toLowerCase())).length === 0 ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <MessageCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    <p className="text-sm font-medium">No groups yet</p>
-                    <p className="mt-1 text-xs opacity-80">Create a group to chat with multiple people.</p>
-                    <Button className="mt-3" size="sm" onClick={() => setCreateGroupOpen(true)}>Create group</Button>
+                    {groups.length === 0 ? (
+                      <>
+                        <p className="text-sm font-medium">No groups yet</p>
+                        <p className="mt-1 text-xs opacity-80">Create a group to chat with multiple people.</p>
+                        <Button className="mt-3" size="sm" onClick={() => setCreateGroupOpen(true)}>Create group</Button>
+                      </>
+                    ) : groupSearch.trim() ? (
+                      <>
+                        <p className="text-sm font-medium">No matching results</p>
+                        <p className="mt-1 text-xs opacity-80">No groups match "{groupSearch.trim()}".</p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-sm font-medium">No groups yet</p>
+                      </>
+                    )}
                   </div>
                 ) : (
                   groups
@@ -1227,9 +1295,6 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             }}>
               <Eraser className="w-4 h-4" />
             </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Group profile image" title="Group profile image" onClick={() => setGroupProfileImageOpen(true)}>
-              <ImageIcon className="w-4 h-4" />
-            </Button>
             </>
             ) : (
             <>
@@ -1290,6 +1355,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             >
               <Eraser className="w-4 h-4" />
             </Button>
+            {!isGroupChat && (
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Archive chat" title="Archive chat" onClick={() => {
+                if (!activeChat) return;
+                archiveThread(activeChat.id);
+                showSuccess('Archived');
+              }}>
+                <Archive className="w-4 h-4" />
+              </Button>
+            )}
             {isGroupChat && (isGroupLeader || isGroupCoLeader) && (
               <Button
                 variant="ghost"
@@ -1961,7 +2035,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     )}
     {groupSettingsOpen && createPortal(
       <div className="fixed inset-0 z-[85] bg-background flex flex-col" onClick={() => setGroupSettingsOpen(false)}>
-        <div className="flex items-center gap-3 p-3 border-b shrink-0" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center gap-3 p-3 border-b shrink-0 pt-8" onClick={(e) => e.stopPropagation()}>
           <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setGroupSettingsOpen(false)} aria-label="Close settings">
             <X className="w-4 h-4" />
           </Button>
@@ -1979,13 +2053,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <p className="text-xs text-muted-foreground">{(activeGroupObj?.members || []).length} members</p>
             </div>
             {(isGroupLeader || isGroupCoLeader) && (
-              <Button size="sm" variant="outline" onClick={() => {
-                const name = window.prompt('Group name', activeGroupObj?.name || '');
-                if (name === null) return;
-                const description = window.prompt('Group description', activeGroupObj?.description || '');
-                if (description === null) return;
-                void api.groupProfile(activeGroupId!, { name: name.trim() || undefined, description: description.trim() }).then(() => { refreshGroups(); showSuccess('Group updated'); }).catch(() => showError('Could not update group'));
-              }}>Edit</Button>
+              <Button size="sm" variant="outline" onClick={() => setGroupEditOpen(true)}>Edit</Button>
             )}
           </div>
 
@@ -1994,7 +2062,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <div className="space-y-1">
               {(activeGroupObj?.members || []).map((m: string) => (
                 <div key={m} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                  <span className="truncate">{m}</span>
+                  <span className="truncate">{memberNames[m] || m}</span>
                   <div className="flex items-center gap-1">
                     {m === activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Leader</span>}
                     {Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) && m !== activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Co-leader</span>}
@@ -2002,6 +2070,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                       <>
                         <Button size="sm" variant="ghost" onClick={async () => {
                           const isCo = Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m);
+                          const ok = window.confirm(isCo ? `Demote ${memberNames[m] || m} from co-leader to member?` : `Promote ${memberNames[m] || m} to co-leader?`);
+                          if (!ok) return;
                           try { await api.groupSetRole(activeGroupId!, m, isCo ? 'member' : 'coleader'); await refreshGroups(); showSuccess('Role updated'); } catch { showError('Could not update role'); }
                         }}>{Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) ? 'Demote' : 'Promote'}</Button>
                         <Button size="sm" variant="ghost" onClick={async () => {
@@ -2077,6 +2147,93 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               }}>Archive group</Button>
             </div>
           )}
+        </div>
+      </div>,
+      document.body
+    )}
+    {groupEditOpen && createPortal(
+      <div className="fixed inset-0 z-[90] bg-background flex flex-col" onClick={() => setGroupEditOpen(false)}>
+        <div className="flex items-center gap-3 p-3 border-b shrink-0 pt-8" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setGroupEditOpen(false)} aria-label="Close">
+            <X className="w-4 h-4" />
+          </Button>
+          <h2 className="font-bold text-lg">Edit group</h2>
+          <div className="flex-1" />
+        </div>
+        <div className="flex-1 overflow-auto p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="flex flex-col items-center gap-2">
+            {groupEditImage ? (
+              <img src={groupEditImage} alt="Group" className="h-24 w-24 rounded-full object-cover" />
+            ) : (
+              <div className="h-24 w-24 rounded-full bg-muted flex items-center justify-center text-2xl font-bold">
+                {(groupEditName || 'G').slice(0,2).toUpperCase()}
+              </div>
+            )}
+            {(isGroupLeader || isGroupCoLeader) && (
+              <label className="cursor-pointer rounded-md bg-primary/10 px-3 py-1.5 text-sm text-primary hover:bg-primary/20">
+                Change photo
+                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f || !activeGroupId) return;
+                  try {
+                    const up = await api.uploadFile(f, 'equyvo/group/avatars');
+                    const url = up?.data?.secureUrl;
+                    if (!url) { showError('Upload failed'); return; }
+                    setGroupEditImage(url);
+                  } catch { showError('Upload failed'); }
+                }} />
+              </label>
+            )}
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Group name</label>
+            <Input value={groupEditName} onChange={(e) => setGroupEditName(e.target.value)} disabled={!(isGroupLeader || isGroupCoLeader)} />
+          </div>
+          <div className="space-y-1">
+            <label className="text-sm font-medium">Description</label>
+            <Input value={groupEditDesc} onChange={(e) => setGroupEditDesc(e.target.value)} disabled={!(isGroupLeader || isGroupCoLeader)} />
+          </div>
+          {(isGroupLeader || isGroupCoLeader) && (
+            <Button size="sm" onClick={async () => {
+              if (!activeGroupId) return;
+              try {
+                await api.groupProfile(activeGroupId, { name: groupEditName.trim() || undefined, description: groupEditDesc.trim(), image: groupEditImage || undefined });
+                await refreshGroups();
+                showSuccess('Group updated');
+                setGroupEditOpen(false);
+              } catch { showError('Could not update group'); }
+            }}>Save</Button>
+          )}
+        </div>
+      </div>,
+      document.body
+    )}
+    {showArchived && createPortal(
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70" onClick={() => setShowArchived(false)}>
+        <div className="w-96 max-h-[80vh] overflow-auto rounded-lg bg-card p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+          <h3 className="font-semibold">Archived</h3>
+          <div className="space-y-1">
+            {threads.filter((t) => archivedThreadIds.has(t.id)).map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent">
+                <span className="truncate">{t.peerName}</span>
+                <Button size="sm" variant="ghost" onClick={() => unarchiveThread(t.id)}>Unarchive</Button>
+              </div>
+            ))}
+            {groups.filter((g: any) => g.archived).map((g: any) => (
+              <div key={g.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent">
+                <span className="truncate">{g.name}</span>
+                <Button size="sm" variant="ghost" onClick={async () => {
+                  try { await api.groupArchive(g.id, false); await refreshGroups(); showSuccess('Unarchived'); } catch { showError('Could not unarchive'); }
+                }}>Unarchive</Button>
+              </div>
+            ))}
+            {threads.filter((t) => archivedThreadIds.has(t.id)).length === 0 && groups.filter((g: any) => g.archived).length === 0 && (
+              <p className="text-sm text-muted-foreground">No archived chats.</p>
+            )}
+          </div>
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" onClick={() => setShowArchived(false)}>Close</Button>
+          </div>
         </div>
       </div>,
       document.body
