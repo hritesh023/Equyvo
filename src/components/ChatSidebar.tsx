@@ -2067,7 +2067,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     )}
                     {!isGroupLeader && m === meId && (
                       <Button size="sm" variant="ghost" onClick={async () => {
-                        try { await api.groupRemoveMember(activeGroupId!, meId); await refreshGroups(); showSuccess('Left group'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not leave'); }
+                        try { const r: any = await api.groupRemoveMember(activeGroupId!, meId); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Left group'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not leave'); }
                       }}>Leave</Button>
                     )}
                   </div>
@@ -2211,7 +2211,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <div key={g.id} className="flex items-center justify-between gap-2 rounded px-2 py-1.5 text-sm hover:bg-accent">
                 <span className="truncate">{g.name}</span>
                 <Button size="sm" variant="ghost" onClick={async () => {
-                  try { await api.groupArchive(g.id, false); await refreshGroups(); showSuccess('Unarchived'); } catch { showError('Could not unarchive'); }
+                  try { const r: any = await api.groupArchive(g.id, false); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Unarchived'); } catch { showError('Could not unarchive'); }
                 }}>Unarchive</Button>
               </div>
             ))}
