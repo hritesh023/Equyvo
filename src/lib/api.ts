@@ -804,7 +804,11 @@ export const api = {
     try {
       const mod = await import('./moderation');
       const screen = await mod.screenMedia(file, { kind: folder || 'upload' });
-      if (screen.verdict !== 'allow') {
+      // Only an explicit policy 'block' may stop an upload. A 'review' result
+      // (e.g. the device could not sample a video frame) is an infrastructure
+      // limitation — let it through and rely on server-side moderation instead
+      // of failing every mobile video/live upload.
+      if (screen.verdict === 'block') {
         throw new mod.ContentBlockedError(
           screen.message || 'This content isn’t allowed on Equyvo (adult, violent, exploitative or otherwise prohibited media).',
           screen.category || 'unspecified',

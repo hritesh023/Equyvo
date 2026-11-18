@@ -205,16 +205,51 @@ function extForMime(mime: string): string {
   return 'mp4';
 }
 
-/** MediaRecorder for a stream with proactive type probing + bare fallback. */
-function makeRecorder(ms: MediaStream): MediaRecorder {
-  const mime = pickRecorderMime();
-  try {
-    return mime ? new MediaRecorder(ms, { mimeType: mime }) : new MediaRecorder(ms);
-  } catch {
-    // mime probe was wrong (or the type option is unsupported) — bare retry;
-    // any error from the bare call is a genuine recorder failure.
-    return new MediaRecorder(ms);
+/**
+ * Start a recorder, trying several containers. Android WebViews regularly
+ * report a MIME as supported via isTypeSupported() but then throw from
+ * start() ("there was an error starting the media recorder") because no
+ * encoder is available for that exact codec combination. Trying a sequence
+ * (and the bare constructor last) keeps live recording working across devices.
+ */
+function startRecorder(ms: MediaStream, timeslice = 1000): MediaRecorder {
+  if (!ms || !ms.getVideoTracks().some((t) => t.readyState === 'live')) {
+    throw new Error('No live video track is available to record.');
   }
+  const candidates: (string | undefined)[] = [
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4;codecs=avc1',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm;codecs=vp9',
+    'video/webm;codecs=vp8',
+    'video/webm',
+    undefined,
+  ];
+  let lastErr: unknown = null;
+  for (const mime of candidates) {
+    let rec: MediaRecorder | null = null;
+    try {
+      if (mime) {
+        try {
+          if (typeof MediaRecorder === 'undefined' || !MediaRecorder.isTypeSupported(mime)) continue;
+        } catch { continue; }
+        rec = new MediaRecorder(ms, { mimeType: mime });
+      } else {
+        if (typeof MediaRecorder === 'undefined') continue;
+        rec = new MediaRecorder(ms);
+      }
+      rec.start(timeslice);
+      return rec;
+    } catch (e) {
+      lastErr = e;
+      try { if (rec && rec.state !== 'inactive') rec.stop(); } catch { /* ignore */ }
+    }
+  }
+  throw lastErr instanceof Error
+    ? lastErr
+    : new Error('This device could not start video recording. Update Android System WebView and try again.');
 }
 
 /** Real duration (seconds) of a video Blob via metadata — promise never rejects. */
@@ -2755,9 +2790,16 @@ const CreatePage = () => {
       try {
         try {
           await startNativeScreenRecording();
-        } catch {
+        } catch (e) {
           setLiveNativeScreen(false);
-          showError('Screen recording was cancelled or denied. Nothing was recorded or published.');
+          // Surface the real native error (permission denied, foreground
+          // service refused, encoder unavailable) instead of a generic guess.
+          const reason = e instanceof Error ? e.message : String(e || '');
+          showError(
+            /cancel|denied|permission/i.test(reason)
+              ? 'Screen recording was cancelled or denied. Nothing was recorded or published. ' + reason
+              : 'Could not start screen recording: ' + (reason || 'Unknown error'),
+          );
           return;
         }
         const thumb = await uploadLiveCover();
@@ -2838,9 +2880,9 @@ const CreatePage = () => {
       // Probe containers instead of hard-coded vp9 webm (Android WebViews).
       let recorder: MediaRecorder;
       try {
-        recorder = makeRecorder(mediaStream);
-      } catch {
-        throw new Error('This device cannot record live video. Please update your system WebView.');
+        recorder = startRecorder(mediaStream, 1000);
+      } catch (e) {
+        throw new Error('This device cannot start live recording. Update Android System WebView or try again. ' + (e instanceof Error ? e.message : ''));
       }
       recorderMimeRef.current = recorder.mimeType || pickRecorderMime();
 
@@ -2879,7 +2921,7 @@ const CreatePage = () => {
       setRecordedChunks(chunks);
 
       // timeslice → periodic ondataavailable → progressive secure upload.
-      recorder.start(1000);
+      // startRecorder() already started it with a probed container.
       recordingStartRef.current = Date.now();
       setIsRecording(true);
       setIsUploading(false);
@@ -3317,7 +3359,7 @@ const CreatePage = () => {
       return;
     }
     try {
-      const rec = makeRecorder(ms);
+      const rec = startRecorder(ms);
       cameraRecorderRef.current = rec;
       cameraMimeRef.current = rec.mimeType || pickRecorderMime();
       cameraChunksRef.current = [];
