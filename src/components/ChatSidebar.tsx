@@ -1004,11 +1004,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           <h2 className="font-bold text-lg flex items-center gap-2">
             <MessageCircle className="w-5 h-5 text-primary" /> Chats
           </h2>
-          {(archivedThreadIds.size > 0 || groups.some((g: any) => g.archived)) && (
-            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Archived" title="Archived" onClick={() => setShowArchived(true)}>
-              <Archive className="w-4 h-4" />
-            </Button>
-          )}
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Archived" title="Archived chats" onClick={() => setShowArchived(true)}>
+            <Archive className="w-4 h-4" />
+          </Button>
           <ChatThemeSelector>
             <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Customize chat background" title="Customize chat background">
               <Palette className="w-4 h-4" />
@@ -2050,13 +2048,19 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     {Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) && m !== activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Co-leader</span>}
                     {isGroupLeader && m !== meId && (
                       <>
-                        <Button size="sm" variant="ghost" onClick={async () => {
-                          const isCo = Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m);
-                          const ok = window.confirm(isCo ? `Demote ${memberNames[m] || m} from co-leader to member?` : `Promote ${memberNames[m] || m} to co-leader?`);
+                        <Button size="sm" variant="ghost" disabled={Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m)} onClick={async () => {
+                          const ok = window.confirm(`Promote ${memberNames[m] || m} to co-leader?`);
                           if (!ok) return;
-                          try { await api.groupSetRole(activeGroupId!, m, isCo ? 'member' : 'coleader'); await refreshGroups(); showSuccess('Role updated'); } catch { showError('Could not update role'); }
-                        }}>{Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) ? 'Demote' : 'Promote'}</Button>
+                          try { await api.groupSetRole(activeGroupId!, m, 'coleader'); await refreshGroups(); showSuccess('Promoted to co-leader'); } catch { showError('Could not update role'); }
+                        }}>Promote</Button>
+                        <Button size="sm" variant="ghost" disabled={!(Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m))} onClick={async () => {
+                          const ok = window.confirm(`Demote ${memberNames[m] || m} from co-leader to member?`);
+                          if (!ok) return;
+                          try { await api.groupSetRole(activeGroupId!, m, 'member'); await refreshGroups(); showSuccess('Demoted to member'); } catch { showError('Could not update role'); }
+                        }}>Demote</Button>
                         <Button size="sm" variant="ghost" onClick={async () => {
+                          const ok = window.confirm(`Remove ${memberNames[m] || m} from the group?`);
+                          if (!ok) return;
                           try { await api.groupRemoveMember(activeGroupId!, m); await refreshGroups(); showSuccess('Removed'); } catch { showError('Could not remove'); }
                         }}><Trash2 className="w-4 h-4" /></Button>
                       </>
