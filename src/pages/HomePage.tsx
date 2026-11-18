@@ -47,6 +47,8 @@ const HomePage = () => {
   const [currentStoryIndex, setCurrentStoryIndex] = useState(0);
   const [savedStories, setSavedStories] = useState<Set<string>>(new Set());
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const likedPostsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { likedPostsRef.current = likedPosts; }, [likedPosts]);
   const [commentedPosts, setCommentedPosts] = useState<Set<string>>(new Set());
   const [reactedPosts, setReactedPosts] = useState<Set<string>>(new Set());
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
@@ -56,6 +58,8 @@ const HomePage = () => {
   const [sharePayload, setSharePayload] = useState<any>(null);
   const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio' | 'story'>('moment');
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
+  const likedMomentsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { likedMomentsRef.current = likedMoments; }, [likedMoments]);
   const [commentSectionOpen, setCommentSectionOpen] = useState(false);
   const [selectedPostId, setSelectedPostId] = useState<string | null>(null);
   const [selectedPostUser, setSelectedPostUser] = useState<string>('');
@@ -533,19 +537,14 @@ const HomePage = () => {
   };
 
   const handleLikeMoment = (momentId: string) => {
-    const liking = !likedMoments.has(momentId);
-    setLikedMoments(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(momentId)) {
-        newSet.delete(momentId);
-        showSuccess(' Moment unliked');
-      } else {
-        newSet.add(momentId);
-        showSuccess('️ Moment liked!');
-        teachBrain(`moment:${momentId}`);
-      }
-      return newSet;
-    });
+    const currentlyLiked = likedMomentsRef.current.has(momentId);
+    const liking = !currentlyLiked;
+    const newSet = new Set(likedMomentsRef.current);
+    if (currentlyLiked) newSet.delete(momentId); else newSet.add(momentId);
+    likedMomentsRef.current = newSet;
+    setLikedMoments(newSet);
+    if (liking) { showSuccess('️ Moment liked!'); teachBrain(`moment:${momentId}`); }
+    else showSuccess(' Moment unliked');
     // Human eval: every like/unlike labels the feed ranking algorithm.
     evalLike(momentId, liking, `moment:${momentId}`);
     // The home rail must show the +1 immediately, exactly like the Moments
@@ -582,21 +581,17 @@ const HomePage = () => {
 
   // Post action handlers
   const handleLikePost = (postId: string) => {
-    const liking = !likedPosts.has(postId);
+    const currentlyLiked = likedPostsRef.current.has(postId);
+    const liking = !currentlyLiked;
     const p = enhancedPosts.find(x => x.id === postId);
     const snapshot = p?.content?.slice(0, 120) || (p as any)?.type || postId;
-    setLikedPosts(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(postId)) {
-        newSet.delete(postId);
-        showSuccess(' Post unliked');
-      } else {
-        newSet.add(postId);
-        showSuccess('️ Post liked!');
-        teachBrain(snapshot);
-      }
-      return newSet;
-    });
+    // Synchronous ref guard so rapid double taps cannot double-count.
+    const newSet = new Set(likedPostsRef.current);
+    if (currentlyLiked) newSet.delete(postId); else newSet.add(postId);
+    likedPostsRef.current = newSet;
+    setLikedPosts(newSet);
+    if (liking) { showSuccess('️ Post liked!'); teachBrain(snapshot); }
+    else showSuccess(' Post unliked');
     // Human eval for the shared brain (ranking + preference label).
     sendHumanEval({
       itemId: postId,
@@ -612,7 +607,7 @@ const HomePage = () => {
     // overwrites, so retries/dedupe can never drift the UI.
     setEnhancedPosts(prev => prev.map(post =>
       post.id === postId
-        ? { ...post, likes: bumpCount(post.likes, likedPosts.has(postId) ? -1 : +1) }
+        ? { ...post, likes: bumpCount(post.likes, liking ? +1 : -1) }
         : post
     ));
     // Persist the like (owner notification + cross-device count). The server

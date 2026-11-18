@@ -85,14 +85,32 @@ export function useEntitlements(): { entitlements: Entitlements; usage: UsageInf
         if (!cancelled) setLoading(false);
       }
     })();
+    const refetch = async () => {
+      try {
+        const token = localStorage.getItem('equyvo_cognito_token');
+        const r = await fetch('/api/me/usage', { headers: token ? { Authorization: 'Bearer ' + token } : {} });
+        if (!r.ok) return;
+        const j = await r.json();
+        if (j?.data) {
+          setUsage(j.data as UsageInfo);
+          if (j.data.entitlements) setEntitlements(j.data.entitlements as Entitlements);
+          else if (j.data.planId) setEntitlements({ planId: j.data.planId });
+        }
+      } catch { /* ignore */ }
+    };
     const onPlanChanged = (e: Event) => {
       const p = (e as CustomEvent).detail?.plan as string | undefined;
       if (p) setEntitlements((prev) => ({ ...prev, planId: p }));
+      // Refresh full entitlements after a successful payment so every
+      // feature included in the new plan unlocks immediately.
+      void refetch();
     };
+    window.addEventListener('equyvo:plan-active', onPlanChanged as EventListener);
     window.addEventListener('planChanged', onPlanChanged);
     return () => {
       cancelled = true;
       window.removeEventListener('planChanged', onPlanChanged);
+      window.removeEventListener('equyvo:plan-active', onPlanChanged as EventListener);
     };
   }, []);
 

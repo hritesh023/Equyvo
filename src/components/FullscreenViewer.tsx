@@ -148,6 +148,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [isDesktop, setIsDesktop] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
+  const isLikedRef = useRef(false);
   const [likeCount, setLikeCount] = useState<number>(0);
   const [showCommentSection, setShowCommentSection] = useState(false);
   const [isSplitView, setIsSplitView] = useState(false);
@@ -471,6 +472,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   useEffect(() => {
     const rawLikes = actualContent?.likes;
     const parsedLikes = typeof rawLikes === 'number' ? rawLikes : Number.parseInt(String(rawLikes ?? 0), 10);
+    isLikedRef.current = false;
     setIsLiked(false);
     setLikeCount(Number.isFinite(parsedLikes) ? parsedLikes : 0);
   }, [actualContent?.id]);
@@ -866,7 +868,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   };
 
   const handleLike = () => {
-    const next = !isLiked;
+    const next = !isLikedRef.current;
+    isLikedRef.current = next;
     setIsLiked(next);
     setLikeCount(current => Math.max(0, current + (next ? 1 : -1)));
     // Persist the like so the creator is notified and counts agree everywhere.

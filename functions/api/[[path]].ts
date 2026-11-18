@@ -2010,6 +2010,8 @@ function planEntitlements(planId) {
     creator,
     business,
     verifiedEligible: !!p.verified,
+    superchat: !!p.superchat,
+    liveMoments: !!p.liveMoments,
     aiCreditsMonthly: aiCreditsForPlan(planId),
     scheduling: creator || business,
     analytics: ['eq_premium','eq_creator','eq_creator_pro','eq_business'].includes(planId),

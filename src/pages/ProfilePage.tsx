@@ -188,6 +188,8 @@ const ProfilePage = () => {
   // Bot profiles removed — app only shows the authenticated user's profile
 
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const likedPostsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { likedPostsRef.current = likedPosts; }, [likedPosts]);
   const [postLikes, setPostLikes] = useState<{ [key: string]: number }>({});
   const [reactedPosts, setReactedPosts] = useState<Set<string>>(new Set());
   const [postReacts, setPostReacts] = useState<{ [key: string]: number }>({});
@@ -674,14 +676,15 @@ const ProfilePage = () => {
   }, []);
 
   const handleLike = (postId: string) => {
-    const liking = !likedPosts.has(postId);
+    const currentlyLiked = likedPostsRef.current.has(postId);
+    const liking = !currentlyLiked;
     // Human eval first (fire-and-forget).
     try { evalLike(postId, liking); } catch { /* never block */ }
     const base = toCount(postLikes[postId] ?? userProfile.posts.find(p => p.id === postId)?.likes);
-    const newLikedPosts = new Set(likedPosts);
+    const newLikedPosts = new Set(likedPostsRef.current);
     const newPostLikes = { ...postLikes };
-
-    if (likedPosts.has(postId)) {
+ 
+    if (currentlyLiked) {
       newLikedPosts.delete(postId);
       newPostLikes[postId] = Math.max(0, base - 1);
     } else {
@@ -690,7 +693,8 @@ const ProfilePage = () => {
       // (saved/history items) — starting from 0 here rendered "NaN likes".
       newPostLikes[postId] = bumpCount(base, +1);
     }
-
+ 
+    likedPostsRef.current = newLikedPosts;
     setLikedPosts(newLikedPosts);
     setPostLikes(newPostLikes);
     // Persist so the owner is notified and the count is shared across devices.

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -151,6 +151,8 @@ const DiscoverPage = () => {
     });
   };
   const [likedPosts, setLikedPosts] = useState<Set<string>>(new Set());
+  const likedPostsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { likedPostsRef.current = likedPosts; }, [likedPosts]);
   const [commentedPosts, setCommentedPosts] = useState<Set<string>>(new Set());
   const [sharedPosts, setSharedPosts] = useState<Set<string>>(new Set());
   const [postLikes, setPostLikes] = useState<Map<string, number>>(new Map());
@@ -223,35 +225,22 @@ const DiscoverPage = () => {
   };
 
   const handleLike = (contentId: string) => {
-    const liking = !likedPosts.has(contentId);
+    const currentlyLiked = likedPostsRef.current.has(contentId);
+    const liking = !currentlyLiked;
     // Human eval first (fire-and-forget).
     try { evalLike(contentId, liking); } catch { /* never block */ }
-    setLikedPosts(prev => {
-      const newSet = new Set(prev);
-      const isCurrentlyLiked = newSet.has(contentId);
-
-      if (isCurrentlyLiked) {
-        newSet.delete(contentId);
-        showSuccess(' Post unliked');
-        // Decrement likes (from the true base count, not 0)
-        setPostLikes(prevLikes => {
-          const newLikes = new Map(prevLikes);
-          const currentLikes = prevLikes.has(contentId) ? (prevLikes.get(contentId) as number) : baseLikesOf(contentId);
-          newLikes.set(contentId, Math.max(0, currentLikes - 1));
-          return newLikes;
-        });
-      } else {
-        newSet.add(contentId);
-        showSuccess('️ Post liked!');
-        // Increment likes (from the true base count, not 0)
-        setPostLikes(prevLikes => {
-          const newLikes = new Map(prevLikes);
-          const currentLikes = prevLikes.has(contentId) ? (prevLikes.get(contentId) as number) : baseLikesOf(contentId);
-          newLikes.set(contentId, currentLikes + 1);
-          return newLikes;
-        });
-      }
-      return newSet;
+    // Synchronous ref guard so rapid double taps cannot double-count.
+    const newSet = new Set(likedPostsRef.current);
+    if (currentlyLiked) newSet.delete(contentId); else newSet.add(contentId);
+    likedPostsRef.current = newSet;
+    setLikedPosts(newSet);
+    if (liking) showSuccess('️ Post liked!'); else showSuccess(' Post unliked');
+    // Update likes count functionally from the latest map.
+    setPostLikes(prevLikes => {
+      const newLikes = new Map(prevLikes);
+      const currentLikes = prevLikes.has(contentId) ? (prevLikes.get(contentId) as number) : baseLikesOf(contentId);
+      newLikes.set(contentId, currentlyLiked ? Math.max(0, currentLikes - 1) : currentLikes + 1);
+      return newLikes;
     });
     // Persist the like (creator notification + cross-device count).
     api.like(contentId, liking ? 'like' : 'unlike').then(({ data }) => {

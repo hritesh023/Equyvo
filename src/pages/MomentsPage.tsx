@@ -35,6 +35,8 @@ const MomentsPage = () => {
   const [hasEngaged, setHasEngaged] = useState(false); // Track user engagement
   const [autoUnmuted, setAutoUnmuted] = useState(false); // Track if auto-unmute has been applied
   const [likedMoments, setLikedMoments] = useState<Set<string>>(new Set());
+  const likedMomentsRef = useRef<Set<string>>(new Set());
+  useEffect(() => { likedMomentsRef.current = likedMoments; }, [likedMoments]);
   // Numeric likes per moment (was string/`K`-suffixed which NaN'ed on +1).
   const [momentLikes, setMomentLikes] = useState<{[key: string]: number}>({});
   const [isScrolling, setIsScrolling] = useState(false);
@@ -512,32 +514,19 @@ const MomentsPage = () => {
   } as React.RefObject<HTMLVideoElement | null>;
 
   const toggleLike = (momentId: string) => {
-    setLikedMoments(prev => {
-      const newLiked = new Set(prev);
-      // Counters were held as strings ("12", "1.2K"); parseFloat chains on an
-      // odd value produced `NaN`. Use the numeric safe-count helpers instead
-      // and keep the stored value a plain number.
-      const currentLikes = toCount(momentLikes[momentId]);
-
-      if (newLiked.has(momentId)) {
-        newLiked.delete(momentId);
-        const newLikes = Math.max(0, currentLikes - 1);
-        setMomentLikes(current => ({
-          ...current,
-          [momentId]: newLikes,
-        }));
-      } else {
-        newLiked.add(momentId);
-        const newLikes = bumpCount(currentLikes, +1);
-        setMomentLikes(current => ({
-          ...current,
-          [momentId]: newLikes,
-        }));
-      }
-      return newLiked;
+    const currentlyLiked = likedMomentsRef.current.has(momentId);
+    const liking = !currentlyLiked;
+    // Synchronous ref guard so rapid double taps cannot double-count.
+    const newLiked = new Set(likedMomentsRef.current);
+    if (currentlyLiked) newLiked.delete(momentId); else newLiked.add(momentId);
+    likedMomentsRef.current = newLiked;
+    setLikedMoments(newLiked);
+    setMomentLikes(prev => {
+      const currentLikes = toCount(prev[momentId] !== undefined ? prev[momentId] : momentLikes[momentId]);
+      const newLikes = currentlyLiked ? Math.max(0, currentLikes - 1) : bumpCount(currentLikes, +1);
+      return { ...prev, [momentId]: newLikes };
     });
     // Persist so the creator is notified and the count survives reloads.
-    const liking = !likedMoments.has(momentId);
     api.like(momentId, liking ? 'like' : 'unlike').then(({ data }) => {
       if (data && typeof data.likes === 'number') {
         const n = data.likes;
