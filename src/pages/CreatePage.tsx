@@ -3928,7 +3928,7 @@ const CreatePage = () => {
               </div>
 
               {/* Chat with audience (only for Everyone / Followers) */}
-              {true && (
+              {(
                 <div className="rounded-lg border border-border p-3 space-y-2">
                   <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                     <input
