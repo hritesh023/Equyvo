@@ -253,6 +253,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
   const [isGroupChat, setIsGroupChat] = useState(false);
   const [groupMuted, setGroupMuted] = useState(false);
+  const [forwardOpen, setForwardOpen] = useState(false);
+  const [forwardTarget, setForwardTarget] = useState<string>('');
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
@@ -382,6 +384,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       const list = Array.isArray(res?.data?.messages) ? res.data.messages : [];
       setGroupMsgs(list);
       setMsgs(list);
+      const pinned = list.find((m: any) => m.pinned);
+      if (pinned) setPinnedMsgId(pinned.id); else setPinnedMsgId(null);
     } catch { setGroupMsgs([]); setMsgs([]); }
   };
 
@@ -869,8 +873,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     if (isGroupChat && activeGroupId) await refreshGroupMsgs(activeGroupId);
     else refreshMsgs(activeChat.id);
   };
-  const forwardSelectedMsgs = async () => {
-    const target = window.prompt('Forward to chat peer id or group id:');
+  const forwardSelectedMsgs = () => {
+    setForwardTarget('');
+    setForwardOpen(true);
+  };
+  const doForward = async () => {
+    const target = forwardTarget;
     if (!target) return;
     const selected = msgs.filter((m: any) => selectedMsgIds.has(m.id));
     for (const m of selected) {
@@ -884,6 +892,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       } catch { /* best-effort */ }
     }
     clearSelection();
+    setForwardOpen(false);
     showSuccess('Forwarded');
   };
   const pinSelectedMsg = async () => {
@@ -1180,6 +1189,28 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 }}
               >
                 <Volume2 className="w-4 h-4" />
+              </Button>
+            )}
+            {isGroupChat && (isGroupLeader || isGroupCoLeader) && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label="Edit group"
+                title="Edit group name/description"
+                onClick={async () => {
+                  const name = window.prompt('Group name', activeGroupObj?.name || '');
+                  if (name === null) return;
+                  const description = window.prompt('Group description', activeGroupObj?.description || '');
+                  if (description === null) return;
+                  try {
+                    await api.groupProfile(activeGroupId!, { name: name.trim() || undefined, description: description.trim() });
+                    await refreshGroups();
+                    showSuccess('Group updated');
+                  } catch { showError('Could not update group'); }
+                }}
+              >
+                <MoreVertical className="w-4 h-4" />
               </Button>
             )}
             {isGroupChat && isGroupLeader && (
@@ -1709,6 +1740,30 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 showSuccess('Group created');
               } catch { showError('Could not create group'); }
             }}>Create</Button>
+          </div>
+        </div>
+      </div>,
+      document.body
+    )}
+    {forwardOpen && createPortal(
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70" onClick={() => setForwardOpen(false)}>
+        <div className="w-96 max-h-[80vh] overflow-auto rounded-lg bg-card p-4 space-y-3" onClick={(e) => e.stopPropagation()}>
+          <h3 className="font-semibold">Forward to</h3>
+          <div className="space-y-1 max-h-60 overflow-auto">
+            {threads.map((t: any) => (
+              <button key={t.id} className={`w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent ${forwardTarget === t.id ? 'bg-accent' : ''}`} onClick={() => setForwardTarget(t.id)}>
+                {t.peerName} <span className="text-xs text-muted-foreground">(chat)</span>
+              </button>
+            ))}
+            {groups.map((g: any) => (
+              <button key={g.id} className={`w-full text-left rounded px-2 py-1.5 text-sm hover:bg-accent ${forwardTarget === g.id ? 'bg-accent' : ''}`} onClick={() => setForwardTarget(g.id)}>
+                {g.name} <span className="text-xs text-muted-foreground">(group)</span>
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setForwardOpen(false)}>Cancel</Button>
+            <Button size="sm" onClick={() => void doForward()} disabled={!forwardTarget}>Forward</Button>
           </div>
         </div>
       </div>,

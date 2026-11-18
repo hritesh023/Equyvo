@@ -1061,6 +1061,8 @@ export const api = {
     request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/delete`, { method: 'POST', body: JSON.stringify({ id: msgId, forEveryone: !!forEveryone }) }),
   groupSettings: (id: string, replyPermission: string) =>
     request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify({ replyPermission }) }),
+  groupProfile: (id: string, data: { name?: string; description?: string }) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/profile`, { method: 'POST', body: JSON.stringify(data) }),
 
   // Health check
   health: () => request<{ status: string }>('/health'),

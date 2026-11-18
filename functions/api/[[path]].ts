@@ -9106,7 +9106,9 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           const actor = await getActor(request, env);
           const denied = actorResponse(actor, env, cors);
           if (denied) return denied;
-          if (group.leaderId !== actor.id) return json({ error: 'Only the group leader can add members.' }, 403, cors);
+          if (group.leaderId !== actor.id && !(Array.isArray(group.coLeaders) && group.coLeaders.includes(actor.id))) {
+            return json({ error: 'Only leaders/co-leaders can add members.' }, 403, cors);
+          }
           let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
           const clean = sanitizeBody(raw);
           const uid = await canonicalAccountId(env, String(clean.userId || '').trim());
@@ -9154,6 +9156,28 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           const rp = String(clean.replyPermission || '').trim();
           if (!['all', 'leaders', 'leader'].includes(rp)) return json({ error: 'Invalid replyPermission' }, 400, cors);
           group.settings = { ...(group.settings || {}), replyPermission: rp };
+          await writeGroup(group);
+          return json({ data: { group }, error: null }, 200, cors);
+        }
+
+        // POST /api/groups/:id/profile  { name?, description? }  (leader/co-leader)
+        if (sub === 'profile' && method === 'POST') {
+          const actor = await getActor(request, env);
+          const denied = actorResponse(actor, env, cors);
+          if (denied) return denied;
+          if (group.leaderId !== actor.id && !(Array.isArray(group.coLeaders) && group.coLeaders.includes(actor.id))) {
+            return json({ error: 'Forbidden' }, 403, cors);
+          }
+          if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+          const clean = sanitizeBody(raw);
+          if (clean.name !== undefined) {
+            const n = String(clean.name || '').trim().slice(0, 80);
+            if (n) group.name = n;
+          }
+          if (clean.description !== undefined) {
+            group.description = String(clean.description || '').trim().slice(0, 300);
+          }
           await writeGroup(group);
           return json({ data: { group }, error: null }, 200, cors);
         }
