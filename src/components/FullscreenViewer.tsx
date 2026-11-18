@@ -17,6 +17,7 @@ import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts'
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
+import LiveRelayPlayer from '@/components/LiveRelayPlayer';
 import api from '@/lib/api';
 import { normalizeContentItem, formatWatchTime } from '@/lib/media';
 import { toCount } from '@/lib/count';
@@ -1454,6 +1455,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               onEnded={() => { if (effectiveLive) setLiveEnded(true); }}
               onSeeked={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
               onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); const v = e.currentTarget; if (v.videoWidth && v.videoHeight) setMediaAspect(v.videoWidth / v.videoHeight); }}
+            />
+          ) : isLiveStream && effectiveLive && String((actualContent as any)?.contentId || (actualContent as any)?.liveContentId || viewerContentId || '') ? (
+            // Live in progress with no stored replay URL yet: watch the
+            // broadcaster's real-time relay instead of an empty player.
+            <LiveRelayPlayer
+              room={String((actualContent as any)?.contentId || (actualContent as any)?.liveContentId || viewerContentId)}
+              onEnded={() => setLiveEnded(true)}
             />
           ) : (
             <div className="absolute inset-0 w-full h-full flex items-center justify-center" style={{ zIndex: 1, pointerEvents: 'none' }}>

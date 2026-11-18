@@ -26,6 +26,7 @@ import {
   stopNativeScreenRecording,
   nativeRecordingToBlob,
 } from '@/lib/native-screen-recorder';
+import { LiveRelay } from '@/lib/live-relay';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
 import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
@@ -613,6 +614,8 @@ const CreatePage = () => {
   const liveChunkSeqRef = useRef(0);
   const liveChunkUploadingRef = useRef(false);
   const liveChunkChunksRef = useRef<Blob[]>([]);
+  // Real-time relay (Durable Object WebSocket) for viewers watching now.
+  const liveRelayRef = useRef<LiveRelay | null>(null);
   // Camera tab: live preview stream + recorder.
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -687,6 +690,8 @@ const CreatePage = () => {
     try { liveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
     try { if (liveChunkTimerRef.current) clearInterval(liveChunkTimerRef.current); } catch { /* ignore */ }
     liveChunkTimerRef.current = null;
+    try { liveRelayRef.current?.close(); } catch { /* ignore */ }
+    liveRelayRef.current = null;
     liveStreamRef.current = null;
     liveRecorderRef.current = null;
     liveActiveRef.current = false;
@@ -2573,6 +2578,8 @@ const CreatePage = () => {
     liveRecorderRef.current = null;
     try { if (liveChunkTimerRef.current) clearInterval(liveChunkTimerRef.current); } catch { /* ignore */ }
     liveChunkTimerRef.current = null;
+    try { liveRelayRef.current?.close(); } catch { /* ignore */ }
+    liveRelayRef.current = null;
   };
 
   // Progressive ("simultaneous") upload while the session is live. Every
@@ -2832,6 +2839,17 @@ const CreatePage = () => {
       const liveId = await commitLiveStart(liveSourceValue, thumb);
       publishedContentId = liveId;
 
+      // Real-time relay: viewers can watch the captured stream NOW, while the
+      // recorder/progressive uploader continues to build the saved replay.
+      // A relay failure never cancels the broadcast — replay still uploads.
+      try {
+        const relay = await LiveRelay.connect(liveId, 'broadcaster', {});
+        liveRelayRef.current = relay;
+        await relay.startCapturing(mediaStream);
+      } catch (e) {
+        console.warn('Real-time live relay unavailable:', e);
+      }
+
       const chunks: Blob[] = [];
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
@@ -2894,6 +2912,9 @@ const CreatePage = () => {
 
   const handleEndLive = async () => {
     const contentId = liveContentIdRef.current;
+    // Stop real-time delivery first; viewers see a clean "ended" state.
+    try { liveRelayRef.current?.close(); } catch { /* ignore */ }
+    liveRelayRef.current = null;
 
     // Native screen capture writes a file (no MediaRecorder stream). Read it
     // from the device and upload it as the recorded replay, then finalize the

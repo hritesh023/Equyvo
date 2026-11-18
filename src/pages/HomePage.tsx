@@ -936,7 +936,27 @@ const HomePage = () => {
             return;
           }
         }
-      } catch { /* fall through to Discover */ }
+      } catch { /* fall through to live relay */ }
+      // No stored replay yet: the stream is still in progress. Open the
+      // fullscreen viewer with the session id so it joins the live relay.
+      if (contentId) {
+        setFullscreenContent({
+          id: contentId,
+          contentId,
+          type: 'live',
+          contentType: 'live',
+          isLive: true,
+          live: true,
+          title: live.title,
+          content: live.title,
+          user: live.user,
+          thumbnail: live.thumbnail,
+          image: live.thumbnail,
+          source: live.source || 'camera',
+        } as FullscreenContent);
+        setFullscreenType('live');
+        return;
+      }
     }
     navigate('/app/discover?tab=live');
   };

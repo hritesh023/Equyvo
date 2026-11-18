@@ -1,0 +1,13 @@
+name = "equyvo-live-relay"
+main = "src/index.ts"
+compatibility_date = "2026-07-05"
+
+# One Durable Object per live session. The object fans broadcaster frames out
+# to viewers in real time; no external streaming service is required.
+[[durable_objects.bindings]]
+name = "LIVE_ROOM"
+class_name = "LiveRoom"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LiveRoom"]
