@@ -1,0 +1,135 @@
+diff --git a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt
+index e1d0a0a..ca17349 100644
+--- a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt
++++ b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt
+@@ -45,6 +45,12 @@ class CapgoScrCast private constructor(
+      * Invoked when a recording ends without {@link #stopRecording()} having been called.
+      */
+     var externalStopListener: ExternalStopListener? = null
++
++    /**
++     * Equyvo patch: invoked when a recording ends because stopRecording() was
++     * called, so the caller can receive the saved file path for upload.
++     */
++    var stopListener: StopListener? = null
+     private var receiverRegistered = false
+ 
+     private val metrics by lazy {
+@@ -110,6 +116,8 @@ class CapgoScrCast private constructor(
+                     val savedPath = cleanupSession(deleteEmptyOutput = startPending || error != null)
+                     if (!startPending && sessionActive && !stopRequested) {
+                         externalStopListener?.onExternalStop(savedPath, error?.message)
++                    } else if (stopRequested) {
++                        stopListener?.onStopped(savedPath, error?.message)
+                     }
+                     stopRequested = false
+                 }
+@@ -317,6 +325,11 @@ class CapgoScrCast private constructor(
+         fun onExternalStop(path: String?, error: String?)
+     }
+ 
++    /** Equyvo patch: explicit-stop result, including the saved file path. */
++    fun interface StopListener {
++        fun onStopped(path: String?, error: String?)
++    }
++
+     companion object {
+         const val EXTRA_SESSION_GENERATION = "capgoSessionGeneration"
+ 
+diff --git a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java
+index 0fa5d16..3fb99f7 100644
+--- a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java
++++ b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java
+@@ -108,12 +108,29 @@ public class ScreenRecorderPlugin extends Plugin {
+     public void stop(PluginCall call) {
+         try {
+             final CapgoScrCast recorder = activeRecorder != null ? activeRecorder : pendingRecorder;
+-            if (recorder != null) {
+-                recorder.stopRecording();
++            if (recorder == null) {
++                call.resolve();
++                return;
+             }
++            // Equyvo patch: keep the call alive until the saved file path is
++            // known, then hand it to JS so the replay can be uploaded.
++            call.setKeepAlive(true);
++            recorder.setStopListener(new CapgoScrCast.StopListener() {
++                @Override
++                public void onStopped(final String path, final String error) {
++                    recorder.setStopListener(null);
++                    final JSObject ret = new JSObject();
++                    ret.put("url", path != null ? Uri.fromFile(new File(path)).toString() : "");
++                    if (error != null) {
++                        ret.put("error", error);
++                    }
++                    call.resolve(ret);
++                    call.release(bridge);
++                }
++            });
++            recorder.stopRecording();
+             pendingRecorder = null;
+             activeRecorder = null;
+-            call.resolve();
+         } catch (final Exception e) {
+             call.reject("Could not stop screen recording", e);
+         }
+diff --git a/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/ScreenRecorderPlugin.swift b/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/ScreenRecorderPlugin.swift
+index 49e92cb..8e9dbbd 100644
+--- a/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/ScreenRecorderPlugin.swift
++++ b/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/ScreenRecorderPlugin.swift
+@@ -31,7 +31,9 @@ public class ScreenRecorderPlugin: CAPPlugin, CAPBridgedPlugin {
+     @objc func start(_ call: CAPPluginCall) {
+         let recordAudio = call.getBool("recordAudio") ?? false
+         let videoFormat = VideoContainerFormat.from(call.getString("format"))
+-        implementation.startRecording(saveToCameraRoll: true, recordAudio: recordAudio, videoFormat: videoFormat, handler: { error in
++        // Equyvo patch: keep the finished file in the app sandbox so the live
++        // replay can be uploaded, instead of deleting it after Photos save.
++        implementation.startRecording(saveToCameraRoll: false, recordAudio: recordAudio, videoFormat: videoFormat, handler: { error in
+             if let error = error {
+                 debugPrint("Error when start recording \(error)")
+                 call.reject("Cannot start recording")
+@@ -47,7 +49,12 @@ public class ScreenRecorderPlugin: CAPPlugin, CAPBridgedPlugin {
+                 debugPrint("Error when stop recording \(error)")
+                 call.reject("Cannot stop recording")
+             } else {
+-                call.resolve()
++                // Equyvo patch: return the saved file URL for upload.
++                var data: [String: Any] = [:]
++                if let url = implementation.currentOutputURL {
++                    data["url"] = url.absoluteString
++                }
++                call.resolve(data)
+             }
+         })
+     }
+diff --git a/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/Wyler.swift b/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/Wyler.swift
+index ff03f6d..92fef0a 100644
+--- a/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/Wyler.swift
++++ b/node_modules/@capgo/capacitor-screen-recorder/ios/Sources/ScreenRecorderPlugin/Wyler.swift
+@@ -70,6 +70,8 @@ public final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
+     private let stateLock = NSLock()
+     /// Fired when recording ends without `stoprecording()` being called.
+     public var onExternalStop: ((URL?, Error?) -> Void)?
++    /// Equyvo patch: lets the plugin return the finished file for upload.
++    public var currentOutputURL: URL? { videoOutputURL }
+     let recorder = RPScreenRecorder.shared()
+ 
+     public func startRecording(to outputURL: URL? = nil,
+@@ -333,7 +335,7 @@ public final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
+                                                                     didCreate: didCreate,
+                                                                     handler: complete)
+                     } else {
+-                        self.deleteOutputFileIfNeeded(outputURL: outputURL, didCreate: didCreate)
++                        // Equyvo patch: keep the file so it can be uploaded.
+                         complete(nil)
+                     }
+                 }
+@@ -346,7 +348,7 @@ public final class ScreenRecorder: NSObject, RPScreenRecorderDelegate {
+                                                                 didCreate: didCreate,
+                                                                 handler: complete)
+                 } else {
+-                    self.deleteOutputFileIfNeeded(outputURL: outputURL, didCreate: didCreate)
++                    // Equyvo patch: keep the file so it can be uploaded.
+                     complete(nil)
+                 }
+             }

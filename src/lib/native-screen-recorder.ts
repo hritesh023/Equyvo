@@ -71,7 +71,24 @@ export async function stopNativeScreenRecording(timeoutMs = 30000): Promise<Nati
       }
     }, timeoutMs);
   });
-  await ScreenRecorder.stop();
+  // Patched plugin: stop() resolves with { url, error? } once the file is
+  // finalized. The onStopped listener remains the fallback for system stops.
+  try {
+    const stopped = (await ScreenRecorder.stop()) as unknown as { url?: string; error?: string } | undefined;
+    if (stopped && (stopped.url || stopped.error)) {
+      if (stopResolver) {
+        const resolve = stopResolver;
+        stopResolver = null;
+        resolve({ url: String(stopped.url || ''), error: stopped.error ? String(stopped.error) : undefined });
+      }
+    }
+  } catch (e) {
+    if (stopResolver) {
+      const resolve = stopResolver;
+      stopResolver = null;
+      resolve({ url: '', error: e instanceof Error ? e.message : 'Could not stop the recording.' });
+    }
+  }
   return result;
 }
 
