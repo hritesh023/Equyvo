@@ -56,6 +56,12 @@
          page calls navigator.mediaDevices.getUserMedia({ audio: true }). -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <!-- Native screen live: MediaProjection foreground service (Android 14+)
+         and the notification that keeps the capture session visible. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <!-- Camera capture + going live: the WebView's getUserMedia({ video })
          prompts via Capacitor's WebChromeClient only when this permission is
          declared. Front camera / back camera hardware feature declared as

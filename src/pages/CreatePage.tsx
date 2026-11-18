@@ -20,6 +20,12 @@ import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
 
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
+import {
+  isNativeScreenRecorderAvailable,
+  startNativeScreenRecording,
+  stopNativeScreenRecording,
+  nativeRecordingToBlob,
+} from '@/lib/native-screen-recorder';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
 import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
@@ -595,6 +601,8 @@ const CreatePage = () => {
   //  camera = getUserMedia, screen = getDisplayMedia (OS/system consent picker).
   const [liveSourceDialogOpen, setLiveSourceDialogOpen] = useState(false);
   const [liveSource, setLiveSource] = useState<'camera' | 'screen'>('camera');
+  const [liveNativeScreen, setLiveNativeScreen] = useState(false);
+  const liveRollbackContentRef = useRef('');
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const liveContentIdRef = useRef('');
   const liveSourceRef = useRef<'camera' | 'screen'>('camera');
@@ -2615,18 +2623,101 @@ const CreatePage = () => {
     }
   };
 
+  // Everything that makes a broadcast genuinely live on the server. Shared by
+  // the web MediaRecorder path and the native MediaProjection/ReplayKit path.
+  const commitLiveStart = async (
+    sourceValue: 'camera' | 'screen',
+    thumb: { url: string; publicId: string; resourceType: string; r2Key: string },
+  ) => {
+    const author = getCurrentAuthor();
+    const liveId = Date.now().toString();
+    const liveContent = {
+      id: liveId,
+      type: 'live',
+      contentType: 'live',
+      title: liveTitle,
+      description: liveDescription,
+      thumbnail: thumb.url,
+      publicId: thumb.publicId,
+      resourceType: thumb.resourceType,
+      r2Key: thumb.r2Key,
+      source: sourceValue,
+      user: author.username,
+      userId: author.userId,
+      avatar: author.avatar,
+      creator: author.username,
+      isLive: true,
+      live: true,
+      time: 'just now',
+      createdAt: new Date().toISOString(),
+      views: 0,
+      likes: 0,
+      comments: 0,
+    };
+
+    // STRICT: both the content row AND the backend session must be accepted.
+    const liveErr = await persistContent(liveContent);
+    if (liveErr) throw new Error('Live announcement sync failed: ' + liveErr);
+    liveRollbackContentRef.current = liveId;
+
+    const { error: presenceErr } = await api.liveStart({
+      contentId: liveId,
+      title: liveTitle || 'Live now',
+      thumbnail: thumb.url || '',
+      source: sourceValue,
+    });
+    if (presenceErr) throw new Error('The server refused the live session: ' + presenceErr);
+
+    liveContentIdRef.current = liveId;
+    liveSourceRef.current = sourceValue;
+    setLiveSource(sourceValue);
+    liveActiveRef.current = true;
+
+    localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent));
+    window.dispatchEvent(new CustomEvent('userWentLive', { detail: liveContent }));
+
+    const existingNotifs = JSON.parse(localStorage.getItem('equyvo_live_notifications') || '[]');
+    existingNotifs.unshift({
+      id: liveId,
+      title: liveTitle,
+      user: author.username,
+      thumbnail: thumb.url || '',
+      source: sourceValue,
+      startedAt: new Date().toISOString(),
+    });
+    localStorage.setItem('equyvo_live_notifications', JSON.stringify(existingNotifs.slice(0, 20)));
+    return liveId;
+  };
+
+  // Uploads the optional stream cover. Never blocks going live.
+  const uploadLiveCover = async () => {
+    const thumb = { url: '', publicId: '', resourceType: '', r2Key: '' };
+    if (!liveThumbnailFile) return thumb;
+    try {
+      const up = await runUpload(liveThumbnailFile, 'equyvo/live/thumbnails', { index: 0, count: 1 }, 'Live cover');
+      if (up) {
+        thumb.url = up.secureUrl;
+        thumb.publicId = up.publicId || '';
+        thumb.resourceType = up.resourceType;
+        thumb.r2Key = up.r2Key || '';
+      }
+    } catch { /* cover is optional — stream continues */ }
+    return thumb;
+  };
+
   const handleStartLive = async (source: 'camera' | 'screen' = 'camera') => {
     if (!liveTitle.trim()) {
       showError('Please enter a title for your live stream');
       return;
     }
     const mediaDevices = navigator.mediaDevices;
-    if (!mediaDevices) {
+    const isScreen = source === 'screen';
+    const nativeScreen = isScreen && isNativeScreenRecorderAvailable();
+    if (!mediaDevices && !nativeScreen) {
       showError('Capture is not available in this browser/app. Live needs camera or screen-sharing support.');
       return;
     }
-    const isScreen = source === 'screen';
-    if (isScreen && typeof (mediaDevices as any).getDisplayMedia !== 'function') {
+    if (isScreen && !nativeScreen && typeof (mediaDevices as any).getDisplayMedia !== 'function') {
       showError('Screen sharing is not available here. Use Camera & microphone, or open Equyvo in a desktop browser to share a screen/app window.');
       return;
     }
@@ -2643,6 +2734,47 @@ const CreatePage = () => {
     publishLockRef.current = true;
     cancelUploadRequestedRef.current = false;
     setIsUploading(true);
+
+    // NATIVE SCREEN PATH — Android MediaProjection / iOS ReplayKit. The OS
+    // consent dialog is shown first; denial ends the attempt with no upload.
+    if (nativeScreen) {
+      setLiveNativeScreen(true);
+      try {
+        try {
+          await startNativeScreenRecording();
+        } catch {
+          showError('Screen recording was cancelled or denied. Nothing was recorded or published.');
+          return;
+        }
+        const thumb = await uploadLiveCover();
+        await commitLiveStart('screen', thumb);
+        setIsRecording(true);
+        recordingStartRef.current = Date.now();
+        setIsUploading(false);
+        deferredSuccess('Screen live stream started — your device is recording only what you selected.');
+      } catch (err) {
+        try { await stopNativeScreenRecording().catch(() => {}); } catch { /* ignore */ }
+        liveActiveRef.current = false;
+        if (liveContentIdRef.current) {
+          void api.liveStop({ contentId: liveContentIdRef.current }).catch(() => {});
+          liveContentIdRef.current = '';
+        }
+        if (liveRollbackContentRef.current) {
+          void api.deletePost(liveRollbackContentRef.current).catch(() => {});
+          liveRollbackContentRef.current = '';
+        }
+        try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
+        window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+        showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
+      } finally {
+        setIsUploading(false);
+        setUploadProgress(null);
+        try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
+        uploadedKeysForCancelRef.current = [];
+        publishLockRef.current = false;
+      }
+      return;
+    }
 
     let mediaStream: MediaStream | null = null;
     let publishedContentId = '';
@@ -2694,85 +2826,11 @@ const CreatePage = () => {
       }
       recorderMimeRef.current = recorder.mimeType || pickRecorderMime();
 
-      // Optional cover — never blocks the stream.
-      let liveThumbnailUrl = '';
-      let liveThumbnailPublicId = '';
-      let liveThumbnailResourceType = '';
-      let liveThumbnailR2Key = '';
-      if (liveThumbnailFile) {
-        try {
-          const upThumb = await runUpload(liveThumbnailFile, 'equyvo/live/thumbnails', { index: 0, count: 1 }, 'Live cover');
-          if (upThumb) {
-            liveThumbnailUrl = upThumb.secureUrl;
-            liveThumbnailPublicId = upThumb.publicId || '';
-            liveThumbnailResourceType = upThumb.resourceType;
-            liveThumbnailR2Key = upThumb.r2Key || '';
-          }
-        } catch { /* cover is optional — stream continues */ }
-      }
+      const thumb = await uploadLiveCover();
       setUploadProgress(null);
-
-      const author = getCurrentAuthor();
-      const liveId = Date.now().toString();
       const liveSourceValue: 'camera' | 'screen' = isScreen ? 'screen' : 'camera';
-      const liveContent = {
-        id: liveId,
-        type: 'live',
-        contentType: 'live',
-        title: liveTitle,
-        description: liveDescription,
-        thumbnail: liveThumbnailUrl,
-        publicId: liveThumbnailPublicId,
-        resourceType: liveThumbnailResourceType,
-        r2Key: liveThumbnailR2Key,
-        source: liveSourceValue,
-        user: author.username,
-        userId: author.userId,
-        avatar: author.avatar,
-        creator: author.username,
-        isLive: true,
-        live: true,
-        time: 'just now',
-        createdAt: new Date().toISOString(),
-        views: 0,
-        likes: 0,
-        comments: 0,
-      };
-
-      // STRICT: both the content row AND the live session must be accepted by
-      // the backend. A failure here means nobody was told, no fake success.
-      const liveErr = await persistContent(liveContent);
-      if (liveErr) throw new Error('Live announcement sync failed: ' + liveErr);
+      const liveId = await commitLiveStart(liveSourceValue, thumb);
       publishedContentId = liveId;
-
-      const { error: presenceErr } = await api.liveStart({
-        contentId: liveId,
-        title: liveTitle || 'Live now',
-        thumbnail: liveThumbnailUrl || '',
-        source: liveSourceValue,
-      });
-      if (presenceErr) throw new Error('The server refused the live session: ' + presenceErr);
-
-      // Only now — capture consent + recorder + content + backend session — is
-      // the broadcast genuinely live.
-      liveContentIdRef.current = liveId;
-      liveSourceRef.current = liveSourceValue;
-      setLiveSource(liveSourceValue);
-      liveActiveRef.current = true;
-
-      localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent));
-      window.dispatchEvent(new CustomEvent('userWentLive', { detail: liveContent }));
-
-      const existingNotifs = JSON.parse(localStorage.getItem('equyvo_live_notifications') || '[]');
-      existingNotifs.unshift({
-        id: liveId,
-        title: liveTitle,
-        user: author.username,
-        thumbnail: liveThumbnailUrl || '',
-        source: liveSourceValue,
-        startedAt: new Date().toISOString(),
-      });
-      localStorage.setItem('equyvo_live_notifications', JSON.stringify(existingNotifs.slice(0, 20)));
 
       const chunks: Blob[] = [];
       recorder.ondataavailable = (event) => {
@@ -2816,9 +2874,12 @@ const CreatePage = () => {
       }
       // If the content row was written but the session never went live, remove
       // it so no dead "live" card is left in anyone's feed.
-      if (publishedContentId && !liveActiveRef.current) {
-        void api.deletePost(publishedContentId).catch(() => {});
+      const orphanId = liveRollbackContentRef.current || publishedContentId;
+      if (orphanId) {
+        void api.deletePost(orphanId).catch(() => {});
+        liveRollbackContentRef.current = '';
       }
+      setLiveNativeScreen(false);
       try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
       showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -2833,6 +2894,48 @@ const CreatePage = () => {
 
   const handleEndLive = async () => {
     const contentId = liveContentIdRef.current;
+
+    // Native screen capture writes a file (no MediaRecorder stream). Read it
+    // from the device and upload it as the recorded replay, then finalize the
+    // server-side session with the real URL + duration.
+    if (liveNativeScreen && isNativeScreenRecorderAvailable()) {
+      let saved = false;
+      try {
+        const result = await stopNativeScreenRecording();
+        if (result.error || !result.url) {
+          showError(
+            'The device could not save the screen recording' +
+              (result.error ? ': ' + result.error : '.') +
+              ' The live session has ended.',
+          );
+        } else {
+          const blob = await nativeRecordingToBlob(result.url);
+          await handleSaveRecording(blob, contentId);
+          saved = true;
+        }
+      } catch (e) {
+        showError('Could not upload the screen recording: ' + (e instanceof Error ? e.message : 'Unknown error'));
+      }
+      setIsRecording(false);
+      setLiveNativeScreen(false);
+      liveActiveRef.current = false;
+      liveStreamRef.current = null;
+      liveRecorderRef.current = null;
+      try { if (liveChunkTimerRef.current) clearInterval(liveChunkTimerRef.current); } catch { /* ignore */ }
+      liveChunkTimerRef.current = null;
+      try { await api.liveStop({ contentId }); } catch { /* best-effort */ }
+      try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('userWentOffline', { detail: { title: liveTitle } }));
+      if (saved) deferredSuccess('Live stream ended and recording saved!');
+      setLiveTitle('');
+      setLiveDescription('');
+      setLiveThumbnailFile(null);
+      setLiveThumbnailPreview('');
+      liveContentIdRef.current = '';
+      liveRollbackContentRef.current = '';
+      return;
+    }
+
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
     }
@@ -2873,7 +2976,19 @@ const CreatePage = () => {
     setLiveThumbnailFile(null);
     setLiveThumbnailPreview('');
     liveContentIdRef.current = '';
+    liveRollbackContentRef.current = '';
+    setLiveNativeScreen(false);
   };
+
+  // If the user stops capture from the system UI ("Stop sharing" / ReplayKit
+  // done), end the Equyvo live session too — no phantom live badge.
+  useEffect(() => {
+    const onNativeStop = () => {
+      if (liveActiveRef.current && liveNativeScreen) void handleEndLive();
+    };
+    window.addEventListener('equyvo:nativeScreenStopped', onNativeStop);
+    return () => window.removeEventListener('equyvo:nativeScreenStopped', onNativeStop);
+  }, [liveNativeScreen, liveTitle]);
 
   const handleSaveRecording = async (blob: Blob, liveSessionId?: string) => {
     // Container follows the probe result ('video/mp4' on Android WebView,
@@ -4794,15 +4909,26 @@ const CreatePage = () => {
                       {liveSource === 'screen' ? 'Screen share' : 'Camera'}
                     </span>
                   </div>
-                  {/* Live local monitor: exactly what the recorder is receiving
-                      (camera stream or the screen/window you selected). */}
-                  <video
-                    ref={liveVideoRef}
-                    autoPlay
-                    muted
-                    playsInline
-                    className="w-full aspect-video rounded-lg bg-black object-contain"
-                  />
+                  {/* Live local monitor: exactly what the recorder is receiving.
+                      Native screen capture writes to a device file instead of a
+                      WebView stream, so it shows a consent/status card. */}
+                  {liveNativeScreen ? (
+                    <div className="flex aspect-video w-full flex-col items-center justify-center gap-2 rounded-lg border border-red-300 bg-black/90 p-4 text-center text-white">
+                      <ScreenShare className="h-8 w-8 text-red-400" />
+                      <p className="text-sm font-medium">Screen recording is running</p>
+                      <p className="text-xs text-white/70">
+                        Your device is recording only what you selected in the system share picker. Tap "End Live Stream" here to publish the replay.
+                      </p>
+                    </div>
+                  ) : (
+                    <video
+                      ref={liveVideoRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full aspect-video rounded-lg bg-black object-contain"
+                    />
+                  )}
                   <p className="text-sm text-red-600">
                     Your {liveSource === 'screen' ? 'shared screen' : 'live stream'} is being recorded and uploaded securely as you go. Click "End Live Stream" to stop and save the replay.
                   </p>
@@ -5269,7 +5395,7 @@ const CreatePage = () => {
               </span>
               <span className="font-semibold">Screen / app window</span>
               <span className="text-sm text-muted-foreground">
-                Your system share picker chooses which screen, app or window to broadcast. Only what you select is recorded.
+                On mobile, your device's screen-capture consent dialog chooses what is shared. On desktop, the browser share picker does. Only what you select is recorded.
               </span>
             </button>
           </div>

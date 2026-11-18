@@ -18,6 +18,14 @@
 	<string>$(PRODUCT_NAME)</string>
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
+	<!-- Live capture: camera/mic for camera live, photo library for the
+	     screen-recording replay that iOS ReplayKit saves. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Equyvo uses the camera to broadcast your live stream.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Equyvo uses the microphone so viewers can hear your live stream.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Equyvo saves your screen-recording replay so you can publish it to your live session.</string>
 	<key>CFBundleShortVersionString</key>
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>

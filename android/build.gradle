@@ -21,6 +21,9 @@ allprojects {
     repositories {
         google()
         mavenCentral()
+        // @capgo/capacitor-screen-recorder pulls its MediaProjection/ReplayKit
+        // capture engine from JitPack.
+        maven { url 'https://jitpack.io' }
     }
     
     // Force Java 17 compatibility for all projects
