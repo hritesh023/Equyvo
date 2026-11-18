@@ -690,7 +690,7 @@ const CreatePage = () => {
           return Number.isFinite(n) ? n : 0;
         };
         const isPriv = (item: any): boolean =>
-          String(item?.visibility || '').toLowerCase() === 'private';
+          false;
         const lower = (v: unknown): string => String(v || '').toLowerCase();
         const videos: UploadedVideo[] = (d.posts || [])
           .filter((p) => lower(p?.type) === 'video')
@@ -705,7 +705,7 @@ const CreatePage = () => {
             publicId: String(p.publicId || ''),
             resourceType: String(p.resourceType || ''),
             uploadDate: toDate(p.createdAt || p.created_at),
-            isPrivate: isPriv(p),
+            isPrivate: false,
             views: num(p.views),
             likes: num(p.likes),
             comments: num(p.comments),
@@ -726,7 +726,7 @@ const CreatePage = () => {
             publicId: String(p.publicId || ''),
             resourceType: String(p.resourceType || ''),
             uploadDate: toDate(p.createdAt || p.created_at),
-            isPrivate: isPriv(p),
+            isPrivate: false,
             views: num(p.views),
             likes: num(p.likes),
             comments: num(p.comments),
@@ -746,7 +746,7 @@ const CreatePage = () => {
               publicId: String(s.publicId || ''),
               resourceType: String(s.resourceType || ''),
               uploadDate: toDate(s.createdAt || s.created_at),
-              isPrivate: isPriv(s),
+              isPrivate: false,
               views: num(s.views),
               likes: num(s.likes),
               comments: num(s.comments),
@@ -768,7 +768,7 @@ const CreatePage = () => {
               boxColor: (s.boxColor || s.box_color) as any,
               thumbnail: String(s.thumbnail || s.image || ''),
               uploadDate: at,
-              isPrivate: isPriv(s),
+              isPrivate: false,
               views: num(s.views),
               likes: num(s.likes),
               comments: num(s.comments),
@@ -790,7 +790,7 @@ const CreatePage = () => {
               resourceType: String(m.resourceType || ''),
               content: String(m.content || ''),
               uploadDate: toDate(m.createdAt || m.created_at),
-              isPrivate: isPriv(m),
+              isPrivate: false,
               views: num(m.views),
               likes: num(m.likes),
               comments: num(m.comments),
@@ -821,7 +821,7 @@ const CreatePage = () => {
               publicId: String(t.publicId || ''),
               resourceType: String(t.resourceType || ''),
               uploadDate: toDate(t.createdAt || t.created_at),
-              isPrivate: isPriv(t),
+              isPrivate: false,
               views: num(t.views),
               likes: num(t.likes ?? t.likes_count),
               comments: num(t.comments ?? t.comments_count),
