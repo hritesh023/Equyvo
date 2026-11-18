@@ -1077,14 +1077,14 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                           const g = groups.find((x: any) => x.id === selectedGroupId);
                           if (!g) return;
                           const next = !g.archived;
-                          try { await api.groupArchive(selectedGroupId, next); await refreshGroups(); showSuccess(next ? 'Archived' : 'Unarchived'); } catch { showError('Could not archive'); }
+                          try { await api.groupArchive(selectedGroupId, next); setGroups((prev: any[]) => prev.map((x: any) => x.id === selectedGroupId ? { ...x, archived: next } : x)); await refreshGroups(); showSuccess(next ? 'Archived' : 'Unarchived'); } catch { showError('Could not archive'); }
                           setGroupSelectionMode(false); setSelectedGroupId(null);
                         }}>Archive</Button>
                         <Button size="sm" variant="destructive" onClick={async () => {
                           if (!selectedGroupId) return;
                           const ok = window.confirm('Delete this group permanently?');
                           if (!ok) return;
-                          try { await api.groupDeleteGroup(selectedGroupId); await refreshGroups(); showSuccess('Group deleted'); } catch { showError('Could not delete group'); }
+                          try { await api.groupDeleteGroup(selectedGroupId); setGroups((prev: any[]) => prev.filter((g: any) => g.id !== selectedGroupId)); await refreshGroups(); showSuccess('Group deleted'); } catch { showError('Could not delete group'); }
                           setGroupSelectionMode(false); setSelectedGroupId(null);
                         }}>Delete</Button>
                       </>
@@ -2010,25 +2010,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               {(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}
             </div>
           )}
-          {(isGroupLeader || isGroupCoLeader) && (
-            <div className="mt-3 flex justify-center">
-              <label className="cursor-pointer rounded-md bg-white/10 px-3 py-1.5 text-sm text-white hover:bg-white/20">
-                Change image
-                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (!f || !activeGroupId) return;
-                  try {
-                    const up = await api.uploadFile(f, 'equyvo/group/avatars');
-                    const url = up?.data?.secureUrl;
-                    if (!url) { showError('Upload failed'); return; }
-                    await api.groupProfile(activeGroupId, { image: url });
-                    await refreshGroups();
-                    showSuccess('Group image updated');
-                  } catch { showError('Could not update image'); }
-                }} />
-              </label>
-            </div>
-          )}
+          \"\"
         </div>
       </div>,
       document.body
