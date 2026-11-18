@@ -99,7 +99,7 @@ const HomePage = () => {
   }, []);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
-  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string } | null>(null);
+  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string; mediaUrl?: string; source?: string } | null>(null);
   useEffect(() => {
     const syncFromStorage = () => {
       try {
@@ -389,6 +389,8 @@ const HomePage = () => {
           thumbnail: String(top.thumbnail || top.avatar || ''),
           contentId: String(top.contentId || top.liveContentId || ''),
           userId: String(top.id || ''),
+          mediaUrl: String(top.mediaUrl || ''),
+          source: String(top.source || 'camera'),
         });
       } else if (!localStorage.getItem('equyvo_active_live')) {
         setLiveNotification(null);
@@ -406,13 +408,13 @@ const HomePage = () => {
     if (activeLive) {
       try {
         const liveData = JSON.parse(activeLive);
-        setLiveNotification({ title: liveData.title, user: liveData.user, thumbnail: liveData.thumbnail || '', contentId: liveData.id, userId: liveData.userId });
+        setLiveNotification({ title: liveData.title, user: liveData.user, thumbnail: liveData.thumbnail || '', contentId: liveData.id, userId: liveData.userId, mediaUrl: liveData.mediaUrl || '', source: liveData.source || 'camera' });
       } catch { /* ignore */ }
     }
 
     const handleUserWentLive = (e: Event) => {
       const detail = (e as CustomEvent).detail || {};
-      setLiveNotification({ title: detail.title, user: detail.user, thumbnail: detail.thumbnail || '', contentId: detail.id, userId: detail.userId });
+      setLiveNotification({ title: detail.title, user: detail.user || detail.creator, thumbnail: detail.thumbnail || '', contentId: detail.id, userId: detail.userId, mediaUrl: detail.mediaUrl || '', source: detail.source || 'camera' });
       void load();
     };
     const handleUserWentOffline = () => {
@@ -883,8 +885,35 @@ const HomePage = () => {
     const contentId = String(live.contentId || '').trim();
     if (contentId) {
       try {
-        const res = await api.getContentItem(contentId);
+        // The recorded live session is server-side truth: source, progressive
+        // chunks and the final replay URL. Render it directly when available.
+        const [res, sessionRes] = await Promise.all([
+          api.getContentItem(contentId),
+          api.liveSession(contentId),
+        ]);
         const raw = (res as { data?: any } | null)?.data;
+        const session = (sessionRes as any)?.data?.session;
+        const sessionUrl = String(session?.mediaUrl || live.mediaUrl || '').trim();
+        if (sessionUrl) {
+          setFullscreenContent({
+            ...(raw || {}),
+            id: contentId,
+            user: raw?.user?.username || (typeof raw?.user === 'string' ? raw.user : '') || live.user,
+            avatar: raw?.user?.avatar_url || raw?.avatar || '',
+            content: raw?.content || session?.title || live.title || 'Live now',
+            image: '',
+            thumbnail: session?.thumbnail || live.thumbnail || '',
+            media: sessionUrl,
+            mediaUrl: sessionUrl,
+            videoUrl: sessionUrl,
+            mediaType: 'video',
+            type: 'live',
+            isLive: session?.status === 'live',
+            source: session?.source || live.source || 'camera',
+          } as FullscreenContent);
+          setFullscreenType('live');
+          return;
+        }
         if (raw) {
           const fields = resolveMediaFields(raw);
           const videoUrl = fields.videoUrl;

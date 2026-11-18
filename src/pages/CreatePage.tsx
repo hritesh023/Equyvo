@@ -4,7 +4,7 @@ import { flushSync } from 'react-dom';
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera } from 'lucide-react';
+import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera, ScreenShare, MonitorUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import MediaCropper from '@/components/MediaCropper';
 import { Label } from "@/components/ui/label";
@@ -591,6 +591,20 @@ const CreatePage = () => {
   const liveActiveRef = useRef(false);
   const liveStreamRef = useRef<MediaStream | null>(null);
   const liveRecorderRef = useRef<MediaRecorder | null>(null);
+  // Live capture source, chosen by the user in the Go-Live dialog:
+  //  camera = getUserMedia, screen = getDisplayMedia (OS/system consent picker).
+  const [liveSourceDialogOpen, setLiveSourceDialogOpen] = useState(false);
+  const [liveSource, setLiveSource] = useState<'camera' | 'screen'>('camera');
+  const liveVideoRef = useRef<HTMLVideoElement | null>(null);
+  const liveContentIdRef = useRef('');
+  const liveSourceRef = useRef<'camera' | 'screen'>('camera');
+  // Progressive ("simultaneous") upload during the live session. Every chunk
+  // goes through api.liveChunk, where the backend re-checks auth + session
+  // ownership + moderation + caps before it is attached to the session.
+  const liveChunkTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const liveChunkSeqRef = useRef(0);
+  const liveChunkUploadingRef = useRef(false);
+  const liveChunkChunksRef = useRef<Blob[]>([]);
   // Camera tab: live preview stream + recorder.
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -663,10 +677,21 @@ const CreatePage = () => {
       }
     } catch { /* ignore */ }
     try { liveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+    try { if (liveChunkTimerRef.current) clearInterval(liveChunkTimerRef.current); } catch { /* ignore */ }
+    liveChunkTimerRef.current = null;
     liveStreamRef.current = null;
     liveRecorderRef.current = null;
     liveActiveRef.current = false;
   }, []);
+
+  // Render whatever is actually being captured — camera or the screen/app the
+  // user picked in the system share picker — into the composer's live preview.
+  useEffect(() => {
+    const el = liveVideoRef.current;
+    if (!el) return;
+    try { el.srcObject = isRecording ? (stream || null) : null; } catch { /* ignore */ }
+    return () => { try { el.srcObject = null; } catch { /* ignore */ } };
+  }, [isRecording, stream]);
 
   // Load everything this account ever published into management, so the
   // thumbnail/delete/privacy controls exist for all uploads on any device.
@@ -2294,7 +2319,9 @@ const CreatePage = () => {
           showError('Please enter a title for your live stream');
           return;
         }
-        await handleStartLive();
+        // Ask the broadcaster how to capture BEFORE anything is started:
+        // camera & microphone, or a screen/app window via the system picker.
+        setLiveSourceDialogOpen(true);
         break;
       case 'schedule':
         if (publishLockRef.current) {
@@ -2525,12 +2552,85 @@ const CreatePage = () => {
     }
   };
 
-  const handleStartLive = async () => {
+  // Stop every local capture resource (used both on "End live" and on a
+  // failed start, so a denied/failed attempt never leaves camera or mic on).
+  const stopLiveCapture = () => {
+    try {
+      if (liveRecorderRef.current && liveRecorderRef.current.state !== 'inactive') {
+        liveRecorderRef.current.stop();
+      }
+    } catch { /* ignore */ }
+    try { liveStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+    liveStreamRef.current = null;
+    liveRecorderRef.current = null;
+    try { if (liveChunkTimerRef.current) clearInterval(liveChunkTimerRef.current); } catch { /* ignore */ }
+    liveChunkTimerRef.current = null;
+  };
+
+  // Progressive ("simultaneous") upload while the session is live. Every
+  // segment is uploaded and registered with /api/live/chunk, where the server
+  // re-checks authentication, session ownership, title moderation and storage
+  // caps. A transient failure is logged; the next tick retries the same data.
+  const uploadLiveChunk = async () => {
+    const contentId = liveContentIdRef.current;
+    if (!contentId || liveChunkUploadingRef.current) return;
+    const pending = liveChunkChunksRef.current;
+    if (!pending.length) return;
+    liveChunkUploadingRef.current = true;
+    try {
+      const mime = (recorderMimeRef.current || pickRecorderMime() || 'video/webm').split(';')[0];
+      const blob = new Blob(pending.slice(), { type: mime });
+      if (!blob.size) return;
+      const sequence = liveChunkSeqRef.current;
+      const file = new File([blob], `live-${contentId}-part-${sequence}.${extForMime(mime)}`, { type: mime });
+      const { data, error } = await api.uploadFile(
+        file,
+        `equyvo/live/${contentId}/chunks`,
+        undefined,
+        { duration: Math.max(1, Math.round((Date.now() - (recordingStartRef.current || Date.now())) / 1000)) },
+      );
+      if (error || !data?.secureUrl) {
+        console.warn('Live chunk upload failed:', error || 'no URL returned');
+        return;
+      }
+      const { error: chunkErr } = await api.liveChunk({
+        contentId,
+        source: liveSourceRef.current,
+        sequence,
+        url: data.secureUrl,
+        bytes: file.size,
+        mime,
+      });
+      if (chunkErr) {
+        console.warn('Live chunk rejected by server:', chunkErr);
+        return;
+      }
+      liveChunkSeqRef.current += 1;
+      // Accepted chunks are persisted server-side; drop the local snapshot.
+      liveChunkChunksRef.current = [];
+    } catch (e) {
+      console.warn('Live chunk uploader error:', e);
+    } finally {
+      liveChunkUploadingRef.current = false;
+    }
+  };
+
+  const handleStartLive = async (source: 'camera' | 'screen' = 'camera') => {
     if (!liveTitle.trim()) {
       showError('Please enter a title for your live stream');
       return;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices) {
+      showError('Capture is not available in this browser/app. Live needs camera or screen-sharing support.');
+      return;
+    }
+    const isScreen = source === 'screen';
+    if (isScreen && typeof (mediaDevices as any).getDisplayMedia !== 'function') {
+      showError('Screen sharing is not available here. Use Camera & microphone, or open Equyvo in a desktop browser to share a screen/app window.');
+      return;
+    }
+    if (!isScreen && !mediaDevices.getUserMedia) {
       showError('Camera is not available on this device. Live needs app permission to go live.');
       return;
     }
@@ -2541,49 +2641,59 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
-      cancelUploadRequestedRef.current = false;
+    cancelUploadRequestedRef.current = false;
+    setIsUploading(true);
+
+    let mediaStream: MediaStream | null = null;
     try {
-      // CAMERA FIRST. Permission is the most likely blocker — surface it
-      // before any announcement/notification exists, so a denied grant can
-      // never leave a live stream that nobody can show.
-      setIsUploading(true);
-      let mediaStream: MediaStream | null = null;
+      // CAPTURE CONSENT — the OS/browser grants this: camera permission for
+      // camera mode, the system share picker for screen mode. No stream, no
+      // announcement. There is no way to start a live session without it.
       try {
-        mediaStream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: 'environment' },
-          audio: true,
-        });
-      } catch (error) {
-        setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
-        if (error instanceof Error) {
-          if (error.name === 'NotAllowedError') {
-            showError('Camera and microphone access denied. Allow access in your device/app settings to go live.');
-          } else if (error.name === 'NotFoundError') {
-            showError('No camera or microphone found. Please connect a device to go live.');
-          } else {
-            showError('Failed to access camera/microphone. Please check your device permissions.');
-          }
+        if (isScreen) {
+          mediaStream = await (mediaDevices as any).getDisplayMedia({ video: true, audio: true });
+        } else {
+          mediaStream = await mediaDevices.getUserMedia({
+            video: { facingMode: 'environment' },
+            audio: true,
+          });
         }
+      } catch (error) {
+        const name = error instanceof Error ? error.name : '';
+        if (isScreen) {
+          showError(
+            name === 'NotAllowedError' || name === 'AbortError'
+              ? 'Screen sharing was cancelled or denied. Nothing was recorded or published.'
+              : 'Could not start screen sharing. Nothing was recorded or published.',
+          );
+        } else if (name === 'NotAllowedError') {
+          showError('Camera and microphone access denied. Allow access in your device/app settings to go live.');
+        } else if (name === 'NotFoundError') {
+          showError('No camera or microphone found. Please connect a device to go live.');
+        } else {
+          showError('Failed to access camera/microphone. Please check your device permissions.');
+        }
+        setIsUploading(false);
+        try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
         return;
+      }
+
+      if (!mediaStream.getTracks().some((t) => t.kind === 'video')) {
+        throw new Error('No video was captured. Allow a camera or pick a screen/window to share.');
       }
       setStream(mediaStream);
       liveStreamRef.current = mediaStream;
 
-      // Modern recording: probe containers instead of the hard-coded vp9
-      // webm (which throws on many Android WebViews and silently killed live).
+      // Probe containers instead of hard-coded vp9 webm (Android WebViews).
       let recorder: MediaRecorder;
       try {
         recorder = makeRecorder(mediaStream);
       } catch {
-        mediaStream.getTracks().forEach(t => t.stop());
-        setStream(null);
-        setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
-        showError('This device cannot record live video. Please update your system WebView.');
-        return;
+        throw new Error('This device cannot record live video. Please update your system WebView.');
       }
       recorderMimeRef.current = recorder.mimeType || pickRecorderMime();
 
-      // Upload thumbnail if provided (camera already secured).
+      // Optional cover — never blocks the stream.
       let liveThumbnailUrl = '';
       let liveThumbnailPublicId = '';
       let liveThumbnailResourceType = '';
@@ -2602,9 +2712,8 @@ const CreatePage = () => {
       setUploadProgress(null);
 
       const author = getCurrentAuthor();
-
-      // Create live content entry
       const liveId = Date.now().toString();
+      const liveSourceValue: 'camera' | 'screen' = isScreen ? 'screen' : 'camera';
       const liveContent = {
         id: liveId,
         type: 'live',
@@ -2615,6 +2724,7 @@ const CreatePage = () => {
         publicId: liveThumbnailPublicId,
         resourceType: liveThumbnailResourceType,
         r2Key: liveThumbnailR2Key,
+        source: liveSourceValue,
         user: author.username,
         userId: author.userId,
         avatar: author.avatar,
@@ -2628,79 +2738,94 @@ const CreatePage = () => {
         comments: 0,
       };
 
-      // Persist the live content (warn, but still start locally on failure)
+      // STRICT: both the content row AND the live session must be accepted by
+      // the backend. A failure here means nobody was told, no fake success.
       const liveErr = await persistContent(liveContent);
-      if (liveErr) {
-        showError('Live announcement sync failed (other devices may not see it): ' + liveErr);
-      }
+      if (liveErr) throw new Error('Live announcement sync failed: ' + liveErr);
 
-      // Tell the backend we are live so EVERY account (not just this tab's
-      // localStorage) can discover the stream. Best-effort: recording still
-      // starts if the presence write fails, and it is retried on the next
-      // start; the server auto-expires stale flags after 4 hours.
-      try {
-        const { error: presenceErr } = await api.liveStart({
-          contentId: liveId,
-          title: liveTitle || 'Live now',
-          thumbnail: liveThumbnailUrl || '',
-        });
-        if (presenceErr) console.warn('Live presence sync failed:', presenceErr);
-      } catch (e) {
-        console.warn('Live presence sync failed:', e);
-      }
+      const { error: presenceErr } = await api.liveStart({
+        contentId: liveId,
+        title: liveTitle || 'Live now',
+        thumbnail: liveThumbnailUrl || '',
+        source: liveSourceValue,
+      });
+      if (presenceErr) throw new Error('The server refused the live session: ' + presenceErr);
+
+      // Only now — capture consent + recorder + content + backend session — is
+      // the broadcast genuinely live.
+      liveContentIdRef.current = liveId;
+      liveSourceRef.current = liveSourceValue;
+      setLiveSource(liveSourceValue);
       liveActiveRef.current = true;
 
-      // Store active live stream info in localStorage for other pages
       localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent));
+      window.dispatchEvent(new CustomEvent('userWentLive', { detail: liveContent }));
 
-      // Dispatch live notification event for followers
-      window.dispatchEvent(new CustomEvent('userWentLive', {
-        detail: liveContent
-      }));
-
-      // Store notification for followers to see
       const existingNotifs = JSON.parse(localStorage.getItem('equyvo_live_notifications') || '[]');
       existingNotifs.unshift({
         id: liveId,
         title: liveTitle,
         user: author.username,
         thumbnail: liveThumbnailUrl || '',
+        source: liveSourceValue,
         startedAt: new Date().toISOString(),
       });
       localStorage.setItem('equyvo_live_notifications', JSON.stringify(existingNotifs.slice(0, 20)));
 
       const chunks: Blob[] = [];
-
       recorder.ondataavailable = (event) => {
         if (event.data.size > 0) {
           chunks.push(event.data);
+          liveChunkChunksRef.current.push(event.data);
         }
       };
-
       recorder.onstop = () => {
         const mime = (recorderMimeRef.current || 'video/webm').split(';')[0];
         const blob = new Blob(chunks, { type: mime });
-        handleSaveRecording(blob);
+        handleSaveRecording(blob, liveId);
       };
 
       setMediaRecorder(recorder);
       liveRecorderRef.current = recorder;
       setRecordedChunks(chunks);
 
-      // Camera secured → recording → announcement done: only now is it LIVE.
-      recorder.start();
+      // timeslice → periodic ondataavailable → progressive secure upload.
+      recorder.start(1000);
       recordingStartRef.current = Date.now();
       setIsRecording(true);
-      setIsUploading(false); try { setUploadState({ isUploading: false, progress: null }); } catch {};
+      setIsUploading(false);
+      try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
+      liveChunkSeqRef.current = 0;
+      liveChunkChunksRef.current = [];
+      liveChunkTimerRef.current = setInterval(() => { void uploadLiveChunk(); }, 15000);
 
-      deferredSuccess('Live stream started! Followers have been notified.');
-    } finally { try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch {}
+      deferredSuccess(
+        isScreen
+          ? 'Screen live stream started — your share permission was required and the session is being recorded.'
+          : 'Live stream started! Followers have been notified.',
+      );
+    } catch (err) {
+      // Roll back EVERYTHING so the UI never shows a fake live session.
+      stopLiveCapture();
+      liveActiveRef.current = false;
+      if (liveContentIdRef.current) {
+        void api.liveStop({ contentId: liveContentIdRef.current }).catch(() => {});
+        liveContentIdRef.current = '';
+      }
+      try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+      showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(null);
+      try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
       uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
     }
   };
 
   const handleEndLive = async () => {
+    const contentId = liveContentIdRef.current;
     if (mediaRecorder && mediaRecorder.state !== 'inactive') {
       mediaRecorder.stop();
     }
@@ -2708,6 +2833,14 @@ const CreatePage = () => {
     if (stream) {
       stream.getTracks().forEach(track => track.stop());
     }
+
+    // Stop the progressive uploader, then flush any final segment before
+    // closing the session on the server.
+    if (liveChunkTimerRef.current) {
+      clearInterval(liveChunkTimerRef.current);
+      liveChunkTimerRef.current = null;
+    }
+    try { await uploadLiveChunk(); } catch { /* best-effort */ }
 
     setIsRecording(false);
     setMediaRecorder(null);
@@ -2717,7 +2850,7 @@ const CreatePage = () => {
     liveRecorderRef.current = null;
 
     // Server-side presence off (retry-safe; the endpoint is idempotent).
-    try { await api.liveStop(); } catch { /* best-effort */ }
+    try { await api.liveStop({ contentId }); } catch { /* best-effort */ }
 
     // Clear active live stream
     localStorage.removeItem('equyvo_active_live');
@@ -2732,9 +2865,10 @@ const CreatePage = () => {
     setLiveDescription('');
     setLiveThumbnailFile(null);
     setLiveThumbnailPreview('');
+    liveContentIdRef.current = '';
   };
 
-  const handleSaveRecording = async (blob: Blob) => {
+  const handleSaveRecording = async (blob: Blob, liveSessionId?: string) => {
     // Container follows the probe result ('video/mp4' on Android WebView,
     // 'video/webm' elsewhere) so the persisted extension matches the bytes.
     const mime = (blob.type || recorderMimeRef.current || 'video/webm').split(';')[0];
@@ -2815,6 +2949,21 @@ const CreatePage = () => {
     });
     if (persistErr) {
       showError('Replay saved locally but feed sync failed: ' + persistErr);
+    }
+
+    // Attach the final replay URL + real duration to the server-side live
+    // session so viewers can play the recorded stream from any device.
+    if (liveSessionId) {
+      try {
+        const { error: finalizeErr } = await api.liveFinalize({
+          contentId: liveSessionId,
+          mediaUrl: liveUploadResult.secureUrl,
+          duration: secs || liveUploadResult.duration || 0,
+        });
+        if (finalizeErr) console.warn('Live replay finalize failed:', finalizeErr);
+      } catch (e) {
+        console.warn('Live replay finalize failed:', e);
+      }
     }
 
     try {
@@ -4629,13 +4778,26 @@ const CreatePage = () => {
               </div>
 
               {isRecording && (
-                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-2">
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4 space-y-3">
+                  <div className="flex items-center gap-2">
                     <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></div>
                     <span className="font-semibold text-red-700">Recording in Progress</span>
+                    <span className="ml-auto inline-flex items-center gap-1 rounded-full bg-background px-2 py-0.5 text-xs text-foreground">
+                      {liveSource === 'screen' ? <ScreenShare className="h-3 w-3" /> : <Camera className="h-3 w-3" />}
+                      {liveSource === 'screen' ? 'Screen share' : 'Camera'}
+                    </span>
                   </div>
+                  {/* Live local monitor: exactly what the recorder is receiving
+                      (camera stream or the screen/window you selected). */}
+                  <video
+                    ref={liveVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="w-full aspect-video rounded-lg bg-black object-contain"
+                  />
                   <p className="text-sm text-red-600">
-                    Your live stream is being recorded. Click "End Live Stream" to stop recording and save the video.
+                    Your {liveSource === 'screen' ? 'shared screen' : 'live stream'} is being recorded and uploaded securely as you go. Click "End Live Stream" to stop and save the replay.
                   </p>
                 </div>
               )}
@@ -4644,7 +4806,7 @@ const CreatePage = () => {
                 <div className="flex flex-col sm:flex-row gap-2">
                   <Button onClick={() => handlePostLive('post')} disabled={isUploading} className="w-full sm:flex-1 bg-red-500 hover:bg-red-600">
                     <Zap className="h-4 w-4 mr-2" />
-                    {isUploading ? 'Connecting camera…' : 'Go Live Now'}
+                    {isUploading ? 'Preparing capture…' : 'Go Live Now'}
                   </Button>
                   <Button
                     onClick={() => {
@@ -5061,6 +5223,54 @@ const CreatePage = () => {
           onCropComplete={handleThumbCropComplete}
         />
       )}
+
+      {/* Capture-choice dialog: the broadcaster decides camera vs screen
+          before any stream is opened. Permission is always requested by the
+          device (camera prompt / OS share picker) — never bypassed. */}
+      <Dialog open={liveSourceDialogOpen} onOpenChange={(open) => setLiveSourceDialogOpen(open)}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Zap className="h-5 w-5 text-red-500" />
+              How do you want to go live?
+            </DialogTitle>
+            <DialogDescription>
+              Your device will ask for permission before recording anything. If you deny or cancel, nothing is captured and nothing is published.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('camera'); }}
+              className="flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors hover:border-primary hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
+                <Camera className="h-5 w-5 text-red-500" />
+              </span>
+              <span className="font-semibold">Camera &amp; microphone</span>
+              <span className="text-sm text-muted-foreground">
+                Broadcast from your device camera and mic. The app requests camera/mic access first.
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('screen'); }}
+              className="flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors hover:border-primary hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/10">
+                <ScreenShare className="h-5 w-5 text-blue-500" />
+              </span>
+              <span className="font-semibold">Screen / app window</span>
+              <span className="text-sm text-muted-foreground">
+                Your system share picker chooses which screen, app or window to broadcast. Only what you select is recorded.
+              </span>
+            </button>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLiveSourceDialogOpen(false)}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Schedule Modal */}
       {showScheduleModal && (

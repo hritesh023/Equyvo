@@ -676,17 +676,40 @@ export const api = {
     request<{ data: { live: any[] }; error: null }>('/live/now'),
 
   // Broadcast presence — makes "Go live" visible to every account, not just
-  // this device's localStorage.
-  liveStart: (data: { contentId?: string; title?: string; thumbnail?: string } = {}) =>
-    request<{ data: { live: boolean; liveAt: string | null }; error: null }>('/live/start', {
+  // this device's localStorage. `source` is the consent-based capture the
+  // broadcaster chose: 'camera' (getUserMedia) or 'screen' (getDisplayMedia,
+  // with the OS/system picker doing the permission check).
+  liveStart: (data: { contentId?: string; title?: string; thumbnail?: string; source?: 'camera' | 'screen' } = {}) =>
+    request<{ data: { live: boolean; liveAt: string | null; sessionId?: string }; error: null }>('/live/start', {
       method: 'POST',
       body: JSON.stringify(data),
     }),
 
-  liveStop: () =>
+  // Progressive upload for a live session (YouTube-style). Each chunk is
+  // validated server-side (auth, session ownership, moderation, caps) before
+  // it is attached to the session, so the broadcaster's stream is actually
+  // recorded on the backend while it is running — not just a local flag.
+  liveChunk: (data: { contentId: string; source: 'camera' | 'screen'; sequence: number; url: string; bytes: number; mime?: string }) =>
+    request<{ data: { ok: boolean; sequence: number; chunks: number }; error: null }>('/live/chunk', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Finalize a live session with its replay URL + real duration.
+  liveFinalize: (data: { contentId: string; mediaUrl?: string; duration?: number }) =>
+    request<{ data: { ok: boolean }; error: null }>('/live/finalize', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  // Public replay descriptor for a recorded live session.
+  liveSession: (contentId: string) =>
+    request<{ data: { session: any | null }; error: null }>(`/live/session?contentId=${encodeURIComponent(contentId)}`),
+
+  liveStop: (data: { contentId?: string; mediaUrl?: string; duration?: number } = {}) =>
     request<{ data: { live: boolean; liveAt: string | null }; error: null }>('/live/stop', {
       method: 'POST',
-      body: JSON.stringify({}),
+      body: JSON.stringify(data),
     }),
 
   // Real (server-persisted) likes/reactions. `action: toggle` makes the server

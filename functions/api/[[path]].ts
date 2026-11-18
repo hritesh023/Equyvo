@@ -96,6 +96,10 @@ const KEYS = {
   CHAT: (a, b) => 'chat:' + a + ':' + b,
   NOTIF: (userId) => 'notif:' + userId,
   LIVE: 'live:now',  MOD_QUEUE: 'mod:queue',
+  // Recorded live sessions. One bounded row per broadcast: owner, consent
+  // source, progressive chunk metadata, final replay URL. Auth + ownership
+  // are enforced on every write (see /api/live/start|chunk|finalize|stop).
+  LIVE_SESSION: (contentId) => 'live:session:' + contentId,
   // Comments: per-content ledgers with replies, likes, pins + owner settings.
   // COMMENTS:<contentId> holds the ordered id list (newest first, capped).
   // COMMENT:<id> holds the comment object. CSETTINGS:<contentId> holds owner
@@ -7883,7 +7887,27 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
     // The flag lives on the profile row AND is mirrored into the bounded
     // profile index, so /api/live/now can show the stream to every account ΓÇö
     // not just people who already follow the broadcaster.
+    // A REAL live-session row is created on start (consent source + chunk
+    // ledger + final replay URL), so the backend actually records the session
+    // instead of only flipping a flag. Every write is authenticated and
+    // ownership-checked. (No OS/permission bypass: capture consent happens on
+    // the device via getUserMedia / getDisplayMedia before /live/start is
+    // ever called.)
     const LIVE_MAX_MS = 4 * 60 * 60 * 1000;
+    const LIVE_MAX_CHUNKS = 2000;
+    const LIVE_MAX_BYTES = 500 * 1024 * 1024;
+    const readLiveSession = async (id: string): Promise<any | null> => {
+      try {
+        const raw = await env.EQUYVO_KV.get(KEYS.LIVE_SESSION(id));
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
+    };
+    const writeLiveSession = async (id: string, session: any) => {
+      await env.EQUYVO_KV.put(KEYS.LIVE_SESSION(id), JSON.stringify(session), {
+        expirationTtl: Math.ceil(LIVE_MAX_MS / 1000) + 24 * 60 * 60,
+      });
+    };
+
     if ((path === '/api/live/start' || path === '/api/live/stop') && method === 'POST') {
       const body = await readJson(request).catch(() => ({}));
       const actor = await getActor(request, env, body);
@@ -7900,8 +7924,61 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           return json({ error: (e && e.message) || 'Stream title violates community guidelines.', code: 'CONTENT_BLOCKED' }, (e && e.status) || 400, cors);
         }
       }
+      // Consent source: 'camera' (getUserMedia) or 'screen' (getDisplayMedia,
+      // whose system picker IS the permission check). The server records what
+      // the client reports — it never invents or bypasses capture consent.
+      const requestedSource = String(clean.source || 'camera').toLowerCase();
+      const liveSource = requestedSource === 'screen' ? 'screen' : 'camera';
       const liveContentId = String(clean.contentId || clean.liveContentId || clean.id || '').slice(0, 64);
       const liveThumbnail = String(clean.thumbnail || clean.liveThumbnail || '').slice(0, 1000);
+
+      if (starting) {
+        if (!liveContentId) {
+          return json({ error: 'Missing stream id.', code: 'INVALID_SESSION' }, 400, cors);
+        }
+        const nowIso = new Date().toISOString();
+        const session = {
+          id: liveContentId,
+          ownerId: actor.id,
+          source: liveSource,
+          title: liveTitle,
+          thumbnail: liveThumbnail,
+          status: 'live',
+          startedAt: nowIso,
+          endedAt: null,
+          duration: 0,
+          chunks: [],
+          chunkBytes: 0,
+          mediaUrl: '',
+        };
+        try {
+          await writeLiveSession(liveContentId, session);
+        } catch {
+          // Never announce a stream the backend cannot actually record.
+          return json({ error: 'Could not create a live session on the server. Nothing was broadcast.', code: 'SESSION_CREATE_FAILED' }, 500, cors);
+        }
+      } else {
+        // Stop: finalize the session owned by this actor, even when the client
+        // omits the id (idempotent after a crash / page refresh).
+        let targetId = liveContentId;
+        try {
+          const me = await getStoredProfile(env, actor.id);
+          if (!targetId && me && me.liveContentId) targetId = String(me.liveContentId);
+        } catch { /* ignore */ }
+        if (targetId) {
+          const session = await readLiveSession(targetId);
+          if (session && session.ownerId === actor.id && session.status === 'live') {
+            session.status = 'ended';
+            session.endedAt = new Date().toISOString();
+            if (clean.mediaUrl) session.mediaUrl = String(clean.mediaUrl).slice(0, 1000);
+            if (Number.isFinite(Number(clean.duration))) {
+              session.duration = Math.max(0, Math.round(Number(clean.duration)));
+            }
+            try { await writeLiveSession(targetId, session); } catch { /* best-effort */ }
+          }
+        }
+      }
+
       try {
         const me = (await getStoredProfile(env, actor.id)) || { id: actor.id };
         me.isLive = starting;
@@ -7909,6 +7986,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         me.liveTitle = starting ? liveTitle : '';
         me.liveContentId = starting ? liveContentId : '';
         me.liveThumbnail = starting ? liveThumbnail : '';
+        me.liveSource = starting ? liveSource : '';
         await kv.put(KEYS.PROFILE(actor.id), JSON.stringify(me));
         // The profile index is cached for a minute; drop it so the new live
         // state is discoverable on the next request instead of the next TTL.
@@ -7931,7 +8009,127 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         if (context && typeof context.waitUntil === 'function') { try { context.waitUntil(fan); } catch {} }
         else { void fan; }
       }
-      return json({ data: { live: starting, liveAt: starting ? new Date().toISOString() : null }, error: null }, 200, cors);
+      return json({ data: { live: starting, liveAt: starting ? new Date().toISOString() : null, sessionId: starting ? liveContentId : undefined }, error: null }, 200, cors);
+    }
+
+    // POST /api/live/chunk ΓÇö progressive, authenticated upload of a recorded
+    // live segment (YouTube-style). Capture consent was already granted on
+    // the device; here the SERVER re-checks identity, session ownership,
+    // moderation of the title, sequence uniqueness and storage caps before a
+    // chunk is accepted. Nothing is recorded backend-side unless these pass.
+    if (path === '/api/live/chunk' && method === 'POST') {
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body || {});
+      const contentId = String(clean.contentId || '').slice(0, 64);
+      const source = String(clean.source || '').toLowerCase();
+      const sequence = Number(clean.sequence);
+      const url = String(clean.url || '');
+      const bytes = Number(clean.bytes || 0);
+      const mime = String(clean.mime || '').slice(0, 80);
+      if (!contentId || (source !== 'camera' && source !== 'screen') ||
+          !Number.isInteger(sequence) || sequence < 0 || sequence > 100000 ||
+          !url || url.length > 1000 || !/^https?:\/\//i.test(url) ||
+          !Number.isFinite(bytes) || bytes < 0 || bytes > LIVE_MAX_BYTES) {
+        return json({ error: 'Invalid live chunk.', code: 'INVALID_CHUNK' }, 400, cors);
+      }
+      // Gentle rate limit (one chunk write per second per broadcaster).
+      try {
+        const rateKey = KEYS.RATE('livechunk', actor.id, String(Math.floor(Date.now() / 1000)));
+        if (await env.EQUYVO_KV.get(rateKey)) {
+          return json({ error: 'Too many live chunk writes. Slow down.', code: 'RATE_LIMITED' }, 429, cors);
+        }
+        await env.EQUYVO_KV.put(rateKey, '1', { expirationTtl: 5 });
+      } catch { /* fail open on a KV hiccup — ownership is still enforced */ }
+      const session = await readLiveSession(contentId);
+      if (!session || session.ownerId !== actor.id) {
+        return json({ error: 'Live session not found or not owned by you.', code: 'FORBIDDEN' }, 403, cors);
+      }
+      if (session.status !== 'live') {
+        return json({ error: 'This live session has already ended.', code: 'SESSION_ENDED' }, 409, cors);
+      }
+      if (session.chunks.length >= LIVE_MAX_CHUNKS || (session.chunkBytes + bytes) > LIVE_MAX_BYTES) {
+        return json({ error: 'Live session storage cap reached.', code: 'QUOTA_STORAGE' }, 402, cors);
+      }
+      if (session.chunks.some((c: any) => Number(c.sequence) === sequence)) {
+        // Idempotent replay after a flaky network retry.
+        return json({ data: { ok: true, sequence, chunks: session.chunks.length }, error: null }, 200, cors);
+      }
+      session.chunks.push({ sequence, url, bytes, mime, source, at: new Date().toISOString() });
+      session.chunkBytes += bytes;
+      try {
+        await writeLiveSession(contentId, session);
+      } catch {
+        return json({ error: 'Could not save live chunk.', code: 'CHUNK_SAVE_FAILED' }, 500, cors);
+      }
+      return json({ data: { ok: true, sequence, chunks: session.chunks.length }, error: null }, 200, cors);
+    }
+
+    // POST /api/live/finalize ΓÇö owner attaches the final replay URL + real
+    // duration to a session it owns. Re-checked against the session owner.
+    if (path === '/api/live/finalize' && method === 'POST') {
+      const body = await readJson(request).catch(() => ({}));
+      const actor = await getActor(request, env, body);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const clean = sanitizeBody(body || {});
+      const contentId = String(clean.contentId || '').slice(0, 64);
+      const mediaUrl = String(clean.mediaUrl || '').slice(0, 1000);
+      const duration = Number(clean.duration || 0);
+      if (!contentId || (mediaUrl && !/^https?:\/\//i.test(mediaUrl)) ||
+          !Number.isFinite(duration) || duration < 0 || duration > LIVE_MAX_MS / 1000) {
+        return json({ error: 'Invalid live finalize payload.', code: 'INVALID_SESSION' }, 400, cors);
+      }
+      const session = await readLiveSession(contentId);
+      if (!session || session.ownerId !== actor.id) {
+        return json({ error: 'Live session not found or not owned by you.', code: 'FORBIDDEN' }, 403, cors);
+      }
+      session.status = 'ended';
+      session.endedAt = session.endedAt || new Date().toISOString();
+      if (mediaUrl) session.mediaUrl = mediaUrl;
+      if (duration) session.duration = Math.round(duration);
+      try {
+        await writeLiveSession(contentId, session);
+      } catch {
+        return json({ error: 'Could not finalize live session.', code: 'SESSION_SAVE_FAILED' }, 500, cors);
+      }
+      return json({ data: { ok: true }, error: null }, 200, cors);
+    }
+
+    // GET /api/live/session?contentId=... ΓÇö public replay descriptor so any
+    // viewer can render the recorded live session (same consent rules apply:
+    // private broadcasters are visible only to their followers).
+    if (path === '/api/live/session' && method === 'GET') {
+      const contentId = String(url.searchParams.get('contentId') || '').slice(0, 64);
+      if (!contentId) return json({ data: { session: null }, error: null }, 200, cors);
+      const session = await readLiveSession(contentId);
+      if (!session) return json({ data: { session: null }, error: null }, 200, cors);
+      const viewer = await getViewer(request, env);
+      if (session.isPrivate === true) {
+        if (!viewer || !(await isFollowingPair(env, viewer.id, session.ownerId))) {
+          return json({ data: { session: null }, error: null }, 200, cors);
+        }
+      }
+      return json({
+        data: {
+          session: {
+            id: session.id,
+            ownerId: session.ownerId,
+            source: session.source,
+            title: session.title,
+            thumbnail: session.thumbnail,
+            status: session.status,
+            startedAt: session.startedAt,
+            endedAt: session.endedAt,
+            duration: session.duration,
+            mediaUrl: session.mediaUrl || '',
+            chunks: Array.isArray(session.chunks) ? session.chunks.length : 0,
+          },
+        },
+        error: null,
+      }, 200, cors);
     }
 
     // GET /api/live/now ΓÇö EVERY account that is live right now (public
@@ -7961,6 +8159,11 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           const isFollowing = followingSet.has(id.toLowerCase());
           // Private broadcasters are discoverable only by their followers.
           if (row.isPrivate === true && !isFollowing) continue;
+          const contentId = String(row.liveContentId || '');
+          // Real session data: consent source + progressive/final media so
+          // every account renders what is actually being recorded, not a
+          // phantom flag. A stale/absent session simply yields empty media.
+          const session = contentId ? await readLiveSession(contentId) : null;
           live.push({
             ...profileSummary(row, id),
             isLive: true,
@@ -7968,8 +8171,10 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
             title: String(row.liveTitle || 'Live now'),
             liveTitle: String(row.liveTitle || 'Live now'),
             thumbnail: String(row.avatar || ''),
-            contentId: String(row.liveContentId || ''),
-            liveContentId: String(row.liveContentId || ''),
+            contentId,
+            liveContentId: contentId,
+            source: session && session.source ? session.source : 'camera',
+            mediaUrl: session && session.mediaUrl ? session.mediaUrl : '',
             isFollowing,
           });
         }

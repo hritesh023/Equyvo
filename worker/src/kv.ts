@@ -35,6 +35,7 @@ const KEYS = {
   CHAT: (a: string, b: string) => `chat:${a}:${b}`,
   NOTIF: (userId: string) => `notif:${userId}`,
   LIVE: 'live:now',
+  LIVE_SESSION: (contentId: string) => `live:session:${contentId}`,
   // Comments: per-content ledgers with replies, likes, shares, pins + owner
   // settings. Mirrors Pages Functions; identity is always server-resolved.
   COMMENTS: (contentId: string) => `comments:${contentId}`,

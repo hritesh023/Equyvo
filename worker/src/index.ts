@@ -893,15 +893,70 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       return respond({ data: { ok: true }, error: null });
     }
 
-    // ---- LIVE PRESENCE ----
+    // ---- LIVE PRESENCE + RECORDED SESSIONS ----
+    // Same contract as Pages Functions: consent for capture happens on-device
+    // (getUserMedia / getDisplayMedia), and the backend records a real session
+    // row with the chosen source, progressive chunks and final replay URL.
+    const LIVE_MAX_MS = 4 * 60 * 60 * 1000;
+    const LIVE_MAX_BYTES = 500 * 1024 * 1024;
+    const readLiveSession = async (id: string): Promise<any | null> => {
+      try {
+        const raw = await env.EQUYVO_KV.get(KEYS.LIVE_SESSION(id));
+        return raw ? JSON.parse(raw) : null;
+      } catch { return null; }
+    };
+    const writeLiveSession = async (id: string, session: any) => {
+      await env.EQUYVO_KV.put(KEYS.LIVE_SESSION(id), JSON.stringify(session), {
+        expirationTtl: Math.ceil(LIVE_MAX_MS / 1000) + 24 * 60 * 60,
+      });
+    };
+
     if ((path === '/api/live/start' || path === '/api/live/stop') && method === 'POST') {
-      const { actor, error } = await requireActor();
+      const raw = await request.json().catch(() => ({}));
+      const { actor, error } = await requireActor(raw);
       if (error) return error;
       const starting = path === '/api/live/start';
+      const clean = sanitizeBody(raw || {});
+      const contentId = String(clean.contentId || clean.liveContentId || clean.id || '').slice(0, 64);
+      const source = String(clean.source || 'camera').toLowerCase() === 'screen' ? 'screen' : 'camera';
+      const title = String(clean.title || '').trim().slice(0, 160);
+      const thumbnail = String(clean.thumbnail || '').slice(0, 1000);
+      if (starting) {
+        if (!contentId) return respondError('Missing stream id.', 400);
+        try {
+          await writeLiveSession(contentId, {
+            id: contentId, ownerId: (actor as any).id, source, title, thumbnail,
+            status: 'live', startedAt: new Date().toISOString(), endedAt: null,
+            duration: 0, chunks: [], chunkBytes: 0, mediaUrl: '',
+          });
+        } catch {
+          return respondError('Could not create a live session on the server. Nothing was broadcast.', 500);
+        }
+      } else {
+        let targetId = contentId;
+        try {
+          const me: any = await getProfile(env, (actor as any).id);
+          if (!targetId && me && me.liveContentId) targetId = String(me.liveContentId);
+        } catch { /* ignore */ }
+        if (targetId) {
+          const s = await readLiveSession(targetId);
+          if (s && s.ownerId === (actor as any).id && s.status === 'live') {
+            s.status = 'ended';
+            s.endedAt = new Date().toISOString();
+            if (clean.mediaUrl) s.mediaUrl = String(clean.mediaUrl).slice(0, 1000);
+            if (Number.isFinite(Number(clean.duration))) s.duration = Math.max(0, Math.round(Number(clean.duration)));
+            try { await writeLiveSession(targetId, s); } catch { /* best-effort */ }
+          }
+        }
+      }
       try {
         const me: any = (await getProfile(env, (actor as any).id)) || { id: (actor as any).id };
         me.isLive = starting;
         me.liveAt = starting ? new Date().toISOString() : null;
+        me.liveTitle = starting ? title : '';
+        me.liveContentId = starting ? contentId : '';
+        me.liveThumbnail = starting ? thumbnail : '';
+        me.liveSource = starting ? source : '';
         await upsertProfile(env, me);
       } catch { /* ignore */ }
       if (starting) {
@@ -915,13 +970,90 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
                 kind: 'live', title: name + ' is live now',
                 body: 'Tap to watch ' + name + ' live.',
                 actorId: (actor as any).id, actorName: String(name),
+                contentId: contentId || undefined,
               }).catch(() => {})));
           } catch { /* ignore */ }
         })();
         if (ctx && ctx.waitUntil) ctx.waitUntil(fan);
         else void fan;
       }
-      return respond({ data: { live: starting }, error: null });
+      return respond({ data: { live: starting, liveAt: starting ? new Date().toISOString() : null, sessionId: starting ? contentId : undefined }, error: null });
+    }
+
+    if (path === '/api/live/chunk' && method === 'POST') {
+      const raw = await request.json().catch(() => ({}));
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const clean = sanitizeBody(raw || {});
+      const contentId = String(clean.contentId || '').slice(0, 64);
+      const source = String(clean.source || '').toLowerCase();
+      const sequence = Number(clean.sequence);
+      const url = String(clean.url || '');
+      const bytes = Number(clean.bytes || 0);
+      if (!contentId || (source !== 'camera' && source !== 'screen') ||
+          !Number.isInteger(sequence) || sequence < 0 || sequence > 100000 ||
+          !url || url.length > 1000 || !/^https?:\/\//i.test(url) ||
+          !Number.isFinite(bytes) || bytes < 0 || bytes > LIVE_MAX_BYTES) {
+        return respondError('Invalid live chunk.', 400);
+      }
+      const s = await readLiveSession(contentId);
+      if (!s || s.ownerId !== (actor as any).id) return respondError('Live session not found or not owned by you.', 403);
+      if (s.status !== 'live') return respondError('This live session has already ended.', 409);
+      if (s.chunks.length >= 2000 || (s.chunkBytes + bytes) > LIVE_MAX_BYTES) {
+        return respond({ error: 'Live session storage cap reached.', code: 'QUOTA_STORAGE' }, 402);
+      }
+      if (!s.chunks.some((c: any) => Number(c.sequence) === sequence)) {
+        s.chunks.push({ sequence, url, bytes, source, mime: String(clean.mime || '').slice(0, 80), at: new Date().toISOString() });
+        s.chunkBytes += bytes;
+        try { await writeLiveSession(contentId, s); }
+        catch { return respondError('Could not save live chunk.', 500); }
+      }
+      return respond({ data: { ok: true, sequence, chunks: s.chunks.length }, error: null });
+    }
+
+    if (path === '/api/live/finalize' && method === 'POST') {
+      const raw = await request.json().catch(() => ({}));
+      const { actor, error } = await requireActor(raw);
+      if (error) return error;
+      const clean = sanitizeBody(raw || {});
+      const contentId = String(clean.contentId || '').slice(0, 64);
+      const mediaUrl = String(clean.mediaUrl || '').slice(0, 1000);
+      const duration = Number(clean.duration || 0);
+      if (!contentId || (mediaUrl && !/^https?:\/\//i.test(mediaUrl)) ||
+          !Number.isFinite(duration) || duration < 0 || duration > LIVE_MAX_MS / 1000) {
+        return respondError('Invalid live finalize payload.', 400);
+      }
+      const s = await readLiveSession(contentId);
+      if (!s || s.ownerId !== (actor as any).id) return respondError('Live session not found or not owned by you.', 403);
+      s.status = 'ended';
+      s.endedAt = s.endedAt || new Date().toISOString();
+      if (mediaUrl) s.mediaUrl = mediaUrl;
+      if (duration) s.duration = Math.round(duration);
+      try { await writeLiveSession(contentId, s); }
+      catch { return respondError('Could not finalize live session.', 500); }
+      return respond({ data: { ok: true }, error: null });
+    }
+
+    if (path === '/api/live/session' && method === 'GET') {
+      const contentId = String(url.searchParams.get('contentId') || '').slice(0, 64);
+      if (!contentId) return respond({ data: { session: null }, error: null });
+      const s = await readLiveSession(contentId);
+      if (!s) return respond({ data: { session: null }, error: null });
+      const viewer = await getViewer(request, env);
+      if (s.isPrivate === true && (!viewer || !(await isFollowingPair(env, viewer.id, s.ownerId)))) {
+        return respond({ data: { session: null }, error: null });
+      }
+      return respond({
+        data: {
+          session: {
+            id: s.id, ownerId: s.ownerId, source: s.source, title: s.title,
+            thumbnail: s.thumbnail, status: s.status, startedAt: s.startedAt,
+            endedAt: s.endedAt, duration: s.duration,
+            mediaUrl: s.mediaUrl || '', chunks: Array.isArray(s.chunks) ? s.chunks.length : 0,
+          },
+        },
+        error: null,
+      });
     }
 
     if (path === '/api/live/now' && method === 'GET') {
@@ -932,7 +1064,16 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       for (const pid of following.slice(0, 200)) {
         try {
           const p: any = await getProfile(env, pid);
-          if (p && p.isLive === true) live.push(profileSummary(p, pid));
+          if (p && p.isLive === true) {
+            const contentId = String(p.liveContentId || '');
+            const s = contentId ? await readLiveSession(contentId) : null;
+            live.push({
+              ...profileSummary(p, pid),
+              contentId,
+              source: s && s.source ? s.source : 'camera',
+              mediaUrl: s && s.mediaUrl ? s.mediaUrl : '',
+            });
+          }
         } catch { /* ignore */ }
         if (live.length >= 20) break;
       }
