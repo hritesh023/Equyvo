@@ -34,6 +34,40 @@ export interface AppNotification {
 
 const KEY = 'equyvo_notifications_v1';
 const DISMISSED_KEY = 'equyvo_notif_dismissed_v1';
+const FIRED_KEY = 'equyvo_system_notified_v1';
+
+function firedIds(): Set<string> {
+  try {
+    const raw = localStorage.getItem(FIRED_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(arr) ? arr.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function markFired(id: string): void {
+  if (!id) return;
+  try {
+    const cur = firedIds();
+    cur.add(String(id));
+    localStorage.setItem(FIRED_KEY, JSON.stringify([...cur].slice(-1000)));
+  } catch {
+    /* ignore */
+  }
+}
+
+function shouldFireSystem(kind: NotificationKind): boolean {
+  // Every notification that reaches the in-app page is also mirrored to the
+  // OS-level tray on mobile/tablet (and desktop when permitted). Follow
+  // requests/accepts always fire; other kinds respect the master push toggle.
+  try {
+    if (kind === 'follow_request' || kind === 'follow_accepted') return true;
+    return localStorage.getItem('notifications') === 'true';
+  } catch {
+    return kind === 'follow_request' || kind === 'follow_accepted';
+  }
+}
 
 function dismissedIds(): Set<string> {
   try {
@@ -232,8 +266,10 @@ export function pushNotification(n: Omit<AppNotification, 'id' | 'at' | 'read'> 
   const list = [item, ...readAll()].slice(0, 200);
   writeAll(list);
   emitNotificationsUpdated();
-  // Mirror to the OS when it is a push-worthy kind and the user opted in.
-  if (pushEnabled() || n.kind === 'follow_request' || n.kind === 'follow_accepted') {
+  // Mirror to the OS so every in-app notification also appears as a system
+  // default notification on mobile/tablet (and desktop when permitted).
+  if (shouldFireSystem(item.kind) && !firedIds().has(String(item.id))) {
+    markFired(String(item.id));
     sendSystemNotification(item.title, item.body);
   }
   return item;
@@ -303,6 +339,14 @@ export async function syncNotificationsFromServer(): Promise<AppNotification[]> 
         // a locally-marked-read state back to unread.
         writeAll([...(fresh as AppNotification[]), ...cur].slice(0, 200));
         emitNotificationsUpdated();
+        // Mirror newly-arrived server notifications to the OS tray.
+        for (const n of fresh as AppNotification[]) {
+          if (!n || !n.id) continue;
+          if (firedIds().has(String(n.id))) continue;
+          if (!shouldFireSystem(n.kind)) continue;
+          markFired(String(n.id));
+          sendSystemNotification(String(n.title || ''), String(n.body || ''));
+        }
       }
     }
   } catch {
@@ -330,6 +374,10 @@ export async function syncNotificationsFromServer(): Promise<AppNotification[]> 
             actorName: String(r),
             link: `/profile/${encodeURIComponent(String(r))}`,
           });
+          if (!firedIds().has(id)) {
+            markFired(id);
+            sendSystemNotification('New follow request', `${r} requested to follow you. Approve or decline from notifications.`);
+          }
         }
       }
       writeAll(cur.slice(0, 200));
