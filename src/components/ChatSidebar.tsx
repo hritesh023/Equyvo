@@ -845,9 +845,14 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     if (!activeChat) return;
     if (forEveryone && !msg.fromMe) return;
     try {
-      await deleteChatMessage(activeChat.id, msg.id, forEveryone);
-      refreshMsgs(activeChat.id);
-      refreshThreads();
+      if (isGroupChat && activeGroupId) {
+        await api.groupDeleteMsg(activeGroupId, msg.id, forEveryone);
+        await refreshGroupMsgs(activeGroupId);
+      } else {
+        await deleteChatMessage(activeChat.id, msg.id, forEveryone);
+        refreshMsgs(activeChat.id);
+        refreshThreads();
+      }
     } catch {
       showError('Could not delete message.');
     }
@@ -1802,13 +1807,18 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               const text = `[Poll]: ${q}\n` + opts.map((o, i) => `${i + 1}. ${o}`).join('\n');
               setSending(true);
               try {
-                const sent = await sendChatMessage(activeChat.id, text);
-                if (!sent) { showError('Poll could not be sent.'); return; }
+                if (isGroupChat && activeGroupId) {
+                  await api.groupSend(activeGroupId, { text, type: 'text' });
+                  await refreshGroupMsgs(activeGroupId);
+                } else {
+                  const sent = await sendChatMessage(activeChat.id, text);
+                  if (!sent) { showError('Poll could not be sent.'); return; }
+                  refreshMsgs(activeChat.id);
+                  refreshThreads();
+                }
                 setPollQuestion('');
                 setPollOptions(['', '']);
                 setPollComposerOpen(false);
-                refreshMsgs(activeChat.id);
-                refreshThreads();
               } catch { showError('Poll could not be sent.'); }
               finally { setSending(false); }
             }}>Send Poll</Button>
