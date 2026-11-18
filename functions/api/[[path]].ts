@@ -258,7 +258,8 @@ function normalizeVisibility(v, fallback = 'public') {
   const s = String(v || '').toLowerCase().trim();
   if (s === 'public' || s === 'followers' || s === 'private' || s === 'hidden') return s;
   if (s === 'friends' || s === 'followers-only') return 'followers';
-  if (s === 'only-me' || s === 'onlyme' || s === 'me') return 'private';
+  // 'only me' / 'only-me' are no longer a valid upload audience; fall through
+  // to the caller's fallback instead of being accepted as a visibility.
   return fallback;
 }
 
@@ -3527,7 +3528,9 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     const authorProfile = await getStoredProfile(env, actor.id);
     // Uploads default to "Everyone" unless the user explicitly chose otherwise.
     const fallback = 'public';
-    visibility = normalizeVisibility(clean.visibility || clean.audience || (clean.isPrivate === true ? 'private' : ''), fallback);
+    // 'private' (only-me) is no longer an upload audience; an isPrivate flag
+    // from a legacy client maps to followers-only, never to owner-only.
+    visibility = normalizeVisibility(clean.visibility || clean.audience || (clean.isPrivate === true ? 'followers' : ''), fallback);
   } catch { visibility = normalizeVisibility(clean.visibility || clean.audience || 'public'); }
   // Content safety (server-only): illegal / child-unsafe content is rejected
   // with a generic message; suspicious content is quarantined to owner-only.

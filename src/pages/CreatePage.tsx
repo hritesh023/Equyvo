@@ -607,10 +607,10 @@ const CreatePage = () => {
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraRecordSecs, setCameraRecordSecs] = useState(0);
   const [cameraDest, setCameraDest] = useState<'story' | 'photo' | 'video' | 'moment' | 'thought'>('story');
-  // Who can see new uploads: public (everyone), followers (followers-only),
-  // private (only you). Sent to the server with every post; the server
-  // enforces it for every account on every device.
-  const [contentVisibility, setContentVisibilityState] = useState<'public' | 'followers' | 'private'>('public');
+  // Who can see new uploads: public (everyone), followers (followers-only).
+  // Sent to the server with every post; the server enforces it for every
+  // account on every device.
+  const [contentVisibility, setContentVisibilityState] = useState<'public' | 'followers'>('public');
 
   // Auto-save draft (Gmail-style): restore any in-progress draft on mount and
   // persist the latest form state on unmount/navigation so an accidental swipe
@@ -1747,8 +1747,8 @@ const CreatePage = () => {
           comments: 0,
           shares: 0,
           expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24 hours from now
-            chatWithAudience: (forcedChat === true) ? true : (contentVisibility !== 'private' ? textStoryChatWithAudience : false),
-            chatPrompt: (forcedChat === true || (contentVisibility !== 'private' && textStoryChatWithAudience)) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
+            chatWithAudience: (forcedChat === true) ? true : textStoryChatWithAudience,
+            chatPrompt: (forcedChat === true || textStoryChatWithAudience) ? ((textStoryChatPrompt || forcedContent || 'Chat with your creator').trim() || 'Chat with your creator') : undefined,
             isPoll,
             pollOptions: isPoll ? textStoryPollOptions.map((o) => o.trim()).filter(Boolean) : undefined,
             boxColor: textStoryBoxColor,
@@ -3387,7 +3387,6 @@ const CreatePage = () => {
               {([
                 { value: 'public', label: 'Everyone', hint: 'Shown across the app' },
                 { value: 'followers', label: 'Followers', hint: 'Followers only' },
-                { value: 'private', label: 'Only me', hint: 'Hidden from everyone else' },
               ] as const).map((opt) => (
                 <button
                   key={opt.value}
@@ -3929,7 +3928,7 @@ const CreatePage = () => {
               </div>
 
               {/* Chat with audience (only for Everyone / Followers) */}
-              {contentVisibility !== 'private' && (
+              {true && (
                 <div className="rounded-lg border border-border p-3 space-y-2">
                   <label className="flex items-center gap-2 text-sm font-medium cursor-pointer">
                     <input
