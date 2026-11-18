@@ -1,5 +1,5 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, VolumeX, Maximize2, Columns, Eye, Image, RotateCcw } from 'lucide-react';
+import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, VolumeX, Maximize2, Columns, Eye, Image, RotateCcw, PictureInPicture2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -1334,9 +1334,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             size="icon"
             onClick={handleMinimize}
             className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
-            title="Minimize"
+            title="Picture-in-Picture"
           >
-            <Minimize2 className="h-5 w-5" />
+            <PictureInPicture2 className="h-5 w-5" />
           </Button>
           )}
           <Button
