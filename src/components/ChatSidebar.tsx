@@ -1288,7 +1288,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               if (!activeGroupId) return;
               const ok = window.confirm('Clear all messages in this group?');
               if (!ok) return;
-              void api.groupClear(activeGroupId).then(() => { setGroupMsgs([]); setMsgs([]); }).catch(() => {});
+              void api.groupClear(activeGroupId).then((r: any) => { if (r?.error) { showError(r.error); return; } setGroupMsgs([]); setMsgs([]); showSuccess('Chat cleared'); }).catch(() => { showError('Could not clear chat'); });
               try { localStorage.setItem('equyvo_chat_cleared_' + activeGroupId, String(Date.now())); } catch {}
             }}>
               <Eraser className="w-4 h-4" />
@@ -2051,17 +2051,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                         <Button size="sm" variant="ghost" disabled={Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m)} onClick={async () => {
                           const ok = window.confirm(`Promote ${memberNames[m] || m} to co-leader?`);
                           if (!ok) return;
-                          try { await api.groupSetRole(activeGroupId!, m, 'coleader'); await refreshGroups(); showSuccess('Promoted to co-leader'); } catch { showError('Could not update role'); }
+                          try { const r: any = await api.groupSetRole(activeGroupId!, m, 'coleader'); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Promoted to co-leader'); } catch { showError('Could not update role'); }
                         }}>Promote</Button>
                         <Button size="sm" variant="ghost" disabled={!(Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m))} onClick={async () => {
                           const ok = window.confirm(`Demote ${memberNames[m] || m} from co-leader to member?`);
                           if (!ok) return;
-                          try { await api.groupSetRole(activeGroupId!, m, 'member'); await refreshGroups(); showSuccess('Demoted to member'); } catch { showError('Could not update role'); }
+                          try { const r: any = await api.groupSetRole(activeGroupId!, m, 'member'); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Demoted to member'); } catch { showError('Could not update role'); }
                         }}>Demote</Button>
                         <Button size="sm" variant="ghost" onClick={async () => {
                           const ok = window.confirm(`Remove ${memberNames[m] || m} from the group?`);
                           if (!ok) return;
-                          try { await api.groupRemoveMember(activeGroupId!, m); await refreshGroups(); showSuccess('Removed'); } catch { showError('Could not remove'); }
+                          try { const r: any = await api.groupRemoveMember(activeGroupId!, m); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Removed'); } catch { showError('Could not remove'); }
                         }}><Trash2 className="w-4 h-4" /></Button>
                       </>
                     )}
@@ -2083,7 +2083,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   const users = res?.data?.users || res?.data?.results || [];
                   if (!Array.isArray(users) || users.length === 0) { showError('No profile found'); return; }
                   const u = users[0];
-                  await api.groupAddMember(activeGroupId!, String(u.id));
+                  const r: any = await api.groupAddMember(activeGroupId!, String(u.id));
+                  if (r?.error) { showError(r.error); return; }
                   await refreshGroups();
                   showSuccess('Member added');
                 } catch { showError('Could not add member'); }
@@ -2095,7 +2096,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <div className="space-y-2">
               <p className="text-sm font-medium">Reply permission</p>
               <select className="h-8 rounded-md border bg-background px-2 text-xs" value={groupReplyPerm} onChange={async (e) => {
-                try { await api.groupSettings(activeGroupId!, e.target.value); await refreshGroups(); } catch {}
+                try { const r: any = await api.groupSettings(activeGroupId!, e.target.value); if (r?.error) { showError(r.error); return; } await refreshGroups(); } catch { showError('Could not update settings'); }
               }}>
                 <option value="all">All can reply</option>
                 <option value="leaders">Leaders can reply</option>
@@ -2125,11 +2126,11 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 if (!activeGroupId) return;
                 const ok = window.confirm('Delete this group permanently?');
                 if (!ok) return;
-                try { await api.groupDeleteGroup(activeGroupId); await refreshGroups(); showSuccess('Group deleted'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not delete group'); }
+                try { const r: any = await api.groupDeleteGroup(activeGroupId); if (r?.error) { showError(r.error); return; } setGroups((prev: any[]) => prev.filter((g: any) => g.id !== activeGroupId)); await refreshGroups(); showSuccess('Group deleted'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not delete group'); }
               }}>Delete group</Button>
               <Button size="sm" variant="outline" onClick={async () => {
                 if (!activeGroupId) return;
-                try { await api.groupArchive(activeGroupId, true); await refreshGroups(); showSuccess('Archived'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not archive'); }
+                try { const r: any = await api.groupArchive(activeGroupId, true); if (r?.error) { showError(r.error); return; } setGroups((prev: any[]) => prev.map((g: any) => g.id === activeGroupId ? { ...g, archived: true } : g)); await refreshGroups(); showSuccess('Archived'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not archive'); }
               }}>Archive group</Button>
             </div>
           )}
@@ -2183,7 +2184,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <Button size="sm" onClick={async () => {
               if (!activeGroupId) return;
               try {
-                await api.groupProfile(activeGroupId, { name: groupEditName.trim() || undefined, description: groupEditDesc.trim(), image: groupEditImage || undefined });
+                const r: any = await api.groupProfile(activeGroupId, { name: groupEditName.trim() || undefined, description: groupEditDesc.trim(), image: groupEditImage || undefined });
+                if (r?.error) { showError(r.error); return; }
                 await refreshGroups();
                 showSuccess('Group updated');
                 setGroupEditOpen(false);
