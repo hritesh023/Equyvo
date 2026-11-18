@@ -1061,8 +1061,14 @@ export const api = {
     request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/delete`, { method: 'POST', body: JSON.stringify({ id: msgId, forEveryone: !!forEveryone }) }),
   groupSettings: (id: string, replyPermission: string) =>
     request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/settings`, { method: 'POST', body: JSON.stringify({ replyPermission }) }),
-  groupProfile: (id: string, data: { name?: string; description?: string }) =>
+  groupProfile: (id: string, data: { name?: string; description?: string; image?: string; avatar?: string }) =>
     request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/profile`, { method: 'POST', body: JSON.stringify(data) }),
+  groupArchive: (id: string, archived: boolean) =>
+    request<{ data: { group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/archive`, { method: 'POST', body: JSON.stringify({ archived }) }),
+  groupDeleteGroup: (id: string) =>
+    request<{ data: { ok: boolean }; error: null }>(`/groups/${encodeURIComponent(id)}/deletegroup`, { method: 'POST', body: JSON.stringify({}) }),
+  groupClear: (id: string) =>
+    request<{ data: { clearedAt: number; group: any }; error: null }>(`/groups/${encodeURIComponent(id)}/clear`, { method: 'POST', body: JSON.stringify({}) }),
 
   // Health check
   health: () => request<{ status: string }>('/health'),

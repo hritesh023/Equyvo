@@ -256,6 +256,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [forwardOpen, setForwardOpen] = useState(false);
   const [forwardTarget, setForwardTarget] = useState<string>('');
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
+  const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
+  const [groupProfileImageOpen, setGroupProfileImageOpen] = useState(false);
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
+  const [groupSelectionMode, setGroupSelectionMode] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
   const [followCandidates, setFollowCandidates] = useState<any[]>([]);
@@ -382,7 +386,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     if (!id) { setGroupMsgs([]); setMsgs([]); return; }
     try {
       const res: any = await api.groupMessages(id, 200);
-      const list = Array.isArray(res?.data?.messages) ? res.data.messages : [];
+      const group = res?.data?.group;
+      if (group) {
+        setGroups((prev: any[]) => prev.map((g: any) => g.id === id ? { ...g, ...group } : g));
+      }
+      let list = Array.isArray(res?.data?.messages) ? res.data.messages : [];
+      const clearedAt = Number(group?.clearedAt || 0);
+      if (clearedAt) list = list.filter((m: any) => Number(m?.createdAt || 0) > clearedAt);
       setGroupMsgs(list);
       setMsgs(list);
       const pinned = list.find((m: any) => m.pinned);
@@ -998,6 +1008,30 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 <div className="p-3">
                   <Input placeholder="Search groups…" value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} />
                 </div>
+                {groupSelectionMode && (
+                  <div className="p-3 flex items-center gap-2 bg-purple-500/10 border-b border-purple-500/30">
+                    <span className="text-sm font-medium flex-1">{selectedGroupId ? '1 group selected' : 'Select a group'}</span>
+                    {selectedGroupId && (
+                      <>
+                        <Button size="sm" variant="outline" onClick={async () => {
+                          const g = groups.find((x: any) => x.id === selectedGroupId);
+                          if (!g) return;
+                          const next = !g.archived;
+                          try { await api.groupArchive(selectedGroupId, next); await refreshGroups(); showSuccess(next ? 'Archived' : 'Unarchived'); } catch { showError('Could not archive'); }
+                          setGroupSelectionMode(false); setSelectedGroupId(null);
+                        }}>Archive</Button>
+                        <Button size="sm" variant="destructive" onClick={async () => {
+                          if (!selectedGroupId) return;
+                          const ok = window.confirm('Delete this group permanently?');
+                          if (!ok) return;
+                          try { await api.groupDeleteGroup(selectedGroupId); await refreshGroups(); showSuccess('Group deleted'); } catch { showError('Could not delete group'); }
+                          setGroupSelectionMode(false); setSelectedGroupId(null);
+                        }}>Delete</Button>
+                      </>
+                    )}
+                    <Button size="sm" variant="ghost" onClick={() => { setGroupSelectionMode(false); setSelectedGroupId(null); }}>Cancel</Button>
+                  </div>
+                )}
                 {groups.length === 0 ? (
                   <div className="p-8 text-center text-muted-foreground">
                     <MessageCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
@@ -1007,10 +1041,32 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   </div>
                 ) : (
                   groups
+                    .filter((g: any) => !g.archived)
                     .filter((g: any) => !groupSearch.trim() || String(g.name || '').toLowerCase().includes(groupSearch.trim().toLowerCase()))
                     .map((g: any) => (
-                      <div key={g.id} role="button" tabIndex={0} className="flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors"
-                        onClick={() => { setIsGroupChat(true); void openGroupChat(g.id); }}
+                      <div key={g.id} role="button" tabIndex={0} className={`flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors ${selectedGroupId === g.id ? 'bg-purple-500/20 ring-1 ring-purple-500/40' : ''}`}
+                        onClick={() => {
+                          if (groupSelectionMode) {
+                            setSelectedGroupId(selectedGroupId === g.id ? null : g.id);
+                            return;
+                          }
+                          setIsGroupChat(true); void openGroupChat(g.id);
+                        }}
+                        onTouchStart={() => {
+                          if (groupSelectionMode) return;
+                          const t = window.setTimeout(() => {
+                            setGroupSelectionMode(true);
+                            setSelectedGroupId(g.id);
+                          }, 500);
+                          (g as any)._t = t;
+                        }}
+                        onTouchEnd={() => { const t = (g as any)._t; if (t) window.clearTimeout(t); }}
+                        onTouchMove={() => { const t = (g as any)._t; if (t) window.clearTimeout(t); }}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setGroupSelectionMode(true);
+                          setSelectedGroupId(g.id);
+                        }}
                       >
                         <Avatar><AvatarFallback>{String(g.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
                         <div className="flex-1 min-w-0">
@@ -1133,7 +1189,46 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 </Button>
               </>
             ) : (
+            isGroupChat ? (
             <>
+            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
+              <ArrowLeft className="w-4 h-4" />
+            </Button>
+            <button
+              type="button"
+              onClick={() => setGroupProfileImageOpen(true)}
+              className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+              aria-label="Open group profile image"
+              title="Open group profile image"
+            >
+              <Avatar className="h-8 w-8 shrink-0 cursor-pointer">
+                <AvatarImage src={activeGroupObj?.avatar || ''} alt={`${activeGroupObj?.name || 'Group'} avatar`} />
+                <AvatarFallback>{(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-sm truncate hover:underline">{activeGroupObj?.name || activeChat.peerName}</p>
+                <p className="text-xs text-muted-foreground">{(activeGroupObj?.members || []).length} members</p>
+              </div>
+            </button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Group settings" title="Group settings" onClick={() => setGroupSettingsOpen(true)}>
+              <MoreVertical className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Clear chat" title="Clear chat" onClick={() => {
+              if (!activeGroupId) return;
+              const ok = window.confirm('Clear all messages in this group?');
+              if (!ok) return;
+              void api.groupClear(activeGroupId).then(() => { setGroupMsgs([]); setMsgs([]); }).catch(() => {});
+              try { localStorage.setItem('equyvo_chat_cleared_' + activeGroupId, String(Date.now())); } catch {}
+            }}>
+              <Eraser className="w-4 h-4" />
+            </Button>
+            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Group profile image" title="Group profile image" onClick={() => setGroupProfileImageOpen(true)}>
+              <ImageIcon className="w-4 h-4" />
+            </Button>
+            </>
+            ) : (
+            <>
+
             <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
               <ArrowLeft className="w-4 h-4" />
             </Button>
@@ -1282,6 +1377,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               </Button>
             </ChatThemeSelector>
             </>
+
+            )
             )}
           </div>
 
@@ -1306,7 +1403,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 {msgs.length === 0 && (
                 <div className="text-center text-muted-foreground py-8">
                   <p className="mx-auto max-w-[260px] rounded-lg bg-black/40 px-3 py-1.5 text-xs text-amber-100/90">
-                    Messages are gated by follow — {activeChat.relation === 'follower' ? `${activeChat.peerName} follows you, so they can write here.` : activeChat.relation === 'following' ? `You follow ${activeChat.peerName}, so you can write here.` : 'you follow each other.'}
+                    {isGroupChat ? 'No messages yet in this group. Say hi!' : `Messages are gated by follow — ${activeChat.relation === 'follower' ? `${activeChat.peerName} follows you, so they can write here.` : activeChat.relation === 'following' ? `You follow ${activeChat.peerName}, so you can write here.` : 'you follow each other.'}`}
                   </p>
                 </div>
               )}
@@ -1371,6 +1468,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                       onTouchMove={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
                       onClick={() => { if (selectionMode) toggleSelectMsg(msg.id); }}
                     >
+                      {isGroupChat && !msg.fromMe && (msg as any).senderName && (
+                        <p className="text-[11px] font-semibold text-sky-300/90 mb-0.5">{(msg as any).senderName}</p>
+                      )}
                       {msg.forwarded && (
                         <p className="text-[11px] italic opacity-70 mb-1">Forwarded</p>
                       )}
@@ -1748,15 +1848,21 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <p className="text-xs text-muted-foreground mb-1">Add members from followers/following</p>
             {followCandidates.length > 0 && (
               <div className="max-h-32 overflow-auto space-y-1 mb-2">
-                {followCandidates.map((u: any) => (
-                  <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="checkbox" checked={newGroupMembers.includes(String(u.id))} onChange={(e) => {
-                      const id = String(u.id);
-                      setNewGroupMembers((prev) => e.target.checked ? [...prev, id] : prev.filter((x) => x !== id));
-                    }} />
-                    <span>{u.name || u.username || u.id}</span>
-                  </label>
-                ))}
+                {followCandidates.map((u: any) => {
+                  const id = String(u.id);
+                  const selected = newGroupMembers.includes(id);
+                  return (
+                    <div key={u.id} role="button" tabIndex={0}
+                      className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${selected ? 'bg-purple-500/20' : 'hover:bg-accent'}`}
+                      onClick={() => setNewGroupMembers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
+                    >
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${selected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400'}`}>
+                        {selected && <Check className="h-3 w-3" />}
+                      </div>
+                      <span>{u.name || u.username || u.id}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
             <p className="text-xs text-muted-foreground mb-1">Or search any profile</p>
@@ -1771,15 +1877,21 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             }} />
             {groupSearchResults.length > 0 && (
               <div className="mt-2 max-h-40 overflow-auto space-y-1">
-                {groupSearchResults.map((u: any) => (
-                  <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer">
-                    <input type="checkbox" checked={newGroupMembers.includes(String(u.id))} onChange={(e) => {
-                      const id = String(u.id);
-                      setNewGroupMembers((prev) => e.target.checked ? [...prev, id] : prev.filter((x) => x !== id));
-                    }} />
-                    <span>{u.name || u.username || u.id}</span>
-                  </label>
-                ))}
+                {groupSearchResults.map((u: any) => {
+                  const id = String(u.id);
+                  const selected = newGroupMembers.includes(id);
+                  return (
+                    <div key={u.id} role="button" tabIndex={0}
+                      className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${selected ? 'bg-purple-500/20' : 'hover:bg-accent'}`}
+                      onClick={() => setNewGroupMembers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
+                    >
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${selected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400'}`}>
+                        {selected && <Check className="h-3 w-3" />}
+                      </div>
+                      <span>{u.name || u.username || u.id}</span>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -1797,6 +1909,164 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               } catch { showError('Could not create group'); }
             }}>Create</Button>
           </div>
+        </div>
+      </div>,
+      document.body
+    )}
+    {groupProfileImageOpen && createPortal(
+      <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/90" onClick={() => setGroupProfileImageOpen(false)}>
+        <div className="relative max-w-3xl w-full p-4" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="icon" className="absolute top-2 right-2 text-white" onClick={() => setGroupProfileImageOpen(false)} aria-label="Close">
+            <X className="w-5 h-5" />
+          </Button>
+          {activeGroupObj?.avatar ? (
+            <img src={activeGroupObj.avatar} alt="Group profile" className="mx-auto max-h-[80vh] max-w-full rounded-lg object-contain" />
+          ) : (
+            <div className="mx-auto h-40 w-40 rounded-full bg-muted flex items-center justify-center text-4xl font-bold">
+              {(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}
+            </div>
+          )}
+          {(isGroupLeader || isGroupCoLeader) && (
+            <div className="mt-3 flex justify-center">
+              <label className="cursor-pointer rounded-md bg-white/10 px-3 py-1.5 text-sm text-white hover:bg-white/20">
+                Change image
+                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                  const f = e.target.files?.[0];
+                  if (!f || !activeGroupId) return;
+                  try {
+                    const up = await api.uploadFile(f, 'equyvo/group/avatars');
+                    const url = up?.data?.secureUrl;
+                    if (!url) { showError('Upload failed'); return; }
+                    await api.groupProfile(activeGroupId, { image: url });
+                    await refreshGroups();
+                    showSuccess('Group image updated');
+                  } catch { showError('Could not update image'); }
+                }} />
+              </label>
+            </div>
+          )}
+        </div>
+      </div>,
+      document.body
+    )}
+    {groupSettingsOpen && createPortal(
+      <div className="fixed inset-0 z-[85] bg-background flex flex-col" onClick={() => setGroupSettingsOpen(false)}>
+        <div className="flex items-center gap-3 p-3 border-b shrink-0" onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setGroupSettingsOpen(false)} aria-label="Close settings">
+            <X className="w-4 h-4" />
+          </Button>
+          <h2 className="font-bold text-lg">Group settings</h2>
+          <div className="flex-1" />
+        </div>
+        <div className="flex-1 overflow-auto p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-3">
+            <Avatar className="h-12 w-12">
+              <AvatarImage src={activeGroupObj?.avatar || ''} />
+              <AvatarFallback>{(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <p className="font-semibold truncate">{activeGroupObj?.name}</p>
+              <p className="text-xs text-muted-foreground">{(activeGroupObj?.members || []).length} members</p>
+            </div>
+            {(isGroupLeader || isGroupCoLeader) && (
+              <Button size="sm" variant="outline" onClick={() => {
+                const name = window.prompt('Group name', activeGroupObj?.name || '');
+                if (name === null) return;
+                const description = window.prompt('Group description', activeGroupObj?.description || '');
+                if (description === null) return;
+                void api.groupProfile(activeGroupId!, { name: name.trim() || undefined, description: description.trim() }).then(() => { refreshGroups(); showSuccess('Group updated'); }).catch(() => showError('Could not update group'));
+              }}>Edit</Button>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Members</p>
+            <div className="space-y-1">
+              {(activeGroupObj?.members || []).map((m: string) => (
+                <div key={m} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
+                  <span className="truncate">{m}</span>
+                  <div className="flex items-center gap-1">
+                    {m === activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Leader</span>}
+                    {Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) && m !== activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Co-leader</span>}
+                    {isGroupLeader && m !== meId && (
+                      <>
+                        <Button size="sm" variant="ghost" onClick={async () => {
+                          const isCo = Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m);
+                          try { await api.groupSetRole(activeGroupId!, m, isCo ? 'member' : 'coleader'); await refreshGroups(); showSuccess('Role updated'); } catch { showError('Could not update role'); }
+                        }}>{Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) ? 'Demote' : 'Promote'}</Button>
+                        <Button size="sm" variant="ghost" onClick={async () => {
+                          try { await api.groupRemoveMember(activeGroupId!, m); await refreshGroups(); showSuccess('Removed'); } catch { showError('Could not remove'); }
+                        }}><Trash2 className="w-4 h-4" /></Button>
+                      </>
+                    )}
+                    {!isGroupLeader && m === meId && (
+                      <Button size="sm" variant="ghost" onClick={async () => {
+                        try { await api.groupRemoveMember(activeGroupId!, meId); await refreshGroups(); showSuccess('Left group'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not leave'); }
+                      }}>Leave</Button>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+            {(isGroupLeader || isGroupCoLeader) && (
+              <Button size="sm" variant="outline" onClick={async () => {
+                const q = window.prompt('Search profile name to add');
+                if (!q) return;
+                try {
+                  const res: any = await api.search(q, 5);
+                  const users = res?.data?.users || res?.data?.results || [];
+                  if (!Array.isArray(users) || users.length === 0) { showError('No profile found'); return; }
+                  const u = users[0];
+                  await api.groupAddMember(activeGroupId!, String(u.id));
+                  await refreshGroups();
+                  showSuccess('Member added');
+                } catch { showError('Could not add member'); }
+              }}><Plus className="w-4 h-4 mr-1" /> Add member</Button>
+            )}
+          </div>
+
+          {isGroupLeader && (
+            <div className="space-y-2">
+              <p className="text-sm font-medium">Reply permission</p>
+              <select className="h-8 rounded-md border bg-background px-2 text-xs" value={groupReplyPerm} onChange={async (e) => {
+                try { await api.groupSettings(activeGroupId!, e.target.value); await refreshGroups(); } catch {}
+              }}>
+                <option value="all">All can reply</option>
+                <option value="leaders">Leaders can reply</option>
+                <option value="leader">Only leader</option>
+              </select>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <p className="text-sm font-medium">Chat features</p>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" onClick={() => setCameraOpen(true)}><Camera className="w-4 h-4 mr-1" /> Camera</Button>
+              <ChatThemeSelector>
+                <Button size="sm" variant="outline"><Palette className="w-4 h-4 mr-1" /> Theme</Button>
+              </ChatThemeSelector>
+              <Button size="sm" variant="outline" onClick={() => {
+                const next = !groupMuted;
+                setGroupMuted(next);
+                try { if (next) localStorage.setItem('equyvo_mute_group_' + activeGroupId, '1'); else localStorage.removeItem('equyvo_mute_group_' + activeGroupId); } catch {}
+              }}><Volume2 className="w-4 h-4 mr-1" /> {groupMuted ? 'Unmute' : 'Mute'}</Button>
+            </div>
+          </div>
+
+          {isGroupLeader && (
+            <div className="space-y-2">
+              <Button size="sm" variant="destructive" onClick={async () => {
+                if (!activeGroupId) return;
+                const ok = window.confirm('Delete this group permanently?');
+                if (!ok) return;
+                try { await api.groupDeleteGroup(activeGroupId); await refreshGroups(); showSuccess('Group deleted'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not delete group'); }
+              }}>Delete group</Button>
+              <Button size="sm" variant="outline" onClick={async () => {
+                if (!activeGroupId) return;
+                try { await api.groupArchive(activeGroupId, true); await refreshGroups(); showSuccess('Archived'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not archive'); }
+              }}>Archive group</Button>
+            </div>
+          )}
         </div>
       </div>,
       document.body

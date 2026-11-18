@@ -9061,7 +9061,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         const groups = [];
         for (const id of ids.slice(0, 100)) {
           const g = await readGroup(id);
-          if (g) groups.push({ id: g.id, name: g.name, leaderId: g.leaderId, coLeaders: g.coLeaders || [], members: g.members || [], createdAt: g.createdAt });
+          if (g) groups.push({ id: g.id, name: g.name, avatar: g.avatar || '', description: g.description || '', leaderId: g.leaderId, coLeaders: g.coLeaders || [], members: g.members || [], archived: !!g.archived, clearedAt: g.clearedAt || 0, createdAt: g.createdAt });
         }
         return json({ data: { groups }, error: null }, 200, cors);
       }
@@ -9182,6 +9182,10 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           }
           if (clean.description !== undefined) {
             group.description = String(clean.description || '').trim().slice(0, 300);
+           if (clean.image !== undefined || clean.avatar !== undefined) {
+             const img = String(clean.image || clean.avatar || '').trim().slice(0, 2000);
+             group.avatar = img;
+           }
           }
           await writeGroup(group);
           return json({ data: { group }, error: null }, 200, cors);
@@ -9205,7 +9209,48 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           return json({ data: { group }, error: null }, 200, cors);
         }
 
-        // POST /api/groups/:id/send
+        // POST /api/groups/:id/archive  { archived }  (leader/co-leader)
+         if (sub === 'archive' && method === 'POST') {
+           const actor = await getActor(request, env);
+           const denied = actorResponse(actor, env, cors);
+           if (denied) return denied;
+           if (group.leaderId !== actor.id && !(Array.isArray(group.coLeaders) && group.coLeaders.includes(actor.id))) {
+             return json({ error: 'Forbidden' }, 403, cors);
+           }
+           if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+           let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+           const clean = sanitizeBody(raw);
+           group.archived = clean.archived !== false;
+           await writeGroup(group);
+           return json({ data: { group }, error: null }, 200, cors);
+         }
+
+         // POST /api/groups/:id/deletegroup  (leader only)
+         if (sub === 'deletegroup' && method === 'POST') {
+           const actor = await getActor(request, env);
+           const denied = actorResponse(actor, env, cors);
+           if (denied) return denied;
+           if (group.leaderId !== actor.id) return json({ error: 'Only the group leader can delete the group.' }, 403, cors);
+           const members = Array.isArray(group.members) ? group.members : [];
+           for (const m of members) {
+             try { await removeUserGroup(m, groupId); } catch {}
+           }
+           try { await kv.delete('group:' + groupId); } catch {}
+           return json({ data: { ok: true }, error: null }, 200, cors);
+         }
+
+         // POST /api/groups/:id/clear  (any member) - sets clearedAt
+         if (sub === 'clear' && method === 'POST') {
+           const actor = await getActor(request, env);
+           const denied = actorResponse(actor, env, cors);
+           if (denied) return denied;
+           if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+           group.clearedAt = Date.now();
+           await writeGroup(group);
+           return json({ data: { clearedAt: group.clearedAt, group }, error: null }, 200, cors);
+         }
+
+         // POST /api/groups/:id/send
         if (sub === 'send' && method === 'POST') {
           const actor = await getActor(request, env);
           const denied = actorResponse(actor, env, cors);
@@ -9217,6 +9262,8 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           const allowedTypes = ['text', 'image', 'file', 'audio', 'video', 'gif'];
           const type = allowedTypes.includes(String(clean.type || '')) ? String(clean.type) : (clean.fileUrl ? 'file' : 'text');
           if (!text && !clean.fileUrl) return json({ error: 'Empty message' }, 400, cors);
+          let fromName = '';
+          try { const me = await getProfile(env, actor.id); fromName = (me && (me.username || me.name)) || actor.id; } catch {}
           if (text.trim()) {
             try {
               const verdict = await moderateContent(env, { text });
@@ -9227,7 +9274,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           }
           const clientId = String(clean.id || '').slice(0, 64).replace(/[^a-zA-Z0-9_-]/g, '');
           const msg = {
-            id: clientId || generateId(), groupId, from: actor.id, text, type,
+            id: clientId || generateId(), groupId, from: actor.id, fromName, text, type,
             fileUrl: String(clean.fileUrl || '').slice(0, 2000),
             fileName: String(clean.fileName || '').slice(0, 200),
             durationSec: Math.min(600, Math.max(0, Math.round(Number(clean.durationSec) || 0))),
@@ -9283,7 +9330,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           const limit = Math.min(300, Math.max(1, parseInt(url.searchParams.get('limit') || '100') || 100));
           const visible = merged.slice(-limit).map((m) => ({
             id: m.id, threadId: groupId, text: m.text, fromMe: m.from === actor.id,
-            senderId: m.from, status: 'sent',
+            senderId: m.from, senderName: m.fromName || m.from, status: 'sent',
             timestamp: (() => { try { return new Date(m.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }); } catch { return ''; } })(),
             createdAt: (() => { try { return new Date(m.createdAt).getTime(); } catch { return 0; } })(),
             type: m.type, fileUrl: m.fileUrl, fileName: m.fileName,
