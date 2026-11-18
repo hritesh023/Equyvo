@@ -103,7 +103,7 @@ export default {
     // Same-origin style guard: only Equyvo apps/sites may open a relay socket.
     const origin = request.headers.get('Origin') || '';
     if (origin) {
-      const allowed = /^(https?:\/\/|capacitor:\/\/)(equyvo\.acronous\.com|equyvo\.pages\.dev|.*\.equyvo\.pages\.dev|localhost(:\d+)?)$/i.test(origin);
+      const allowed = /^(https?:\/\/|capacitor:\/\/)(equyvo\.com|www\.equyvo\.com|equyvo\.acronous\.com|equyvo\.pages\.dev|.*\.equyvo\.pages\.dev|localhost(:\d+)?)$/i.test(origin);
       if (!allowed) return new Response('Forbidden origin', { status: 403 });
     }
 

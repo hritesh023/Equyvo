@@ -1456,6 +1456,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               onSeeked={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
               onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); const v = e.currentTarget; if (v.videoWidth && v.videoHeight) setMediaAspect(v.videoWidth / v.videoHeight); }}
             />
+          ) : isLiveStream && effectiveLive && (actualContent as any)?.relay === false ? (
+            // Native screen capture has no live stream to relay. Be honest
+            // about it instead of leaving viewers on an empty player.
+            <div className="absolute inset-0 flex items-center justify-center bg-black px-6 text-center text-white">
+              <div>
+                <p className="text-lg font-semibold">Screen recording in progress</p>
+                <p className="mt-2 text-sm text-white/70">
+                  This creator is recording their screen on a device. The replay will appear here when the live session ends.
+                </p>
+              </div>
+            </div>
           ) : isLiveStream && effectiveLive && String((actualContent as any)?.contentId || (actualContent as any)?.liveContentId || viewerContentId || '') ? (
             // Live in progress with no stored replay URL yet: watch the
             // broadcaster's real-time relay instead of an empty player.

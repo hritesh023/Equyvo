@@ -679,7 +679,7 @@ export const api = {
   // this device's localStorage. `source` is the consent-based capture the
   // broadcaster chose: 'camera' (getUserMedia) or 'screen' (getDisplayMedia,
   // with the OS/system picker doing the permission check).
-  liveStart: (data: { contentId?: string; title?: string; thumbnail?: string; source?: 'camera' | 'screen' } = {}) =>
+  liveStart: (data: { contentId?: string; title?: string; thumbnail?: string; source?: 'camera' | 'screen'; relay?: boolean } = {}) =>
     request<{ data: { live: boolean; liveAt: string | null; sessionId?: string }; error: null }>('/live/start', {
       method: 'POST',
       body: JSON.stringify(data),

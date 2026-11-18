@@ -99,7 +99,7 @@ const HomePage = () => {
   }, []);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
-  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string; mediaUrl?: string; source?: string } | null>(null);
+  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string; mediaUrl?: string; source?: string; relay?: boolean } | null>(null);
   useEffect(() => {
     const syncFromStorage = () => {
       try {
@@ -391,6 +391,7 @@ const HomePage = () => {
           userId: String(top.id || ''),
           mediaUrl: String(top.mediaUrl || ''),
           source: String(top.source || 'camera'),
+          relay: top.relay !== false,
         });
       } else if (!localStorage.getItem('equyvo_active_live')) {
         setLiveNotification(null);
@@ -953,6 +954,7 @@ const HomePage = () => {
           thumbnail: live.thumbnail,
           image: live.thumbnail,
           source: live.source || 'camera',
+          relay: live.relay !== false,
         } as FullscreenContent);
         setFullscreenType('live');
         return;

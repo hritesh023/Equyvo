@@ -616,6 +616,9 @@ const CreatePage = () => {
   const liveChunkChunksRef = useRef<Blob[]>([]);
   // Real-time relay (Durable Object WebSocket) for viewers watching now.
   const liveRelayRef = useRef<LiveRelay | null>(null);
+  // Guards against a system-level stop event re-entering handleEndLive while
+  // the first end sequence is still uploading/finalizing.
+  const liveEndingRef = useRef(false);
   // Camera tab: live preview stream + recorder.
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -2635,6 +2638,7 @@ const CreatePage = () => {
   const commitLiveStart = async (
     sourceValue: 'camera' | 'screen',
     thumb: { url: string; publicId: string; resourceType: string; r2Key: string },
+    relayAvailable = true,
   ) => {
     const author = getCurrentAuthor();
     const liveId = Date.now().toString();
@@ -2649,6 +2653,7 @@ const CreatePage = () => {
       resourceType: thumb.resourceType,
       r2Key: thumb.r2Key,
       source: sourceValue,
+      relay: relayAvailable,
       user: author.username,
       userId: author.userId,
       avatar: author.avatar,
@@ -2672,6 +2677,7 @@ const CreatePage = () => {
       title: liveTitle || 'Live now',
       thumbnail: thumb.url || '',
       source: sourceValue,
+      relay: relayAvailable,
     });
     if (presenceErr) throw new Error('The server refused the live session: ' + presenceErr);
 
@@ -2750,11 +2756,13 @@ const CreatePage = () => {
         try {
           await startNativeScreenRecording();
         } catch {
+          setLiveNativeScreen(false);
           showError('Screen recording was cancelled or denied. Nothing was recorded or published.');
           return;
         }
         const thumb = await uploadLiveCover();
-        await commitLiveStart('screen', thumb);
+        // Native capture yields a file, not a live JS stream: no real-time relay.
+        await commitLiveStart('screen', thumb, false);
         setIsRecording(true);
         recordingStartRef.current = Date.now();
         setIsUploading(false);
@@ -2772,6 +2780,7 @@ const CreatePage = () => {
         }
         try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
         window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+        setLiveNativeScreen(false);
         showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
       } finally {
         setIsUploading(false);
@@ -2783,6 +2792,8 @@ const CreatePage = () => {
       return;
     }
 
+    // A previous failed native attempt must never leak into this session.
+    setLiveNativeScreen(false);
     let mediaStream: MediaStream | null = null;
     let publishedContentId = '';
     try {
@@ -2910,7 +2921,7 @@ const CreatePage = () => {
     }
   };
 
-  const handleEndLive = async () => {
+  const performEndLive = async () => {
     const contentId = liveContentIdRef.current;
     // Stop real-time delivery first; viewers see a clean "ended" state.
     try { liveRelayRef.current?.close(); } catch { /* ignore */ }
@@ -2947,7 +2958,7 @@ const CreatePage = () => {
       try { await api.liveStop({ contentId }); } catch { /* best-effort */ }
       try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent('userWentOffline', { detail: { title: liveTitle } }));
-      if (saved) deferredSuccess('Live stream ended and recording saved!');
+      if (saved) deferredSuccess('Live stream ended — replay uploaded!');
       setLiveTitle('');
       setLiveDescription('');
       setLiveThumbnailFile(null);
@@ -2991,7 +3002,7 @@ const CreatePage = () => {
       detail: { title: liveTitle }
     }));
 
-    deferredSuccess('Live stream ended and recording saved!');
+    deferredSuccess('Live stream ended — saving replay…');
     setLiveTitle('');
     setLiveDescription('');
     setLiveThumbnailFile(null);
@@ -2999,6 +3010,18 @@ const CreatePage = () => {
     liveContentIdRef.current = '';
     liveRollbackContentRef.current = '';
     setLiveNativeScreen(false);
+  };
+
+  // Single-flight end: a system-level stop event and a button tap can arrive
+  // together. Only the first one runs the upload/finalize sequence.
+  const handleEndLive = async () => {
+    if (liveEndingRef.current) return;
+    liveEndingRef.current = true;
+    try {
+      await performEndLive();
+    } finally {
+      liveEndingRef.current = false;
+    }
   };
 
   // If the user stops capture from the system UI ("Stop sharing" / ReplayKit
@@ -3119,6 +3142,7 @@ const CreatePage = () => {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     } catch { /* local download is a convenience — never fatal */ }
+    deferredSuccess('Live replay saved to your profile.');
   };
 
   // ── Camera tab: capture photos/videos straight from the device camera ────

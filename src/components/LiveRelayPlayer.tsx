@@ -11,6 +11,8 @@ interface LiveRelayPlayerProps {
 const LiveRelayPlayer: React.FC<LiveRelayPlayerProps> = ({ room, onEnded }) => {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
+  const onEndedRef = useRef(onEnded);
+  onEndedRef.current = onEnded;
   const [status, setStatus] = useState<'connecting' | 'live' | 'ended' | 'error'>('connecting');
 
   useEffect(() => {
@@ -60,7 +62,7 @@ const LiveRelayPlayer: React.FC<LiveRelayPlayerProps> = ({ room, onEnded }) => {
           onEnded: () => {
             if (cancelled) return;
             setStatus('ended');
-            try { onEnded?.(); } catch { /* ignore */ }
+            try { onEndedRef.current?.(); } catch { /* ignore */ }
           },
         });
         if (cancelled) { relay.close(); relay = null; }
@@ -75,7 +77,7 @@ const LiveRelayPlayer: React.FC<LiveRelayPlayerProps> = ({ room, onEnded }) => {
       try { void audioCtxRef.current?.close(); } catch { /* ignore */ }
       audioCtxRef.current = null;
     };
-  }, [room, onEnded]);
+  }, [room]);
 
   return (
     <div className="absolute inset-0 flex items-center justify-center bg-black">

@@ -102,7 +102,13 @@ export class LiveRelay {
     video.muted = true;
     video.playsInline = true;
     video.autoplay = true;
-    try { await video.play(); } catch { /* some WebViews need a tick */ }
+    // Some WebViews refuse play() until the element has rendered a frame.
+    try {
+      await video.play();
+    } catch {
+      await new Promise((r) => setTimeout(r, 80));
+      try { await video.play(); } catch { /* frame loop retries too */ }
+    }
     this.videoEl = video;
 
     const canvas = document.createElement('canvas');
@@ -115,7 +121,11 @@ export class LiveRelay {
     this.frameTimer = setInterval(() => {
       if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
       try {
-        if (!video.videoWidth) return;
+        if (!video.videoWidth) {
+          // Autoplay was blocked initially — retry on the next tick.
+          try { void video.play().catch(() => {}); } catch { /* ignore */ }
+          return;
+        }
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const frame = canvas.toDataURL('image/jpeg', 0.6);
         const comma = frame.indexOf(',');

@@ -925,7 +925,8 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         if (!contentId) return respondError('Missing stream id.', 400);
         try {
           await writeLiveSession(contentId, {
-            id: contentId, ownerId: (actor as any).id, source, title, thumbnail,
+            id: contentId, ownerId: (actor as any).id, source,
+            relay: clean.relay !== false, title, thumbnail,
             status: 'live', startedAt: new Date().toISOString(), endedAt: null,
             duration: 0, chunks: [], chunkBytes: 0, mediaUrl: '',
           });
@@ -1046,7 +1047,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       return respond({
         data: {
           session: {
-            id: s.id, ownerId: s.ownerId, source: s.source, title: s.title,
+            id: s.id, ownerId: s.ownerId, source: s.source, relay: s.relay !== false, title: s.title,
             thumbnail: s.thumbnail, status: s.status, startedAt: s.startedAt,
             endedAt: s.endedAt, duration: s.duration,
             mediaUrl: s.mediaUrl || '', chunks: Array.isArray(s.chunks) ? s.chunks.length : 0,
@@ -1071,6 +1072,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
               ...profileSummary(p, pid),
               contentId,
               source: s && s.source ? s.source : 'camera',
+              relay: !s || s.relay !== false,
               mediaUrl: s && s.mediaUrl ? s.mediaUrl : '',
             });
           }

@@ -7941,6 +7941,9 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           id: liveContentId,
           ownerId: actor.id,
           source: liveSource,
+          // Native mobile screen capture has no JS MediaStream to relay, so
+          // viewers see a "replay pending" state instead of an empty player.
+          relay: clean.relay !== false,
           title: liveTitle,
           thumbnail: liveThumbnail,
           status: 'live',
@@ -8118,6 +8121,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
             id: session.id,
             ownerId: session.ownerId,
             source: session.source,
+            relay: session.relay !== false,
             title: session.title,
             thumbnail: session.thumbnail,
             status: session.status,
@@ -8174,6 +8178,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
             contentId,
             liveContentId: contentId,
             source: session && session.source ? session.source : 'camera',
+            relay: !session || session.relay !== false,
             mediaUrl: session && session.mediaUrl ? session.mediaUrl : '',
             isFollowing,
           });
