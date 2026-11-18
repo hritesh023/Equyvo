@@ -2645,6 +2645,7 @@ const CreatePage = () => {
     setIsUploading(true);
 
     let mediaStream: MediaStream | null = null;
+    let publishedContentId = '';
     try {
       // CAPTURE CONSENT — the OS/browser grants this: camera permission for
       // camera mode, the system share picker for screen mode. No stream, no
@@ -2742,6 +2743,7 @@ const CreatePage = () => {
       // the backend. A failure here means nobody was told, no fake success.
       const liveErr = await persistContent(liveContent);
       if (liveErr) throw new Error('Live announcement sync failed: ' + liveErr);
+      publishedContentId = liveId;
 
       const { error: presenceErr } = await api.liveStart({
         contentId: liveId,
@@ -2811,6 +2813,11 @@ const CreatePage = () => {
       if (liveContentIdRef.current) {
         void api.liveStop({ contentId: liveContentIdRef.current }).catch(() => {});
         liveContentIdRef.current = '';
+      }
+      // If the content row was written but the session never went live, remove
+      // it so no dead "live" card is left in anyone's feed.
+      if (publishedContentId && !liveActiveRef.current) {
+        void api.deletePost(publishedContentId).catch(() => {});
       }
       try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
