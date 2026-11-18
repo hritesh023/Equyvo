@@ -48,13 +48,13 @@ export { KEYS };
 
 // --- Monetization: server-side plan catalog (source of truth) ---
 const GB = 1024 * 1024 * 1024;
-export const PLAN_CATALOG: Record<string, { id: string; label: string; priceInr: number | null; storageBytes: number; maxUploadMB: number; maxVideoSec: number; monthlyUploads: number; quality: string; ads: boolean | string; creator?: boolean; business?: boolean; verified?: boolean }> = {
+export const PLAN_CATALOG: Record<string, { id: string; label: string; priceInr: number | null; storageBytes: number; maxUploadMB: number; maxVideoSec: number; monthlyUploads: number; quality: string; ads: boolean | string; creator?: boolean; business?: boolean; verified?: boolean; superchat?: boolean; liveMoments?: boolean }> = {
   eq_free:        { id: 'eq_free',        label: 'Free',        priceInr: 0,    storageBytes: 0,         maxUploadMB: 150,  maxVideoSec: 0,   monthlyUploads: 0,     quality: 'auto-low',  ads: true },
   eq_plus:        { id: 'eq_plus',        label: 'Plus',        priceInr: 79,   storageBytes: 10 * GB,   maxUploadMB: 300,  maxVideoSec: 0,  monthlyUploads: 500,   quality: 'auto-good', ads: 'light' },
   eq_premium:     { id: 'eq_premium',     label: 'Premium',     priceInr: 149,  storageBytes: 30 * GB,   maxUploadMB: 750,  maxVideoSec: 0,  monthlyUploads: 2000,  quality: 'auto-best', ads: false },
-  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 0,  monthlyUploads: 5000,  quality: 'auto-best', ads: false, creator: true },
-  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 0, monthlyUploads: 20000, quality: 'original',  ads: false, creator: true, verified: true },
-  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 0, monthlyUploads: 50000, quality: 'original',  ads: false, creator: true, business: true },
+  eq_creator:     { id: 'eq_creator',     label: 'Creator',     priceInr: 499,  storageBytes: 150 * GB,  maxUploadMB: 1500, maxVideoSec: 0,  monthlyUploads: 5000,  quality: 'auto-best', ads: false, creator: true, superchat: true, liveMoments: true },
+  eq_creator_pro: { id: 'eq_creator_pro', label: 'Creator Pro', priceInr: 1499, storageBytes: 500 * GB,  maxUploadMB: 3072, maxVideoSec: 0, monthlyUploads: 20000, quality: 'original',  ads: false, creator: true, verified: true, superchat: true, liveMoments: true },
+  eq_business:    { id: 'eq_business',    label: 'Business',    priceInr: null, storageBytes: 1024 * GB, maxUploadMB: 6144, maxVideoSec: 0, monthlyUploads: 50000, quality: 'original',  ads: false, creator: true, business: true, superchat: true, liveMoments: true },
 };
 export const DEFAULT_PLAN_ID = 'eq_free';
 export const PLATFORM_FEE_BPS = 1500;
@@ -77,6 +77,7 @@ export function planEntitlements(planId: string) {
     adFree: p.ads === false, adLight: p.ads === 'light',
     storageBytes: p.storageBytes, maxUploadMB: p.maxUploadMB, maxVideoSec: p.maxVideoSec, monthlyUploads: p.monthlyUploads,
     creator, business, verifiedEligible: !!p.verified,
+    superchat: !!p.superchat, liveMoments: !!p.liveMoments,
     aiCreditsMonthly: aiCreditsForPlan(planId),
     scheduling: creator || business,
     analytics: ['eq_premium','eq_creator','eq_creator_pro','eq_business'].includes(planId),
