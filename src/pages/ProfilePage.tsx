@@ -147,6 +147,18 @@ const readCachedOwnProfile = () => {
   }
 };
 
+/** Corrupt/stale localStorage must never throw inside a click handler. */
+const readSavedContentData = (): Record<string, Post> => {
+  try {
+    const raw = localStorage.getItem('savedContentData');
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+};
+
 const ProfilePage = () => {
   const { userId, username } = useParams();
   const _storedUser = getStoredUser();
@@ -508,8 +520,7 @@ const ProfilePage = () => {
       
       // Trigger re-gathering of saved content
       setTimeout(() => {
-        const savedContentData = localStorage.getItem('savedContentData');
-        const savedContent = savedContentData ? JSON.parse(savedContentData) : {};
+        const savedContent = readSavedContentData();
         const allContent = Object.values(savedContent);
         
         // Also include user's own posts that are saved (for backward compatibility)
@@ -548,12 +559,9 @@ const ProfilePage = () => {
       });
       
       // Also remove from savedContentData localStorage
-      const savedContentData = localStorage.getItem('savedContentData');
-      if (savedContentData) {
-        const savedContent = JSON.parse(savedContentData);
-        delete savedContent[postId];
-        localStorage.setItem('savedContentData', JSON.stringify(savedContent));
-      }
+      const savedContent = readSavedContentData();
+      delete savedContent[postId];
+      localStorage.setItem('savedContentData', JSON.stringify(savedContent));
     };
 
     // Listen for thought reacted events from ThoughtsPage
@@ -630,8 +638,7 @@ const ProfilePage = () => {
   useEffect(() => {
     const gatherAllSavedContent = () => {
       // Get saved content data from localStorage
-      const savedContentData = localStorage.getItem('savedContentData');
-      const savedContent = savedContentData ? JSON.parse(savedContentData) : {};
+      const savedContent = readSavedContentData();
       
       // Convert saved content object to array
       const allContent = Object.values(savedContent);
@@ -898,8 +905,7 @@ const ProfilePage = () => {
       
       // Store full content data when saving
       if (post) {
-        const savedContentData = localStorage.getItem('savedContentData');
-        const savedContent = savedContentData ? JSON.parse(savedContentData) : {};
+        const savedContent = readSavedContentData();
         savedContent[postId] = {
           ...post,
           savedAt: new Date().toISOString()

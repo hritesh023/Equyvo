@@ -2053,14 +2053,21 @@ function getAllowedOrigins(env) {
 function corsFor(request, env) {
   const origin = request.headers.get('Origin') || '';
   const allowed = getAllowedOrigins(env);
-  const allowOrigin = allowed.has(origin) ? origin : [...allowed][0];
-  return {
-    'Access-Control-Allow-Origin': allowOrigin,
+  // NEVER fall back to an arbitrary origin (the old fallback returned
+  // http://localhost). Browsers reject that, so every API call from a new
+  // app domain failed with an opaque CORS error. Emit ACAO only for known
+  // origins; a request without an Origin header (native WebView / curl) is
+  // not subject to CORS and needs no header.
+  const headers: Record<string, string> = {
     'Vary': 'Origin',
     'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-Id, X-User-Email',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-User-Id, X-User-Email, X-User-Name, X-Device-Id',
     'Access-Control-Max-Age': '86400',
   };
+  if (origin && allowed.has(origin)) {
+    headers['Access-Control-Allow-Origin'] = origin;
+  }
+  return headers;
 }
 
 // Prevent Cloudflare edge caching of API responses + baseline security headers.

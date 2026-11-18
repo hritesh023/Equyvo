@@ -8,16 +8,7 @@ import { getAuthToken, getToken } from './auth';
 // Falls back to central billing if the same-origin function is missing
 // (stale dist / Worker deploy without Functions) so payment buttons never
 // dead-end on 404.
-function resolveApiBase(): string {
-  try {
-    const cap = (window as any)?.Capacitor;
-    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
-      return 'https://equyvo.pages.dev/api';
-    }
-  } catch { /* ignore */ }
-  return '/api';
-}
-const API_BASE = resolveApiBase();
+import { API_BASE } from './api-base';
 const CENTRAL_BILLING = 'https://api.acronous.com';
 
 // Payment calls are bounded so a hung gateway can never freeze checkout.

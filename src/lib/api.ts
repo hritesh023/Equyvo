@@ -5,16 +5,7 @@
 import { normalizeContentItem, normalizeContentList } from './media';
 import { inferMimeType, detectMimeFromBytes, isAllowedMime } from './mime';
 
-function resolveApiBase(): string {
-  try {
-    const cap = (window as any)?.Capacitor;
-    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
-      return 'https://equyvo.pages.dev/api';
-    }
-  } catch { /* ignore */ }
-  return '/api';
-}
-const API_BASE = resolveApiBase();
+import { API_BASE } from './api-base';
 const USER_KEY = 'equyvo_cognito_user';
 const TOKEN_KEY = 'equyvo_cognito_token';
 

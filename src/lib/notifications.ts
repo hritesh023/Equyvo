@@ -256,10 +256,12 @@ export async function requestPushPermission(): Promise<boolean> {
 
 export function pushNotification(n: Omit<AppNotification, 'id' | 'at' | 'read'> & { id?: string }): AppNotification {
   const item: AppNotification = {
+    ...n,
+    // Generated/system fields must win over a caller passing undefined —
+    // otherwise de-dup and read-state break and notifications duplicate.
     id: n.id || `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}`,
     at: new Date().toISOString(),
     read: false,
-    ...n,
   } as AppNotification;
   // Never resurrect notifications the user already cleared/ignored.
   if (dismissedIds().has(String(item.id))) return item;

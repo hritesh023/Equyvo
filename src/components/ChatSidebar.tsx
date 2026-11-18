@@ -412,7 +412,8 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   // Presence heartbeat: keep this account's lastSeen fresh so followers/following
   // see an accurate online indicator in their chats.
   useEffect(() => {
-    const beat = () => { try { void api.presence(); } catch { /* ignore */ } };
+    // try/catch cannot catch an async rejection — attach .catch explicitly.
+    const beat = () => { try { void api.presence().catch(() => {}); } catch { /* ignore */ } };
     beat();
     const t = window.setInterval(beat, 30000);
     const onVis = () => { if (document.visibilityState === 'visible') beat(); };

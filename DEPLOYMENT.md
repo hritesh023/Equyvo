@@ -33,8 +33,8 @@ together, so `/api` resolves on the same origin.
 
 ```bash
 npm run type-check   # tsc --noEmit, must pass
+npm run lint         # 0 errors required
 npm run build:production
-node --check 'functions/api/[[path]].ts'
 npx wrangler pages deploy dist --project-name=equyvo --branch=main
 ```
 
@@ -111,7 +111,13 @@ Bump `versionCode` (+1, integer) and `versionName` in
 `android/app/build.gradle` every release: Play never accepts a reused
 versionCode. The new code must be higher than the highest code already
 uploaded to **any** track (internal/closed/open/production), not just the
- track you are updating. Current: `versionCode 90` / `1.2.67`.
+ track you are updating. Current: `versionCode 182` / `1.3.56`.
+
+Release signing values (store file, alias, passwords) live in the
+git-ignored `android/local.properties` and are read by `app/build.gradle`;
+never put them in the tracked `gradle.properties`. The upload keystore
+`android/equyvo-release.keystore` is also git-ignored — back it up securely,
+because losing it prevents future updates on Play.
 
 Before uploading, verify the generated bundle actually contains the new
 code. A stale file from a previous build is the usual cause of Play's

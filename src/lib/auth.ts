@@ -1,15 +1,6 @@
 // Auth now uses Equyvo's own backend (no Cognito, no email verification).
 // Kept as a thin HTTP client over /api/auth/*.
-function resolveApiBase(): string {
-  try {
-    const cap = (window as any)?.Capacitor;
-    if (cap && typeof cap.isNativePlatform === 'function' && cap.isNativePlatform()) {
-      return 'https://equyvo.pages.dev/api';
-    }
-  } catch { /* ignore */ }
-  return '/api';
-}
-const API_BASE = resolveApiBase();
+import { API_BASE } from './api-base';
 
 // Auth calls must never hang the splash screen or a sign-in button. 15s is
 // long enough for a weak mobile network, short enough to show a real error.
@@ -334,7 +325,7 @@ async function applyAccountType(user: User, isPrivate: boolean): Promise<void> {
       const id = user?.id || user?.email || '';
       if (id) headers['X-User-Id'] = String(id);
     } catch { /* ignore */ }
-    await authFetch('/api/profile', {
+    await authFetch(API_BASE + '/profile', {
       method: 'PUT',
       headers,
       body: JSON.stringify({

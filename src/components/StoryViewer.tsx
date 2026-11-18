@@ -444,12 +444,28 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
     }
   };
 
-  const handleSendComment = () => {
-    if (comment.trim()) {
-      showSuccess('Comment posted successfully!');
-      setComment('');
-    } else {
+  const [sendingComment, setSendingComment] = useState(false);
+
+  const handleSendComment = async () => {
+    const text = comment.trim();
+    if (!text) {
       showError('Please enter a comment');
+      return;
+    }
+    if (!currentStory?.id || sendingComment) return;
+    setSendingComment(true);
+    try {
+      const res = await api.postComment({ contentId: currentStory.id, text: text.slice(0, 1000), parentId: null });
+      if ((res as { error?: string } | null)?.error) {
+        showError((res as { error?: string }).error || 'Could not post your comment');
+        return;
+      }
+      setComment('');
+      showSuccess('Comment posted successfully!');
+    } catch {
+      showError('Could not post your comment. Check your connection and try again.');
+    } finally {
+      setSendingComment(false);
     }
   };
 
@@ -1094,7 +1110,7 @@ const StoryViewer: React.FC<StoryViewerProps> = ({
               }}
               className="bg-blue-500 hover:bg-blue-600 text-white shadow-lg hover:shadow-blue-500/25 transition-all duration-200 hover:scale-105"
               size="icon"
-              disabled={!comment.trim()}
+              disabled={!comment.trim() || sendingComment}
             >
               <Send className="h-4 w-4" />
             </Button>

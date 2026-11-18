@@ -15,6 +15,7 @@ import CommentSection from '@/components/CommentSection';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import FullscreenViewer from '@/components/FullscreenViewer';
 import FollowButton from '@/components/FollowButton';
+import ReportModal from '@/components/ReportModal';
 import { cn } from '@/lib/utils';
 import { formatWatchTime } from '@/lib/media';
 import { showSuccess, showError } from '@/utils/toast';
@@ -48,6 +49,7 @@ const SearchPage: React.FC = () => {
   const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio'>('image');
   const [showTagBar, setShowTagBar] = useState(false);
   const [currentTag, setCurrentTag] = useState<string>('');
+  const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const requestIdRef = useRef(0);
 
   const query = searchParams.get('q') || '';
@@ -132,7 +134,8 @@ const SearchPage: React.FC = () => {
 
   // Menu handlers
   const handleReport = (postId: string) => {
-    showSuccess(`Report submitted for content ${postId}`);
+    // Open the real report flow — a toast-only handler made "Report" a no-op.
+    setReportModalOpen(postId);
   };
 
   const handleHide = (postId: string) => {
@@ -822,6 +825,13 @@ const SearchPage: React.FC = () => {
           onExpand={handleExpandFullscreen}
         />
       )}
+
+      <ReportModal
+        isOpen={reportModalOpen !== null}
+        onClose={() => setReportModalOpen(null)}
+        contentId={reportModalOpen || ''}
+        contentType="post"
+      />
     </>
   );
 };

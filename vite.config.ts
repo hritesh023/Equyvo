@@ -58,10 +58,7 @@ export default defineConfig(({ mode }) => ({
         // undefined -> "Cannot read properties of undefined (reading
         // 'createContext')" in production. Letting Rollup/Vite choose the
         // splitting keeps the graph acyclic and evaluation order safe.
-        chunkFileNames: (chunkInfo) => {
-          const facadeModuleId = chunkInfo.facadeModuleId ? chunkInfo.facadeModuleId.split('/').pop()?.replace(/\.[^.]*$/, '') : 'chunk';
-          return 'js/[name]-[hash].js';
-        },
+        chunkFileNames: 'js/[name]-[hash].js',
         entryFileNames: 'js/[name]-[hash].js',
         assetFileNames: (assetInfo) => {
           const name = assetInfo.name || '';
@@ -77,13 +74,14 @@ export default defineConfig(({ mode }) => ({
     chunkSizeWarningLimit: 1000,
     minify: 'esbuild' as const,
     sourcemap: mode === 'development',
-    target: 'esnext',
+    // 'esnext' shipped syntax older Android System WebViews cannot parse.
+    // 'modules' targets browsers with ES modules + a conservative ES level.
+    target: 'modules',
     cssMinify: true,
     cssCodeSplit: true,
     modulePreload: { polyfill: true },
     reportCompressedSize: true,
     dynamicImportVars: true,
-    treeShake: true,
   },
   optimizeDeps: {
     include: ['react', 'react-dom', 'react-router-dom', '@radix-ui/react-slot', 'lucide-react', 'date-fns', 'clsx', 'tailwind-merge', 'class-variance-authority'],

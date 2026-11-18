@@ -838,6 +838,7 @@ const HomePage = () => {
       return;
     }
     (async () => {
+      try {
       const res = await api.getContentItem(wanted);
       const raw = (res as { data?: any } | null)?.data;
       if (raw) {
@@ -867,7 +868,12 @@ const HomePage = () => {
       } else {
         showError('This post is unavailable or was deleted.');
       }
-      navigate('/app/home', { replace: true });
+      } catch {
+        // A flaky connection must not strand the user on a dead deep link.
+        showError('Could not open this post. Check your connection and try again.');
+      } finally {
+        navigate('/app/home', { replace: true });
+      }
     })();
   }, [location.search, isLoadingPosts, enhancedPosts, navigate]);
 
@@ -969,7 +975,18 @@ const HomePage = () => {
   };
 
   const handleAddToHistory = (post: Post) => {
-    // Add to history functionality
+    if (!post?.id) return;
+    try {
+      const historyItem = { ...post, watchedAt: new Date().toISOString(), watchDuration: 0 };
+      const stored = localStorage.getItem('watchHistory');
+      const parsed = stored ? JSON.parse(stored) : [];
+      const history = Array.isArray(parsed) ? parsed : [];
+      const next = [historyItem, ...history.filter((h: any) => h?.id !== post.id)].slice(0, 50);
+      localStorage.setItem('watchHistory', JSON.stringify(next));
+      window.dispatchEvent(new CustomEvent('contentWatched', { detail: { content: historyItem } }));
+    } catch {
+      // History is a convenience — never let a quota/parse error break a tap.
+    }
   };
 
   const handleVote = (postId: string, voteType: 'upvote' | 'downvote') => {

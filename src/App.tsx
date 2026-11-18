@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { flushSync } from 'react-dom';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
@@ -16,17 +16,27 @@ import { AudioProvider } from './contexts/AudioContext';
 import { checkAuthStatus, signOutUser, getStoredUser, clearStoredUser, clearToken, setToken, User } from './lib/auth';
 import { claimBilling } from './lib/billing';
 import HomePage from './pages/HomePage';
-import AuthPage from './pages/AuthPage';
-import CreatePage from './pages/CreatePage';
-import DiscoverPage from './pages/DiscoverPage';
-import ProfilePage from './pages/ProfilePage';
-import SettingsPage from './pages/SettingsPage';
-import SearchPage from './pages/SearchPage';
-import MomentsPage from './pages/MomentsPage';
-import ThoughtsPage from './pages/ThoughtsPage';
-import PricingPage from './pages/PricingPage';
-import SubscriptionFeaturesPage from './pages/SubscriptionFeaturesPage';
-import NotFound from './pages/NotFound';
+// Route-level code splitting: only the landing page ships in the entry
+// bundle. Heavy pages (create/compose, feeds, chat-heavy profile, pricing)
+// are fetched on demand — this is the safe way to split without the static
+// import cycles that broke a previous manualChunks experiment.
+const AuthPage = lazy(() => import('./pages/AuthPage'));
+const CreatePage = lazy(() => import('./pages/CreatePage'));
+const DiscoverPage = lazy(() => import('./pages/DiscoverPage'));
+const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
+const SearchPage = lazy(() => import('./pages/SearchPage'));
+const MomentsPage = lazy(() => import('./pages/MomentsPage'));
+const ThoughtsPage = lazy(() => import('./pages/ThoughtsPage'));
+const PricingPage = lazy(() => import('./pages/PricingPage'));
+const SubscriptionFeaturesPage = lazy(() => import('./pages/SubscriptionFeaturesPage'));
+const NotFound = lazy(() => import('./pages/NotFound'));
+
+const RouteFallback = () => (
+  <div className="flex min-h-[45vh] w-full items-center justify-center" role="status" aria-label="Loading">
+    <div className="animate-spin rounded-full h-7 w-7 border-b-2 border-primary" />
+  </div>
+);
 import type { User as AppUser } from './lib/auth';
 import { useIsMobile } from './hooks/use-mobile';
 import { useIsTablet } from './hooks/use-tablet';
@@ -480,15 +490,17 @@ const AppContent = () => {
   if (isAuthPage) {
     return (
       <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-4">
-        <AuthPage onAuthSuccess={(u) => {
-          setUser(u);
-          // Guest paid earlier with this email? Link it now.
-          claimBilling().then((c) => {
-            if (c && c.granted.length) {
-              window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
-            }
-          });
-        }} />
+        <Suspense fallback={<RouteFallback />}>
+          <AuthPage onAuthSuccess={(u) => {
+            setUser(u);
+            // Guest paid earlier with this email? Link it now.
+            claimBilling().then((c) => {
+              if (c && c.granted.length) {
+                window.dispatchEvent(new CustomEvent('planChanged', { detail: { plan: c.granted[0] } }));
+              }
+            }).catch(() => { /* billing claim is best-effort */ });
+          }} />
+        </Suspense>
         <Toaster />
       </div>
     );
@@ -520,7 +532,8 @@ const AppContent = () => {
             next navigation instead of a full-app "reload" wall. */}
         <ErrorBoundary>
          <div className={`equyvo-zoom-surface ${slideClass}`} data-equyvo-zoom-surface="true">
-         <Routes>
+         <Suspense fallback={<RouteFallback />}>
+          <Routes>
           <Route path="/" element={<HomePage />} />
           <Route path="/app/home" element={<HomePage />} />
           <Route path="/app/discover" element={<DiscoverPage />} />
@@ -549,6 +562,7 @@ const AppContent = () => {
           <Route path="/search" element={<SearchPage />} />
           <Route path="*" element={<NotFound />} />
          </Routes>
+          </Suspense>
          </div>
         </ErrorBoundary>
       </main>

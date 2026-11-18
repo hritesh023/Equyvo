@@ -818,10 +818,10 @@ const MomentsPage = () => {
                     if (!target) return;
                     try {
                       if (followingCreators.has(target)) {
-                        await (await import('@/lib/api')).api.unfollow(target);
+                        await api.unfollow(target);
                         setFollowingCreators(prev => { const n=new Set(prev); n.delete(target); return n; });
                       } else {
-                        await (await import('@/lib/api')).api.follow(target);
+                        await api.follow(target);
                         setFollowingCreators(prev => new Set(prev).add(target));
                       }
                     } catch { /* ignore */ }

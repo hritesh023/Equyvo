@@ -60,6 +60,11 @@
          and the notification that keeps the capture session visible. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- Required on Android 14+ (API 34+): the recorder foreground service
+         declares foregroundServiceType="mediaProjection|microphone". Without
+         this permission, starting a live capture throws SecurityException
+         and the "go live from screen" feature crashes on modern devices. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <!-- Camera capture + going live: the WebView's getUserMedia({ video })
