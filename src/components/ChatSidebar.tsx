@@ -258,6 +258,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupMembers, setNewGroupMembers] = useState<string[]>([]);
+  const [followCandidates, setFollowCandidates] = useState<any[]>([]);
   const [groupSearch, setGroupSearch] = useState('');
   const [groupSearchResults, setGroupSearchResults] = useState<any[]>([]);
   const [groupMsgs, setGroupMsgs] = useState<any[]>([]);
@@ -424,6 +425,23 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   }, []);
 
   useEffect(() => { void refreshGroups(); }, []);
+  useEffect(() => {
+    if (!createGroupOpen) return;
+    (async () => {
+      try {
+        const stored = getStoredUser();
+        const uid = stored?.id || stored?.email || '';
+        const [f, g] = await Promise.all([api.followers(uid), api.following(uid)]);
+        const list = [...(f?.data?.profiles || f?.data?.ids || []), ...(g?.data?.profiles || g?.data?.ids || [])];
+        // normalize to objects with id/name
+        const norm = list.map((x: any) => (typeof x === 'string' ? { id: x, name: x } : x));
+        // dedupe by id
+        const seen = new Set();
+        const uniq = norm.filter((x: any) => { const k = String(x.id || x); if (seen.has(k)) return false; seen.add(k); return true; });
+        setFollowCandidates(uniq);
+      } catch { setFollowCandidates([]); }
+    })();
+  }, [createGroupOpen]);
   useEffect(() => {
     let cancelled = false;
     const syncSocial = async () => {
@@ -1172,6 +1190,30 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             >
               <Eraser className="w-4 h-4" />
             </Button>
+            {isGroupChat && (isGroupLeader || isGroupCoLeader) && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8 shrink-0"
+                aria-label="Add member"
+                title="Add member"
+                onClick={async () => {
+                  const q = window.prompt('Search profile name to add');
+                  if (!q) return;
+                  try {
+                    const res: any = await api.search(q, 5);
+                    const users = res?.data?.users || res?.data?.results || [];
+                    if (!Array.isArray(users) || users.length === 0) { showError('No profile found'); return; }
+                    const u = users[0];
+                    await api.groupAddMember(activeGroupId!, String(u.id));
+                    await refreshGroups();
+                    showSuccess('Member added');
+                  } catch { showError('Could not add member'); }
+                }}
+              >
+                <Plus className="w-4 h-4" />
+              </Button>
+            )}
             {isGroupChat && (
               <Button
                 variant="ghost"
@@ -1703,7 +1745,21 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           <h3 className="font-semibold">Create group</h3>
           <Input placeholder="Group name" value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
           <div>
-            <p className="text-xs text-muted-foreground mb-1">Add members (search profiles)</p>
+            <p className="text-xs text-muted-foreground mb-1">Add members from followers/following</p>
+            {followCandidates.length > 0 && (
+              <div className="max-h-32 overflow-auto space-y-1 mb-2">
+                {followCandidates.map((u: any) => (
+                  <label key={u.id} className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={newGroupMembers.includes(String(u.id))} onChange={(e) => {
+                      const id = String(u.id);
+                      setNewGroupMembers((prev) => e.target.checked ? [...prev, id] : prev.filter((x) => x !== id));
+                    }} />
+                    <span>{u.name || u.username || u.id}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground mb-1">Or search any profile</p>
             <Input placeholder="Search profile name…" value={groupSearch} onChange={async (e) => {
               const q = e.target.value; setGroupSearch(q);
               if (q.trim().length < 2) { setGroupSearchResults([]); return; }
