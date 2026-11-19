@@ -52,6 +52,9 @@ export interface Env {
   // '{"diskUsedGB":210,"diskTotalGB":300,"ramUsedGB":18,"ramTotalGB":24}'.
   // Used when the Contabo /storage endpoint is unavailable.
   CONTABO_USAGE_JSON?: string;
+  // Cloudflare Stream (adaptive HLS live + VOD). Secrets, never public.
+  CF_ACCOUNT_ID?: string;
+  STREAM_API_TOKEN?: string;
 }
 
 const KEYS = {
@@ -7868,6 +7871,73 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
     }
 
     // ΓöÇΓöÇ LIVE PRESENCE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── CLOUDFLARE STREAM (adaptive HLS live + automatic VOD) ───────────────
+    const streamConfigured = !!(env.STREAM_API_TOKEN && env.CF_ACCOUNT_ID);
+    if (path === '/api/stream/config' && method === 'GET') {
+      return json({ data: { configured: streamConfigured }, error: null }, 200, cors);
+    }
+    if (path === '/api/stream/live-input' && method === 'POST') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      if (!streamConfigured) return json({ error: 'Live streaming is not configured yet.' }, 503, cors);
+      const body = await readJson(request);
+      const name = String(body.name || 'Equyvo live').slice(0, 120);
+      const contentId = String(body.contentId || '').slice(0, 64);
+      const token = String(env.STREAM_API_TOKEN || '');
+      const account = String(env.CF_ACCOUNT_ID || '');
+      let result: any = null;
+      try {
+        const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${account}/stream/live_inputs`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            meta: { name, contentId, ownerId: actor.id, app: 'equyvo' },
+            enabled: true,
+            preferLowLatency: body.lowLatency !== false,
+            recording: { mode: 'automatic', timeoutSeconds: 0, requireSignedURLs: false },
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j?.success) result = j.result;
+      } catch { /* return a clear error below */ }
+      if (!result?.uid) return json({ error: 'Could not create a live stream right now.' }, 502, cors);
+      await kv.put('stream:live:' + result.uid, JSON.stringify({ ownerId: actor.id, contentId, createdAt: Date.now() }));
+      if (contentId) await kv.put('stream:bycontent:' + contentId, result.uid);
+      return json({ data: {
+        uid: result.uid,
+        hlsUrl: result.playback?.hls || '',
+        dashUrl: result.playback?.dash || '',
+        rtmpUrl: result.rtmps?.url || '',
+        streamKey: result.rtmps?.streamKey || '',
+        srtUrl: result.srt?.url || '',
+        srtPassphrase: result.srt?.passphrase || '',
+        webRtcPublishUrl: result.webRTC?.url || '',
+        lowLatency: !!result.preferLowLatency,
+      }, error: null }, 200, cors);
+    }
+    if (path === '/api/stream/live-input' && method === 'GET') {
+      const contentId = String(url.searchParams.get('contentId') || '').slice(0, 64);
+      const uid = contentId ? await kv.get('stream:bycontent:' + contentId) : String(url.searchParams.get('uid') || '').slice(0, 64);
+      if (!uid) return json({ data: null, error: null }, 200, cors);
+      let result: any = null;
+      try {
+        const r = await fetch(`https://api.cloudflare.com/client/v4/accounts/${env.CF_ACCOUNT_ID}/stream/live_inputs/${encodeURIComponent(uid)}`, {
+          headers: { Authorization: `Bearer ${env.STREAM_API_TOKEN}` },
+          signal: AbortSignal.timeout(6000),
+        });
+        const j = await r.json().catch(() => null);
+        if (r.ok && j?.success) result = j.result;
+      } catch { /* best-effort */ }
+      return json({ data: {
+        uid,
+        hlsUrl: result?.playback?.hls || '',
+        dashUrl: result?.playback?.dash || '',
+        status: result?.status || 'unknown',
+      }, error: null }, 200, cors);
+    }
+
     // ── STORAGE GUARD CONTROL (Contabo → Cloudflare shift) ──────────────────
     // A monitor/cron on the VPS pushes disk/RAM usage here. When either exceeds
     // 65%, all best-effort Contabo brain calls are skipped and Equyvo runs on

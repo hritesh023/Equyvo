@@ -666,6 +666,23 @@ export const api = {
   liveNow: () =>
     request<{ data: { live: any[] }; error: null }>('/live/now'),
 
+  // Cloudflare Stream (adaptive HLS live + automatic VOD replay).
+  streamConfig: () =>
+    request<{ data: { configured: boolean }; error: null }>('/stream/config'),
+  createLiveInput: (data: { name?: string; contentId?: string; lowLatency?: boolean } = {}) =>
+    request<{ data: {
+      uid: string; hlsUrl: string; dashUrl: string;
+      rtmpUrl: string; streamKey: string; srtUrl: string; srtPassphrase: string;
+      webRtcPublishUrl: string; lowLatency: boolean;
+    }; error: null }>('/stream/live-input', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  getLiveInput: (contentId: string) =>
+    request<{ data: { uid: string; hlsUrl: string; dashUrl: string; status: string } | null; error: null }>(
+      `/stream/live-input?contentId=${encodeURIComponent(contentId)}`,
+    ),
+
   // Broadcast presence — makes "Go live" visible to every account, not just
   // this device's localStorage. `source` is the consent-based capture the
   // broadcaster chose: 'camera' (getUserMedia) or 'screen' (getDisplayMedia,

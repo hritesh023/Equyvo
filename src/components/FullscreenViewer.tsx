@@ -19,6 +19,7 @@ import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import LiveRelayPlayer from '@/components/LiveRelayPlayer';
 import LiveChatPanel from '@/components/LiveChatPanel';
+import StreamPlayer from '@/components/StreamPlayer';
 import api from '@/lib/api';
 import { normalizeContentItem, formatWatchTime } from '@/lib/media';
 import { toCount } from '@/lib/count';
@@ -1437,7 +1438,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             handleVideoTap(e);
           }}
         >
-          {fallbackVideoSrc && !videoFailed ? (
+          {String((actualContent as any)?.hlsUrl || '').startsWith('http') ? (
+            <StreamPlayer
+              src={String((actualContent as any).hlsUrl)}
+              poster={String(actualContent?.thumbnail || actualContent?.image || '')}
+              lowLatency={(actualContent as any)?.lowLatency !== false}
+              onEnded={() => setLiveEnded(true)}
+            />
+          ) : fallbackVideoSrc && !videoFailed ? (
             <video
               ref={videoRef}
               key={videoRetryKey}
