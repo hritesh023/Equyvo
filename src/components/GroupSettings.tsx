@@ -339,10 +339,6 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
             <SettingsRow icon={<Trash2 className="h-4 w-4" />} label={isLeader ? 'Delete group' : 'Exit group'} detail={isLeader ? 'Permanently delete for everyone' : 'Leave this group'} danger onClick={() => setConfirm(isLeader ? { type: 'delete' } : { type: 'leave' })} />
           </div>
 
-          <div className="pt-3 text-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-white">Equyvo Groups</span>
-            <p className="mt-2 text-[11px] text-muted-foreground">Created {group.createdAt ? new Date(group.createdAt).toLocaleDateString() : 'recently'} · leaders and admins manage membership and reply permissions.</p>
-          </div>
         </div>
       </div>
 

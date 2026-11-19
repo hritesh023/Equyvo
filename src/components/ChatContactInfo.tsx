@@ -239,12 +239,6 @@ const ChatContactInfo: React.FC<ChatContactInfoProps> = ({
             <Row icon={<Trash2 className="h-4 w-4" />} label="Delete chat" detail="Remove this chat from your list" onClick={onDeleteChat} danger right={null} />
           </div>
 
-          <div className="pt-3 text-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-white">Equyvo</span>
-            <p className="mt-2 text-[11px] text-muted-foreground">
-              Chats here are end-to-end encrypted and gated by follows. Blocking and reporting are handled by the Equyvo safety stack.
-            </p>
-          </div>
         </div>
       </div>
 

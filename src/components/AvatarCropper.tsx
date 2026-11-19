@@ -99,8 +99,15 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ imageSrc, onCancel, onCro
     try {
       const unit = baseScale * zoom; // rendered px per natural px
       const s = stageSize / unit; // visible square side in natural px
-      const sx = (stageSize / 2 + pos.x - renderedW / 2) / unit;
-      const sy = (stageSize / 2 + pos.y - renderedH / 2) / unit;
+      // The image's top-left corner sits at (left, top) in stage/viewport px.
+      // Source coordinates grow in the OPPOSITE direction: the natural pixel
+      // visible at the stage's left/top edge is -left/unit and -top/unit.
+      // Using +left/unit here clamps every drag to the image's top-left corner,
+      // so the user's repositioning never makes it into the exported avatar.
+      const left = stageSize / 2 + pos.x - renderedW / 2;
+      const top = stageSize / 2 + pos.y - renderedH / 2;
+      const sx = -left / unit;
+      const sy = -top / unit;
       const cx = Math.min(Math.max(0, sx), Math.max(0, imgSize.w - s));
       const cy = Math.min(Math.max(0, sy), Math.max(0, imgSize.h - s));
       const cw = Math.min(s, imgSize.w - cx);
