@@ -299,7 +299,17 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                       );
                     }
                     if (aud) {
-                      return (
+                      // Audio with cover art uses the same clean poster → full
+                      // Equyvo player flow as Discover. Keep inline playback
+                      // only when there is no poster to tap.
+                      return img ? (
+                        <MediaPreview
+                          poster={img}
+                          alt={post.content || 'Audio content'}
+                          onClick={() => handleContentClick(post)}
+                          className="w-full rounded-lg mb-4 aspect-video cursor-pointer"
+                        />
+                      ) : (
                         <audio
                           src={aud}
                           controls

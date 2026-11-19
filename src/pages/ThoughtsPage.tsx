@@ -18,12 +18,7 @@ import {
   Copy,
   Flag,
   EyeOff,
-  Eye,
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
-  Maximize2
+  Eye
 } from 'lucide-react';
 import { Badge } from "@/components/ui/badge";
 import ReportModal from '@/components/ReportModal';
@@ -60,6 +55,7 @@ import { shouldShowAds } from '@/lib/ads-config';
 import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { resolveAvatar } from '@/utils/avatar';
+import MediaPreview from '@/components/MediaPreview';
 
 // Real author identity for locally-created reacted copies: the signed-in
 // user's id, display name and uploaded profile icon — never fake art/names.
@@ -92,60 +88,11 @@ function realAuthorField(): { id: string; username: string } {
 }
 
 // MediaRenderer component to handle different media types
-const MediaRenderer: React.FC<{ 
-  media: ThoughtMedia; 
-  onFullscreen?: (content: FullscreenContent, videoRef?: React.RefObject<HTMLVideoElement>) => void; 
-  videoRef?: React.RefObject<HTMLVideoElement> 
-}> = ({ media, onFullscreen, videoRef: externalVideoRef }) => {
-  const internalVideoRef = useRef<HTMLVideoElement>(null);
-  const videoRef = externalVideoRef || internalVideoRef;
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [isMuted, setIsMuted] = useState(true);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
+const MediaRenderer: React.FC<{
+  media: ThoughtMedia;
+  onFullscreen?: (content: FullscreenContent, videoRef?: React.RefObject<HTMLVideoElement>) => void;
+}> = ({ media, onFullscreen }) => {
   const [imageError, setImageError] = useState(false);
-  const [videoError, setVideoError] = useState(false);
-
-  const formatDuration = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const togglePlay = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        // play() returns a promise and rejects when the browser blocks
-        // playback; swallow it so fast taps never crash the feed.
-        const p = videoRef.current.play();
-        if (p && typeof p.catch === 'function') p.catch(() => {});
-      }
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  const toggleMute = () => {
-    if (videoRef.current) {
-      videoRef.current.muted = !isMuted;
-      setIsMuted(!isMuted);
-    }
-  };
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    if (videoRef.current) {
-      setDuration(videoRef.current.duration);
-    }
-  };
-
-  const isLongVideo = media.type === 'video' && media.duration && media.duration > 300; // > 5 minutes
 
   if (media.type === 'photo') {
     if (imageError) {
@@ -247,125 +194,25 @@ const MediaRenderer: React.FC<{
   }
 
   if (media.type === 'video' && media.url) {
-    if (videoError) {
-      return (
-        <div className="mt-3 rounded-lg overflow-hidden bg-muted border border-border flex items-center justify-center h-64">
-          <div className="text-center p-4">
-            <div className="text-muted-foreground text-sm mb-2"> Video failed to load</div>
-            <button
-              onClick={() => setVideoError(false)}
-              className="text-xs text-primary hover:underline"
-            >
-              Try again
-            </button>
-          </div>
-        </div>
-      );
-    }
-    // Thumbnail-first behaviour: the poster (custom cover when the author
-    // uploaded one, else the frame captured at upload) is the preview. The
-    // actual video content only plays/heeds controls, or opens fullscreen via
-    // the expand button — the cover never renders as a second media block.
+    // Discover-style clean poster → Equyvo full-screen player. No inline
+    // native/custom controls or detail overlays on the Thoughts page.
     return (
-      <div className="mt-3 rounded-lg overflow-hidden bg-black relative">
-        <video
-          ref={videoRef}
+      <div className="mt-3 rounded-lg overflow-hidden bg-black">
+        <MediaPreview
           src={media.url}
-          poster={media.thumbnail}
+          poster={media.thumbnail || undefined}
+          alt="Video from Thought"
+          onClick={() => onFullscreen && onFullscreen({
+            type: 'moment',
+            videoUrl: media.url,
+            thumbnail: media.thumbnail,
+            title: 'Video from Thought',
+            creator: 'Thought User',
+            id: `video-${media.url}`,
+            duration: media.duration,
+          })}
           className="w-full max-h-96"
-          onTimeUpdate={handleTimeUpdate}
-          onLoadedMetadata={handleLoadedMetadata}
-          onClick={togglePlay}
-          onPlay={() => setIsPlaying(true)}
-          onPause={() => setIsPlaying(false)}
-          onError={(e) => {
-             const v = e.currentTarget;
-             if (!v.dataset.origSrc) v.dataset.origSrc = media.url || '';
-             const attempts = Number(v.dataset.thoughtRetry || '0');
-             if (attempts < 2) {
-               v.dataset.thoughtRetry = String(attempts + 1);
-               const base = v.dataset.origSrc || media.url || '';
-               v.src = `${base}${base.includes('?') ? '&' : '?'}retry=${attempts + 1}`;
-               v.load();
-             } else {
-               setVideoError(true);
-             }
-           }}
-          playsInline
-          preload="metadata"
         />
-
-        {/* Video overlay controls */}
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          {!isPlaying && (
-            <div
-              className="bg-black/50 rounded-full p-4 pointer-events-auto cursor-pointer"
-              onClick={togglePlay}
-              role="button"
-              aria-label="Play thought video"
-            >
-              <Play className="h-8 w-8 text-white" />
-            </div>
-          )}
-        </div>
-
-        {/* Video controls bar */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-4">
-          <div className="flex items-center justify-between text-white">
-            <div className="flex items-center gap-3">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-white hover:bg-white/20 pointer-events-auto"
-                onClick={togglePlay}
-              >
-                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-white hover:bg-white/20 pointer-events-auto"
-                onClick={toggleMute}
-              >
-                {isMuted ? <VolumeX className="h-4 w-4" /> : <Volume2 className="h-4 w-4" />}
-              </Button>
-              <span className="text-xs">
-                {formatDuration(currentTime)} / {formatDuration(duration)}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              {isLongVideo && (
-                <Badge variant="secondary" className="text-xs">
-                  Long Video ({formatDuration(media.duration || 0)})
-                </Badge>
-              )}
-              <Button
-                variant="ghost"
-                size="sm"
-                className="text-white hover:bg-white/20 pointer-events-auto"
-                onClick={() => {
-                  // Pause the current video before opening fullscreen to prevent double audio
-                  if (videoRef.current) {
-                    videoRef.current.pause();
-                  }
-                  if (onFullscreen) {
-                    onFullscreen({
-                      type: 'moment',
-                      videoUrl: media.url,
-                      thumbnail: media.thumbnail,
-                      title: 'Video from Thought',
-                      creator: 'Thought User',
-                      id: `video-${media.url}`,
-                      duration: media.duration
-                    }, videoRef);
-                  }
-                }}
-              >
-                <Maximize2 className="h-4 w-4" />
-              </Button>
-            </div>
-          </div>
-        </div>
       </div>
     );
   }
@@ -402,7 +249,6 @@ const ThoughtsPage = memo(() => {
   const [fullscreenType, setFullscreenType] = useState<'live' | 'moment' | 'image' | 'audio' | 'story'>('image');
   const [originalVideoRef, setOriginalVideoRef] = useState<React.RefObject<HTMLVideoElement> | null>(null);
   const [originalVideoState, setOriginalVideoState] = useState<{ currentTime: number; isPlaying: boolean } | null>(null);
-  const videoRefs = useRef<{ [key: string]: React.RefObject<HTMLVideoElement> }>({});
   const isInitialized = useRef(false);
 
   // TRENDING — server-computed engagement algorithm (GET /api/thoughts/
@@ -1201,9 +1047,6 @@ const ThoughtsPage = memo(() => {
                         <div className="space-y-3">
                           {list.map((mediaItem, index) => {
                             const mediaKey = `${thought.id}-${index}`;
-                            if (!videoRefs.current[mediaKey]) {
-                              videoRefs.current[mediaKey] = React.createRef<HTMLVideoElement>();
-                            }
                             const normalized = {
                               ...mediaItem,
                               type: mediaItem.type === 'video' ? 'video' : mediaItem.type === 'gif' ? 'gif' : 'photo',
@@ -1215,8 +1058,7 @@ const ThoughtsPage = memo(() => {
                               <MediaRenderer
                                 key={mediaKey}
                                 media={normalized as never}
-                                videoRef={videoRefs.current[mediaKey]}
-                                onFullscreen={(content) => handleFullscreen(content, videoRefs.current[mediaKey])}
+                                onFullscreen={(content) => handleFullscreen(content)}
                               />
                             );
                           })}

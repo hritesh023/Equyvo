@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Card, CardContent, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Clock, Video, MessageSquare, Maximize, Bookmark, X, Eye, Play, Trash } from 'lucide-react';
+import { Clock, Video, MessageSquare, Maximize, Bookmark, X, Eye, Trash } from 'lucide-react';
 import { Post } from '@/types';
 import { showSuccess } from '@/utils/toast';
 import { normalizeContentItem } from '@/lib/media';
-import ResilientVideo from '@/components/ResilientVideo';
+import MediaPreview from '@/components/MediaPreview';
 
 interface WatchHistorySectionProps {
   watchHistory: (Post & { watchedAt?: string; watchDuration?: number })[];
@@ -146,15 +146,14 @@ const WatchHistorySection: React.FC<WatchHistorySectionProps> = ({
                     {(item.media || item.thumbnail || item.image) && (
                       <div className="mb-2">
                         {item.mediaType === 'video' || item.type === 'video' ? (
-                          <div className="relative w-full rounded-lg overflow-hidden bg-black" style={{ aspectRatio: '16/9', maxHeight: '120px' }}>
-                            <ResilientVideo
+                          <div className="w-full rounded-lg overflow-hidden bg-black" style={{ aspectRatio: '16/9', maxHeight: '120px' }}>
+                            <MediaPreview
                               src={item.videoUrl || item.media || item.image}
                               poster={item.thumbnail || undefined}
-                              controls
-                              playsInline
-                              preload="metadata"
-                              className="w-full h-full object-cover"
+                              alt={item.content || 'Content preview'}
+                              fit="cover"
                               onClick={() => onFullscreen(item)}
+                              className="w-full h-full"
                             />
                           </div>
                         ) : (

@@ -318,21 +318,57 @@ const ProfilePage = () => {
         isLive: true,
         live: true,
         liveContentId: String(l.contentId || l.liveContentId || ''),
-        relay: l.relay,
         title: String(l.liveTitle || l.title || 'Live now'),
         content: String(l.liveTitle || l.title || 'Live now'),
+        user: String(l.name || l.username || userProfile.name || 'Creator'),
         creator: String(l.name || l.username || userProfile.name || 'Creator'),
         creatorId: String(l.id || userProfile.id || ''),
         avatar: String(l.avatar || userProfile.avatar || ''),
         image: String(l.thumbnail || l.avatar || ''),
         thumbnail: String(l.thumbnail || l.avatar || ''),
+        videoUrl: String(l.mediaUrl || ''),
+        mediaUrl: String(l.mediaUrl || ''),
+        source: String(l.source || 'camera'),
+        relay: l.relay !== false,
         views: Number(l.views || 0),
         category: 'Live',
         timestamp: l.liveAt || new Date().toISOString(),
         time: l.liveAt || 'Now',
       } as unknown as Post))
       .filter((p: any) => !seen.has(String(p.id)));
-    return [...active, ...ownLive];
+
+    // /api/live/now intentionally excludes the viewer, so a self-viewing
+    // profile also needs its own live state from GET /api/profile/:id.
+    const p = userProfile as Record<string, unknown>;
+    const profileLiveId = String(p.liveContentId || '');
+    const profileLiveAt = String(p.liveAt || '');
+    const liveAtMs = Date.parse(profileLiveAt);
+    const recent = Number.isFinite(liveAtMs) && Date.now() - liveAtMs <= 4 * 60 * 60 * 1000;
+    const selfLive: Post[] = (p.isLive === true || (!!profileLiveId && !!profileLiveAt)) && recent
+      ? [{
+          id: profileLiveId || `live-${userProfile.id}`,
+          user: String(userProfile.username || userProfile.name || 'Creator'),
+          creator: String(userProfile.name || 'Creator'),
+          creatorId: String(userProfile.id || ''),
+          avatar: String(userProfile.avatar || ''),
+          type: 'live',
+          contentType: 'live',
+          isLive: true,
+          live: true,
+          liveContentId: profileLiveId,
+          mediaUrl: String(p.mediaUrl || ''),
+          source: String(p.source || 'camera'),
+          relay: p.relay !== false,
+          title: String(p.liveTitle || 'Live now'),
+          content: String(p.liveTitle || 'Live now'),
+          image: String(userProfile.avatar || ''),
+          thumbnail: String(userProfile.avatar || ''),
+          time: profileLiveAt || 'Now',
+        } as unknown as Post]
+      : [];
+
+    const ids = new Set([...active, ...selfLive].map((x: any) => String(x.id)));
+    return [...active, ...selfLive, ...ownLive.filter((x: any) => !ids.has(String(x.id)))];
   }, [userProfile.posts, userProfile.id, userProfile.name, userProfile.username,
     liveNowItems, resolvedTargetId, routeTarget, viewerId]);
 
@@ -2062,7 +2098,7 @@ const ProfilePage = () => {
                 return (
                   <Card key={String(item.id)} className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={open}>
                     <MediaPreview
-                      src={item.videoUrl || (typeof live.media === 'string' ? live.media : undefined)}
+                      src={item.videoUrl || (typeof live.mediaUrl === 'string' ? live.mediaUrl : undefined) || (typeof live.media === 'string' ? live.media : undefined)}
                       poster={poster}
                       alt={String(live.title || item.content || 'Live stream')}
                       fit="cover"
