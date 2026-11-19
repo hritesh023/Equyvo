@@ -3741,12 +3741,9 @@ const CreatePage = () => {
   };
 
   // ── Full-screen live presenter ──────────────────────────────────────────
-  // Native screen recording captures the device screen, so ANY Equyvo control
-  // left on screen would end up in the saved video. Hide the entire app UI
-  // while it runs; the system notification / "Stop sharing" ends the stream.
-  if (isRecording && liveSource === 'screen' && liveNativeScreen) {
-    return <div aria-hidden="true" className="fixed inset-0 z-[1] bg-transparent" />;
-  }
+  // Screen live intentionally does NOT hide the UI: the native FLAG_SECURE
+  // bridge keeps every Equyvo window out of the captured video, so the user
+  // is free to browse any part of the app while the stream keeps recording.
   // Camera live gets a true full-screen studio view (like the camera capture
   // screen) with only a minimal control strip on top.
   if (isRecording && liveSource === 'camera') {
