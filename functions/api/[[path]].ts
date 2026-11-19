@@ -48,6 +48,10 @@ export interface Env {
   // Admin token for GET /api/reports (dashboard.acronous.com monitor).
   // Set via `wrangler pages secret put REPORTS_ADMIN_TOKEN`. Never public.
   REPORTS_ADMIN_TOKEN?: string;
+  // Optional manual override for Contabo usage, e.g.
+  // '{"diskUsedGB":210,"diskTotalGB":300,"ramUsedGB":18,"ramTotalGB":24}'.
+  // Used when the Contabo /storage endpoint is unavailable.
+  CONTABO_USAGE_JSON?: string;
 }
 
 const KEYS = {
@@ -1336,7 +1340,7 @@ async function brainSafetyCheck(env, text) {
   if (!s.trim()) return null;
   try {
     const base = aiBrainBase(env);
-    const data = await aiFetchJson(base + '/v1/moderate', {
+    const data = await aiFetchJsonGuarded(env, base + '/v1/moderate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: s, source: 'equyvo-safety' }),
@@ -1443,7 +1447,7 @@ async function screenUploadedImage(env, bytes, mime, filename) {
   if (b.length > 4 * 1024 * 1024) return 'allow';
   try {
     const dataUrl = 'data:' + (mime || 'image/jpeg') + ';base64,' + uint8ToBase64(b);
-    const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
+    const data = await aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/vision', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ images: [dataUrl], task: 'moderate', prompt: UPLOAD_VISION_PROMPT, source: 'equyvo-upload' }),
@@ -3693,7 +3697,7 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   try {
     const evalText = String(item.content || item.title || item.description || '').slice(0, 500);
     if (evalText.trim()) {
-      void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+      void aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/learn', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           query: evalText,
@@ -3779,6 +3783,21 @@ const STORAGE_GUARD_CACHE_KEY = 'maint:storage_guard_v1';
 const STORAGE_GUARD_TTL_MS = 5 * 60 * 1000;
 
 async function contaboUsage(env) {
+  // 0) Manual override (dashboard ops / tests) — highest priority.
+  try {
+    const raw = String(env.CONTABO_USAGE_JSON || '').trim();
+    if (raw) {
+      const j = JSON.parse(raw);
+      if (j && j.diskUsedGB != null) {
+        return {
+          diskUsedGB: Number(j.diskUsedGB ?? j.disk_used_gb ?? 0),
+          diskTotalGB: Number(j.diskTotalGB ?? j.disk_total_gb ?? CONTABO_TOTAL_DISK_GB),
+          ramUsedGB: Number(j.ramUsedGB ?? j.ram_used_gb ?? 0),
+          ramTotalGB: Number(j.ramTotalGB ?? j.ram_total_gb ?? CONTABO_TOTAL_RAM_GB),
+        };
+      }
+    }
+  } catch { /* invalid override — fall through */ }
   // Try the Contabo backend first (authoritative).
   try {
     const base = String(env.EQUYVO_API_BASE || env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
@@ -3819,7 +3838,13 @@ async function contaboUsage(env) {
   return null;
 }
 
+// Per-isolate short circuit so every best-effort AI call does not pay a KV read.
+let storageGuardMem: { t: number; value: { shifted: boolean; pct: number; usage: any } } | null = null;
+
 async function storageGuard(env) {
+  if (storageGuardMem && Date.now() - storageGuardMem.t < STORAGE_GUARD_TTL_MS) {
+    return storageGuardMem.value;
+  }
   const cached = await env.EQUYVO_KV.get(STORAGE_GUARD_CACHE_KEY + ':decision');
   try {
     if (cached) {
@@ -3848,12 +3873,22 @@ async function storageGuard(env) {
   }
   const decision = { t: Date.now(), shifted, pct, usage };
   try { await env.EQUYVO_KV.put(STORAGE_GUARD_CACHE_KEY + ':decision', JSON.stringify(decision), { expirationTtl: 300 }); } catch {}
-  return { shifted, pct, usage };
+  storageGuardMem = { t: Date.now(), value: decision };
+  return decision;
 }
 
+/** True when Contabo is overloaded: skip Contabo work and rely on the
+ *  Cloudflare-native stores (KV + R2), which already hold all app data. */
 async function useD1(env) {
   const g = await storageGuard(env);
-  return g.shifted && !!env.EQUYVO_D1;
+  return g.shifted;
+}
+
+/** Best-effort Cont brain call that is skipped entirely while shifted.
+ *  Callers already handle `null`, so the app falls back to Cloudflare data. */
+async function aiFetchJsonGuarded(env, url, init, timeoutMs) {
+  try { if (await useD1(env)) return null; } catch { /* guard is best-effort */ }
+  return aiFetchJson(url, init, timeoutMs);
 }
 
 // ---------------------------------------------------------------------------
@@ -4674,7 +4709,7 @@ export const onRequest = async (context) => {
       if (verdict !== 'block' && samples.length > 0) {
         let confirmed = false;
         try {
-          const data = await aiFetchJson(aiBrainBase(env) + '/v1/vision', {
+          const data = await aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/vision', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ images: samples, task: 'moderate', prompt: UPLOAD_VISION_PROMPT, source: 'equyvo-upload-gate' }),
@@ -5172,7 +5207,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       // preference for continual learning. Equyvo hosts no model itself.
       try {
         const act = String(body.action || 'view').slice(0, 20);
-        void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+        void aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/learn', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             query: String(body.itemId || body.category || act).slice(0, 300),
@@ -5496,7 +5531,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
     if (path === '/api/suggest/search' && method === 'GET') {
       const q = String(url.searchParams.get('q') || '').slice(0, 100);
       if (!q) return json({ data: { suggestions: [] } }, 200, cors);
-      const brain = await aiFetchJson(aiBrainBase(env) + '/v1/suggest/search', {
+      const brain = await aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/suggest/search', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ query: q, source: 'equyvo-search' }),
       }, 2500);
@@ -5525,7 +5560,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       let interests = {};
       try { interests = await aiGetInterests(env, userId); } catch {}
       const top = Object.entries(interests).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k]) => k);
-      const brain = await aiFetchJson(aiBrainBase(env) + '/v1/suggest/feed', {
+      const brain = await aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/suggest/feed', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ user_id: userId, userId, interacted: top.slice(0, 20), source: 'equyvo-feed' }),
       }, 2500);
@@ -6783,7 +6818,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       // for the shared Acronous brain (Contabo). Backend-only.
       try {
         const hint = String(folder || '') + ' ' + String(file.type || '') + ' ' + String(file.name || '');
-        void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+        void aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/learn', {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             query: hint.slice(0, 300),
@@ -7225,7 +7260,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
     // service server-to-server (best-effort, capped). Clients never see
     // where the service lives or how it works.
     const brainProxy = async (brainPath, body) => {
-      const data = await aiFetchJson(aiBrainBase(env) + brainPath, {
+      const data = await aiFetchJsonGuarded(env, aiBrainBase(env) + brainPath, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body || {}),
       }, 2500);
@@ -7318,7 +7353,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       // the shared Acronous brain (Contabo). Backend-only.
       try {
         if (text && text.trim()) {
-          void aiFetchJson(aiBrainBase(env) + '/v1/learn', {
+          void aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/learn', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               query: text.slice(0, 500),
@@ -7833,6 +7868,36 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
     }
 
     // ΓöÇΓöÇ LIVE PRESENCE ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
+    // ── STORAGE GUARD CONTROL (Contabo → Cloudflare shift) ──────────────────
+    // A monitor/cron on the VPS pushes disk/RAM usage here. When either exceeds
+    // 65%, all best-effort Contabo brain calls are skipped and Equyvo runs on
+    // its Cloudflare-native stores (KV + R2). Admin-token gated.
+    if (path === '/api/admin/storage-usage' && method === 'POST') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String(env.REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return json({ error: 'Forbidden' }, 403, cors);
+      const body = await readJson(request);
+      const usage = {
+        diskUsedGB: Number(body.diskUsedGB ?? body.disk_used_gb ?? 0),
+        diskTotalGB: Number(body.diskTotalGB ?? body.disk_total_gb ?? CONTABO_TOTAL_DISK_GB),
+        ramUsedGB: Number(body.ramUsedGB ?? body.ram_used_gb ?? 0),
+        ramTotalGB: Number(body.ramTotalGB ?? body.ram_total_gb ?? CONTABO_TOTAL_RAM_GB),
+      };
+      await kv.put(STORAGE_GUARD_CACHE_KEY, JSON.stringify(usage), { expirationTtl: 60 * 60 * 24 * 7 });
+      try { await kv.delete(STORAGE_GUARD_CACHE_KEY + ':decision'); } catch { /* ignore */ }
+      storageGuardMem = null;
+      const guard = await storageGuard(env);
+      return json({ data: { usage, guard }, error: null }, 200, cors);
+    }
+    if (path === '/api/admin/storage-usage' && method === 'GET') {
+      const token = String(request.headers.get('X-Admin-Token') || '');
+      const expected = String(env.REPORTS_ADMIN_TOKEN || '');
+      if (!expected || token !== expected) return json({ error: 'Forbidden' }, 403, cors);
+      const guard = await storageGuard(env);
+      const usage = await contaboUsage(env);
+      return json({ data: { usage, guard, threshold: STORAGE_GUARD_THRESHOLD }, error: null }, 200, cors);
+    }
+
     // ΓöÇΓöÇ ADMIN CONTENT BROWSER (dashboard.acronous.com) ΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇΓöÇ
     // GET /api/admin/content?limit= ΓÇö admin-gated via X-Admin-Token. Returns
     // EVERY content item uploaded by users (posts/thoughts/stories/moments)
@@ -8200,7 +8265,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
 
 
     if (path === '/api/trending/topics' && method === 'GET') {
-      const data = await aiFetchJson(aiBrainBase(env) + '/v1/trending', {
+      const data = await aiFetchJsonGuarded(env, aiBrainBase(env) + '/v1/trending', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ source: 'equyvo-trending' }),
       }, 2500);
