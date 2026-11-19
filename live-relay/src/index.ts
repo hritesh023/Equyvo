@@ -57,12 +57,25 @@ export class LiveRoom {
     } catch { /* ignore */ }
 
     ws.addEventListener('message', (event: MessageEvent) => {
-      // Only media from the broadcaster is forwarded. Viewers cannot inject
-      // frames into someone else's live session.
-      if (role !== 'broadcaster') return;
       const data = event.data;
       const size = typeof data === 'string' ? data.length : (data instanceof ArrayBuffer ? data.byteLength : 0);
       if (!size || size > MAX_MESSAGE_BYTES) return;
+
+      // Viewer ping/pong: echoed only to that viewer so they can estimate
+      // one-way latency without relying on synchronised device clocks.
+      if (role === 'viewer' && typeof data === 'string') {
+        try {
+          const msg = JSON.parse(data) as { type?: string; ts?: number };
+          if (msg?.type === 'ping' && Number.isFinite(msg.ts)) {
+            ws.send(JSON.stringify({ type: 'pong', ts: msg.ts }));
+            return;
+          }
+        } catch { /* ignore malformed ping */ }
+      }
+
+      // Only media from the broadcaster is forwarded. Viewers cannot inject
+      // frames into someone else's live session.
+      if (role !== 'broadcaster') return;
       for (const [key, session] of this.sessions) {
         if (key === id || session.role !== 'viewer') continue;
         if (session.ws.readyState === WebSocket.OPEN) {

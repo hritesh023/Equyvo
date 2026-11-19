@@ -6,12 +6,15 @@
 const RELAY_BASE = (import.meta.env.VITE_LIVE_RELAY_URL as string | undefined)?.trim()
   || 'https://equyvo-live-relay.httpsacronous-landinghriteshkumarpatroworkersdev.workers.dev';
 
+const MAX_RECONNECTS = 12;
+
 export interface RelayMessage {
-  type: 'ready' | 'ended' | 'video' | 'audio' | 'viewers';
+  type: 'ready' | 'ended' | 'video' | 'audio' | 'viewers' | 'ping' | 'pong';
   data?: string;
   mime?: string;
   role?: string;
   viewers?: number;
+  ts?: number;
 }
 
 export interface RelayHandlers {
@@ -19,6 +22,10 @@ export interface RelayHandlers {
   onAudio?: (base64: string, mime: string) => void;
   onEnded?: () => void;
   onReady?: (viewers: number) => void;
+  onViewers?: (viewers: number) => void;
+  onReconnecting?: (attempt: number) => void;
+  /** One-way latency estimate from a relay ping/pong (clock-skew-free). */
+  onLatency?: (ms: number) => void;
 }
 
 function socketUrl(room: string, role: 'broadcaster' | 'viewer'): string {
@@ -42,10 +49,17 @@ function blobToBase64(blob: Blob): Promise<string> {
 export class LiveRelay {
   private ws: WebSocket | null = null;
   private frameTimer: ReturnType<typeof setInterval> | null = null;
+  private frameLoop: (() => void) | null = null;
+  private frameIntervalMs = 150;
+  private fastFrames = 0;
   private videoEl: HTMLVideoElement | null = null;
   private canvas: HTMLCanvasElement | null = null;
   private audioRecorder: MediaRecorder | null = null;
   private audioStream: MediaStream | null = null;
+  private endedByServer = false;
+  private reconnectAttempt = 0;
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingTimer: ReturnType<typeof setInterval> | null = null;
   private closed = false;
 
   private constructor(private room: string, private role: 'broadcaster' | 'viewer', private handlers: RelayHandlers) {}
@@ -61,24 +75,45 @@ export class LiveRelay {
       let settled = false;
       const ws = new WebSocket(socketUrl(this.room, this.role));
       this.ws = ws;
-      ws.onopen = () => { if (!settled) { settled = true; resolve(); } };
-      ws.onerror = () => { if (!settled) { settled = true; reject(new Error('Live relay connection failed')); } };
-      ws.onclose = () => {
-        if (!settled) { settled = true; reject(new Error('Live relay closed before it opened')); }
-        if (!this.closed) {
-          this.closed = true;
-          try { this.handlers.onEnded?.(); } catch { /* ignore */ }
-        }
+
+      ws.onopen = () => {
+        if (!settled) { settled = true; resolve(); }
+        this.reconnectAttempt = 0;
+        if (this.role === 'viewer') this.startPing();
       };
-      ws.onmessage = async (event) => {
+      ws.onerror = () => {
+        if (!settled) { settled = true; reject(new Error('Live relay connection failed')); }
+      };
+      ws.onclose = () => {
+        if (this.ws !== ws) return; // stale socket from an older attempt
+        this.ws = null;
+        this.stopPing();
+        if (this.closed) return;
+        if (this.endedByServer) {
+          try { this.handlers.onEnded?.(); } catch { /* ignore */ }
+          return;
+        }
+        // A dropped connection is NOT the end of the stream — retry with
+        // capped exponential backoff instead of leaving the viewer stranded.
+        this.scheduleReconnect();
+      };
+      ws.onmessage = (event) => {
+        if (this.ws !== ws) return;
         let msg: RelayMessage;
         try { msg = JSON.parse(String(event.data)); } catch { return; }
         if (msg.type === 'ready' || msg.type === 'viewers') {
-          try { this.handlers.onReady?.(Number(msg.viewers || 0)); } catch { /* ignore */ }
+          const n = Number(msg.viewers || 0);
+          try { this.handlers.onReady?.(n); this.handlers.onViewers?.(n); } catch { /* ignore */ }
           return;
         }
         if (msg.type === 'ended') {
+          this.endedByServer = true;
           try { this.handlers.onEnded?.(); } catch { /* ignore */ }
+          return;
+        }
+        if (msg.type === 'pong' && Number.isFinite(msg.ts)) {
+          const rtt = Math.max(0, Date.now() - Number(msg.ts));
+          try { this.handlers.onLatency?.(Math.round(rtt / 2)); } catch { /* ignore */ }
           return;
         }
         if (msg.type === 'video' && msg.data) {
@@ -90,6 +125,36 @@ export class LiveRelay {
         }
       };
     });
+  }
+
+  private scheduleReconnect(): void {
+    if (this.closed || this.reconnectTimer) return;
+    this.reconnectAttempt += 1;
+    if (this.reconnectAttempt > MAX_RECONNECTS) {
+      try { this.handlers.onEnded?.(); } catch { /* ignore */ }
+      return;
+    }
+    const delay = Math.min(8000, Math.round(400 * Math.pow(1.7, this.reconnectAttempt - 1)));
+    try { this.handlers.onReconnecting?.(this.reconnectAttempt); } catch { /* ignore */ }
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (this.closed) return;
+      this.open().catch(() => this.scheduleReconnect());
+    }, delay);
+  }
+
+  private startPing(): void {
+    if (this.pingTimer) return;
+    const sendPing = () => {
+      if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      this.send({ type: 'ping', ts: Date.now() });
+    };
+    sendPing();
+    this.pingTimer = setInterval(sendPing, 5000);
+  }
+
+  private stopPing(): void {
+    if (this.pingTimer) { clearInterval(this.pingTimer); this.pingTimer = null; }
   }
 
   /** Starts capturing video frames + audio from an already-granted stream. */
@@ -118,21 +183,36 @@ export class LiveRelay {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    this.frameTimer = setInterval(() => {
+    // Adaptive frame rate: back off when a frame costs too long to encode or
+    // send (weak device/uplink), recover slowly when there is headroom.
+    this.frameLoop = () => {
       if (this.closed || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
       try {
         if (!video.videoWidth) {
-          // Autoplay was blocked initially — retry on the next tick.
           try { void video.play().catch(() => {}); } catch { /* ignore */ }
           return;
         }
+        const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        const start = now();
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
         const frame = canvas.toDataURL('image/jpeg', 0.6);
         const comma = frame.indexOf(',');
-        if (comma < 0) return;
-        this.send({ type: 'video', data: frame.slice(comma + 1) });
+        if (comma >= 0) this.send({ type: 'video', data: frame.slice(comma + 1) });
+        const cost = now() - start;
+        if (cost > this.frameIntervalMs * 0.85 && this.frameIntervalMs < 400) {
+          this.frameIntervalMs = Math.min(400, this.frameIntervalMs + 50);
+          this.scheduleFrameLoop();
+        } else if (cost < this.frameIntervalMs * 0.3 && this.frameIntervalMs > 120) {
+          this.fastFrames += 1;
+          if (this.fastFrames >= 20) {
+            this.frameIntervalMs = Math.max(120, this.frameIntervalMs - 30);
+            this.fastFrames = 0;
+            this.scheduleFrameLoop();
+          }
+        }
       } catch { /* skip a bad frame — keep the stream alive */ }
-    }, 150);
+    };
+    this.scheduleFrameLoop();
 
     // Audio: audio-only MediaRecorder chunks are small (~1/sec) and decode
     // cleanly in the viewer's Web Audio context.
@@ -157,6 +237,11 @@ export class LiveRelay {
     }
   }
 
+  private scheduleFrameLoop(): void {
+    if (this.frameTimer) { clearInterval(this.frameTimer); this.frameTimer = null; }
+    if (this.frameLoop) this.frameTimer = setInterval(this.frameLoop, this.frameIntervalMs);
+  }
+
   private send(message: RelayMessage): void {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     try { this.ws.send(JSON.stringify(message)); } catch { /* ignore */ }
@@ -164,7 +249,10 @@ export class LiveRelay {
 
   close(): void {
     this.closed = true;
+    if (this.reconnectTimer) { clearTimeout(this.reconnectTimer); this.reconnectTimer = null; }
+    this.stopPing();
     if (this.frameTimer) { clearInterval(this.frameTimer); this.frameTimer = null; }
+    this.frameLoop = null;
     if (this.audioRecorder && this.audioRecorder.state !== 'inactive') {
       try { this.audioRecorder.stop(); } catch { /* ignore */ }
     }
