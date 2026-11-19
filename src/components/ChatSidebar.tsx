@@ -4,7 +4,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, VolumeX, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin, Archive, Ban, ExternalLink, Flag, Users, Shield } from 'lucide-react';
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, VolumeX, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin, Archive, Ban, ExternalLink, Flag, Users, Shield, ImagePlus } from 'lucide-react';
 import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
@@ -247,6 +248,7 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
 
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const { t } = useI18n();
+  const [tab, setTab] = useState<'followers' | 'following' | 'groups'>('followers');
   const [threads, setThreads] = useState<ChatThread[]>(() => listThreads());
   const [activeId, setActiveId] = useState<string | null>(null);
   // Groups
@@ -267,6 +269,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
   const [blockedOpen, setBlockedOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  // Per-chat photo override (Equyvo-unique) + menu portal position so the
+  // dropdown is never hidden behind the full-screen conversation overlay.
+  const [chatAvatars, setChatAvatars] = useState<Record<string, string>>(() => {
+    try {
+      const raw = localStorage.getItem('equyvo_chat_avatars');
+      return raw ? JSON.parse(raw) : {};
+    } catch { return {}; }
+  });
+  const [chatMenuPos, setChatMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const [muteTick, setMuteTick] = useState(0);
+  const chatMenuBtnRef = useRef<HTMLButtonElement>(null);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupSelectionMode, setGroupSelectionMode] = useState(false);
   const [archivedThreadIds, setArchivedThreadIds] = useState<Set<string>>(() => {
@@ -577,10 +590,16 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     : null);
   const openContactInfo = (peer?: { id: string; name: string; avatar?: string }) => {
     setContactPeer(peer || (activeChat && !isGroupChat
-      ? { id: activeChat.peerId, name: activeChat.peerName, avatar: activeChat.peerAvatar }
+      ? { id: activeChat.peerId, name: activeChat.peerName, avatar: getChatAvatar(activeChat.peerId) || activeChat.peerAvatar }
       : null));
     setChatMenuOpen(false);
     setContactInfoOpen(true);
+  };
+  const toggleChatMenu = () => {
+    if (chatMenuOpen) { setChatMenuOpen(false); return; }
+    const rect = chatMenuBtnRef.current?.getBoundingClientRect();
+    if (rect) setChatMenuPos({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) });
+    setChatMenuOpen(true);
   };
   useEffect(() => {
     if (stickToBottomRef.current) {
@@ -588,18 +607,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     }
   }, [msgs.length, activeId, activeGroupId]);
 
+  const getChatAvatar = (id: string) => chatAvatars[String(id).toLowerCase()] || '';
+  const setChatAvatar = (id: string, url: string) => {
+    const key = String(id).toLowerCase();
+    setChatAvatars((prev) => {
+      const next = { ...prev };
+      if (url) next[key] = url; else delete next[key];
+      try { localStorage.setItem('equyvo_chat_avatars', JSON.stringify(next)); } catch { /* ignore */ }
+      return next;
+    });
+    window.dispatchEvent(new CustomEvent('chatUpdated'));
+  };
   const matchesSearch = (name: string, last = '') => {
     if (!searchQuery.trim()) return true;
     const q = searchQuery.trim().toLowerCase();
     return name.toLowerCase().includes(q) || last.toLowerCase().includes(q);
   };
   const baseThreads = threads.filter((t) => !archivedThreadIds.has(t.id) && !isBlocked(t.peerId || t.id));
-  const followingThreads = baseThreads
-    .filter((t) => t.relation === 'following' || t.relation === 'mutual')
-    .filter((t) => matchesSearch(t.peerName, t.lastMessage))
-    .sort((a, b) => (b.unread - a.unread) || b.timestamp.localeCompare(a.timestamp));
-  const followerThreads = baseThreads
-    .filter((t) => t.relation === 'follower' || t.relation === 'mutual')
+  const visibleThreads = baseThreads
+    .filter((t) => (tab === 'followers' ? t.relation === 'follower' || t.relation === 'mutual' : t.relation === 'following' || t.relation === 'mutual'))
     .filter((t) => matchesSearch(t.peerName, t.lastMessage))
     .sort((a, b) => (b.unread - a.unread) || b.timestamp.localeCompare(a.timestamp));
   const visibleGroups = groups
@@ -1010,21 +1036,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const isAttachedImage = !!attachedFile && attachedFile.type.startsWith('image/');
   const isAttachedGif = !!attachedFile && attachedFile.type === 'image/gif';
 
-  const SectionHeader = ({ label, count, action }: { label: string; count: number; action?: React.ReactNode }) => (
-    <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border/40 bg-background/95 px-4 py-2 backdrop-blur">
-      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
-      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{count}</span>
-      <div className="flex-1" />
-      {action}
-    </div>
-  );
-
   const ThreadRow = ({ contact, relationLabel }: { contact: ChatThread; relationLabel: string }) => (
     <div
       role="button"
       tabIndex={0}
       aria-label={`Open chat with ${contact.peerName}${contact.unread > 0 ? `, ${contact.unread} unread` : ''}`}
-      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-emerald-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-sky-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50"
       onClick={() => {
         if (chatLongPressRef.current.triggered) { chatLongPressRef.current.triggered = false; return; }
         setActiveId(contact.id);
@@ -1041,14 +1058,14 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     >
       <div className="relative shrink-0">
         <Avatar
-          className="h-12 w-12 cursor-pointer transition hover:ring-2 hover:ring-emerald-500/60"
+          className="h-12 w-12 cursor-pointer transition hover:ring-2 hover:ring-sky-500/60"
           onClick={(e) => { e.stopPropagation(); navigateToProfile(navigate, contact.peerId, contact.peerName); }}
           title={`Open ${contact.peerName}'s Equyvo profile`}
         >
-          <AvatarImage src={contact.peerAvatar} alt={`${contact.peerName} avatar`} />
+          <AvatarImage src={getChatAvatar(contact.peerId) || contact.peerAvatar} alt={`${contact.peerName} avatar`} />
           <AvatarFallback>{(contact.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
         </Avatar>
-        {contact.online && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-background bg-green-500" aria-label="Online" />}
+        {contact.online && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-background bg-cyan-500" aria-label="Online" />}
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between gap-2">
@@ -1058,7 +1075,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         <div className="flex items-center justify-between gap-2">
           <p className="truncate text-xs text-muted-foreground">{contact.lastMessage || relationLabel}</p>
           {contact.unread > 0 && (
-            <span aria-label={`${contact.unread} unread messages`} className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-bold text-white">
+            <span aria-label={`${contact.unread} unread messages`} className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-sky-500 px-1.5 text-[10px] font-bold text-white">
               {contact.unread}
             </span>
           )}
@@ -1071,7 +1088,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
     <div
       role="button"
       tabIndex={0}
-      className={`flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-emerald-500/5 ${selectedGroupId === g.id ? 'bg-emerald-500/10 ring-1 ring-emerald-500/40' : ''}`}
+      className={`flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-sky-500/5 ${selectedGroupId === g.id ? 'bg-sky-500/10 ring-1 ring-sky-500/40' : ''}`}
       onClick={() => {
         if (groupSelectionMode) { setSelectedGroupId(selectedGroupId === g.id ? null : g.id); return; }
         setIsGroupChat(true); void openGroupChat(g.id);
@@ -1120,8 +1137,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       <div className="shrink-0 border-b border-border bg-card/80">
         <div className="flex items-center gap-1 px-3 pb-2 pt-[max(0.75rem,var(--equyvo-safe-top))]">
           <h2 className="flex min-w-0 flex-1 items-center gap-2 text-lg font-bold">
-            <MessageCircle className="h-5 w-5 shrink-0 text-emerald-500" /> Chats
-            <span className="hidden rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary sm:inline">Equyvo</span>
+            <MessageCircle className="h-5 w-5 shrink-0 text-cyan-400" />
+            <span className="bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 bg-clip-text text-transparent">Chats</span>
+            <span className="hidden rounded-full bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 bg-clip-text px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-transparent sm:inline">Equyvo</span>
           </h2>
           <ChatThemeSelector>
             <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Customize chat background" title="Chat wallpaper">
@@ -1138,6 +1156,13 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <Plus className="h-4 w-4" />
           </Button>
         </div>
+        <Tabs value={tab} onValueChange={(v) => { setTab(v as 'followers' | 'following' | 'groups'); setSearchQuery(''); setGroupSelectionMode(false); setSelectedGroupId(null); }} className="w-full px-3 pb-2">
+          <TabsList className="grid w-full grid-cols-3">
+            <TabsTrigger value="followers">Followers</TabsTrigger>
+            <TabsTrigger value="following">Following</TabsTrigger>
+            <TabsTrigger value="groups">Groups</TabsTrigger>
+          </TabsList>
+        </Tabs>
         <div className="relative px-4 pb-3">
           <Search aria-hidden className="absolute left-6 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -1158,20 +1183,17 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
 
       {!activeChat && !activeGroupId && (
         <ScrollArea className="flex-1">
-          {groupSelectionMode && (
-            <div className="flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/10 px-4 py-2">
+          {groupSelectionMode && tab === 'groups' && (
+            <div className="flex items-center gap-2 border-b border-cyan-400/30 bg-cyan-500/10 px-4 py-2">
               <span className="flex-1 text-xs font-medium">{selectedGroupId ? '1 group selected' : 'Select a group'}</span>
               {selectedGroupId && (
                 <>
                   <Button size="sm" variant="outline" onClick={async () => {
-                    const g = groups.find((x: any) => x.id === selectedGroupId);
-                    if (!g) return;
-                    const next = !g.archived;
+                    const next = !(groups.find((x: any) => x.id === selectedGroupId)?.archived);
                     try { await api.groupArchive(selectedGroupId, next); await refreshGroups(); showSuccess(next ? 'Archived' : 'Unarchived'); } catch { showError('Could not archive'); }
                     setGroupSelectionMode(false); setSelectedGroupId(null);
                   }}>Archive</Button>
                   <Button size="sm" variant="destructive" onClick={async () => {
-                    if (!selectedGroupId) return;
                     if (!window.confirm('Delete this group permanently?')) return;
                     try { await api.groupDeleteGroup(selectedGroupId); await refreshGroups(); showSuccess('Group deleted'); } catch { showError('Could not delete group'); }
                     setGroupSelectionMode(false); setSelectedGroupId(null);
@@ -1185,31 +1207,40 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             <div className="p-8 text-center text-sm text-muted-foreground">Loading your chats…</div>
           ) : (
             <div className="pb-6">
-              <section>
-                <SectionHeader label="Following" count={followingThreads.length} />
-                {followingThreads.length ? followingThreads.map((c) => <ThreadRow key={c.id} contact={c} relationLabel="You follow them — tap to say hi" />) : (
-                  <p className="px-4 py-5 text-xs text-muted-foreground">No 1-on-1 chats with people you follow yet.</p>
-                )}
-              </section>
-              <section>
-                <SectionHeader label="Followers" count={followerThreads.length} />
-                {followerThreads.length ? followerThreads.map((c) => <ThreadRow key={c.id} contact={c} relationLabel="Follows you — tap to reply" />) : (
-                  <p className="px-4 py-5 text-xs text-muted-foreground">No 1-on-1 chats with followers yet.</p>
-                )}
-              </section>
-              <section>
-                <SectionHeader label="Groups" count={visibleGroups.length} action={
-                  <Button variant="ghost" size="sm" className="h-7 text-[11px] text-emerald-600" onClick={() => setCreateGroupOpen(true)}>
-                    <Plus className="mr-1 h-3.5 w-3.5" /> New group
-                  </Button>
-                } />
-                {visibleGroups.length ? visibleGroups.map((g: any) => <GroupRow key={g.id} g={g} />) : (
-                  <div className="px-4 py-6 text-center">
-                    <Users className="mx-auto mb-2 h-8 w-8 text-muted-foreground/40" />
-                    <p className="text-xs text-muted-foreground">No groups yet — create one to chat with multiple people.</p>
+              {tab === 'groups' ? (
+                <>
+                  <div className="flex items-center justify-between gap-2 px-4 py-2">
+                    <p className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">Your groups</p>
+                    <Button size="sm" variant="outline" className="h-7 text-[11px] text-cyan-500" onClick={() => setCreateGroupOpen(true)}>
+                      <Plus className="mr-1 h-3.5 w-3.5" /> New group
+                    </Button>
                   </div>
-                )}
-              </section>
+                  {visibleGroups.length ? visibleGroups.map((g: any) => <GroupRow key={g.id} g={g} />) : (
+                    <div className="px-4 py-10 text-center">
+                      <Users className="mx-auto mb-2 h-10 w-10 text-muted-foreground/40" />
+                      <p className="text-sm font-medium">No groups yet</p>
+                      <p className="mt-1 text-xs text-muted-foreground">Create a group to chat with multiple people.</p>
+                      <Button className="mt-3" size="sm" onClick={() => setCreateGroupOpen(true)}>Create group</Button>
+                    </div>
+                  )}
+                </>
+              ) : visibleThreads.length ? (
+                visibleThreads.map((c) => (
+                  <ThreadRow
+                    key={c.id}
+                    contact={c}
+                    relationLabel={tab === 'followers' ? 'Follows you — tap to reply' : 'You follow them — tap to say hi'}
+                  />
+                ))
+              ) : (
+                <div className="p-10 text-center text-muted-foreground">
+                  <MessageCircle className="mx-auto mb-4 h-12 w-12 opacity-50" />
+                  <p className="text-sm font-medium">{tab === 'followers' ? 'No follower chats yet' : 'No following chats yet'}</p>
+                  <p className="mt-1 text-xs">
+                    {tab === 'followers' ? 'When accounts follow you, they appear here and can message you.' : 'Follow accounts to message them from this tab.'}
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </ScrollArea>
@@ -1251,7 +1282,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <button
                 type="button"
                 onClick={() => { setGroupSettingsFromList(false); setGroupSettingsOpen(true); }}
-                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50"
                 aria-label="Open group info"
                 title="Open group info"
               >
@@ -1281,12 +1312,12 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <button
                 type="button"
                 onClick={() => openContactInfo()}
-                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-500/50"
                 aria-label={`Open ${activeChat.peerName}'s contact info`}
                 title="Contact info"
               >
                 <Avatar className="h-9 w-9 shrink-0">
-                  <AvatarImage src={activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
+                  <AvatarImage src={getChatAvatar(activeChat.peerId) || activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
                   <AvatarFallback>{(activeChat.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
                 </Avatar>
                 <div className="min-w-0 flex-1">
@@ -1304,24 +1335,18 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   <Palette className="h-4 w-4" />
                 </Button>
               </ChatThemeSelector>
-              <div className="relative shrink-0">
-                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="More options" title="More options" onClick={() => setChatMenuOpen((v) => !v)}>
+              <div className="shrink-0">
+                <Button
+                  ref={chatMenuBtnRef}
+                  variant="ghost"
+                  size="icon"
+                  className="h-8 w-8"
+                  aria-label="More options"
+                  title="More options"
+                  onClick={toggleChatMenu}
+                >
                   <MoreVertical className="h-4 w-4" />
                 </Button>
-                {chatMenuOpen && (
-                  <>
-                    <div className="fixed inset-0 z-40" onClick={() => setChatMenuOpen(false)} />
-                    <div className="absolute right-0 top-9 z-50 w-56 overflow-hidden rounded-lg border bg-popover py-1 shadow-xl">
-                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => openContactInfo()}><Users className="h-4 w-4" /> Contact info</button>
-                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); setActiveId(null); navigateToProfile(navigate, activeChat.peerId, activeChat.peerName); }}><ExternalLink className="h-4 w-4" /> Equyvo profile</button>
-                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); setReportOpen(true); }}><Flag className="h-4 w-4" /> Report contact</button>
-                      <div className="my-1 border-t" />
-                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); archiveThread(activeChat.id); showSuccess('Archived'); }}><Archive className="h-4 w-4" /> Archive chat</button>
-                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); if (window.confirm('Clear all messages in this chat?')) { void clearThread(activeChat.id); refreshMsgs(activeChat.id); refreshThreads(); } }}><Eraser className="h-4 w-4" /> Clear chat</button>
-                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-500 hover:bg-accent" onClick={() => { setChatMenuOpen(false); if (window.confirm('Delete this chat?')) { deleteThread(activeChat.id); setActiveId(null); refreshThreads(); } }}><Trash2 className="h-4 w-4" /> Delete chat</button>
-                    </div>
-                  </>
-                )}
               </div>
             </>
             )
@@ -1359,16 +1384,16 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   const sel = selectedMsgIds.has(msg.id);
                   return (
                     <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[80%] relative group ${sel ? 'ring-2 ring-purple-500/60 rounded-xl' : ''}`}>
+                      <div className={`max-w-[80%] relative group ${sel ? 'ring-2 ring-sky-500/60 rounded-xl' : ''}`}>
                         {selectionMode && (
                           <div className={`absolute ${msg.fromMe ? '-left-7' : '-right-7'} top-1/2 -translate-y-1/2`}>
-                            <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${sel ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400'}`}>
+                            <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${sel ? 'bg-cyan-500 border-sky-600 text-white' : 'border-slate-400'}`}>
                               {sel && <Check className="h-3 w-3" />}
                             </div>
                           </div>
                         )}
                         <div
-                          className={`px-3 py-1.5 rounded-xl text-sm shadow-sm italic opacity-70 bg-slate-800/60 text-slate-300 rounded-tl-none ${sel ? 'bg-purple-500/20' : ''}`}
+                          className={`px-3 py-1.5 rounded-xl text-sm shadow-sm italic opacity-70 bg-slate-800/60 text-slate-300 rounded-tl-none ${sel ? 'bg-sky-500/20' : ''}`}
                           onContextMenu={(e) => { e.preventDefault(); setMenuMsgId(msg.id); }}
                           onTouchStart={() => { const t = window.setTimeout(() => toggleSelectMsg(msg.id), 500); (msg as any)._t = t; }}
                           onTouchEnd={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
@@ -1387,10 +1412,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                 const msgSelected = selectedMsgIds.has(msg.id);
                 return (
                 <div key={msg.id} className={`flex ${msg.fromMe ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] relative group ${msgSelected ? 'ring-2 ring-purple-500/60 rounded-xl' : ''}`}>
+                  <div className={`max-w-[80%] relative group ${msgSelected ? 'ring-2 ring-sky-500/60 rounded-xl' : ''}`}>
                     {selectionMode && (
                       <div className={`absolute ${msg.fromMe ? '-left-7' : '-right-7'} top-1/2 -translate-y-1/2 z-30`}>
-                        <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${msgSelected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400 bg-slate-900/60'}`}>
+                        <div className={`h-5 w-5 rounded-full border flex items-center justify-center ${msgSelected ? 'bg-cyan-500 border-sky-600 text-white' : 'border-slate-400 bg-slate-900/60'}`}>
                           {msgSelected && <Check className="h-3 w-3" />}
                         </div>
                       </div>
@@ -1406,9 +1431,9 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                     <div
                       className={`px-3 py-1.5 rounded-xl text-sm shadow-sm ${
                         msg.fromMe
-                          ? 'bg-purple-600 text-white rounded-tr-none'
+                          ? 'bg-cyan-500 text-white rounded-tr-none'
                           : 'bg-slate-700 text-slate-100 rounded-tl-none dark:bg-slate-700'
-                      } ${msgSelected ? 'bg-purple-500/30' : ''}`}
+                      } ${msgSelected ? 'bg-sky-500/30' : ''}`}
                       onContextMenu={(e) => { e.preventDefault(); setMenuMsgId(msg.id); }}
                       onTouchStart={() => { const t = window.setTimeout(() => toggleSelectMsg(msg.id), 500); (msg as any)._t = t; }}
                       onTouchEnd={() => { const t = (msg as any)._t; if (t) window.clearTimeout(t); }}
@@ -1530,7 +1555,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                    stickToBottomRef.current = true;
                    setShowScrollDown(false);
                  }}
-                 className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-purple-600 text-white shadow-lg hover:bg-purple-500"
+                 className="absolute bottom-4 right-4 z-20 flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 text-white shadow-lg hover:from-cyan-300 hover:to-blue-400"
                >
                  <ChevronDown className="h-5 w-5" />
                </button>
@@ -1620,7 +1645,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   <Button
                     type="button"
                     size="icon"
-                    className="h-10 w-10 rounded-full bg-purple-600 hover:bg-purple-500"
+                    className="h-10 w-10 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400"
                     onClick={finishVoiceRecording}
                     disabled={sending}
                     aria-label="Send voice message"
@@ -1682,7 +1707,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               <Button
                 type="submit"
                 size="icon"
-                className="h-10 w-10 rounded-full bg-purple-600 hover:bg-purple-500"
+                className="h-10 w-10 rounded-full bg-gradient-to-r from-cyan-400 to-blue-500 hover:from-cyan-300 hover:to-blue-400"
                 disabled={(!message.trim() && !attachedFile) || sending || !canGroupReply}
                 aria-label={sending ? 'Sending…' : 'Send message'}
                 title={sending ? 'Sending…' : 'Send message (Enter)'}
@@ -1709,6 +1734,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       <MediaCropper
         imageSrc={attachCropSrc}
         preserveAspect
+        compact
         isGif={isAttachedGif}
         keepOriginalLabel="Send GIF as-is"
         title="Adjust image"
@@ -1805,10 +1831,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   const selected = newGroupMembers.includes(id);
                   return (
                     <div key={u.id} role="button" tabIndex={0}
-                      className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${selected ? 'bg-purple-500/20' : 'hover:bg-accent'}`}
+                      className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${selected ? 'bg-sky-500/20' : 'hover:bg-accent'}`}
                       onClick={() => setNewGroupMembers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
                     >
-                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${selected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400'}`}>
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${selected ? 'bg-cyan-500 border-sky-600 text-white' : 'border-slate-400'}`}>
                         {selected && <Check className="h-3 w-3" />}
                       </div>
                       <span>{u.name || u.username || u.id}</span>
@@ -1834,10 +1860,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
                   const selected = newGroupMembers.includes(id);
                   return (
                     <div key={u.id} role="button" tabIndex={0}
-                      className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${selected ? 'bg-purple-500/20' : 'hover:bg-accent'}`}
+                      className={`flex items-center gap-2 text-sm cursor-pointer rounded px-2 py-1 ${selected ? 'bg-sky-500/20' : 'hover:bg-accent'}`}
                       onClick={() => setNewGroupMembers((prev) => prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id])}
                     >
-                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${selected ? 'bg-purple-600 border-purple-600 text-white' : 'border-slate-400'}`}>
+                      <div className={`h-4 w-4 rounded border flex items-center justify-center ${selected ? 'bg-cyan-500 border-sky-600 text-white' : 'border-slate-400'}`}>
                         {selected && <Check className="h-3 w-3" />}
                       </div>
                       <span>{u.name || u.username || u.id}</span>
@@ -1915,9 +1941,10 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
         open={contactInfoOpen}
         peerId={contactTarget.id}
         peerName={contactTarget.name}
-        peerAvatar={contactTarget.avatar}
+        peerAvatar={getChatAvatar(contactTarget.id) || contactTarget.avatar}
         online={!isGroupChat ? !!activeChat?.online : false}
-        muted={(() => { try { return localStorage.getItem('equyvo_mute_contact_' + contactTarget.id) === '1'; } catch { return false; } })()}
+        onAvatarChanged={(id, url) => setChatAvatar(id, url)}
+        muted={(() => { void muteTick; try { return localStorage.getItem('equyvo_mute_contact_' + contactTarget.id) === '1'; } catch { return false; } })()}
         blocked={isBlocked(contactTarget.id)}
         messages={!isGroupChat && activeChat ? msgs : []}
         onClose={() => { setContactInfoOpen(false); setContactPeer(null); }}
@@ -1925,6 +1952,7 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           const key = 'equyvo_mute_contact_' + contactTarget.id;
           let next = false;
           try { next = localStorage.getItem(key) !== '1'; if (next) localStorage.setItem(key, '1'); else localStorage.removeItem(key); } catch { /* ignore */ }
+          setMuteTick((n) => n + 1);
           showSuccess(next ? 'Notifications muted' : 'Notifications on');
         }}
         onSetBlocked={(blocked) => setBlockedPeer(blocked, contactTarget.id)}
@@ -1942,6 +1970,25 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
           if (window.confirm('Delete this chat?')) { deleteThread(activeChat.id); setActiveId(null); setMsgs([]); refreshThreads(); setContactInfoOpen(false); }
         }}
       />
+    )}
+    {chatMenuOpen && chatMenuPos && !isGroupChat && activeChat && createPortal(
+      <>
+        <div className="fixed inset-0 z-[190]" onClick={() => setChatMenuOpen(false)} />
+        <div
+          className="fixed z-[200] w-56 overflow-hidden rounded-lg border bg-popover py-1 shadow-2xl"
+          style={{ top: chatMenuPos.top, right: chatMenuPos.right }}
+          role="menu"
+        >
+          <button role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => openContactInfo()}><Users className="h-4 w-4" /> Contact info</button>
+          <button role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); setActiveId(null); navigateToProfile(navigate, activeChat.peerId, activeChat.peerName); }}><ExternalLink className="h-4 w-4" /> Equyvo profile</button>
+          <button role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); setReportOpen(true); }}><Flag className="h-4 w-4" /> Report contact</button>
+          <div className="my-1 border-t" />
+          <button role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); archiveThread(activeChat.id); showSuccess('Archived'); }}><Archive className="h-4 w-4" /> Archive chat</button>
+          <button role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); if (window.confirm('Clear all messages in this chat?')) { void clearThread(activeChat.id); refreshMsgs(activeChat.id); refreshThreads(); } }}><Eraser className="h-4 w-4" /> Clear chat</button>
+          <button role="menuitem" className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-500 hover:bg-accent" onClick={() => { setChatMenuOpen(false); if (window.confirm('Delete this chat?')) { deleteThread(activeChat.id); setActiveId(null); refreshThreads(); } }}><Trash2 className="h-4 w-4" /> Delete chat</button>
+        </div>
+      </>,
+      document.body,
     )}
     {blockedOpen && createPortal(
       <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onClick={() => setBlockedOpen(false)}>

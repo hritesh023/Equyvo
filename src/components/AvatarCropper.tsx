@@ -9,6 +9,8 @@ interface AvatarCropperProps {
   imageSrc: string;
   onCancel: () => void;
   onCropComplete: (file: File) => void;
+  /** Compact editor that always fits inside the viewport. */
+  compact?: boolean;
 }
 
 const OUTPUT_SIZE = 512;
@@ -20,7 +22,7 @@ const MAX_ZOOM = 3;
  * inside the round profile icon — drag to reposition, slider/wheel to zoom.
  * Outputs a square JPEG (the avatar displays it clipped to a circle).
  */
-const AvatarCropper: React.FC<AvatarCropperProps> = ({ imageSrc, onCancel, onCropComplete }) => {
+const AvatarCropper: React.FC<AvatarCropperProps> = ({ imageSrc, onCancel, onCropComplete, compact = false }) => {
   const stageRef = useRef<HTMLDivElement>(null);
   const imgRef = useRef<HTMLImageElement>(null);
   const [imgSize, setImgSize] = useState({ w: 0, h: 0 });
@@ -130,14 +132,14 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ imageSrc, onCancel, onCro
 
   const content = (
     <div
-      className="fixed inset-0 z-[350] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className={`fixed inset-0 z-[350] flex items-center justify-center bg-black/70 backdrop-blur-sm ${compact ? 'p-2' : 'p-4'}`}
       onClick={onCancel}
     >
       <div
-        className="w-full max-w-sm rounded-xl bg-card p-4 shadow-2xl"
+        className={`w-full overflow-y-auto rounded-xl bg-card shadow-2xl ${compact ? 'max-h-[94dvh] max-w-xs p-3' : 'max-w-sm p-4'}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between">
+        <div className={`flex items-center justify-between ${compact ? 'mb-2' : 'mb-3'}`}>
           <h3 className="text-base font-semibold">Adjust profile photo</h3>
           <Button variant="ghost" size="icon" onClick={onCancel} aria-label="Close cropper">
             <X className="h-4 w-4" />
@@ -146,7 +148,7 @@ const AvatarCropper: React.FC<AvatarCropperProps> = ({ imageSrc, onCancel, onCro
 
         <div
           ref={stageRef}
-          className="relative aspect-square w-full cursor-grab touch-none select-none overflow-hidden rounded-xl bg-black active:cursor-grabbing"
+          className={`relative aspect-square cursor-grab touch-none select-none overflow-hidden rounded-xl bg-black active:cursor-grabbing ${compact ? 'mx-auto w-[min(64vw,240px)]' : 'w-full'}`}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={endDrag}

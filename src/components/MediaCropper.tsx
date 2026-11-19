@@ -34,6 +34,8 @@ interface MediaCropperProps {
   keepOriginalLabel?: string;
   /** Called instead of exporting when a GIF is confirmed untouched. */
   onKeepOriginal?: () => void;
+  /** Compact editor that always fits inside the viewport (no overflow). */
+  compact?: boolean;
   onCancel: () => void;
   onCropComplete: (file: File) => void;
 }
@@ -60,6 +62,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
   isGif = false,
   keepOriginalLabel = 'Use original GIF',
   onKeepOriginal,
+  compact = false,
   onCancel,
   onCropComplete,
 }) => {
@@ -240,15 +243,15 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
 
   const content = (
     <div
-      className="fixed inset-0 z-[350] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      className={`fixed inset-0 z-[350] flex items-center justify-center bg-black/70 backdrop-blur-sm ${compact ? 'p-2' : 'p-4'}`}
       onClick={onCancel}
       style={{ pointerEvents: 'auto' }}
     >
       <div
-        className="w-full max-w-md rounded-xl bg-card p-4 shadow-2xl"
+        className={`w-full overflow-y-auto rounded-xl bg-card shadow-2xl ${compact ? 'max-h-[94dvh] max-w-sm p-3' : 'max-w-md p-4'}`}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="mb-3 flex items-center justify-between">
+        <div className={`flex items-center justify-between ${compact ? 'mb-2' : 'mb-3'}`}>
           <h3 className="text-base font-semibold">{title}</h3>
           <Button variant="ghost" size="icon" onClick={onCancel} aria-label="Close thumbnail editor">
             <X className="h-4 w-4" />
@@ -257,8 +260,11 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
 
         <div
           ref={stageRef}
-          className="relative w-full cursor-grab touch-none select-none overflow-hidden rounded-xl bg-black active:cursor-grabbing"
-          style={{ aspectRatio: `${outW} / ${outH}` }}
+          className={`relative cursor-grab touch-none select-none overflow-hidden rounded-xl bg-black active:cursor-grabbing ${compact ? 'mx-auto' : 'w-full'}`}
+          style={{
+            aspectRatio: `${outW} / ${outH}`,
+            ...(compact ? { height: 'min(36dvh, 300px)', width: 'auto', maxWidth: '100%', marginInline: 'auto' } : {}),
+          }}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={endDrag}
@@ -288,7 +294,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
           />
         </div>
 
-        <p className="mt-3 text-center text-xs text-muted-foreground">
+        <p className={`text-center text-xs text-muted-foreground ${compact ? 'mt-2' : 'mt-3'}`}>
           {isGif
             ? (fitMode === 'fit' && zoom === 1
               ? 'GIF stays animated when used as-is. Zoom or switch to Fill to create a still.'
@@ -298,7 +304,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
               : 'Fill crops to the frame — drag to position, zoom to choose the crop.')}
         </p>
 
-        <div className="mt-3 flex items-center gap-2">
+        <div className={`flex items-center gap-2 ${compact ? 'mt-2' : 'mt-3'}`}>
           <Button
             type="button"
             variant={fitMode === 'fit' ? 'default' : 'outline'}
@@ -328,7 +334,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
           </Button>
         </div>
 
-        <div className="mt-3 flex items-center gap-3">
+        <div className={`flex items-center gap-3 ${compact ? 'mt-2' : 'mt-3'}`}>
           <ZoomIn className="h-4 w-4 shrink-0 text-muted-foreground" />
           <Slider
             value={[zoom]}
@@ -340,7 +346,7 @@ const MediaCropper: React.FC<MediaCropperProps> = ({
           />
         </div>
 
-        <div className="mt-4 flex gap-2">
+        <div className={`flex gap-2 ${compact ? 'mt-3' : 'mt-4'}`}>
           <Button variant="outline" onClick={onCancel} className="flex-1" disabled={working}>
             Cancel
           </Button>

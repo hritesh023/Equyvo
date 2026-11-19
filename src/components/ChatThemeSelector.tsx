@@ -656,6 +656,7 @@ export function ChatThemeSelector({ children }: ChatThemeSelectorProps) {
         <MediaCropper
           imageSrc={cropSrc}
           preserveAspect
+          compact
           isGif={cropSrc.startsWith('data:image/gif')}
           keepOriginalLabel="Use GIF as-is"
           title="Adjust chat background"

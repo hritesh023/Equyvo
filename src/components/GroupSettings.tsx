@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { ChatThemeSelector } from './ChatThemeSelector';
+import AvatarCropper from './AvatarCropper';
 import { showError, showSuccess } from '@/utils/toast';
 import api from '@/lib/api';
 import ReportModal from './ReportModal';
@@ -54,6 +55,8 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
   const [addResults, setAddResults] = useState<any[]>([]);
   const [addBusy, setAddBusy] = useState(false);
   const [memberMenu, setMemberMenu] = useState<string | null>(null);
+  const [memberMenuPos, setMemberMenuPos] = useState<{ top: number; right: number } | null>(null);
+  const [avatarSrc, setAvatarSrc] = useState<string | null>(null);
   const [permOpen, setPermOpen] = useState(false);
   const [confirm, setConfirm] = useState<ConfirmState>(null);
   const [busy, setBusy] = useState(false);
@@ -97,6 +100,27 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
 
   const memberName = (id: string) => profiles[id]?.name || id;
   const memberAvatar = (id: string) => profiles[id]?.avatar || '';
+
+  const toggleMemberMenu = (id: string, el: HTMLElement) => {
+    if (memberMenu === id) { setMemberMenu(null); setMemberMenuPos(null); return; }
+    const rect = el.getBoundingClientRect();
+    setMemberMenuPos({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) });
+    setMemberMenu(id);
+  };
+
+  /** Pick -> adjust in a square frame -> upload -> apply to the group. */
+  const applyGroupAvatar = async (file: File) => {
+    setAvatarSrc(null);
+    setBusy(true);
+    try {
+      const up = await api.uploadFile(file, 'equyvo/group/avatars');
+      const url = up?.data?.secureUrl || up?.data?.originalUrl;
+      if (!url || up?.error) { showError('Upload failed'); return; }
+      setEditAvatar(url);
+      await mutate(() => api.groupProfile(group.id, { image: url }), 'Group photo updated');
+    } catch { showError('Upload failed'); }
+    finally { setBusy(false); }
+  };
 
   const sortedMembers = useMemo(() => {
     const clean = search.trim().toLowerCase();
@@ -149,20 +173,33 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
   }: {
     icon: React.ReactNode; label: string; detail?: string;
     onClick?: () => void; danger?: boolean; right?: React.ReactNode;
-  }) => (
-    <button type="button" onClick={onClick} className={`flex w-full items-center gap-3.5 px-4 py-3 text-left transition-colors hover:bg-muted/60 ${danger ? 'text-red-500' : ''}`}>
-      <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${danger ? 'bg-red-500/10' : 'bg-primary/10 text-primary'}`}>{icon}</span>
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-sm font-medium">{label}</span>
-        {detail && <span className="block truncate text-xs text-muted-foreground">{detail}</span>}
-      </span>
-      {right ?? (onClick ? <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" /> : null)}
-    </button>
-  );
+  }) => {
+    const body = (
+      <>
+        <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${danger ? 'bg-red-500/10' : 'bg-cyan-500/10 text-cyan-500'}`}>{icon}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-sm font-medium">{label}</span>
+          {detail && <span className="block truncate text-xs text-muted-foreground">{detail}</span>}
+        </span>
+      </>
+    );
+    return (
+      <div className={`flex w-full items-center gap-3.5 px-4 py-3 ${danger ? 'text-red-500' : ''}`}>
+        {onClick ? (
+          <button type="button" onClick={onClick} className="flex min-w-0 flex-1 items-center gap-3.5 text-left hover:opacity-80">
+            {body}
+          </button>
+        ) : (
+          <div className="flex min-w-0 flex-1 items-center gap-3.5">{body}</div>
+        )}
+        {right ?? (onClick ? <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground/70" /> : null)}
+      </div>
+    );
+  };
 
   return createPortal(
     <div className="fixed inset-0 z-[96] flex flex-col bg-background" onClick={onClose}>
-      <div className="flex shrink-0 items-center gap-3 bg-gradient-to-b from-emerald-700 to-emerald-600 px-2 py-3 pt-[max(0.75rem,var(--equyvo-safe-top))] text-white shadow-lg">
+      <div className="flex shrink-0 items-center gap-3 bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 px-2 py-3 pt-[max(0.75rem,var(--equyvo-safe-top))] text-white shadow-lg">
         <Button variant="ghost" size="icon" className="h-9 w-9 text-white hover:bg-white/15" onClick={(e) => { e.stopPropagation(); onClose(); }} aria-label="Back">
           <ArrowLeft className="h-5 w-5" />
         </Button>
@@ -176,32 +213,32 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
 
       <div className="flex-1 overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         {/* Identity */}
-        <div className="flex flex-col items-center bg-gradient-to-b from-emerald-700 to-emerald-600 px-6 pb-8 pt-3 text-white">
-          <button type="button" onClick={() => group.avatar && setMediaOpen('media')} className="relative" aria-label="Group photo">
-            <Avatar className="h-28 w-28 border-4 border-white/20 shadow-xl">
-              <AvatarImage src={group.avatar || ''} alt={group.name} />
-              <AvatarFallback className="bg-white/20 text-3xl text-white">{initials}</AvatarFallback>
-            </Avatar>
+        <div className="flex flex-col items-center bg-gradient-to-r from-cyan-500 via-purple-600 to-pink-500 px-6 pb-8 pt-3 text-white">
+          <div className="relative">
+            <button type="button" onClick={() => group.avatar && setMediaOpen('media')} className="block" aria-label="Group photo">
+              <Avatar className="h-28 w-28 border-4 border-white/20 shadow-xl">
+                <AvatarImage src={group.avatar || ''} alt={group.name} />
+                <AvatarFallback className="bg-white/20 text-3xl text-white">{initials}</AvatarFallback>
+              </Avatar>
+            </button>
             {canManage && (
-              <label className="absolute bottom-0 right-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-white text-emerald-700 shadow-lg" title="Change group photo">
+              <label className="absolute bottom-0 right-0 flex h-9 w-9 cursor-pointer items-center justify-center rounded-full bg-white text-sky-700 shadow-lg" title="Change group photo">
                 <Camera className="h-4 w-4" />
-                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
+                <input type="file" accept="image/*,.gif" className="hidden" onChange={(e) => {
                   const f = e.target.files?.[0];
+                  e.target.value = '';
                   if (!f) return;
-                  try {
-                    const up = await api.uploadFile(f, 'equyvo/group/avatars');
-                    const url = up?.data?.secureUrl;
-                    if (!url) throw new Error('upload');
-                    const ok = await mutate(() => api.groupProfile(group.id, { image: url }), 'Group photo updated');
-                    if (ok) setEditAvatar(url);
-                  } catch { showError('Upload failed'); }
+                  const reader = new FileReader();
+                  reader.onload = () => setAvatarSrc(String(reader.result || ''));
+                  reader.onerror = () => showError('Could not read that image.');
+                  reader.readAsDataURL(f);
                 }} />
               </label>
             )}
-          </button>
+          </div>
           <h3 className="mt-4 text-xl font-semibold">{group.name}</h3>
-          <p className="text-xs text-emerald-100/80">Group · {members.length} participants</p>
-          {group.description && <p className="mt-2 max-w-sm text-center text-sm text-emerald-50/90">{group.description}</p>}
+          <p className="text-xs text-sky-100/80">Group · {members.length} participants</p>
+          {group.description && <p className="mt-2 max-w-sm text-center text-sm text-sky-50/90">{group.description}</p>}
         </div>
 
         <div className="-mt-4 space-y-3 px-3 pb-10">
@@ -214,7 +251,7 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
                 { key: 'links', label: 'Links', icon: <Link2 className="h-5 w-5" /> },
               ] as const).map((a) => (
                 <button key={a.key} type="button" onClick={() => setMediaOpen(a.key)} className="flex flex-col items-center gap-1 rounded-lg py-2 text-muted-foreground hover:bg-muted/60 hover:text-foreground">
-                  <span className="text-primary">{a.icon}</span>
+                  <span className="text-cyan-500">{a.icon}</span>
                   <span className="text-xs font-medium">{a.label}</span>
                 </button>
               ))}
@@ -230,7 +267,6 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
               icon={muted ? <BellOff className="h-4 w-4" /> : <Bell className="h-4 w-4" />}
               label="Mute notifications"
               detail={muted ? 'Notifications are muted' : 'Notifications are on'}
-              onClick={onToggleMute}
               right={<Switch checked={muted} onCheckedChange={onToggleMute} aria-label="Mute notifications" />}
             />
             <SettingsRow
@@ -239,7 +275,9 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
               detail="Customize this chat's background"
               right={
                 <ChatThemeSelector>
-                  <span className="flex cursor-pointer items-center justify-center rounded-md p-2 text-muted-foreground hover:bg-accent"><ChevronRight className="h-4 w-4" /></span>
+                  <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground" aria-label="Open chat wallpaper" title="Chat wallpaper">
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </ChatThemeSelector>
               }
             />
@@ -277,21 +315,15 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
                       </span>
                     </button>
                     {isLeader && id !== meId && (
-                      <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setMemberMenu(memberMenu === id ? null : id)} aria-label="Member options">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8"
+                        onClick={(e) => toggleMemberMenu(id, e.currentTarget)}
+                        aria-label={`Options for ${memberName(id)}`}
+                      >
                         <MoreVertical className="h-4 w-4" />
                       </Button>
-                    )}
-                    {memberMenu === id && (
-                      <div className="absolute right-3 top-12 z-20 w-48 overflow-hidden rounded-lg border bg-popover shadow-xl">
-                        {Array.isArray(group.coLeaders) && group.coLeaders.includes(id) ? (
-                          <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, id, 'member'), 'Demoted to participant'); }}>Dismiss as admin</button>
-                        ) : (
-                          <button type="button" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, id, 'coleader'), 'Promoted to admin'); }}>Make admin</button>
-                        )}
-                        <button type="button" className="w-full px-3 py-2 text-left text-sm text-red-500 hover:bg-accent" onClick={() => { setMemberMenu(null); setConfirm({ type: 'remove', userId: id, name: memberName(id) }); }}>
-                          <span className="flex items-center gap-2"><UserMinus className="h-4 w-4" /> Remove from group</span>
-                        </button>
-                      </div>
                     )}
                   </div>
                 );
@@ -308,7 +340,7 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
           </div>
 
           <div className="pt-3 text-center">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-primary">Equyvo Groups</span>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-pink-400 via-purple-500 to-cyan-400 px-3 py-1 text-[10px] font-bold uppercase tracking-widest text-white">Equyvo Groups</span>
             <p className="mt-2 text-[11px] text-muted-foreground">Created {group.createdAt ? new Date(group.createdAt).toLocaleDateString() : 'recently'} · leaders and admins manage membership and reply permissions.</p>
           </div>
         </div>
@@ -370,7 +402,7 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
                 }} className="flex w-full items-center gap-3 rounded-lg p-2 text-left hover:bg-muted/60">
                   <Avatar className="h-9 w-9"><AvatarImage src={u.avatar || ''} /><AvatarFallback>{String(u.name || u.username || '?').slice(0, 2).toUpperCase()}</AvatarFallback></Avatar>
                   <span className="min-w-0 flex-1 truncate text-sm">{u.name || u.username || u.id}</span>
-                  <Plus className="h-4 w-4 text-primary" />
+                  <Plus className="h-4 w-4 text-cyan-500" />
                 </button>
               ))}
               {addResults.length === 0 && addQuery.trim().length >= 2 && <p className="py-6 text-center text-sm text-muted-foreground">No profiles found.</p>}
@@ -393,9 +425,9 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
                   await mutate(() => api.groupSettings(group.id, o.value), 'Permission updated');
                   setPermOpen(false);
                 }} className="flex w-full items-center gap-3 rounded-lg p-3 text-left hover:bg-muted/60">
-                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-primary"><Shield className="h-4 w-4" /></span>
+                  <span className="flex h-9 w-9 items-center justify-center rounded-full bg-cyan-500/10 text-cyan-500"><Shield className="h-4 w-4" /></span>
                   <span className="min-w-0 flex-1"><span className="block text-sm font-medium">{o.label}</span><span className="block text-xs text-muted-foreground">{o.detail}</span></span>
-                  {replyPerm === o.value && <Check className="h-5 w-5 text-primary" />}
+                  {replyPerm === o.value && <Check className="h-5 w-5 text-cyan-500" />}
                 </button>
               ))}
             </div>
@@ -422,6 +454,34 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
           </div>
         </div>, document.body)}
 
+      {memberMenu && memberMenuPos && createPortal(
+        <>
+          <div className="fixed inset-0 z-[210]" onClick={() => { setMemberMenu(null); setMemberMenuPos(null); }} />
+          <div
+            className="fixed z-[220] w-48 overflow-hidden rounded-lg border bg-popover py-1 shadow-2xl"
+            style={{ top: memberMenuPos.top, right: memberMenuPos.right }}
+            role="menu"
+          >
+            {Array.isArray(group.coLeaders) && group.coLeaders.includes(memberMenu) ? (
+              <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, memberMenu, 'member'), 'Demoted to participant'); }}>Dismiss as admin</button>
+            ) : (
+              <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, memberMenu, 'coleader'), 'Promoted to admin'); }}>Make admin</button>
+            )}
+            <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm text-red-500 hover:bg-accent" onClick={() => { setMemberMenu(null); setConfirm({ type: 'remove', userId: memberMenu, name: memberName(memberMenu) }); }}>
+              <span className="flex items-center gap-2"><UserMinus className="h-4 w-4" /> Remove from group</span>
+            </button>
+          </div>
+        </>,
+        document.body,
+      )}
+      {avatarSrc && (
+        <AvatarCropper
+          imageSrc={avatarSrc}
+          compact
+          onCancel={() => setAvatarSrc(null)}
+          onCropComplete={(file) => void applyGroupAvatar(file)}
+        />
+      )}
       <ReportModal isOpen={reportOpen} onClose={() => setReportOpen(false)} contentId={group.id || ''} contentType="profile" />
 
       {/* Media placeholder sheet — chat media is available in the conversation */}
