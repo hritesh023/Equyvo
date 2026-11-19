@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera, ScreenShare, MonitorUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import MediaCropper from '@/components/MediaCropper';
-import StreamStudio, { type PublishedStream } from '@/components/StreamStudio';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -2363,54 +2362,6 @@ const CreatePage = () => {
       uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
       if (action === 'post') setUploadProgress(null);
-    }
-  };
-
-  // Publish a Cloudflare Stream live card after OBS credentials were created.
-  const handleStreamPublish = async (stream: PublishedStream) => {
-    publishLockRef.current = true;
-    cancelUploadRequestedRef.current = false;
-    try {
-      const liveContent: Record<string, unknown> = {
-        id: stream.contentId,
-        type: 'live',
-        contentType: 'live',
-        title: stream.title,
-        content: liveDescription || stream.title,
-        description: liveDescription,
-        hlsUrl: stream.hlsUrl,
-        streamUid: stream.uid,
-        liveContentId: stream.contentId,
-        contentId: stream.contentId,
-        isLive: true,
-        live: true,
-        relay: false,
-        source: 'external',
-        thumbnail: liveThumbnailPreview || '',
-        image: liveThumbnailPreview || '',
-        time: 'just now',
-        createdAt: new Date().toISOString(),
-        views: 0,
-        likes: 0,
-        comments: 0,
-      };
-      const err = await persistContent(liveContent);
-      if (err) throw new Error(err);
-      liveRollbackContentRef.current = stream.contentId;
-      const { error } = await api.liveStart({
-        contentId: stream.contentId,
-        title: stream.title,
-        thumbnail: liveThumbnailPreview || '',
-        source: 'camera',
-        relay: false,
-      });
-      if (error) throw new Error(error);
-      try { localStorage.setItem('equyvo_active_live', JSON.stringify(liveContent)); } catch { /* ignore */ }
-      window.dispatchEvent(new CustomEvent('userWentLive', { detail: liveContent }));
-    } finally {
-      try { setIsUploading(false); setUploadProgress(null); setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
-      uploadedKeysForCancelRef.current = [];
-      publishLockRef.current = false;
     }
   };
 
@@ -5142,12 +5093,6 @@ const CreatePage = () => {
                   End Live Stream
                 </Button>
               )}
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardContent className="pt-4">
-              <StreamStudio title={liveTitle} onPublish={handleStreamPublish} />
             </CardContent>
           </Card>
         </TabsContent>

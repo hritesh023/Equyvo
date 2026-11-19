@@ -25,6 +25,7 @@ import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from './ads/InFeedAdGate';
 import { resolveMediaFields } from '@/lib/media';
 import { toCount } from '@/lib/count';
+import { canReactTo } from '@/lib/reactions';
 import ResilientImage from '@/components/ResilientImage';
 import MediaPreview from '@/components/MediaPreview';
 
@@ -424,16 +425,20 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                           size="sm"
                         />
                         
-                        <Button 
-                          variant="ghost" 
-                          size="sm" 
-                          className={`flex items-center gap-1 ${reactedPosts.has(post.id) ? 'text-green-500' : ''}`}
-                          onClick={() => onReact(post.id)}
-                          title="React to make this post yours"
-                        >
-                          <Repeat className={`h-4 w-4 ${reactedPosts.has(post.id) ? 'fill-current' : ''}`} /> 
-                          {toCount(postReacts[post.id] ?? post.reacts)}
-                        </Button>
+                        {/* Reactions (reposts) are for other people's posts only —
+                            never offer to "make this post yours" on your own. */}
+                        {canReactTo(post as unknown as Record<string, unknown>, currentUserId) && (
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            className={`flex items-center gap-1 ${reactedPosts.has(post.id) ? 'text-green-500' : ''}`}
+                            onClick={() => onReact(post.id)}
+                            title={reactedPosts.has(post.id) ? 'Remove reaction — this post will no longer be yours' : 'React to make this post yours (like a repost)'}
+                          >
+                            <Repeat className={`h-4 w-4 ${reactedPosts.has(post.id) ? 'fill-current' : ''}`} /> 
+                            {toCount(postReacts[post.id] ?? post.reacts)}
+                          </Button>
+                        )}
                       </>
                     )}
                     

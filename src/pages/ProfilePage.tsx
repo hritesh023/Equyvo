@@ -55,6 +55,7 @@ import { toCount, bumpCount } from '@/lib/count';
 import api from '@/lib/api';
 import { isVideoItem, hideFromMyView } from '@/lib/feed-store';
 import { normalizeContentList, normalizeContentItem, resolveMediaFields } from '@/lib/media';
+import { canReactTo, isReactedCopy, persistReaction, removeReaction } from '@/lib/reactions';
 
 const ownerIdOf = (post: unknown): string => {
   const p = (post || {}) as Record<string, unknown>;
@@ -476,7 +477,11 @@ const ProfilePage = () => {
             ...((d.moments || []) as any[]).map((m: any) => ({ ...m, type: 'moment' })),
           ] as Post[];
         }
-        setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isBlockedContent(p)) }));
+        // "You reacted to this post" items are real backend content owned by
+        // this account. Keep them in the reacted lane so they are never
+        // rendered twice (once as a normal post, once as a reacted post).
+        setUserReactedPosts(serverItems.filter((p: any) => isReactedCopy(p)).map((p: any) => ({ ...p, isReacted: true } as Post)));
+        setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isReactedCopy(p) && !isBlockedContent(p)) }));
         return;
         // Legacy fallback: posts-only endpoint for accounts whose content
         // predates the aggregate endpoint.
@@ -543,23 +548,30 @@ const ProfilePage = () => {
           ...((data as any).stories || []).map((s: any) => ({ ...s, type: s.type || 'story' })),
           ...((data as any).moments || []).map((m: any) => ({ ...m, type: 'moment' })),
         ];
-                setUserProfile(prev => {
-          const existing = prev.posts || [];
-          const serverById = new Map(serverItems.map((p: any) => [p.id, p]));
-          // Server is authoritative across devices: replace so deleted/bugged content cannot resurrect.
-          const posts = serverItems;
-          return { ...prev, posts };
+                // Server is authoritative across devices: reacted copies live in the
+        // reacted lane, everything else is a normal post.
+        const serverReacted = serverItems.filter((p: any) => isReactedCopy(p)).map((p: any) => ({ ...p, isReacted: true } as Post));
+        setUserReactedPosts(prev => {
+          const merged = new Map<string, Post>();
+          prev.forEach(p => merged.set(String((p as any).originalPostId || p.id), p));
+          serverReacted.forEach(p => merged.set(String((p as any).originalPostId || p.id), p));
+          return Array.from(merged.values());
         });
+        setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isReactedCopy(p)) }));
       }).catch(() => {});
       // Legacy fallback: posts-only endpoint.
       api.getUserPosts(currentUser.id).then(({ data, error }) => {
         if (cancelled || error || !Array.isArray(data)) return;
-        setUserProfile(prev => {
-          const existing = prev.posts || [];
-          const serverById = new Map(data.map(p => [p.id, p]));
-          const posts = data;
-          return { ...prev, posts };
-        });
+        const legacyReacted = (data as Post[]).filter(p => isReactedCopy(p)).map(p => ({ ...p, isReacted: true } as Post));
+        if (legacyReacted.length) {
+          setUserReactedPosts(prev => {
+            const merged = new Map<string, Post>();
+            prev.forEach(p => merged.set(String((p as any).originalPostId || p.id), p));
+            legacyReacted.forEach(p => merged.set(String((p as any).originalPostId || p.id), p));
+            return Array.from(merged.values());
+          });
+        }
+        setUserProfile(prev => ({ ...prev, posts: (data as Post[]).filter(p => !isReactedCopy(p)) }));
       }).catch(() => {});
     }
 
@@ -691,10 +703,34 @@ const ProfilePage = () => {
       } catch {}
     };
 
+    // Repost-style reactions fired from the Home feed: mirror them here so the
+    // reacted copy shows up immediately in the reacting account's profile.
+    const handlePostReacted = (event: CustomEvent) => {
+      const reacted = event.detail?.reactedPost;
+      if (!isSelfView || !reacted) return;
+      const originalId = String(event.detail?.originalPostId || '');
+      setUserReactedPosts(prev => [
+        { ...reacted, isReacted: true } as Post,
+        ...prev.filter(p => String((p as any).originalPostId) !== originalId),
+      ]);
+      setReactedPosts(prev => new Set(prev).add(originalId));
+    };
+    const handlePostUnreacted = (event: CustomEvent) => {
+      const originalId = String(event.detail?.originalPostId || '');
+      setUserReactedPosts(prev => prev.filter(p => String((p as any).originalPostId) !== originalId));
+      setReactedPosts(prev => {
+        const next = new Set(prev);
+        next.delete(originalId);
+        return next;
+      });
+    };
+
     window.addEventListener('contentSaved', handleContentSaved as EventListener);
     window.addEventListener('contentUnsaved', handleContentUnsaved as EventListener);
     window.addEventListener('thoughtReacted', handleThoughtReacted as EventListener);
     window.addEventListener('thoughtUnreacted', handleThoughtUnreacted as EventListener);
+    window.addEventListener('postReacted', handlePostReacted as EventListener);
+    window.addEventListener('postUnreacted', handlePostUnreacted as EventListener);
     window.addEventListener('userPostCreated', handleUserPostCreated as EventListener);
     window.addEventListener('userPostDeleted', handleUserPostDeleted as EventListener);
     
@@ -703,6 +739,8 @@ const ProfilePage = () => {
       window.removeEventListener('contentUnsaved', handleContentUnsaved as EventListener);
       window.removeEventListener('thoughtReacted', handleThoughtReacted as EventListener);
       window.removeEventListener('thoughtUnreacted', handleThoughtUnreacted as EventListener);
+      window.removeEventListener('postReacted', handlePostReacted as EventListener);
+      window.removeEventListener('postUnreacted', handlePostUnreacted as EventListener);
       window.removeEventListener('userPostCreated', handleUserPostCreated as EventListener);
       window.removeEventListener('userPostDeleted', handleUserPostDeleted as EventListener);
     };
@@ -899,52 +937,45 @@ const ProfilePage = () => {
   };
 
   const handleReact = (postId: string) => {
+    const post = userProfile.posts.find(p => p.id === postId) ||
+      viewerReactedPosts.find(p => String((p as any).originalPostId) === postId);
+    if (!post) return;
+    // Reactions are reposts: only somebody else's content can be reacted to.
+    if (!canReactTo(post as unknown as Record<string, unknown>, myAccountId())) {
+      showError("You can't react to your own post.");
+      return;
+    }
+
     const newReactedPosts = new Set(reactedPosts);
     const newPostReacts = { ...postReacts };
-    const post = userProfile.posts.find(p => p.id === postId);
+    const reacting = !reactedPosts.has(postId);
 
-    if (reactedPosts.has(postId)) {
-      // Remove reaction and remove from user's reacted posts
-      newReactedPosts.delete(postId);
-      newPostReacts[postId] = bumpCount(newPostReacts[postId], -1);
-      setUserReactedPosts(prev => prev.filter(p => p.originalPostId !== postId));
-      showSuccess('Reaction removed - post no longer yours');
-    } else {
-      // Add reaction and make it user's own post
+    if (reacting) {
       newReactedPosts.add(postId);
       newPostReacts[postId] = bumpCount(newPostReacts[postId], +1);
-
-      if (post) {
-        // Real identity of the signed-in account — never a placeholder name.
-        const displayName = String(
-          userProfile.username || userProfile.name || 'User',
-        ).slice(0, 80);
-        const userReactedPost: Post = {
-          id: `user-reacted-${postId}`,
-          originalPostId: postId,
-          user: displayName,
-          avatar: userProfile.avatar || '',
-          time: 'Just now',
-          content: ` Reacted to: ${post.content}`,
-          likes: post.likes,
-          reacts: (post.reacts || 0) + 1,
-          comments: post.comments,
-          shares: post.shares,
-          originalAuthor: post.user,
-          type: post.type as 'post' | 'thought' | 'reacted' | 'moment' | 'video',
-          media: post.media,
-          mediaType: post.mediaType as 'video' | 'image' | 'moment',
-          videoUrl: post.videoUrl
-        };
-        setUserReactedPosts(prev => [userReactedPost as Post, ...prev] as Post[]);
-      }
-      showSuccess(' Post reacted! This post is now yours too!');
+      showSuccess('You reacted to this post — it is now in your profile.');
+      // Persist a real "You reacted to this post" item owned by this account.
+      const source = post as Post;
+      void persistReaction(source, 'post').then(({ copy }) => {
+        if (!copy) return;
+        setUserReactedPosts(prev => [({ ...copy, isReacted: true } as Post), ...prev.filter(p => String((p as any).originalPostId) !== postId)]);
+        window.dispatchEvent(new CustomEvent('postReacted', {
+          detail: { originalPostId: postId, reactedPost: copy },
+        }));
+      });
+    } else {
+      newReactedPosts.delete(postId);
+      newPostReacts[postId] = bumpCount(newPostReacts[postId], -1);
+      setUserReactedPosts(prev => prev.filter(p => String((p as any).originalPostId) !== postId));
+      void removeReaction(postId, 'post');
+      window.dispatchEvent(new CustomEvent('postUnreacted', { detail: { originalPostId: postId } }));
+      showSuccess('Reaction removed — post no longer yours');
     }
 
     setReactedPosts(newReactedPosts);
     setPostReacts(newPostReacts);
     // Persist the reaction (owner notification + cross-device count).
-    api.react(postId, reactedPosts.has(postId) ? 'unreact' : 'react').then(({ data }) => {
+    api.react(postId, reacting ? 'react' : 'unreact').then(({ data }) => {
       if (data && typeof data.reacts === 'number') {
         setPostReacts(prev => ({ ...prev, [postId]: data.reacts }));
       }

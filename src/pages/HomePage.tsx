@@ -26,6 +26,7 @@ import { bumpCount, toCount } from '@/lib/count';
 import { getAuthenticatedUser, getStoredUser } from '@/lib/auth';
 import api from '@/lib/api';
 import { isOwnContent } from '@/utils/ownership';
+import { canReactTo, persistReaction, removeReaction } from '@/lib/reactions';
 import { deleteContent, isBlockedContent } from '@/utils/delete';
 import { FullscreenContent, Post, Story } from '@/types';
 import { useIsMobile } from '@/hooks/use-mobile';
@@ -646,6 +647,13 @@ const HomePage = () => {
 
   const handleReactPost = (postId: string) => {
     const p = enhancedPosts.find(x => x.id === postId);
+    if (!p) return;
+    // A reaction is a repost: it makes the item part of YOUR content. You can
+    // never repost your own post (the button is hidden too — this is the guard).
+    if (!canReactTo(p as unknown as Record<string, unknown>, currentUserId)) {
+      showError("You can't react to your own post.");
+      return;
+    }
     const snapshot = p?.content?.slice(0, 120) || (p as any)?.type || postId;
     const reacting = !reactedPosts.has(postId);
     // Human eval: reactions are positive engagement labels.
@@ -660,15 +668,15 @@ const HomePage = () => {
       const newSet = new Set(prev);
       if (newSet.has(postId)) {
         newSet.delete(postId);
-        showSuccess('Post unreacted');
+        showSuccess('Reaction removed — post no longer yours');
       } else {
         newSet.add(postId);
-        showSuccess('Post reacted!');
+        showSuccess('You reacted to this post — it is now in your profile.');
         teachBrain(snapshot);
       }
       return newSet;
     });
-    
+
     // Update the post reacts count optimistically (+1 / -1).
     setEnhancedPosts(prev => prev.map(post => 
       post.id === postId 
@@ -682,6 +690,20 @@ const HomePage = () => {
         post.id === postId ? { ...post, reacts: data.reacts } : post,
       ));
     }).catch(() => undefined);
+
+    // Repost semantics: create/remove a REAL content item owned by the caller,
+    // labelled "You reacted to this post", so it lives in the user's profile.
+    if (reacting) {
+      void persistReaction(p, 'post').then(({ copy }) => {
+        if (!copy) return;
+        window.dispatchEvent(new CustomEvent('postReacted', {
+          detail: { originalPostId: postId, reactedPost: copy },
+        }));
+      });
+    } else {
+      void removeReaction(postId, 'post');
+      window.dispatchEvent(new CustomEvent('postUnreacted', { detail: { originalPostId: postId } }));
+    }
   };
 
   const handleCommentCountChange = (postId: string, count: number) => {

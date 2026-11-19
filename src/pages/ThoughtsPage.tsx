@@ -56,6 +56,7 @@ import { useAdPlan } from '@/hooks/use-ad-plan';
 import InFeedAdGate from '@/components/ads/InFeedAdGate';
 import { resolveAvatar } from '@/utils/avatar';
 import MediaPreview from '@/components/MediaPreview';
+import { canReactTo, persistReaction, removeReaction, reactedCopyId, REACTION_LABEL } from '@/lib/reactions';
 
 // Real author identity for locally-created reacted copies: the signed-in
 // user's id, display name and uploaded profile icon — never fake art/names.
@@ -623,9 +624,15 @@ const ThoughtsPage = memo(() => {
   };
 
   const handleReact = (thoughtId: string) => {
+    const thought = thoughts.find(t => t.id === thoughtId);
+    if (!thought) return;
+    // A reaction is a repost: never allow reacting to your own thought.
+    if (!canReactTo(thought as unknown as Record<string, unknown>, realAuthorField().id)) {
+      showError("You can't react to your own post.");
+      return;
+    }
     const newReactedThoughts = new Set(reactedThoughts);
     const newThoughtReacts = { ...thoughtReacts };
-    const thought = thoughts.find(t => t.id === thoughtId);
 
     if (reactedThoughts.has(thoughtId)) {
       // Remove reaction - decrement count by 1
@@ -633,7 +640,10 @@ const ThoughtsPage = memo(() => {
       newThoughtReacts[thoughtId] = Math.max(0, (newThoughtReacts[thoughtId] || 0) - 1);
       const updatedUserReactedThoughts = userReactedThoughts.filter(t => (t as any).originalThoughtId !== thoughtId);
       setUserReactedThoughts(updatedUserReactedThoughts);
-      
+
+      // Remove the persisted "You reacted to this post" copy from the backend.
+      void removeReaction(thoughtId, 'thought');
+
       // Save to localStorage
       localStorage.setItem('userReactedThoughts', JSON.stringify(updatedUserReactedThoughts));
       
@@ -652,7 +662,7 @@ const ThoughtsPage = memo(() => {
         const author = realAuthorField();
         const userReactedThought: Thought & { originalThoughtId: string; originalAuthor: string } = {
           ...thought,
-          id: `user-reacted-${thoughtId}`,
+          id: reactedCopyId(thoughtId),
           originalThoughtId: thoughtId,
           originalAuthor: userNameOf(thought),
           user: {
@@ -660,7 +670,7 @@ const ThoughtsPage = memo(() => {
             username: author.username,
             avatar_url: realAuthorAvatar(),
           },
-          content: ` Reacted to: ${thought.content}`,
+          content: REACTION_LABEL,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
           likes_count: thought.likes_count,
@@ -679,12 +689,15 @@ const ThoughtsPage = memo(() => {
         // Save to localStorage
         localStorage.setItem('userReactedThoughts', JSON.stringify(updatedUserReactedThoughts));
         
+        // Persist a real "You reacted to this post" item owned by this account.
+        void persistReaction(thought as any, 'thought');
+
         // Dispatch event to notify profile page
         window.dispatchEvent(new CustomEvent('thoughtReacted', { 
           detail: { thoughtId, userReactedThought: userReactedThought, userReactedThoughts: updatedUserReactedThoughts } 
         }));
       }
-      showSuccess(' Thought reacted! This thought is now yours too!');
+      showSuccess('You reacted to this post — it is now in your profile.');
     }
 
     setReactedThoughts(newReactedThoughts);
@@ -1119,26 +1132,29 @@ const ThoughtsPage = memo(() => {
                         </DialogContent>
                       </Dialog>
 
-                      <Button 
-                        variant="ghost" 
-                        size="sm" 
-                        className={`flex items-center gap-1 flex-shrink-0 ${reactedThoughts.has(thought.id) ? 'text-green-500 hover:text-green-600' : 'text-muted-foreground hover:text-foreground'}`}
-                        onClick={() => handleReact(thought.id)}
-                        title={reactedThoughts.has(thought.id) ? "Remove reaction - this thought will no longer be yours" : "React to make this thought yours"}
-                      >
-                        {reactedThoughts.has(thought.id) ? (
-                          <>
-                            <Repeat2 className="h-4 w-4 fill-current" />
-                            <span className="text-xs font-medium">Reacted</span>
-                          </>
-                        ) : (
-                          <>
-                            <Repeat className="h-4 w-4" />
-                            <span className="text-xs">React</span>
-                          </>
-                        )}
-                        <span className="text-xs ml-1">({thoughtReacts[thought.id] || thought.reacts_count || 0})</span>
-                      </Button>
+                      {/* Reactions (reposts) are for other people's thoughts only. */}
+                      {canReactTo(thought as unknown as Record<string, unknown>, realAuthorField().id) && (
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className={`flex items-center gap-1 flex-shrink-0 ${reactedThoughts.has(thought.id) ? 'text-green-500 hover:text-green-600' : 'text-muted-foreground hover:text-foreground'}`}
+                          onClick={() => handleReact(thought.id)}
+                          title={reactedThoughts.has(thought.id) ? "Remove reaction - this thought will no longer be yours" : "React to make this thought yours (like a repost)"}
+                        >
+                          {reactedThoughts.has(thought.id) ? (
+                            <>
+                              <Repeat2 className="h-4 w-4 fill-current" />
+                              <span className="text-xs font-medium">Reacted</span>
+                            </>
+                          ) : (
+                            <>
+                              <Repeat className="h-4 w-4" />
+                              <span className="text-xs">React</span>
+                            </>
+                          )}
+                          <span className="text-xs ml-1">({thoughtReacts[thought.id] || thought.reacts_count || 0})</span>
+                        </Button>
+                      )}
                     </div>
 
                     {/* Secondary action buttons */}
