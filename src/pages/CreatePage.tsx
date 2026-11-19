@@ -637,6 +637,13 @@ const CreatePage = () => {
   //  camera = getUserMedia, screen = getDisplayMedia (OS/system consent picker).
   const [liveSourceDialogOpen, setLiveSourceDialogOpen] = useState(false);
   const [liveSource, setLiveSource] = useState<'camera' | 'screen'>('camera');
+  // Full-screen live studio: 'choose' → camera or screen → screen mode.
+  const [liveStudioStage, setLiveStudioStage] = useState<'choose' | 'camera' | 'screen'>('choose');
+  const [liveScreenMode, setLiveScreenMode] = useState<'app' | 'entire'>('entire');
+  // Live uploads happen continuously in the background — never show a
+  // percentage bar / loading overlay while a live session is being set up,
+  // running, or having its replay uploaded.
+  const [liveBusy, setLiveBusy] = useState(false);
   const [liveNativeScreen, setLiveNativeScreen] = useState(false);
   const liveRollbackContentRef = useRef('');
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -2372,6 +2379,7 @@ const CreatePage = () => {
         }
         // Ask the broadcaster how to capture BEFORE anything is started:
         // camera & microphone, or a screen/app window via the system picker.
+        setLiveStudioStage('choose');
         setLiveSourceDialogOpen(true);
         break;
       case 'schedule':
@@ -2780,6 +2788,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+    setLiveBusy(true);
     cancelUploadRequestedRef.current = false;
     setIsUploading(true);
 
@@ -2830,6 +2839,7 @@ const CreatePage = () => {
         try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
         uploadedKeysForCancelRef.current = [];
         publishLockRef.current = false;
+        setLiveBusy(false);
       }
       return;
     }
@@ -2960,6 +2970,7 @@ const CreatePage = () => {
       try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
       uploadedKeysForCancelRef.current = [];
       publishLockRef.current = false;
+      setLiveBusy(false);
     }
   };
 
@@ -3077,6 +3088,7 @@ const CreatePage = () => {
   }, [liveNativeScreen, liveTitle]);
 
   const handleSaveRecording = async (blob: Blob, liveSessionId?: string) => {
+    setLiveBusy(true);
     // Container follows the probe result ('video/mp4' on Android WebView,
     // 'video/webm' elsewhere) so the persisted extension matches the bytes.
     const mime = (blob.type || recorderMimeRef.current || 'video/webm').split(';')[0];
@@ -3111,6 +3123,7 @@ const CreatePage = () => {
     if (!liveUploadResult?.secureUrl) {
       // NEVER persist a video item without its playable URL — that is what
       // made live replays render as broken "image" cards before.
+      setLiveBusy(false);
       return;
     }
 
@@ -3185,6 +3198,7 @@ const CreatePage = () => {
       URL.revokeObjectURL(url);
     } catch { /* local download is a convenience — never fatal */ }
     deferredSuccess('Live replay saved to your profile.');
+    setLiveBusy(false);
   };
 
   // ── Camera tab: capture photos/videos straight from the device camera ────
@@ -3726,6 +3740,34 @@ const CreatePage = () => {
     }).format(date);
   };
 
+  // ── Full-screen live presenter ──────────────────────────────────────────
+  // Native screen recording captures the device screen, so ANY Equyvo control
+  // left on screen would end up in the saved video. Hide the entire app UI
+  // while it runs; the system notification / "Stop sharing" ends the stream.
+  if (isRecording && liveSource === 'screen' && liveNativeScreen) {
+    return <div aria-hidden="true" className="fixed inset-0 z-[1] bg-transparent" />;
+  }
+  // Camera live gets a true full-screen studio view (like the camera capture
+  // screen) with only a minimal control strip on top.
+  if (isRecording && liveSource === 'camera') {
+    return (
+      <div className="fixed inset-0 z-[120] flex flex-col bg-black text-white">
+        <video ref={liveVideoRef} autoPlay muted playsInline className="absolute inset-0 h-full w-full object-cover" />
+        <div className="relative z-10 flex items-center gap-3 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+          <span className="inline-flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold backdrop-blur">
+            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" /> LIVE
+          </span>
+          <span className="truncate text-sm text-white/85">{liveTitle || 'Live now'}</span>
+        </div>
+        <div className="relative z-10 mt-auto flex justify-center p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
+          <Button onClick={handleEndLive} className="rounded-full bg-white px-7 text-black hover:bg-white/90">
+            <Square className="h-4 w-4 mr-2" /> End Live
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4 md:space-y-6 w-full px-4 sm:px-6 lg:px-8 pb-8 md:pb-6 lg:pb-8">
       <h1 className="text-lg md:text-2xl lg:text-3xl font-bold">Create New Content</h1>
@@ -3861,7 +3903,7 @@ const CreatePage = () => {
 
       {/* Publish progress: exact byte-level bar for every composer tab while
           one upload network is active (chunked flow reports real progress). */}
-      {isUploading && uploadProgress && uploadProgress.phase !== 'done' && (
+      {!liveBusy && isUploading && uploadProgress && uploadProgress.phase !== 'done' && (
         <div className="fixed bottom-24 left-4 right-4 z-50 rounded-lg border border-primary/30 bg-background/95 backdrop-blur px-4 py-3 space-y-2 shadow-lg" role="status" aria-live="polite">
           <div className="flex items-center justify-between text-xs font-medium">
             <span className="text-primary">
@@ -5415,7 +5457,7 @@ const CreatePage = () => {
       )}
 
       {/* Upload Loading Overlay */}
-      {isUploading && uploadProgress && uploadProgress.phase !== 'done' && (
+      {!liveBusy && isUploading && uploadProgress && uploadProgress.phase !== 'done' && (
         <div className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[99999] pointer-events-none">
           <Card className="p-4 text-center max-w-sm mx-4 shadow-2xl pointer-events-auto">
             <Loader2 className="h-6 w-6 animate-spin mx-auto mb-2 text-primary" />
@@ -5444,53 +5486,131 @@ const CreatePage = () => {
         />
       )}
 
-      {/* Capture-choice dialog: the broadcaster decides camera vs screen
-          before any stream is opened. Permission is always requested by the
-          device (camera prompt / OS share picker) — never bypassed. */}
-      <Dialog open={liveSourceDialogOpen} onOpenChange={(open) => setLiveSourceDialogOpen(open)}>
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
+      {/* ── Equyvo Live Studio: full-screen, minimal, professional ──────────
+          Android itself must show the screen-capture consent prompt before
+          any recording (a platform security rule, not another app). Our own
+          studio UI is what the user sees around it, and it hides completely
+          once recording starts so no Equyvo control appears in the video. */}
+      {liveSourceDialogOpen && (
+        <div className="fixed inset-0 z-[110] flex flex-col bg-gradient-to-b from-[#0a0a0f] to-black text-white">
+          <div className="flex items-center gap-3 border-b border-white/10 px-5 py-4 pt-[max(1rem,env(safe-area-inset-top))]">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500/15">
               <Zap className="h-5 w-5 text-red-500" />
-              How do you want to go live?
-            </DialogTitle>
-            <DialogDescription>
-              Your device will ask for permission before recording anything. If you deny or cancel, nothing is captured and nothing is published.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="grid gap-3 sm:grid-cols-2">
+            </span>
+            <div className="min-w-0">
+              <p className="font-semibold leading-tight">Equyvo Live Studio</p>
+              <p className="truncate text-xs text-white/50">{liveTitle || 'Untitled live stream'}</p>
+            </div>
             <button
               type="button"
-              onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('camera'); }}
-              className="flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors hover:border-primary hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary"
+              aria-label="Close live studio"
+              onClick={() => setLiveSourceDialogOpen(false)}
+              className="ml-auto rounded-full p-2 text-white/70 hover:bg-white/10 hover:text-white"
             >
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-red-500/10">
-                <Camera className="h-5 w-5 text-red-500" />
-              </span>
-              <span className="font-semibold">Camera &amp; microphone</span>
-              <span className="text-sm text-muted-foreground">
-                Broadcast from your device camera and mic. The app requests camera/mic access first.
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('screen'); }}
-              className="flex flex-col items-start gap-2 rounded-xl border p-4 text-left transition-colors hover:border-primary hover:bg-primary/5 focus:outline-none focus:ring-2 focus:ring-primary"
-            >
-              <span className="flex h-10 w-10 items-center justify-center rounded-full bg-blue-500/10">
-                <ScreenShare className="h-5 w-5 text-blue-500" />
-              </span>
-              <span className="font-semibold">Screen / app window</span>
-              <span className="text-sm text-muted-foreground">
-                On mobile, your device's screen-capture consent dialog chooses what is shared. On desktop, the browser share picker does. Only what you select is recorded.
-              </span>
+              <X className="h-5 w-5" />
             </button>
           </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setLiveSourceDialogOpen(false)}>Cancel</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+
+          <div className="flex-1 overflow-y-auto px-5 py-6">
+            {liveStudioStage === 'choose' && (
+              <div className="mx-auto grid w-full max-w-4xl gap-4 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => setLiveStudioStage('camera')}
+                  className="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-3xl border border-white/10 bg-white/5 p-8 text-center transition hover:border-red-500/60 hover:bg-red-500/10"
+                >
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-red-500/15">
+                    <Camera className="h-8 w-8 text-red-400" />
+                  </span>
+                  <span className="text-xl font-semibold">Camera &amp; microphone</span>
+                  <span className="max-w-xs text-sm text-white/55">
+                    Go live with your camera and voice in a full-screen studio.
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLiveStudioStage('screen')}
+                  className="flex min-h-[220px] flex-col items-center justify-center gap-4 rounded-3xl border border-white/10 bg-white/5 p-8 text-center transition hover:border-blue-500/60 hover:bg-blue-500/10"
+                >
+                  <span className="flex h-16 w-16 items-center justify-center rounded-full bg-blue-500/15">
+                    <MonitorUp className="h-8 w-8 text-blue-400" />
+                  </span>
+                  <span className="text-xl font-semibold">Screen recording</span>
+                  <span className="max-w-xs text-sm text-white/55">
+                    Share an app or your whole screen. Equyvo's controls hide while you record.
+                  </span>
+                </button>
+              </div>
+            )}
+
+            {liveStudioStage === 'camera' && (
+              <div className="mx-auto w-full max-w-3xl space-y-5">
+                <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-3xl border border-white/10 bg-black">
+                  <Camera className="h-12 w-12 text-white/30" />
+                  <p className="text-sm text-white/50">Your camera preview fills the screen once the stream starts</p>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
+                  Equyvo will ask for camera and microphone access. A full-screen live view with a single “End Live” control appears when you start.
+                </div>
+                <Button
+                  onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('camera'); }}
+                  className="h-14 w-full rounded-2xl bg-red-500 text-base font-semibold hover:bg-red-600"
+                >
+                  <Zap className="h-5 w-5 mr-2" /> Start camera live
+                </Button>
+                <Button variant="ghost" onClick={() => setLiveStudioStage('choose')} className="w-full text-white/60">
+                  Back
+                </Button>
+              </div>
+            )}
+
+            {liveStudioStage === 'screen' && (
+              <div className="mx-auto w-full max-w-3xl space-y-5">
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setLiveScreenMode('app')}
+                    className={`flex flex-col items-start gap-2 rounded-2xl border p-5 text-left transition ${
+                      liveScreenMode === 'app' ? 'border-blue-400 bg-blue-500/10' : 'border-white/10 bg-white/5'
+                    }`}
+                  >
+                    <ScreenShare className="h-6 w-6 text-blue-400" />
+                    <span className="font-semibold">Record an app</span>
+                    <span className="text-sm text-white/55">
+                      Choose one app in Android's share prompt to record only that app.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLiveScreenMode('entire')}
+                    className={`flex flex-col items-start gap-2 rounded-2xl border p-5 text-left transition ${
+                      liveScreenMode === 'entire' ? 'border-blue-400 bg-blue-500/10' : 'border-white/10 bg-white/5'
+                    }`}
+                  >
+                    <MonitorUp className="h-6 w-6 text-blue-400" />
+                    <span className="font-semibold">Record entire screen</span>
+                    <span className="text-sm text-white/55">
+                      Capture everything visible on your device until you stop.
+                    </span>
+                  </button>
+                </div>
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-white/60">
+                  Android requires its own confirmation before screen capture — that prompt is a device security feature, not another app. Pick <span className="text-white">{liveScreenMode === 'app' ? 'the app you want to share' : 'the whole screen'}</span> there. While you stream, Equyvo's screens are hidden from the recording, so you can open any part of the app and it will not appear in your video. Stop from the recording notification or "Stop sharing" in the status bar.
+                </div>
+                <Button
+                  onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('screen'); }}
+                  className="h-14 w-full rounded-2xl bg-blue-500 text-base font-semibold hover:bg-blue-600"
+                >
+                  <MonitorUp className="h-5 w-5 mr-2" /> Start screen recording
+                </Button>
+                <Button variant="ghost" onClick={() => setLiveStudioStage('choose')} className="w-full text-white/60">
+                  Back
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Schedule Modal */}
       {showScheduleModal && (

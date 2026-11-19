@@ -5,6 +5,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.View;
+import android.view.WindowManager;
 import android.app.PictureInPictureParams;
 import android.util.Rational;
 import androidx.activity.EdgeToEdge;
@@ -78,6 +79,7 @@ public class MainActivity extends BridgeActivity {
                     if (bridge != null && bridge.getWebView() != null) {
                         bridge.getWebView().addJavascriptInterface(new PiPBridge(), "AndroidPiP");
                         bridge.getWebView().addJavascriptInterface(new NavBridge(), "AndroidNav");
+                        bridge.getWebView().addJavascriptInterface(new LiveBridge(), "EquyvoLive");
                     } else {
                         pipHandler.postDelayed(this, 200L);
                     }
@@ -185,6 +187,29 @@ public class MainActivity extends BridgeActivity {
                 }
             } catch (Throwable ignored) {}
             return pendingBottom;
+        }
+    }
+
+    /**
+     * During a screen live the user may browse anywhere inside Equyvo, but
+     * MediaProjection captures whatever is on screen. FLAG_SECURE makes this
+     * window invisible to screen capture (it renders black in the recording),
+     * so no Equyvo screen ever leaks into the broadcaster's video.
+     */
+    public class LiveBridge {
+        @android.webkit.JavascriptInterface
+        public void setSecure(final boolean secure) {
+            runOnUiThread(() -> {
+                try {
+                    if (secure) {
+                        getWindow().setFlags(
+                            WindowManager.LayoutParams.FLAG_SECURE,
+                            WindowManager.LayoutParams.FLAG_SECURE);
+                    } else {
+                        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+                    }
+                } catch (Throwable ignored) {}
+            });
         }
     }
 

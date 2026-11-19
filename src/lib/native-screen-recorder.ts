@@ -24,9 +24,21 @@ let listener: PluginListenerHandle | null = null;
 let stopResolver: ((event: NativeStopEvent) => void) | null = null;
 let lastStopEvent: NativeStopEvent | null = null;
 
+/** Hide this window from MediaProjection while a screen live is running. */
+function setLiveWindowSecure(secure: boolean): void {
+  try {
+    const bridge = (window as any)?.EquyvoLive;
+    if (bridge && typeof bridge.setSecure === 'function') {
+      if (secure) bridge.setSecure(true);
+      else bridge.setSecure(false);
+    }
+  } catch { /* web or older native build — no-op */ }
+}
+
 async function ensureListener(): Promise<void> {
   if (listener) return;
   listener = await ScreenRecorder.addListener('onStopped', (event: NativeStopEvent) => {
+    setLiveWindowSecure(false);
     const payload: NativeStopEvent = { url: String(event?.url || ''), error: event?.error ? String(event.error) : undefined };
     lastStopEvent = payload;
     if (stopResolver) {
@@ -49,7 +61,15 @@ export async function startNativeScreenRecording(): Promise<void> {
   }
   await ensureListener();
   lastStopEvent = null;
-  await ScreenRecorder.start({ recordAudio: true, format: 'mp4' });
+  try {
+    await ScreenRecorder.start({ recordAudio: true, format: 'mp4' });
+    // From here on, Equyvo's own windows must never appear in the capture —
+    // the user is free to browse the app while the stream keeps recording.
+    setLiveWindowSecure(true);
+  } catch (e) {
+    setLiveWindowSecure(false);
+    throw e;
+  }
 }
 
 /** Stops recording and resolves with the saved local file URL. */
@@ -89,6 +109,7 @@ export async function stopNativeScreenRecording(timeoutMs = 30000): Promise<Nati
       resolve({ url: '', error: e instanceof Error ? e.message : 'Could not stop the recording.' });
     }
   }
+  setLiveWindowSecure(false);
   return result;
 }
 
