@@ -102,7 +102,9 @@ export function buildReactedCopy(source: Post, kind: 'post' | 'thought' = 'post'
     reacts: 0,
     views: 0,
     visibility: (source as any)?.visibility || 'public',
-    tags: ['reacted'],
+    // The backend dedupes rapid identical posts via a content fingerprint.
+    // Including the original id keeps reactions to DIFFERENT posts distinct.
+    tags: ['reacted', `r${originalId.slice(0, 48)}`],
     // Quote-card media (never invented — only what the original actually had).
     media: (source as any)?.media || source?.videoUrl || source?.image || '',
     videoUrl: source?.videoUrl || '',
