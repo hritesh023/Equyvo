@@ -3,7 +3,7 @@ import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Play, Camera, Volume2, VolumeX, Trash, AlertTriangle, BadgeCheck } from 'lucide-react';
+import { Settings, Edit, ThumbsUp, MessageCircle, Share2, Video, MessageSquare, MoreVertical, Maximize, Repeat, Bookmark, Clock, History, X, Eye, Camera, Volume2, VolumeX, Trash, AlertTriangle, BadgeCheck, Radio } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import ContentManagementTab from '@/components/ContentManagementTab';
 import {
@@ -33,7 +33,7 @@ import EditProfileModal from '@/components/EditProfileModal';
 import EditPostModal from '@/components/EditPostModal';
 import CommentSection from '@/components/CommentSection';
 import FullscreenViewer from '@/components/FullscreenViewer';
-import ResilientVideo from '@/components/ResilientVideo';
+import MediaPreview from '@/components/MediaPreview';
 import VotingButtons from '@/components/VotingButtons';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import WatchHistorySection from '@/components/WatchHistorySection';
@@ -54,7 +54,7 @@ import { pickDisplayName, profilePreviewFrom, userNameOf } from '@/lib/identity'
 import { toCount, bumpCount } from '@/lib/count';
 import api from '@/lib/api';
 import { isVideoItem, hideFromMyView } from '@/lib/feed-store';
-import { normalizeContentList, normalizeContentItem, resolveMediaFields, formatWatchTime } from '@/lib/media';
+import { normalizeContentList, normalizeContentItem, resolveMediaFields } from '@/lib/media';
 
 const ownerIdOf = (post: unknown): string => {
   const p = (post || {}) as Record<string, unknown>;
@@ -279,6 +279,63 @@ const ProfilePage = () => {
     (userProfile as Record<string, unknown>)._placeholder === true &&
     !pickDisplayName(userProfile.name, userProfile.username);
   const [activeTab, setActiveTab] = useState<string>('posts');
+
+  // Live tab: active broadcasts from /api/live/now plus live-flagged posts /
+  // replays in this profile's own content. Both open in Equyvo's full player.
+  const [liveNowItems, setLiveNowItems] = useState<any[]>([]);
+  useEffect(() => {
+    let cancelled = false;
+    api.liveNow().then((res) => {
+      if (cancelled || res?.error) return;
+      const rows = Array.isArray((res as any)?.data?.live) ? (res as any).data.live : [];
+      setLiveNowItems(rows);
+    }).catch(() => undefined);
+    return () => { cancelled = true; };
+  }, []);
+  const liveItems = React.useMemo(() => {
+    const isLivePost = (p: any) =>
+      p?.isLive === true || p?.live === true ||
+      ['live'].includes(String(p?.type || '').toLowerCase()) ||
+      ['live'].includes(String(p?.contentType || '').toLowerCase()) ||
+      String(p?.mediaType || '').toLowerCase() === 'live';
+    const ownLive = (userProfile.posts || []).filter(isLivePost)
+      .map((p) => ({ ...p, isLive: true, type: 'live' as const }));
+    const seen = new Set(ownLive.map((p: any) => String(p.id)));
+    const idKeys = [resolvedTargetId, userProfile.id, routeTarget, viewerId]
+      .map((x) => normalizeIdentity(String(x || ''))).filter(Boolean);
+    const nameKeys = [userProfile.name, userProfile.username]
+      .map((x) => String(x || '').toLowerCase()).filter(Boolean);
+    const active = liveNowItems
+      .filter((l: any) => {
+        const lid = normalizeIdentity(String(l.id || l.userId || l.ownerId || ''));
+        const lname = String(l.name || l.username || '').toLowerCase();
+        return (lid && idKeys.includes(lid)) || (lname && nameKeys.includes(lname));
+      })
+      .map((l: any) => ({
+        id: String(l.contentId || l.liveContentId || `live-${l.id || ''}`),
+        type: 'live',
+        contentType: 'live',
+        isLive: true,
+        live: true,
+        liveContentId: String(l.contentId || l.liveContentId || ''),
+        relay: l.relay,
+        title: String(l.liveTitle || l.title || 'Live now'),
+        content: String(l.liveTitle || l.title || 'Live now'),
+        creator: String(l.name || l.username || userProfile.name || 'Creator'),
+        creatorId: String(l.id || userProfile.id || ''),
+        avatar: String(l.avatar || userProfile.avatar || ''),
+        image: String(l.thumbnail || l.avatar || ''),
+        thumbnail: String(l.thumbnail || l.avatar || ''),
+        views: Number(l.views || 0),
+        category: 'Live',
+        timestamp: l.liveAt || new Date().toISOString(),
+        time: l.liveAt || 'Now',
+      } as unknown as Post))
+      .filter((p: any) => !seen.has(String(p.id)));
+    return [...active, ...ownLive];
+  }, [userProfile.posts, userProfile.id, userProfile.name, userProfile.username,
+    liveNowItems, resolvedTargetId, routeTarget, viewerId]);
+
   useEffect(() => {
     const onHidden = (e: Event) => {
       const id = String((e as CustomEvent).detail?.id || '');
@@ -1555,11 +1612,12 @@ const ProfilePage = () => {
         }}
         className="w-full"
       >
-        <TabsList className={`flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid ${isSelfView ? 'md:grid-cols-7' : 'md:grid-cols-5'} md:overflow-visible md:bg-muted md:rounded-md md:pr-1`}>
+        <TabsList className={`flex w-full max-w-full justify-start gap-1.5 overflow-x-auto scroll-px-3 scrollbar-hide bg-transparent py-1 pl-1 pr-6 h-auto md:grid ${isSelfView ? 'md:grid-cols-8' : 'md:grid-cols-6'} md:overflow-visible md:bg-muted md:rounded-md md:pr-1`}>
           <TabsTrigger value="posts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">All Posts</TabsTrigger>
           <TabsTrigger value="stories" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Stories</TabsTrigger>
           <TabsTrigger value="moments" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Moments</TabsTrigger>
           <TabsTrigger value="videos" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Videos</TabsTrigger>
+          <TabsTrigger value="live" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Live</TabsTrigger>
           <TabsTrigger value="thoughts" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Thoughts</TabsTrigger>
           {isSelfView && (
             <TabsTrigger value="manage" className="shrink-0 whitespace-nowrap rounded-full border border-border/60 bg-card px-3.5 py-2 text-xs font-medium data-[state=active]:border-primary/40 data-[state=active]:bg-primary/10 data-[state=active]:text-primary md:rounded-sm md:border-transparent md:bg-transparent md:text-sm">Manage</TabsTrigger>
@@ -1664,14 +1722,12 @@ const ProfilePage = () => {
                     {(post.media || post.image || post.thumbnail) && (
                       post.mediaType === 'video' || post.type === 'video' ? (
                         post.videoUrl || post.video ? (
-                          <ResilientVideo
+                          <MediaPreview
                             src={post.videoUrl || post.video || post.media}
                             poster={post.thumbnail || post.image}
-                            controls
-                            playsInline
-                            preload="metadata"
-                            className="w-full rounded-lg mb-3 md:mb-4 object-contain bg-black max-h-60 md:max-h-80 cursor-pointer"
+                            alt={post.content || 'Post media'}
                             onClick={() => handleFullscreen(post)}
+                            className="w-full rounded-lg mb-3 md:mb-4 max-h-60 md:max-h-80 cursor-pointer"
                           />
                         ) : (
                           <img
@@ -1820,14 +1876,13 @@ const ProfilePage = () => {
                 <Card key={story.id} className="overflow-hidden">
                   <div className="relative aspect-[9/16] bg-black">
                     {story.type !== 'text-story' && isVideoItem(story) ? (
-                      <ResilientVideo
+                      <MediaPreview
                         src={normalizeContentItem<Post>(story).videoUrl}
                         poster={normalizeContentItem<Post>(story).thumbnail || normalizeContentItem<Post>(story).image}
-                        controls
-                        playsInline
-                        preload="metadata"
-                        className="w-full h-full object-cover cursor-pointer"
+                        alt={story.content || 'Story'}
                         onClick={() => handleFullscreen(story)}
+                        fit="cover"
+                        className="w-full h-full cursor-pointer"
                       />
                     ) : story.type !== 'text-story' && (story.thumbnail || story.image || story.media) ? (
                       <img
@@ -1938,21 +1993,15 @@ const ProfilePage = () => {
               handleFullscreen(video);
             }}>
                 <div className="relative aspect-video bg-black">
-                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                    <Play className="h-10 w-10 text-white opacity-80" />
-                  </div>
-                  <ResilientVideo
+                  <MediaPreview
                     src={video.videoUrl || video.video || video.media}
                     poster={video.thumbnail || undefined}
-                    controls
-                    playsInline
-                    preload="metadata"
-                    className="w-full h-full object-cover"
-                    onClick={(e) => { e.stopPropagation(); addToWatchHistory(video); handleFullscreen(video); }}
+                    alt={video.content || 'Video'}
+                    fit="cover"
+                    stopPropagation
+                    onClick={() => { addToWatchHistory(video); handleFullscreen(video); }}
+                    className="w-full h-full cursor-pointer"
                   />
-                  <div className="absolute bottom-2 right-2 bg-black/80 text-white text-xs px-1 rounded">
-                    {formatWatchTime(video.duration) || 'Video'}
-                  </div>
                   <div
                     className="absolute top-2 right-2 rounded-full bg-black/60 backdrop-blur-sm"
                     onClick={(e) => e.stopPropagation()}
@@ -1999,6 +2048,52 @@ const ProfilePage = () => {
               </div>
             )}
           </div>
+        </TabsContent>
+
+        <TabsContent value="live" className="mt-6 space-y-4">
+          {liveItems.length > 0 ? (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              {liveItems.map((item) => {
+                const live = item as Record<string, unknown>;
+                const active = live.isLive === true || live.live === true ||
+                  String(live.type || '').toLowerCase() === 'live' && !live.ended;
+                const open = () => { addToWatchHistory(item); handleFullscreen(item); };
+                const poster = String(live.thumbnail || live.image || userProfile.avatar || '');
+                return (
+                  <Card key={String(item.id)} className="overflow-hidden cursor-pointer hover:shadow-md transition-shadow" onClick={open}>
+                    <MediaPreview
+                      src={item.videoUrl || (typeof live.media === 'string' ? live.media : undefined)}
+                      poster={poster}
+                      alt={String(live.title || item.content || 'Live stream')}
+                      fit="cover"
+                      stopPropagation
+                      onClick={open}
+                      className="w-full aspect-video"
+                    />
+                    <CardContent className="p-3">
+                      <div className="flex items-center gap-2">
+                        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white ${active ? 'bg-red-600' : 'bg-muted-foreground'}`}>
+                          {active ? 'Live' : 'Replay'}
+                        </span>
+                        <p className="truncate text-sm font-medium">{String(live.title || item.content || 'Live stream')}</p>
+                      </div>
+                      {toCount(item.views) > 0 && (
+                        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <Eye className="h-3 w-3" /> {toCount(item.views)} views
+                        </p>
+                      )}
+                      {item.time && <p className="mt-0.5 text-xs text-muted-foreground">{item.time}</p>}
+                    </CardContent>
+                  </Card>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-muted-foreground">
+              <Radio className="h-10 w-10 mx-auto mb-2 opacity-20" />
+              <p>No live streams yet</p>
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="thoughts" className="mt-6 space-y-4">
@@ -2069,14 +2164,12 @@ const ProfilePage = () => {
                     <div className="mb-4">
                       {post.mediaType === 'video' ? (
                         post.videoUrl ? (
-                          <ResilientVideo
+                          <MediaPreview
                             src={post.videoUrl || post.video || post.media}
                             poster={post.thumbnail}
-                            controls
-                            playsInline
-                            preload="metadata"
-                            className="w-full rounded-lg mb-4 object-contain bg-black max-h-80 cursor-pointer"
+                            alt={post.content || 'Post media'}
                             onClick={() => handleFullscreen(post)}
+                            className="w-full rounded-lg mb-4 max-h-80 cursor-pointer"
                           />
                         ) : (
                           <img
@@ -2246,14 +2339,12 @@ const ProfilePage = () => {
                     {(post.media || post.thumbnail || post.image) && (
                       <div className="mb-3">
                         {(post.mediaType === 'video' || post.type === 'video') && (post.videoUrl || post.video) ? (
-                          <ResilientVideo
+                          <MediaPreview
                             src={post.videoUrl || post.video || post.media}
                             poster={post.thumbnail || post.image}
-                            controls
-                            playsInline
-                            preload="metadata"
-                            className="w-full rounded-lg object-contain bg-black max-h-60 cursor-pointer"
+                            alt={post.content || 'Saved content'}
                             onClick={() => handleFullscreen(post)}
+                            className="w-full rounded-lg max-h-60 cursor-pointer"
                           />
                         ) : (
                           <img

@@ -26,7 +26,7 @@ import InFeedAdGate from './ads/InFeedAdGate';
 import { resolveMediaFields } from '@/lib/media';
 import { toCount } from '@/lib/count';
 import ResilientImage from '@/components/ResilientImage';
-import ResilientVideo from '@/components/ResilientVideo';
+import MediaPreview from '@/components/MediaPreview';
 
 interface ExtendedPost extends Post {
   type: 'post' | 'thought' | 'reacted';
@@ -353,31 +353,15 @@ const ForYouFeed: React.FC<ForYouFeedProps> = ({
                     const aud = resolved.audioUrl;
                     const isVideo = Boolean(vid);
                     if (isVideo) {
+                      // Discover-style poster: no native <video controls> UI.
+                      // Tapping opens the same full-screen Equyvo player.
                       return (
-                        <ResilientVideo
+                        <MediaPreview
                           src={vid}
                           poster={img || undefined}
-                          controls
-                          playsInline
-                          preload="metadata"
-                          className="w-full rounded-lg mb-4 aspect-video bg-black cursor-pointer object-contain"
-                          style={{ width: '100%' }}
+                          alt={post.content || 'Post media'}
                           onClick={() => handleContentClick(post)}
-                          fallbackRenderer={(
-                            <div className="text-muted-foreground text-sm p-6 text-center" role="status">
-                              Video could not load right now.
-                              <button
-                                type="button"
-                                className="block mx-auto mt-1 text-primary underline underline-offset-2"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  window.location.reload();
-                                }}
-                              >
-                                Retry
-                              </button>
-                            </div>
-                          )}
+                          className="w-full rounded-lg mb-4 aspect-video cursor-pointer"
                         />
                       );
                     }

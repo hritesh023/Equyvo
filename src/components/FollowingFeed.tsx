@@ -26,7 +26,7 @@ import InFeedAdGate from './ads/InFeedAdGate';
 import { resolveMediaFields } from '@/lib/media';
 import { toCount } from '@/lib/count';
 import ResilientImage from '@/components/ResilientImage';
-import ResilientVideo from '@/components/ResilientVideo';
+import MediaPreview from '@/components/MediaPreview';
 
 interface FollowingFeedProps {
   posts: Post[];
@@ -286,15 +286,15 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     const aud = resolved.audioUrl;
                     const isVideo = Boolean(vid);
                     if (isVideo) {
+                      // Discover-style poster: no native <video controls> UI.
+                      // Tapping opens the same full-screen Equyvo player.
                       return (
-                        <ResilientVideo
+                        <MediaPreview
                           src={vid}
                           poster={img || undefined}
-                          controls
-                          playsInline
-                          preload="metadata"
-                          className="w-full rounded-lg mb-4 aspect-video bg-black cursor-pointer object-contain"
+                          alt={post.content || 'Post media'}
                           onClick={() => handleContentClick(post)}
+                          className="w-full rounded-lg mb-4 aspect-video cursor-pointer"
                         />
                       );
                     }
