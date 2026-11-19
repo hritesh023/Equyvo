@@ -18,6 +18,7 @@ import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
 import LiveRelayPlayer from '@/components/LiveRelayPlayer';
+import LiveChatPanel from '@/components/LiveChatPanel';
 import api from '@/lib/api';
 import { normalizeContentItem, formatWatchTime } from '@/lib/media';
 import { toCount } from '@/lib/count';
@@ -77,6 +78,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setHideOverlay(false);
     setContentOnly(false);
     setShowControls(true);
+    setShowLiveChat(false);
     setMediaAspect(null);
     setIsExpandedLandscape(false);
   }, [actualContent?.id]);
@@ -146,6 +148,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
+  const [showLiveChat, setShowLiveChat] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isLiked, setIsLiked] = useState(false);
@@ -317,6 +320,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   );
   const commentCount = toCount((actualContent as any)?.comments ?? (actualContent as any)?.engagement?.comments);
   const viewerContentId = String((actualContent as any)?.id || (actualContent as any)?.videoId || (actualContent as any)?.imageId || 'unknown');
+  const liveRoomId = String((actualContent as any)?.contentId || (actualContent as any)?.liveContentId || viewerContentId);
     
   // Determine container style based on content type and device
   const getContainerStyle = () => {
@@ -1314,6 +1318,17 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         }}
       >
         <div className="flex justify-end gap-2">
+          {isLiveStream && effectiveLive && (
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={(e) => { e.stopPropagation(); e.preventDefault(); setShowLiveChat((v) => !v); }}
+              className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
+              title={showLiveChat ? 'Hide live chat' : 'Show live chat'}
+            >
+              <MessageCircle className="h-5 w-5" />
+            </Button>
+          )}
           {!isOriginalPortrait && !(isPortraitMoment || isStory) && Math.min(window.innerWidth, window.innerHeight) < 1024 && (
             <Button
               variant="ghost"
@@ -1369,6 +1384,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           </Button>
         </div>
       </div>
+
+      {/* Live chat side panel (Twitch/Kick-style) */}
+      {showLiveChat && isLiveStream && effectiveLive && (
+        <LiveChatPanel contentId={liveRoomId} onClose={() => setShowLiveChat(false)} />
+      )}
 
       {/* Video Container - Full height or split view */}
       {isVideoType && (
