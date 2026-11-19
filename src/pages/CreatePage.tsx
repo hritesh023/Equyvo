@@ -637,9 +637,8 @@ const CreatePage = () => {
   //  camera = getUserMedia, screen = getDisplayMedia (OS/system consent picker).
   const [liveSourceDialogOpen, setLiveSourceDialogOpen] = useState(false);
   const [liveSource, setLiveSource] = useState<'camera' | 'screen'>('camera');
-  // Full-screen live studio: 'choose' → camera or screen → screen mode.
+  // Full-screen live studio: 'choose' → camera or screen capture.
   const [liveStudioStage, setLiveStudioStage] = useState<'choose' | 'camera' | 'screen'>('choose');
-  const [liveScreenMode, setLiveScreenMode] = useState<'app' | 'entire'>('entire');
   // Live uploads happen continuously in the background — never show a
   // percentage bar / loading overlay while a live session is being set up,
   // running, or having its replay uploaded.
@@ -5534,7 +5533,7 @@ const CreatePage = () => {
                   </span>
                   <span className="text-xl font-semibold">Screen recording</span>
                   <span className="max-w-xs text-sm text-white/55">
-                    Share an app or your whole screen. Equyvo's controls hide while you record.
+                    Share one app window. Equyvo stays out of the video while you control the live stream.
                   </span>
                 </button>
               </div>
@@ -5563,42 +5562,23 @@ const CreatePage = () => {
 
             {liveStudioStage === 'screen' && (
               <div className="mx-auto w-full max-w-3xl space-y-5">
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    onClick={() => setLiveScreenMode('app')}
-                    className={`flex flex-col items-start gap-2 rounded-2xl border p-5 text-left transition ${
-                      liveScreenMode === 'app' ? 'border-blue-400 bg-blue-500/10' : 'border-white/10 bg-white/5'
-                    }`}
-                  >
-                    <ScreenShare className="h-6 w-6 text-blue-400" />
-                    <span className="font-semibold">Record an app</span>
-                    <span className="text-sm text-white/55">
-                      Choose one app in Android's share prompt to record only that app.
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setLiveScreenMode('entire')}
-                    className={`flex flex-col items-start gap-2 rounded-2xl border p-5 text-left transition ${
-                      liveScreenMode === 'entire' ? 'border-blue-400 bg-blue-500/10' : 'border-white/10 bg-white/5'
-                    }`}
-                  >
-                    <MonitorUp className="h-6 w-6 text-blue-400" />
-                    <span className="font-semibold">Record entire screen</span>
-                    <span className="text-sm text-white/55">
-                      Capture everything visible on your device until you stop.
-                    </span>
-                  </button>
+                <div className="flex flex-col items-start gap-3 rounded-3xl border border-blue-400/40 bg-blue-500/10 p-6">
+                  <span className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-500/20">
+                    <ScreenShare className="h-7 w-7 text-blue-300" />
+                  </span>
+                  <span className="text-xl font-semibold">Record an app window</span>
+                  <span className="text-sm leading-relaxed text-white/60">
+                    Only the app you select is recorded — Equyvo itself is excluded by Android, so you can open any part of the app while live and it will never appear in your video.
+                  </span>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-white/60">
-                  Android requires its own confirmation before screen capture — that prompt is a device security feature, not another app. Pick <span className="text-white">{liveScreenMode === 'app' ? 'the app you want to share' : 'the whole screen'}</span> there. While you stream, Equyvo's screens are hidden from the recording, so you can open any part of the app and it will not appear in your video. Stop from the recording notification or "Stop sharing" in the status bar.
+                  Android will ask you to confirm screen capture. Choose <span className="font-semibold text-white">a single app</span> (not “Entire screen”) — that is what keeps Equyvo out of the recording. Stop from the recording notification or “Stop sharing” in the status bar.
                 </div>
                 <Button
                   onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('screen'); }}
                   className="h-14 w-full rounded-2xl bg-blue-500 text-base font-semibold hover:bg-blue-600"
                 >
-                  <MonitorUp className="h-5 w-5 mr-2" /> Start screen recording
+                  <ScreenShare className="h-5 w-5 mr-2" /> Choose app &amp; start live
                 </Button>
                 <Button variant="ghost" onClick={() => setLiveStudioStage('choose')} className="w-full text-white/60">
                   Back
