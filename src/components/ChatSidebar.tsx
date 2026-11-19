@@ -1,11 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin, Archive } from 'lucide-react';
+import { MessageCircle, Send, Paperclip, X, Palette, Search, Check, CheckCheck, Clock, ArrowLeft, Crop, Trash2, MoreVertical, Mic, Volume2, VolumeX, Eraser, Camera, ChevronDown, BarChart3, Image as ImageIcon, Film, File as FileIcon, Folder, Plus, ArrowRight, Pin, Archive, Ban, ExternalLink, Flag, Users, Shield } from 'lucide-react';
 import { ChatCamera } from './ChatCamera';
 import { showError, showSuccess } from '@/utils/toast';
 import { useI18n } from '@/lib/i18n';
@@ -13,6 +12,9 @@ import api from '@/lib/api';
 import { useNavigate } from 'react-router-dom';
 import { ChatThemeSelector } from './ChatThemeSelector';
 import MediaCropper from './MediaCropper';
+import ChatContactInfo from './ChatContactInfo';
+import GroupSettings from './GroupSettings';
+import ReportModal from './ReportModal';
 import { useChatTheme } from '@/contexts/ChatThemeContext';
 import { navigateToProfile } from '@/utils/profile-navigation';
 import { getStoredUser } from '@/lib/auth';
@@ -245,7 +247,6 @@ const ChatPollBox: React.FC<{ msg: ChatMessage }> = ({ msg }) => {
 
 const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const { t } = useI18n();
-  const [tab, setTab] = useState<'followers' | 'following' | 'groups'>('followers');
   const [threads, setThreads] = useState<ChatThread[]>(() => listThreads());
   const [activeId, setActiveId] = useState<string | null>(null);
   // Groups
@@ -257,12 +258,15 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const [forwardTarget, setForwardTarget] = useState<string>('');
   const [createGroupOpen, setCreateGroupOpen] = useState(false);
   const [groupSettingsOpen, setGroupSettingsOpen] = useState(false);
-  const [groupEditOpen, setGroupEditOpen] = useState(false);
-  const [groupEditName, setGroupEditName] = useState('');
-  const [groupEditDesc, setGroupEditDesc] = useState('');
-  const [groupEditImage, setGroupEditImage] = useState('');
+  const [groupSettingsFromList, setGroupSettingsFromList] = useState(false);
   const [groupProfileImageOpen, setGroupProfileImageOpen] = useState(false);
-  const [memberNames, setMemberNames] = useState<Record<string, string>>({});
+  // WhatsApp-style contact info + chat menu + blocked contacts
+  const [contactInfoOpen, setContactInfoOpen] = useState(false);
+  const [contactPeer, setContactPeer] = useState<{ id: string; name: string; avatar?: string } | null>(null);
+  const [chatMenuOpen, setChatMenuOpen] = useState(false);
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+  const [blockedOpen, setBlockedOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null);
   const [groupSelectionMode, setGroupSelectionMode] = useState(false);
   const [archivedThreadIds, setArchivedThreadIds] = useState<Set<string>>(() => {
@@ -546,49 +550,62 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
       void refreshGroupMsgs(activeGroupId);
     }
   }, [activeGroupId]);
-  useEffect(() => {
-    if (!activeGroupObj) return;
-    const members = Array.isArray(activeGroupObj.members) ? activeGroupObj.members : [];
-    const missing = members.filter((m: string) => !memberNames[m]);
-    if (missing.length === 0) return;
-    let cancelled = false;
-    (async () => {
-      const next = { ...memberNames };
-      for (const m of missing) {
-        try {
-          const { data } = await api.getProfile(m);
-          const p = (data as any)?.data || data;
-          next[m] = p?.name || p?.username || m;
-        } catch {
-          next[m] = m;
-        }
-      }
-      if (!cancelled) setMemberNames(next);
-    })();
-    return () => { cancelled = true; };
-  }, [activeGroupObj, groupSettingsOpen]);
-  useEffect(() => {
-    if (groupEditOpen && activeGroupObj) {
-      setGroupEditName(activeGroupObj.name || '');
-      setGroupEditDesc(activeGroupObj.description || '');
-      setGroupEditImage(activeGroupObj.avatar || '');
+  // Load the signed-in account's block list so blocked chats can be hidden.
+  const loadBlocks = async () => {
+    try {
+      const res: any = await api.listBlocks();
+      setBlockedIds(new Set((res?.data?.ids || []).map((x: any) => String(x).toLowerCase())));
+    } catch { /* offline — keep current list */ }
+  };
+  useEffect(() => { void loadBlocks(); }, []);
+  const isBlocked = (id: string) => blockedIds.has(String(id || '').toLowerCase());
+  const setBlockedPeer = async (blocked: boolean, peerOverride?: string) => {
+    const peer = peerOverride || (activeChat && !isGroupChat ? activeChat.peerId : '');
+    if (!peer) return;
+    const res: any = await api.setUserBlock(peer, blocked);
+    if (res?.error) throw new Error(res.error);
+    await loadBlocks();
+    // Close the conversation and clear it from the visible list when blocked.
+    if (!peerOverride || peer === activeChat?.peerId) {
+      setActiveId(null);
+      setMsgs([]);
     }
-  }, [groupEditOpen]);
+    refreshThreads();
+  };
+  const contactTarget = contactPeer ?? (activeChat && !isGroupChat
+    ? { id: activeChat.peerId, name: activeChat.peerName, avatar: activeChat.peerAvatar }
+    : null);
+  const openContactInfo = (peer?: { id: string; name: string; avatar?: string }) => {
+    setContactPeer(peer || (activeChat && !isGroupChat
+      ? { id: activeChat.peerId, name: activeChat.peerName, avatar: activeChat.peerAvatar }
+      : null));
+    setChatMenuOpen(false);
+    setContactInfoOpen(true);
+  };
   useEffect(() => {
     if (stickToBottomRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
     }
   }, [msgs.length, activeId, activeGroupId]);
 
-  const visibleThreads = threads
-    .filter((t) => !archivedThreadIds.has(t.id))
-    .filter((t) => (tab === 'followers' ? t.relation === 'follower' || t.relation === 'mutual' : t.relation === 'following' || t.relation === 'mutual'))
-    .filter((t) => {
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.trim().toLowerCase();
-      return (t.peerName || '').toLowerCase().includes(q) || (t.lastMessage || '').toLowerCase().includes(q);
-    })
+  const matchesSearch = (name: string, last = '') => {
+    if (!searchQuery.trim()) return true;
+    const q = searchQuery.trim().toLowerCase();
+    return name.toLowerCase().includes(q) || last.toLowerCase().includes(q);
+  };
+  const baseThreads = threads.filter((t) => !archivedThreadIds.has(t.id) && !isBlocked(t.peerId || t.id));
+  const followingThreads = baseThreads
+    .filter((t) => t.relation === 'following' || t.relation === 'mutual')
+    .filter((t) => matchesSearch(t.peerName, t.lastMessage))
     .sort((a, b) => (b.unread - a.unread) || b.timestamp.localeCompare(a.timestamp));
+  const followerThreads = baseThreads
+    .filter((t) => t.relation === 'follower' || t.relation === 'mutual')
+    .filter((t) => matchesSearch(t.peerName, t.lastMessage))
+    .sort((a, b) => (b.unread - a.unread) || b.timestamp.localeCompare(a.timestamp));
+  const visibleGroups = groups
+    .filter((g: any) => !g.archived)
+    .filter((g: any) => matchesSearch(g.name || ''))
+    .sort((a: any, b: any) => String(b.name || '').localeCompare(String(a.name || '')));
 
   const getChatBackgroundStyle = (): React.CSSProperties => {
     const opacity = typeof chatTheme.opacity === 'number' && Number.isFinite(chatTheme.opacity)
@@ -993,6 +1010,106 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   const isAttachedImage = !!attachedFile && attachedFile.type.startsWith('image/');
   const isAttachedGif = !!attachedFile && attachedFile.type === 'image/gif';
 
+  const SectionHeader = ({ label, count, action }: { label: string; count: number; action?: React.ReactNode }) => (
+    <div className="sticky top-0 z-[1] flex items-center gap-2 border-b border-border/40 bg-background/95 px-4 py-2 backdrop-blur">
+      <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground">{label}</span>
+      <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">{count}</span>
+      <div className="flex-1" />
+      {action}
+    </div>
+  );
+
+  const ThreadRow = ({ contact, relationLabel }: { contact: ChatThread; relationLabel: string }) => (
+    <div
+      role="button"
+      tabIndex={0}
+      aria-label={`Open chat with ${contact.peerName}${contact.unread > 0 ? `, ${contact.unread} unread` : ''}`}
+      className="flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-emerald-500/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+      onClick={() => {
+        if (chatLongPressRef.current.triggered) { chatLongPressRef.current.triggered = false; return; }
+        setActiveId(contact.id);
+      }}
+      onTouchStart={() => startChatLongPress(contact.id)}
+      onTouchEnd={cancelChatLongPress}
+      onTouchMove={cancelChatLongPress}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        const ok = window.confirm('Delete this chat?');
+        if (ok) { deleteThread(contact.id); refreshThreads(); if (activeId === contact.id) setActiveId(null); }
+      }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setActiveId(contact.id); } }}
+    >
+      <div className="relative shrink-0">
+        <Avatar
+          className="h-12 w-12 cursor-pointer transition hover:ring-2 hover:ring-emerald-500/60"
+          onClick={(e) => { e.stopPropagation(); navigateToProfile(navigate, contact.peerId, contact.peerName); }}
+          title={`Open ${contact.peerName}'s Equyvo profile`}
+        >
+          <AvatarImage src={contact.peerAvatar} alt={`${contact.peerName} avatar`} />
+          <AvatarFallback>{(contact.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
+        </Avatar>
+        {contact.online && <span className="absolute bottom-0 right-0 h-3.5 w-3.5 rounded-full border-2 border-background bg-green-500" aria-label="Online" />}
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="truncate text-sm font-semibold">{contact.peerName}</p>
+          <span className="shrink-0 text-[10px] text-muted-foreground">{contact.timestamp}</span>
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <p className="truncate text-xs text-muted-foreground">{contact.lastMessage || relationLabel}</p>
+          {contact.unread > 0 && (
+            <span aria-label={`${contact.unread} unread messages`} className="flex h-5 min-w-5 shrink-0 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[10px] font-bold text-white">
+              {contact.unread}
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  const GroupRow = ({ g }: { g: any }) => (
+    <div
+      role="button"
+      tabIndex={0}
+      className={`flex items-center gap-3 px-4 py-2.5 transition-colors hover:bg-emerald-500/5 ${selectedGroupId === g.id ? 'bg-emerald-500/10 ring-1 ring-emerald-500/40' : ''}`}
+      onClick={() => {
+        if (groupSelectionMode) { setSelectedGroupId(selectedGroupId === g.id ? null : g.id); return; }
+        setIsGroupChat(true); void openGroupChat(g.id);
+      }}
+      onTouchStart={() => {
+        if (groupSelectionMode) return;
+        const timer = window.setTimeout(() => { setGroupSelectionMode(true); setSelectedGroupId(g.id); }, 500);
+        (g as any)._t = timer;
+      }}
+      onTouchEnd={() => { const timer = (g as any)._t; if (timer) window.clearTimeout(timer); }}
+      onTouchMove={() => { const timer = (g as any)._t; if (timer) window.clearTimeout(timer); }}
+      onContextMenu={(e) => { e.preventDefault(); setGroupSelectionMode(true); setSelectedGroupId(g.id); }}
+      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIsGroupChat(true); void openGroupChat(g.id); } }}
+    >
+      <Avatar className="h-12 w-12 shrink-0">
+        <AvatarImage src={g.avatar || ''} alt={g.name} />
+        <AvatarFallback>{String(g.name || 'G').slice(0, 2).toUpperCase()}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between gap-2">
+          <p className="truncate text-sm font-semibold">{g.name}</p>
+          <Users className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        </div>
+        <p className="truncate text-xs text-muted-foreground">{(g.members || []).length} participants</p>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon"
+        className="h-8 w-8 shrink-0 text-muted-foreground"
+        aria-label={`${g.name} settings`}
+        title="Group settings"
+        onClick={(e) => { e.stopPropagation(); setIsGroupChat(true); setActiveGroupId(g.id); setGroupSettingsFromList(true); setGroupSettingsOpen(true); }}
+      >
+        <MoreVertical className="h-4 w-4" />
+      </Button>
+    </div>
+  );
+
   const shell = isMobile
     ? 'chat-mobile-shell w-full flex flex-col bg-background'
     : 'h-[calc(100vh-6.5rem)] w-80 fixed right-4 top-24 bg-card/95 backdrop-blur-xl border border-border/50 rounded-2xl shadow-2xl overflow-hidden hidden lg:flex flex-col z-40';
@@ -1000,236 +1117,101 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
   return (
     <>
     <div className={shell}>
-      <div className="p-4 border-b border-border bg-muted/30">
-        <div className="flex items-center justify-between mb-3">
-          <h2 className="font-bold text-lg flex items-center gap-2">
-            <MessageCircle className="w-5 h-5 text-primary" /> Chats
+      <div className="shrink-0 border-b border-border bg-card/80">
+        <div className="flex items-center gap-1 px-3 pb-2 pt-[max(0.75rem,var(--equyvo-safe-top))]">
+          <h2 className="flex min-w-0 flex-1 items-center gap-2 text-lg font-bold">
+            <MessageCircle className="h-5 w-5 shrink-0 text-emerald-500" /> Chats
+            <span className="hidden rounded-full bg-primary/10 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-primary sm:inline">Equyvo</span>
           </h2>
-          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Archived" title="Archived chats" onClick={() => setShowArchived(true)}>
-            <Archive className="w-4 h-4" />
-          </Button>
           <ChatThemeSelector>
-            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Customize chat background" title="Customize chat background">
-              <Palette className="w-4 h-4" />
+            <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Customize chat background" title="Chat wallpaper">
+              <Palette className="h-4 w-4" />
             </Button>
           </ChatThemeSelector>
-        </div>
-        <Tabs value={tab} onValueChange={(v) => { setTab(v as 'followers' | 'following' | 'groups'); setSearchQuery(''); }} className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="followers">Followers</TabsTrigger>
-            <TabsTrigger value="following">Following</TabsTrigger>
-            <TabsTrigger value="groups">Groups</TabsTrigger>
-          </TabsList>
-        </Tabs>
-        <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
-          {tab === 'followers'
-            ? 'Followers — accounts that follow you can message you here.'
-            : tab === 'following'
-            ? 'Following — accounts you follow; you can message them here.'
-            : 'Groups — create groups and chat with multiple people at once.'}
-        </p>
-      </div>
-
-      <div className="relative p-4 pb-2">
-        <Search aria-hidden className="absolute left-6 top-[26px] h-4 w-4 text-muted-foreground" />
-        <Input
-          placeholder={tab === 'followers' ? 'Search followers…' : 'Search following…'}
-          aria-label={tab === 'followers' ? 'Search followers' : 'Search following'}
-          className="pl-8 pr-8 bg-background/50"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          maxLength={100}
-        />
-        {searchQuery && (
-          <Button
-            variant="ghost"
-            size="icon"
-            className="absolute right-5 top-[20px] h-6 w-6"
-            onClick={() => setSearchQuery('')}
-            aria-label="Clear search"
-          >
-            <X className="h-3.5 w-3.5" />
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Blocked contacts" title="Blocked contacts" onClick={() => setBlockedOpen(true)}>
+            <Shield className="h-4 w-4" />
           </Button>
-        )}
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="Archived" title="Archived chats" onClick={() => setShowArchived(true)}>
+            <Archive className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="New group" title="New group" onClick={() => setCreateGroupOpen(true)}>
+            <Plus className="h-4 w-4" />
+          </Button>
+        </div>
+        <div className="relative px-4 pb-3">
+          <Search aria-hidden className="absolute left-6 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search chats, people and groups…"
+            aria-label="Search chats"
+            className="h-9 bg-background/70 pl-8 pr-8 text-sm"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            maxLength={100}
+          />
+          {searchQuery && (
+            <Button variant="ghost" size="icon" className="absolute right-5 top-1/2 h-6 w-6 -translate-y-1/2" onClick={() => setSearchQuery('')} aria-label="Clear search">
+              <X className="h-3.5 w-3.5" />
+            </Button>
+          )}
+        </div>
       </div>
 
       {!activeChat && !activeGroupId && (
         <ScrollArea className="flex-1">
-          <div className="divide-y divide-border/20">
-            {tab === 'groups' ? (
-              <>
-                <div className="p-3 flex items-center justify-between gap-2">
-                  <p className="text-sm font-medium">Groups</p>
-                  <Button size="sm" variant="outline" onClick={() => setCreateGroupOpen(true)}>
-                    <Plus className="h-4 w-4 mr-1" /> New group
+          {groupSelectionMode && (
+            <div className="flex items-center gap-2 border-b border-emerald-500/30 bg-emerald-500/10 px-4 py-2">
+              <span className="flex-1 text-xs font-medium">{selectedGroupId ? '1 group selected' : 'Select a group'}</span>
+              {selectedGroupId && (
+                <>
+                  <Button size="sm" variant="outline" onClick={async () => {
+                    const g = groups.find((x: any) => x.id === selectedGroupId);
+                    if (!g) return;
+                    const next = !g.archived;
+                    try { await api.groupArchive(selectedGroupId, next); await refreshGroups(); showSuccess(next ? 'Archived' : 'Unarchived'); } catch { showError('Could not archive'); }
+                    setGroupSelectionMode(false); setSelectedGroupId(null);
+                  }}>Archive</Button>
+                  <Button size="sm" variant="destructive" onClick={async () => {
+                    if (!selectedGroupId) return;
+                    if (!window.confirm('Delete this group permanently?')) return;
+                    try { await api.groupDeleteGroup(selectedGroupId); await refreshGroups(); showSuccess('Group deleted'); } catch { showError('Could not delete group'); }
+                    setGroupSelectionMode(false); setSelectedGroupId(null);
+                  }}>Delete</Button>
+                </>
+              )}
+              <Button size="sm" variant="ghost" onClick={() => { setGroupSelectionMode(false); setSelectedGroupId(null); }}>Cancel</Button>
+            </div>
+          )}
+          {loading && threads.length === 0 && groups.length === 0 ? (
+            <div className="p-8 text-center text-sm text-muted-foreground">Loading your chats…</div>
+          ) : (
+            <div className="pb-6">
+              <section>
+                <SectionHeader label="Following" count={followingThreads.length} />
+                {followingThreads.length ? followingThreads.map((c) => <ThreadRow key={c.id} contact={c} relationLabel="You follow them — tap to say hi" />) : (
+                  <p className="px-4 py-5 text-xs text-muted-foreground">No 1-on-1 chats with people you follow yet.</p>
+                )}
+              </section>
+              <section>
+                <SectionHeader label="Followers" count={followerThreads.length} />
+                {followerThreads.length ? followerThreads.map((c) => <ThreadRow key={c.id} contact={c} relationLabel="Follows you — tap to reply" />) : (
+                  <p className="px-4 py-5 text-xs text-muted-foreground">No 1-on-1 chats with followers yet.</p>
+                )}
+              </section>
+              <section>
+                <SectionHeader label="Groups" count={visibleGroups.length} action={
+                  <Button variant="ghost" size="sm" className="h-7 text-[11px] text-emerald-600" onClick={() => setCreateGroupOpen(true)}>
+                    <Plus className="mr-1 h-3.5 w-3.5" /> New group
                   </Button>
-                </div>
-                <div className="p-3">
-                  <Input placeholder="Search groups…" value={groupSearch} onChange={(e) => setGroupSearch(e.target.value)} />
-                </div>
-                {groupSelectionMode && (
-                  <div className="p-3 flex items-center gap-2 bg-purple-500/10 border-b border-purple-500/30">
-                    <span className="text-sm font-medium flex-1">{selectedGroupId ? '1 group selected' : 'Select a group'}</span>
-                    {selectedGroupId && (
-                      <>
-                        <Button size="sm" variant="outline" onClick={async () => {
-                          const g = groups.find((x: any) => x.id === selectedGroupId);
-                          if (!g) return;
-                          const next = !g.archived;
-                          try { await api.groupArchive(selectedGroupId, next); setGroups((prev: any[]) => prev.map((x: any) => x.id === selectedGroupId ? { ...x, archived: next } : x)); await refreshGroups(); showSuccess(next ? 'Archived' : 'Unarchived'); } catch { showError('Could not archive'); }
-                          setGroupSelectionMode(false); setSelectedGroupId(null);
-                        }}>Archive</Button>
-                        <Button size="sm" variant="destructive" onClick={async () => {
-                          if (!selectedGroupId) return;
-                          const ok = window.confirm('Delete this group permanently?');
-                          if (!ok) return;
-                          try { await api.groupDeleteGroup(selectedGroupId); setGroups((prev: any[]) => prev.filter((g: any) => g.id !== selectedGroupId)); await refreshGroups(); showSuccess('Group deleted'); } catch { showError('Could not delete group'); }
-                          setGroupSelectionMode(false); setSelectedGroupId(null);
-                        }}>Delete</Button>
-                      </>
-                    )}
-                    <Button size="sm" variant="ghost" onClick={() => { setGroupSelectionMode(false); setSelectedGroupId(null); }}>Cancel</Button>
+                } />
+                {visibleGroups.length ? visibleGroups.map((g: any) => <GroupRow key={g.id} g={g} />) : (
+                  <div className="px-4 py-6 text-center">
+                    <Users className="mx-auto mb-2 h-8 w-8 text-muted-foreground/40" />
+                    <p className="text-xs text-muted-foreground">No groups yet — create one to chat with multiple people.</p>
                   </div>
                 )}
-                {groups.filter((g: any) => !g.archived).filter((g: any) => !groupSearch.trim() || String(g.name || '').toLowerCase().includes(groupSearch.trim().toLowerCase())).length === 0 ? (
-                  <div className="p-8 text-center text-muted-foreground">
-                    <MessageCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                    {groups.length === 0 ? (
-                      <>
-                        <p className="text-sm font-medium">No groups yet</p>
-                        <p className="mt-1 text-xs opacity-80">Create a group to chat with multiple people.</p>
-                        <Button className="mt-3" size="sm" onClick={() => setCreateGroupOpen(true)}>Create group</Button>
-                      </>
-                    ) : groupSearch.trim() ? (
-                      <>
-                        <p className="text-sm font-medium">No matching results</p>
-                        <p className="mt-1 text-xs opacity-80">No groups match "{groupSearch.trim()}".</p>
-                      </>
-                    ) : (
-                      <>
-                        <p className="text-sm font-medium">No groups yet</p>
-                      </>
-                    )}
-                  </div>
-                ) : (
-                  groups
-                    .filter((g: any) => !g.archived)
-                    .filter((g: any) => !groupSearch.trim() || String(g.name || '').toLowerCase().includes(groupSearch.trim().toLowerCase()))
-                    .map((g: any) => (
-                      <div key={g.id} role="button" tabIndex={0} className={`flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors ${selectedGroupId === g.id ? 'bg-purple-500/20 ring-1 ring-purple-500/40' : ''}`}
-                        onClick={() => {
-                          if (groupSelectionMode) {
-                            setSelectedGroupId(selectedGroupId === g.id ? null : g.id);
-                            return;
-                          }
-                          setIsGroupChat(true); void openGroupChat(g.id);
-                        }}
-                        onTouchStart={() => {
-                          if (groupSelectionMode) return;
-                          const t = window.setTimeout(() => {
-                            setGroupSelectionMode(true);
-                            setSelectedGroupId(g.id);
-                          }, 500);
-                          (g as any)._t = t;
-                        }}
-                        onTouchEnd={() => { const t = (g as any)._t; if (t) window.clearTimeout(t); }}
-                        onTouchMove={() => { const t = (g as any)._t; if (t) window.clearTimeout(t); }}
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setGroupSelectionMode(true);
-                          setSelectedGroupId(g.id);
-                        }}
-                      >
-                        <Avatar><AvatarFallback>{String(g.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback></Avatar>
-                        <div className="flex-1 min-w-0">
-                          <p className="font-medium text-sm truncate">{g.name}</p>
-                          <p className="text-xs text-muted-foreground truncate">{(g.members || []).length} members</p>
-                        </div>
-                      </div>
-                    ))
-                )}
-              </>
-            ) : loading && threads.length === 0 ? (
-              <div className="p-8 text-center text-muted-foreground text-sm">Loading your people…</div>
-            ) : visibleThreads.length > 0 ? (
-              visibleThreads.map((contact) => (
-                <div
-                  key={contact.id}
-                  role="button"
-                  tabIndex={0}
-                  aria-label={`Open chat with ${contact.peerName}${contact.unread > 0 ? `, ${contact.unread} unread` : ''}`}
-                  className="flex items-center gap-3 p-3 hover:bg-secondary/20 cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                  onClick={() => {
-                    if (chatLongPressRef.current.triggered) {
-                      chatLongPressRef.current.triggered = false;
-                      return;
-                    }
-                    setActiveId(contact.id);
-                  }}
-                  onTouchStart={() => startChatLongPress(contact.id)}
-                  onTouchEnd={cancelChatLongPress}
-                  onTouchMove={cancelChatLongPress}
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    const ok = window.confirm('Delete this chat?');
-                    if (ok) {
-                      deleteThread(contact.id);
-                      refreshThreads();
-                      if (activeId === contact.id) setActiveId(null);
-                    }
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter' || e.key === ' ') {
-                      e.preventDefault();
-                      setActiveId(contact.id);
-                    }
-                  }}
-                >
-                  <div className="relative">
-                    <Avatar
-                      className="cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all duration-200"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigateToProfile(navigate, contact.peerId, contact.peerName);
-                      }}
-                      title={`${contact.peerName}'s Profile`}
-                    >
-                      <AvatarImage src={contact.peerAvatar} alt={`${contact.peerName} avatar`} />
-                      <AvatarFallback>{(contact.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
-                    </Avatar>
-                    {contact.online && (
-                      <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 rounded-full border-2 border-background" aria-label="Online" role="status" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <p className="font-medium text-sm truncate">{contact.peerName}</p>
-                      <span className="text-xs text-muted-foreground shrink-0">{contact.timestamp}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-xs text-muted-foreground truncate">{contact.lastMessage || (contact.relation === 'mutual' ? 'You follow each other — say hi' : tab === 'followers' ? 'Follows you' : 'You follow them')}</p>
-                      {contact.unread > 0 && (
-                        <span
-                          aria-label={`${contact.unread} unread messages`}
-                          className="flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1.5 text-[11px] font-bold text-white"
-                        >
-                          {contact.unread}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div className="p-8 text-center text-muted-foreground">
-                <MessageCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
-                <p className="text-sm font-medium">{tab === 'followers' ? 'No followers yet' : 'You are not following anyone yet'}</p>
-                <p className="mt-1 text-xs opacity-80">
-                  {tab === 'followers' ? 'When accounts follow you, they appear here and can message you.' : 'Follow accounts to message them from this tab.'}
-                </p>
-              </div>
-            )}
-          </div>
+              </section>
+            </div>
+          )}
         </ScrollArea>
       )}
 
@@ -1263,200 +1245,87 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
             ) : (
             isGroupChat ? (
             <>
-            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-            <button
-              type="button"
-              onClick={() => setGroupProfileImageOpen(true)}
-              className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              aria-label="Open group profile image"
-              title="Open group profile image"
-            >
-              <Avatar className="h-8 w-8 shrink-0 cursor-pointer">
-                <AvatarImage src={activeGroupObj?.avatar || ''} alt={`${activeGroupObj?.name || 'Group'} avatar`} />
-                <AvatarFallback>{(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm truncate hover:underline">{activeGroupObj?.name || activeChat.peerName}</p>
-                <p className="text-xs text-muted-foreground">{(activeGroupObj?.members || []).length} members</p>
-              </div>
-            </button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Group settings" title="Group settings" onClick={() => setGroupSettingsOpen(true)}>
-              <MoreVertical className="w-4 h-4" />
-            </Button>
-            <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Clear chat" title="Clear chat" onClick={() => {
-              if (!activeGroupId) return;
-              const ok = window.confirm('Clear all messages in this group?');
-              if (!ok) return;
-              void api.groupClear(activeGroupId).then((r: any) => { if (r?.error) { showError(r.error); return; } setGroupMsgs([]); setMsgs([]); showSuccess('Chat cleared'); }).catch(() => { showError('Could not clear chat'); });
-              try { localStorage.setItem('equyvo_chat_cleared_' + activeGroupId, String(Date.now())); } catch {}
-            }}>
-              <Eraser className="w-4 h-4" />
-            </Button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+              <button
+                type="button"
+                onClick={() => { setGroupSettingsFromList(false); setGroupSettingsOpen(true); }}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                aria-label="Open group info"
+                title="Open group info"
+              >
+                <Avatar className="h-9 w-9 shrink-0">
+                  <AvatarImage src={activeGroupObj?.avatar || ''} alt={`${activeGroupObj?.name || 'Group'} avatar`} />
+                  <AvatarFallback>{(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{activeGroupObj?.name || activeChat.peerName}</p>
+                  <p className="truncate text-xs text-muted-foreground">{(activeGroupObj?.members || []).length} participants</p>
+                </div>
+              </button>
+              <ChatThemeSelector>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Chat wallpaper" title="Chat wallpaper">
+                  <Palette className="h-4 w-4" />
+                </Button>
+              </ChatThemeSelector>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Group settings" title="Group info & settings" onClick={() => { setGroupSettingsFromList(false); setGroupSettingsOpen(true); }}>
+                <MoreVertical className="h-4 w-4" />
+              </Button>
             </>
             ) : (
             <>
-
-            <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
-              <ArrowLeft className="w-4 h-4" />
-            </Button>
-            <button
-              type="button"
-              onClick={() => {
-                // Close the conversation before routing so the chat overlay
-                // never covers the profile being opened.
-                setActiveId(null);
-                navigateToProfile(navigate, activeChat.peerId, activeChat.peerName);
-              }}
-              className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
-              aria-label={`Open ${activeChat.peerName}'s profile`}
-              title={`Open ${activeChat.peerName}'s profile`}
-            >
-              <Avatar className="h-8 w-8 shrink-0 cursor-pointer">
-                <AvatarImage src={activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
-                <AvatarFallback>{(activeChat.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0">
-                <p className="font-semibold text-sm truncate hover:underline">{activeChat.peerName}</p>
-                <p className="text-xs text-muted-foreground">
-                  {activeChat.relation === 'mutual' ? 'You follow each other' : activeChat.relation === 'follower' ? 'Follows you' : 'You follow them'}
-                  {activeChat.online ? ' · Online' : ''}
-                </p>
+              <Button variant="ghost" size="icon" className="h-8 w-8 -ml-1 mr-1" onClick={() => { setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setChatMenuOpen(false); refreshThreads(); void refreshGroups(); }} aria-label="Back to chat list" title="Back to chat list">
+                <ArrowLeft className="w-4 h-4" />
+              </Button>
+              <button
+                type="button"
+                onClick={() => openContactInfo()}
+                className="flex min-w-0 flex-1 items-center gap-3 rounded-md text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/50"
+                aria-label={`Open ${activeChat.peerName}'s contact info`}
+                title="Contact info"
+              >
+                <Avatar className="h-9 w-9 shrink-0">
+                  <AvatarImage src={activeChat.peerAvatar} alt={`${activeChat.peerName} avatar`} />
+                  <AvatarFallback>{(activeChat.peerName || '?')[0]?.toUpperCase()}</AvatarFallback>
+                </Avatar>
+                <div className="min-w-0 flex-1">
+                  <p className="truncate text-sm font-semibold">{activeChat.peerName}</p>
+                  <p className="truncate text-xs text-muted-foreground">
+                    {activeChat.online ? 'online' : activeChat.relation === 'mutual' ? 'You follow each other' : activeChat.relation === 'follower' ? 'Follows you' : 'You follow them'}
+                  </p>
+                </div>
+              </button>
+              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Open camera" title="Open camera" onClick={() => setCameraOpen(true)}>
+                <Camera className="h-4 w-4" />
+              </Button>
+              <ChatThemeSelector>
+                <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Chat wallpaper" title="Chat wallpaper">
+                  <Palette className="h-4 w-4" />
+                </Button>
+              </ChatThemeSelector>
+              <div className="relative shrink-0">
+                <Button variant="ghost" size="icon" className="h-8 w-8" aria-label="More options" title="More options" onClick={() => setChatMenuOpen((v) => !v)}>
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+                {chatMenuOpen && (
+                  <>
+                    <div className="fixed inset-0 z-40" onClick={() => setChatMenuOpen(false)} />
+                    <div className="absolute right-0 top-9 z-50 w-56 overflow-hidden rounded-lg border bg-popover py-1 shadow-xl">
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => openContactInfo()}><Users className="h-4 w-4" /> Contact info</button>
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); setActiveId(null); navigateToProfile(navigate, activeChat.peerId, activeChat.peerName); }}><ExternalLink className="h-4 w-4" /> Equyvo profile</button>
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); setReportOpen(true); }}><Flag className="h-4 w-4" /> Report contact</button>
+                      <div className="my-1 border-t" />
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); archiveThread(activeChat.id); showSuccess('Archived'); }}><Archive className="h-4 w-4" /> Archive chat</button>
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent" onClick={() => { setChatMenuOpen(false); if (window.confirm('Clear all messages in this chat?')) { void clearThread(activeChat.id); refreshMsgs(activeChat.id); refreshThreads(); } }}><Eraser className="h-4 w-4" /> Clear chat</button>
+                      <button className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-red-500 hover:bg-accent" onClick={() => { setChatMenuOpen(false); if (window.confirm('Delete this chat?')) { deleteThread(activeChat.id); setActiveId(null); refreshThreads(); } }}><Trash2 className="h-4 w-4" /> Delete chat</button>
+                    </div>
+                  </>
+                )}
               </div>
-            </button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0"
-              aria-label="Open camera"
-              title="Open camera"
-              onClick={() => setCameraOpen(true)}
-            >
-              <Camera className="w-4 h-4" />
-            </Button>
-            {/* Background selector reachable even while the chat is open
-                (the desktop sidebar header sits under the chat panel overlay). */}
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-8 w-8 shrink-0"
-              aria-label="Clear chat"
-              title="Clear chat"
-              onClick={() => {
-                if (!activeChat) return;
-                const ok = window.confirm('Clear all messages in this chat?');
-                if (!ok) return;
-                void clearThread(activeChat.id);
-                refreshMsgs(activeChat.id);
-                refreshThreads();
-              }}
-            >
-              <Eraser className="w-4 h-4" />
-            </Button>
-            {!isGroupChat && (
-              <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" aria-label="Archive chat" title="Archive chat" onClick={() => {
-                if (!activeChat) return;
-                archiveThread(activeChat.id);
-                showSuccess('Archived');
-              }}>
-                <Archive className="w-4 h-4" />
-              </Button>
-            )}
-            {isGroupChat && (isGroupLeader || isGroupCoLeader) && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                aria-label="Add member"
-                title="Add member"
-                onClick={async () => {
-                  const q = window.prompt('Search profile name to add');
-                  if (!q) return;
-                  try {
-                    const res: any = await api.search(q, 5);
-                    const users = res?.data?.users || res?.data?.results || [];
-                    if (!Array.isArray(users) || users.length === 0) { showError('No profile found'); return; }
-                    const u = users[0];
-                    await api.groupAddMember(activeGroupId!, String(u.id));
-                    await refreshGroups();
-                    showSuccess('Member added');
-                  } catch { showError('Could not add member'); }
-                }}
-              >
-                <Plus className="w-4 h-4" />
-              </Button>
-            )}
-            {isGroupChat && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                aria-label={groupMuted ? 'Unmute group' : 'Mute group'}
-                title={groupMuted ? 'Unmute group' : 'Mute group'}
-                onClick={() => {
-                  const next = !groupMuted;
-                  setGroupMuted(next);
-                  try {
-                    if (next) localStorage.setItem('equyvo_mute_group_' + activeGroupId, '1');
-                    else localStorage.removeItem('equyvo_mute_group_' + activeGroupId);
-                  } catch { /* ignore */ }
-                }}
-              >
-                <Volume2 className="w-4 h-4" />
-              </Button>
-            )}
-            {isGroupChat && (isGroupLeader || isGroupCoLeader) && (
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                aria-label="Edit group"
-                title="Edit group name/description"
-                onClick={async () => {
-                  const name = window.prompt('Group name', activeGroupObj?.name || '');
-                  if (name === null) return;
-                  const description = window.prompt('Group description', activeGroupObj?.description || '');
-                  if (description === null) return;
-                  try {
-                    await api.groupProfile(activeGroupId!, { name: name.trim() || undefined, description: description.trim() });
-                    await refreshGroups();
-                    showSuccess('Group updated');
-                  } catch { showError('Could not update group'); }
-                }}
-              >
-                <MoreVertical className="w-4 h-4" />
-              </Button>
-            )}
-            {isGroupChat && isGroupLeader && (
-              <select
-                className="h-8 rounded-md border bg-background px-2 text-xs"
-                value={groupReplyPerm}
-                onChange={async (e) => {
-                  try { await api.groupSettings(activeGroupId!, e.target.value); await refreshGroups(); } catch { /* ignore */ }
-                }}
-                aria-label="Reply permission"
-                title="Who can reply"
-              >
-                <option value="all">All can reply</option>
-                <option value="leaders">Leaders can reply</option>
-                <option value="leader">Only leader</option>
-              </select>
-            )}
-            <ChatThemeSelector>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-8 w-8 shrink-0"
-                aria-label="Customize chat background"
-                title="Customize chat background"
-              >
-                <Palette className="w-4 h-4" />
-              </Button>
-            </ChatThemeSelector>
             </>
-
             )
+
             )}
           </div>
 
@@ -2009,194 +1878,93 @@ const ChatSidebar = ({ isMobile = false }: { isMobile?: boolean }) => {
               {(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}
             </div>
           )}
-          \"\"
         </div>
       </div>,
       document.body
     )}
-    {groupSettingsOpen && createPortal(
-      <div className="fixed inset-0 z-[85] bg-background flex flex-col" onClick={() => setGroupSettingsOpen(false)}>
-        <div className="flex items-center gap-3 p-3 border-b shrink-0 pt-8" onClick={(e) => e.stopPropagation()}>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setGroupSettingsOpen(false)} aria-label="Close settings">
-            <X className="w-4 h-4" />
-          </Button>
-          <h2 className="font-bold text-lg">Group settings</h2>
-          <div className="flex-1" />
-        </div>
-        <div className="flex-1 overflow-auto p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
-          <div className="flex items-center gap-3">
-            <Avatar className="h-12 w-12">
-              <AvatarImage src={activeGroupObj?.avatar || ''} />
-              <AvatarFallback>{(activeGroupObj?.name || 'G').slice(0,2).toUpperCase()}</AvatarFallback>
-            </Avatar>
-            <div className="min-w-0">
-              <p className="font-semibold truncate">{activeGroupObj?.name}</p>
-              <p className="text-xs text-muted-foreground">{(activeGroupObj?.members || []).length} members</p>
-            </div>
-            {(isGroupLeader || isGroupCoLeader) && (
-              <Button size="sm" variant="outline" onClick={() => setGroupEditOpen(true)}>Edit</Button>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Members</p>
-            <div className="space-y-1">
-              {(activeGroupObj?.members || []).map((m: string) => (
-                <div key={m} className="flex items-center justify-between gap-2 rounded-md border p-2 text-sm">
-                  <span className="truncate">{memberNames[m] || m}</span>
-                  <div className="flex items-center gap-1">
-                    {m === activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Leader</span>}
-                    {Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m) && m !== activeGroupObj?.leaderId && <span className="text-xs text-muted-foreground">Co-leader</span>}
-                    {isGroupLeader && m !== meId && (
-                      <>
-                        <Button size="sm" variant="ghost" disabled={Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m)} onClick={async () => {
-                          const ok = window.confirm(`Promote ${memberNames[m] || m} to co-leader?`);
-                          if (!ok) return;
-                          try { const r: any = await api.groupSetRole(activeGroupId!, m, 'coleader'); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Promoted to co-leader'); } catch { showError('Could not update role'); }
-                        }}>Promote</Button>
-                        <Button size="sm" variant="ghost" disabled={!(Array.isArray(activeGroupObj?.coLeaders) && activeGroupObj.coLeaders.includes(m))} onClick={async () => {
-                          const ok = window.confirm(`Demote ${memberNames[m] || m} from co-leader to member?`);
-                          if (!ok) return;
-                          try { const r: any = await api.groupSetRole(activeGroupId!, m, 'member'); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Demoted to member'); } catch { showError('Could not update role'); }
-                        }}>Demote</Button>
-                        <Button size="sm" variant="ghost" onClick={async () => {
-                          const ok = window.confirm(`Remove ${memberNames[m] || m} from the group?`);
-                          if (!ok) return;
-                          try { const r: any = await api.groupRemoveMember(activeGroupId!, m); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Removed'); } catch { showError('Could not remove'); }
-                        }}><Trash2 className="w-4 h-4" /></Button>
-                      </>
-                    )}
-                    {!isGroupLeader && m === meId && (
-                      <Button size="sm" variant="ghost" onClick={async () => {
-                        try { const r: any = await api.groupRemoveMember(activeGroupId!, meId); if (r?.error) { showError(r.error); return; } await refreshGroups(); showSuccess('Left group'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not leave'); }
-                      }}>Leave</Button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-            {(isGroupLeader || isGroupCoLeader) && (
-              <Button size="sm" variant="outline" onClick={async () => {
-                const q = window.prompt('Search profile name to add');
-                if (!q) return;
-                try {
-                  const res: any = await api.search(q, 5);
-                  const users = res?.data?.users || res?.data?.results || [];
-                  if (!Array.isArray(users) || users.length === 0) { showError('No profile found'); return; }
-                  const u = users[0];
-                  const r: any = await api.groupAddMember(activeGroupId!, String(u.id));
-                  if (r?.error) { showError(r.error); return; }
-                  await refreshGroups();
-                  showSuccess('Member added');
-                } catch { showError('Could not add member'); }
-              }}><Plus className="w-4 h-4 mr-1" /> Add member</Button>
-            )}
-          </div>
-
-          {isGroupLeader && (
-            <div className="space-y-2">
-              <p className="text-sm font-medium">Reply permission</p>
-              <select className="h-8 rounded-md border bg-background px-2 text-xs" value={groupReplyPerm} onChange={async (e) => {
-                try { const r: any = await api.groupSettings(activeGroupId!, e.target.value); if (r?.error) { showError(r.error); return; } await refreshGroups(); } catch { showError('Could not update settings'); }
-              }}>
-                <option value="all">All can reply</option>
-                <option value="leaders">Leaders can reply</option>
-                <option value="leader">Only leader</option>
-              </select>
-            </div>
-          )}
-
-          <div className="space-y-2">
-            <p className="text-sm font-medium">Chat features</p>
-            <div className="flex flex-wrap gap-2">
-              <Button size="sm" variant="outline" onClick={() => setCameraOpen(true)}><Camera className="w-4 h-4 mr-1" /> Camera</Button>
-              <ChatThemeSelector>
-                <Button size="sm" variant="outline"><Palette className="w-4 h-4 mr-1" /> Theme</Button>
-              </ChatThemeSelector>
-              <Button size="sm" variant="outline" onClick={() => {
-                const next = !groupMuted;
-                setGroupMuted(next);
-                try { if (next) localStorage.setItem('equyvo_mute_group_' + activeGroupId, '1'); else localStorage.removeItem('equyvo_mute_group_' + activeGroupId); } catch {}
-              }}><Volume2 className="w-4 h-4 mr-1" /> {groupMuted ? 'Unmute' : 'Mute'}</Button>
-            </div>
-          </div>
-
-          {isGroupLeader && (
-            <div className="space-y-2">
-              <Button size="sm" variant="destructive" onClick={async () => {
-                if (!activeGroupId) return;
-                const ok = window.confirm('Delete this group permanently?');
-                if (!ok) return;
-                try { const r: any = await api.groupDeleteGroup(activeGroupId); if (r?.error) { showError(r.error); return; } setGroups((prev: any[]) => prev.filter((g: any) => g.id !== activeGroupId)); await refreshGroups(); showSuccess('Group deleted'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not delete group'); }
-              }}>Delete group</Button>
-              <Button size="sm" variant="outline" onClick={async () => {
-                if (!activeGroupId) return;
-                try { const r: any = await api.groupArchive(activeGroupId, true); if (r?.error) { showError(r.error); return; } setGroups((prev: any[]) => prev.map((g: any) => g.id === activeGroupId ? { ...g, archived: true } : g)); await refreshGroups(); showSuccess('Archived'); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]); setGroupSettingsOpen(false); } catch { showError('Could not archive'); }
-              }}>Archive group</Button>
-            </div>
-          )}
-        </div>
-      </div>,
-      document.body
+    {groupSettingsOpen && activeGroupObj && (
+      <GroupSettings
+        open={groupSettingsOpen}
+        group={activeGroupObj}
+        meId={meId}
+        muted={groupMuted}
+        onClose={() => {
+          setGroupSettingsOpen(false);
+          if (groupSettingsFromList) { setActiveGroupId(null); setIsGroupChat(false); setGroupSettingsFromList(false); }
+        }}
+        onToggleMute={() => {
+          const next = !groupMuted;
+          setGroupMuted(next);
+          try {
+            if (next) localStorage.setItem('equyvo_mute_group_' + activeGroupId, '1');
+            else localStorage.removeItem('equyvo_mute_group_' + activeGroupId);
+          } catch { /* ignore */ }
+        }}
+        onUpdated={async () => { await refreshGroups(); if (activeGroupId) await refreshGroupMsgs(activeGroupId); }}
+        onClosedChat={() => {
+          setActiveGroupId(null); setIsGroupChat(false); setActiveId(null);
+          setMsgs([]); setGroupMsgs([]); setGroupSettingsOpen(false);
+          refreshThreads(); void refreshGroups();
+        }}
+        onOpenContact={(id, name, avatar) => openContactInfo({ id, name, avatar })}
+        onCamera={() => setCameraOpen(true)}
+      />
     )}
-    {groupEditOpen && createPortal(
-      <div className="fixed inset-0 z-[90] bg-background flex flex-col" onClick={() => setGroupEditOpen(false)}>
-        <div className="flex items-center gap-3 p-3 border-b shrink-0 pt-8" onClick={(e) => e.stopPropagation()}>
-          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setGroupEditOpen(false)} aria-label="Close">
-            <X className="w-4 h-4" />
-          </Button>
-          <h2 className="font-bold text-lg">Edit group</h2>
-          <div className="flex-1" />
-        </div>
-        <div className="flex-1 overflow-auto p-4 space-y-4" onClick={(e) => e.stopPropagation()}>
-          <div className="flex flex-col items-center gap-2">
-            {groupEditImage ? (
-              <img src={groupEditImage} alt="Group" className="h-24 w-24 rounded-full object-cover" />
-            ) : (
-              <div className="h-24 w-24 rounded-full bg-muted flex items-center justify-center text-2xl font-bold">
-                {(groupEditName || 'G').slice(0,2).toUpperCase()}
+    {contactInfoOpen && contactTarget && (
+      <ChatContactInfo
+        open={contactInfoOpen}
+        peerId={contactTarget.id}
+        peerName={contactTarget.name}
+        peerAvatar={contactTarget.avatar}
+        online={!isGroupChat ? !!activeChat?.online : false}
+        muted={(() => { try { return localStorage.getItem('equyvo_mute_contact_' + contactTarget.id) === '1'; } catch { return false; } })()}
+        blocked={isBlocked(contactTarget.id)}
+        messages={!isGroupChat && activeChat ? msgs : []}
+        onClose={() => { setContactInfoOpen(false); setContactPeer(null); }}
+        onToggleMute={() => {
+          const key = 'equyvo_mute_contact_' + contactTarget.id;
+          let next = false;
+          try { next = localStorage.getItem(key) !== '1'; if (next) localStorage.setItem(key, '1'); else localStorage.removeItem(key); } catch { /* ignore */ }
+          showSuccess(next ? 'Notifications muted' : 'Notifications on');
+        }}
+        onSetBlocked={(blocked) => setBlockedPeer(blocked, contactTarget.id)}
+        onViewProfile={() => {
+          const id = contactTarget.id; const name = contactTarget.name;
+          setContactInfoOpen(false); setContactPeer(null); setActiveId(null); setActiveGroupId(null); setIsGroupChat(false); setMsgs([]);
+          navigateToProfile(navigate, id, name);
+        }}
+        onClearChat={() => {
+          if (!activeChat || isGroupChat) { showError('Open a 1-on-1 chat to clear this conversation.'); return; }
+          if (window.confirm('Clear all messages in this chat?')) { void clearThread(activeChat.id); refreshMsgs(activeChat.id); refreshThreads(); setContactInfoOpen(false); }
+        }}
+        onDeleteChat={() => {
+          if (!activeChat || isGroupChat) { showError('Open a 1-on-1 chat to delete this conversation.'); return; }
+          if (window.confirm('Delete this chat?')) { deleteThread(activeChat.id); setActiveId(null); setMsgs([]); refreshThreads(); setContactInfoOpen(false); }
+        }}
+      />
+    )}
+    {blockedOpen && createPortal(
+      <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70 p-4" onClick={() => setBlockedOpen(false)}>
+        <div className="w-full max-w-sm rounded-xl bg-card p-5" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold">Blocked contacts</h3>
+            <Button variant="ghost" size="icon" onClick={() => setBlockedOpen(false)} aria-label="Close"><X className="h-4 w-4" /></Button>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">Blocked contacts cannot message you or add you to new groups.</p>
+          <div className="mt-3 max-h-72 space-y-1 overflow-y-auto">
+            {[...blockedIds].map((id) => (
+              <div key={id} className="flex items-center justify-between gap-2 rounded-lg border p-2.5">
+                <span className="min-w-0 flex-1 truncate text-sm">{id}</span>
+                <Button size="sm" variant="outline" onClick={async () => {
+                  try { await setBlockedPeer(false, id); showSuccess('Contact unblocked'); } catch { showError('Could not unblock'); }
+                }}>Unblock</Button>
               </div>
-            )}
-            {(isGroupLeader || isGroupCoLeader) && (
-              <label className="cursor-pointer rounded-md bg-primary/10 px-3 py-1.5 text-sm text-primary hover:bg-primary/20">
-                Change photo
-                <input type="file" accept="image/*" className="hidden" onChange={async (e) => {
-                  const f = e.target.files?.[0];
-                  if (!f || !activeGroupId) return;
-                  try {
-                    const up = await api.uploadFile(f, 'equyvo/group/avatars');
-                    const url = up?.data?.secureUrl;
-                    if (!url) { showError('Upload failed'); return; }
-                    setGroupEditImage(url);
-                  } catch { showError('Upload failed'); }
-                }} />
-              </label>
-            )}
+            ))}
+            {blockedIds.size === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No blocked contacts.</p>}
           </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Group name</label>
-            <Input value={groupEditName} onChange={(e) => setGroupEditName(e.target.value)} disabled={!(isGroupLeader || isGroupCoLeader)} />
-          </div>
-          <div className="space-y-1">
-            <label className="text-sm font-medium">Description</label>
-            <Input value={groupEditDesc} onChange={(e) => setGroupEditDesc(e.target.value)} disabled={!(isGroupLeader || isGroupCoLeader)} />
-          </div>
-          {(isGroupLeader || isGroupCoLeader) && (
-            <Button size="sm" onClick={async () => {
-              if (!activeGroupId) return;
-              try {
-                const r: any = await api.groupProfile(activeGroupId, { name: groupEditName.trim() || undefined, description: groupEditDesc.trim(), image: groupEditImage || undefined });
-                if (r?.error) { showError(r.error); return; }
-                await refreshGroups();
-                showSuccess('Group updated');
-                setGroupEditOpen(false);
-              } catch { showError('Could not update group'); }
-            }}>Save</Button>
-          )}
         </div>
-      </div>,
-      document.body
-    )}
+      </div>, document.body)}
+    <ReportModal isOpen={reportOpen} onClose={() => setReportOpen(false)} contentId={activeChat?.peerId || ''} contentType="profile" />
     {showArchived && createPortal(
       <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/70" onClick={() => setShowArchived(false)}>
         <div className="w-96 max-h-[80vh] overflow-auto rounded-lg bg-card p-4 space-y-3" onClick={(e) => e.stopPropagation()}>

@@ -1068,6 +1068,16 @@ export const api = {
       { method: 'PUT', body: JSON.stringify({ enabled }) },
     ),
 
+  // Contact blocks (WhatsApp-style). Stored server-side per account; a blocked
+  // peer can no longer push messages to you (and you cannot message them).
+  listBlocks: () =>
+    request<{ data: { ids: string[] }; error: null }>('/blocks'),
+  setUserBlock: (userId: string, blocked: boolean) =>
+    request<{ data: { ids: string[] }; error: null }>('/blocks', {
+      method: 'POST',
+      body: JSON.stringify({ userId, blocked }),
+    }),
+
   // Presence heartbeat — updates the signed-in account's lastSeen so followers/
   // following can see an online indicator in chats.
   presence: () =>

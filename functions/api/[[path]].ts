@@ -1767,6 +1767,31 @@ async function canChat(env, viewerId, peerId) {
     return false;
   } catch { return false; }
 }
+// ── Per-account block list (WhatsApp-style contact blocking) ───────────────
+// Stored per blocker as a canonical id list. The reverse key is written too so
+// the transport can refuse delivery in both directions without a scan.
+const blocksKey = (id) => 'userblocks:' + String(id || '').toLowerCase();
+const blockedByKey = (id) => 'blockedby:' + String(id || '').toLowerCase();
+async function readBlockedIds(env, id) {
+  try {
+    const raw = await env.EQUYVO_KV.get(blocksKey(id));
+    const arr = raw ? JSON.parse(raw) : [];
+    return Array.isArray(arr) ? arr.map((x) => String(x).toLowerCase()) : [];
+  } catch { return []; }
+}
+async function isBlockedBetween(env, a, b) {
+  if (!a || !b || a === b) return false;
+  try {
+    const [mine, theirs] = await Promise.all([
+      readBlockedIds(env, a),
+      (async () => { try { const raw = await env.EQUYVO_KV.get(blocksKey(b)); const arr = raw ? JSON.parse(raw) : []; return Array.isArray(arr) ? arr.map((x) => String(x).toLowerCase()) : []; } catch { return []; } })(),
+    ]);
+    const x = String(a).toLowerCase();
+    const y = String(b).toLowerCase();
+    return mine.includes(y) || theirs.includes(x);
+  } catch { return false; }
+}
+
 async function enqueueModeration(env, entry) {
   try {
     const raw = await env.EQUYVO_KV.get(KEYS.MOD_QUEUE);
@@ -7310,6 +7335,36 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
     //   Delivery (`delivered`, double tick) + read (`seen`, Seen label) are
     //   confirmed via GET messages / POST seen polling below.
     //   Gate: either side must follow the other, else 403 (strangers blocked).
+    // ─── CONTACT BLOCKS (WhatsApp-style) ───────────────────────────────────
+    // GET /api/blocks -> { ids }  |  POST /api/blocks { userId, blocked:bool }
+    if (path === '/api/blocks') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      if (method === 'GET') {
+        return json({ data: { ids: await readBlockedIds(env, actor.id) }, error: null }, 200, cors);
+      }
+      if (method === 'POST') {
+        let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
+        const clean = sanitizeBody(raw);
+        const target = await canonicalAccountId(env, String(clean.userId || '').trim());
+        if (!target || target === actor.id) return json({ error: 'Invalid user' }, 400, cors);
+        const list = await readBlockedIds(env, actor.id);
+        const shouldBlock = clean.blocked !== false;
+        const next = shouldBlock ? Array.from(new Set([target, ...list])) : list.filter((x) => x !== String(target).toLowerCase());
+        try {
+          await kv.put(blocksKey(actor.id), JSON.stringify(next.slice(0, 500)));
+          const revRaw = await kv.get(blockedByKey(target));
+          const rev = revRaw ? JSON.parse(revRaw) : [];
+          const arr = Array.isArray(rev) ? rev : [];
+          const me = String(actor.id).toLowerCase();
+          const nextRev = shouldBlock ? Array.from(new Set([me, ...arr])) : arr.filter((x) => x !== me);
+          await kv.put(blockedByKey(target), JSON.stringify(nextRev.slice(0, 500)));
+        } catch {}
+        return json({ data: { ids: next }, error: null }, 200, cors);
+      }
+    }
+
     if (path.match(/^\/api\/chat\//) && path.endsWith('/send') && method === 'POST') {
       const actor = await getActor(request, env);
       const denied = actorResponse(actor, env, cors);
@@ -7321,6 +7376,9 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       if (!rl.ok) return json({ error: 'Too many requests', retryAfter: 60 }, 429, cors);
       if (!(await canChat(env, actor.id, peer))) {
         return json({ error: 'You can only message accounts you follow or that follow you.' }, 403, cors);
+      }
+      if (await isBlockedBetween(env, actor.id, peer)) {
+        return json({ error: 'You cannot message this account.' }, 403, cors);
       }
       let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
       const clean = sanitizeBody(raw);
@@ -9413,7 +9471,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         const groups = [];
         for (const id of ids.slice(0, 100)) {
           const g = await readGroup(id);
-          if (g) groups.push({ id: g.id, name: g.name, avatar: g.avatar || '', description: g.description || '', leaderId: g.leaderId, coLeaders: g.coLeaders || [], members: g.members || [], archived: !!g.archived, clearedAt: g.clearedAt || 0, createdAt: g.createdAt });
+          if (g) groups.push({ id: g.id, name: g.name, avatar: g.avatar || '', description: g.description || '', leaderId: g.leaderId, coLeaders: g.coLeaders || [], members: g.members || [], settings: g.settings || { replyPermission: 'all' }, archived: !!g.archived, clearedAt: g.clearedAt || 0, createdAt: g.createdAt });
         }
         return json({ data: { groups }, error: null }, 200, cors);
       }
@@ -9446,8 +9504,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
       if (groupId) {
         const group = await readGroup(groupId);
         if (!group) return json({ error: 'Group not found' }, 404, cors);
-        const isMember = Array.isArray(group.members) && group.members.includes(actor.id ?? '');
-        // actor may be null for some reads; resolve below per route.
+        // Membership is resolved per sub-route below (each resolves its own actor).
 
         // GET /api/groups/:id
         if (!sub && method === 'GET') {
@@ -9534,10 +9591,11 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           }
           if (clean.description !== undefined) {
             group.description = String(clean.description || '').trim().slice(0, 300);
-           if (clean.image !== undefined || clean.avatar !== undefined) {
-             const img = String(clean.image || clean.avatar || '').trim().slice(0, 2000);
-             group.avatar = img;
-           }
+          }
+          // Avatar must update independently of the description — otherwise
+          // changing only the group photo silently does nothing (group UI bug).
+          if (clean.image !== undefined || clean.avatar !== undefined) {
+            group.avatar = String(clean.image || clean.avatar || '').trim().slice(0, 2000);
           }
           await writeGroup(group);
           return json({ data: { group }, error: null }, 200, cors);
@@ -9608,6 +9666,13 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           const denied = actorResponse(actor, env, cors);
           if (denied) return denied;
           if (!group.members.includes(actor.id)) return json({ error: 'Forbidden' }, 403, cors);
+          // A member who blocked the actor (or vice versa) must not be able to
+          // push messages into a shared group — mirror 1:1 block behaviour.
+          let blockedMember = false;
+          for (const m of (group.members || [])) {
+            if (m !== actor.id && await isBlockedBetween(env, actor.id, m)) { blockedMember = true; break; }
+          }
+          if (blockedMember) return json({ error: 'You cannot message a blocked account.' }, 403, cors);
           let raw; try { raw = await readJson(request); } catch (e) { return json({ error: e.message || 'Invalid body' }, 400, cors); }
           const clean = sanitizeBody(raw);
           const text = String(clean.text || '').slice(0, 2000);
