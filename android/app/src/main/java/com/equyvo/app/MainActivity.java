@@ -43,7 +43,10 @@ public class MainActivity extends BridgeActivity {
 
     private String lastInsetsPayload = "";
     private volatile boolean fullscreenActive = false;
+    /** True while the web layer shows its draggable IN-APP mini player. */
+    private volatile boolean inAppPipActive = false;
     private volatile boolean inPipMode = false;
+    private final Handler systemPipHandler = new Handler(Looper.getMainLooper());
     private int pendingTop = 0;
     private int pendingBottom = 0;
     private int pendingRetry = 0;
@@ -213,35 +216,76 @@ public class MainActivity extends BridgeActivity {
         }
     }
 
+    /**
+     * Promote the current in-app mini player to a native system PiP window.
+     *
+     * Before the OS snapshots the Activity we tell the web layer to reveal
+     * ONLY the full-screen media (remove the in-app mini window and hide every
+     * overlay). That snapshot is what the floating PiP window shows, so it
+     * can never contain the app shell/header. The short delay lets the web
+     * layout settle before the snapshot is taken.
+     */
+    private void enterSystemPip() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode()) {
+            return;
+        }
+        try {
+            if (bridge != null && bridge.getWebView() != null) {
+                bridge.getWebView().evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('prepareForSystemPip'));", null);
+            }
+        } catch (Throwable ignored) {}
+
+        systemPipHandler.postDelayed(() -> {
+            try {
+                if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
+                PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                        .setAspectRatio(new Rational(9, 16));
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
+                }
+                enterPictureInPictureMode(b.build());
+                inPipMode = true;
+            } catch (Throwable ignored) {}
+        }, 180L);
+    }
+
     /** JS bridge for system-level Picture-in-Picture. */
     public class PiPBridge {
+        /** Kept for compatibility. Promotes an active in-app PiP to system PiP. */
         @android.webkit.JavascriptInterface
         public void enter() {
             runOnUiThread(() -> {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    try {
-                        PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                                .setAspectRatio(new Rational(9, 16));
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                            try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
-                        }
-                        enterPictureInPictureMode(b.build());
-                        inPipMode = true;
-                    } catch (Throwable ignored) {}
-                }
+                if (inAppPipActive || fullscreenActive) enterSystemPip();
             });
         }
 
+        /**
+         * Ask the web layer to exit PiP. System PiP dismissal is driven by the
+         * OS controls (expand / close / drag-to-close), which fire
+         * onPictureInPictureModeChanged -> pipModeChanged on the web side.
+         */
         @android.webkit.JavascriptInterface
         public void exit() {
             runOnUiThread(() -> {
-                try { moveTaskToBack(false); } catch (Throwable ignored) {}
+                try {
+                    if (bridge != null && bridge.getWebView() != null) {
+                        bridge.getWebView().evaluateJavascript(
+                                "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+                    }
+                } catch (Throwable ignored) {}
             });
         }
 
         @android.webkit.JavascriptInterface
         public void setFullscreenActive(boolean active) {
             fullscreenActive = active;
+        }
+
+        /** Set by the web layer when the in-app mini player opens/closes. */
+        @android.webkit.JavascriptInterface
+        public void setInAppPip(boolean active) {
+            inAppPipActive = active;
         }
 
         @android.webkit.JavascriptInterface
@@ -253,20 +297,40 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        // Auto-enter system PiP when the user leaves the app while a fullscreen
-        // viewer is active, so the mini window persists outside the app and
-        // stays in the recent-apps list (standard Android PiP behaviour).
-        try {
-            if (fullscreenActive && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !isInPictureInPictureMode()) {
-                PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                        .setAspectRatio(new Rational(9, 16));
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
-                }
-                enterPictureInPictureMode(b.build());
-                inPipMode = true;
-            }
-        } catch (Throwable ignored) {}
+        // Only promote to a system PiP window when the user explicitly asked
+        // for PiP (the in-app mini player is active). A plain full-screen
+        // viewer must simply background like any other screen.
+        if (inAppPipActive) enterSystemPip();
+    }
+
+    @Override
+    public void onStop() {
+        super.onStop();
+        // Some OEMs / navigation paths do not call onUserLeaveHint (recents,
+        // screen off, app switcher). Cover those here so a PiP request always
+        // turns into a persistent system window when the app is left.
+        if (inAppPipActive && !isInPictureInPictureMode() && !isFinishing()) {
+            enterSystemPip();
+        }
+    }
+
+    @Override
+    public void onStart() {
+        super.onStart();
+        // Returning from a system PiP window that was dismissed while the app
+        // was in the background: make sure the web layer restores its normal
+        // full-screen viewer instead of a stale content-only appearance.
+        if (!isInPictureInPictureMode() && inPipMode) {
+            inPipMode = false;
+            systemPipHandler.postDelayed(() -> {
+                try {
+                    if (bridge != null && bridge.getWebView() != null) {
+                        bridge.getWebView().evaluateJavascript(
+                                "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+                    }
+                } catch (Throwable ignored) {}
+            }, 120L);
+        }
     }
 
     @Override
@@ -279,10 +343,12 @@ public class MainActivity extends BridgeActivity {
                 bridge.getWebView().evaluateJavascript(js, null);
             }
         } catch (Throwable ignored) {}
-        // When the system PiP window is dismissed (close button / drag-to-close /
-        // removed from recents) the activity finishes; make sure state is clean.
-        if (!isInPictureInPictureMode && isFinishing()) {
-            fullscreenActive = false;
+        // When the system PiP window is dismissed (expand, close button,
+        // drag-to-middle/close gesture, or removed from recents) the PiP view
+        // must exit cleanly: clear all PiP state so nothing is left on screen.
+        if (!isInPictureInPictureMode) {
+            inAppPipActive = false;
+            if (isFinishing()) fullscreenActive = false;
         }
     }
 

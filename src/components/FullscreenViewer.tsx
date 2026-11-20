@@ -116,6 +116,48 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // long-press left = rewind at 2× (long videos, moments & live streams).
   useVideo2xPress(() => [videoRef.current]);
   const [isPlaying, setIsPlaying] = useState(true);
+
+  // ── In-app Picture-in-Picture state ────────────────────────────────────
+  // The PiP icon FIRST creates a small, draggable mini player INSIDE the app
+  // that renders ONLY the full-screen media (never the app shell). The native
+  // shell promotes it to a system-level PiP window only when the app is
+  // actually backgrounded, so the mini window keeps floating outside the app.
+  const [isInAppPip, setIsInAppPip] = useState(false);
+  const inAppPipRef = useRef(false);
+  const pipWindowRef = useRef<HTMLDivElement | null>(null);
+  const pipListenersRef = useRef<Array<() => void>>([]);
+
+  /** Tell the native shell whether an in-app PiP is active. */
+  const notifyNativePip = useCallback((active: boolean) => {
+    try {
+      const bridge = (window as any).AndroidPiP;
+      bridge?.setInAppPip?.(active);
+      // Keep fullscreenActive in sync so the shell only auto-promotes to a
+      // system PiP window on app-background when the user actually asked for
+      // PiP (not merely because a full-screen viewer happens to be open).
+      bridge?.setFullscreenActive?.(active);
+      if (active) (window as any).__pipEntered = true;
+      else (window as any).__pipEntered = false;
+    } catch { /* ignore */ }
+  }, []);
+
+  /**
+   * Tear down the in-app PiP mini window and every listener it installed.
+   * Idempotent — safe to call from any exit path (expand, close, system PiP
+   * taking over, unmount, or a system PiP dismissal event).
+   */
+  const removeInAppPipWindow = useCallback(() => {
+    const win = pipWindowRef.current;
+    if (win && win.parentNode) {
+      try { win.parentNode.removeChild(win); } catch { /* ignore */ }
+    }
+    pipWindowRef.current = null;
+    pipListenersRef.current.forEach((off) => { try { off(); } catch { /* ignore */ } });
+    pipListenersRef.current = [];
+    inAppPipRef.current = false;
+    setIsInAppPip(false);
+  }, []);
+
   // Signal fullscreen takeover so the feed banner stays hidden while video
   // plays (no overlays, no interruptions).
   useEffect(() => {
@@ -123,11 +165,28 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     try { (window as any).AndroidPiP?.setFullscreenActive?.(true); } catch { /* ignore */ }
     return () => {
       window.dispatchEvent(new CustomEvent('fullscreenViewerClosed'));
-      try { (window as any).AndroidPiP?.setFullscreenActive?.(false); } catch { /* ignore */ }
+      try {
+        const bridge = (window as any).AndroidPiP;
+        bridge?.setFullscreenActive?.(false);
+        bridge?.setInAppPip?.(false);
+      } catch { /* ignore */ }
+      // Never leave an orphan mini window on screen when the viewer unmounts.
+      const win = pipWindowRef.current;
+      if (win && win.parentNode) {
+        try { win.parentNode.removeChild(win); } catch { /* ignore */ }
+      }
+      pipWindowRef.current = null;
+      pipListenersRef.current.forEach((off) => { try { off(); } catch { /* ignore */ } });
+      pipListenersRef.current = [];
+      inAppPipRef.current = false;
     };
   }, []);
 
-  // When the OS enters PiP, hide all overlays so the mini window shows only content.
+  // When the OS enters PiP, hide all overlays so the mini window shows only
+  // content. When the OS PiP exits (expand button, close button, or dragging
+  // the PiP window to the middle/bottom of the screen to dismiss it), the PiP
+  // view must exit cleanly: drop every minimized/content-only appearance and
+  // bring the full-screen viewer back with its normal control set.
   useEffect(() => {
     const handler = (e: any) => {
       const active = !!e?.detail?.active;
@@ -136,13 +195,77 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(true);
         setShowControls(false);
       } else {
+        removeInAppPipWindow();
+        setIsNativePip(false);
+        setIsMinimized(false);
         setContentOnly(false);
         setHideOverlay(false);
         setShowControls(true);
+        setShowDetailsPanel(true);
+        notifyNativePip(false);
       }
     };
     window.addEventListener('pipModeChanged', handler as EventListener);
     return () => window.removeEventListener('pipModeChanged', handler as EventListener);
+  }, [removeInAppPipWindow, notifyNativePip]);
+
+  // The native shell fires this immediately before it snapshots the Activity
+  // into a system PiP window. Make sure the snapshot contains ONLY the media:
+  // remove the in-app mini window (it must not appear twice) and reveal the
+  // full-screen viewer in content-only mode (all overlays hidden).
+  useEffect(() => {
+    const prepare = () => {
+      removeInAppPipWindow();
+      setIsNativePip(true);
+      setIsMinimized(false);
+      setIsSplitView(false);
+      setContentOnly(true);
+      setHideOverlay(true);
+      setShowControls(false);
+    };
+    window.addEventListener('prepareForSystemPip', prepare as EventListener);
+    return () => window.removeEventListener('prepareForSystemPip', prepare as EventListener);
+  }, [removeInAppPipWindow]);
+
+  // Web (equyvo.acronous.com): leaving the tab while the in-app PiP is active
+  // promotes the <video> to the browser's real PiP window, so it keeps
+  // floating above other windows — the web equivalent of the native path.
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== 'hidden' || !inAppPipRef.current) return;
+      const promote = () => {
+        if (!inAppPipRef.current) return;
+        removeInAppPipWindow();
+        setIsNativePip(true);
+        setIsMinimized(false);
+        setContentOnly(true);
+        setHideOverlay(true);
+        setShowControls(false);
+        const v = videoRef.current as any;
+        try {
+          if (v && (document as any).pictureInPictureEnabled &&
+              typeof v.requestPictureInPicture === 'function' &&
+              !(document as any).pictureInPictureElement) {
+            const r = v.requestPictureInPicture();
+            if (r && typeof r.catch === 'function') r.catch(() => { /* gesture policy may block */ });
+          }
+        } catch { /* ignore */ }
+      };
+      // Let the content-only layout settle before asking the browser for PiP.
+      setTimeout(promote, 60);
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, [removeInAppPipWindow]);
+
+  // When the browser PiP window is dismissed, exit PiP everywhere.
+  useEffect(() => {
+    const onLeave = () => {
+      window.dispatchEvent(new CustomEvent('pipModeChanged', { detail: { active: false } }));
+    };
+    const v = videoRef.current;
+    v?.addEventListener('leavepictureinpicture', onLeave);
+    return () => v?.removeEventListener('leavepictureinpicture', onLeave);
   }, []);
 
   const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
@@ -925,319 +1048,215 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     }
   };
 
+  // Exit the in-app PiP and return to the normal full-screen viewer.
+  const restoreFromPip = useCallback(() => {
+    removeInAppPipWindow();
+    setIsNativePip(false);
+    setIsMinimized(false);
+    notifyNativePip(false);
+    resetDiscoverControls();
+  }, [removeInAppPipWindow, notifyNativePip, resetDiscoverControls]);
+
+  /**
+   * PiP icon handler.
+   *
+   * Tapping PiP ALWAYS enters an in-app mini player first: a small draggable
+   * window that renders ONLY the full-screen media (video/image), never the
+   * app shell. We deliberately do NOT enter system PiP or background the app
+   * here. The native shell watches `inAppPipActive` and promotes this to a
+   * system PiP window only when the user actually leaves the app, so the mini
+   * window keeps floating on screen outside the app. Dismissing that system
+   * window (expand, close, or dragging it to the middle/bottom of the screen)
+   * fires `pipModeChanged(false)` above and clears all PiP state.
+   */
   const handleMinimize = () => {
+    if (inAppPipRef.current) return; // already in PiP
     const video = videoRef.current;
-    const isNative = !!(window as any)?.Capacitor?.isNativePlatform?.();
-    setIsNativePip(isNative);
-    // Hide everything except the content so the PiP window shows only media.
+    const currentTime = video?.currentTime || 0;
+    const isPaused = video ? video.paused : true;
+
+    inAppPipRef.current = true;
+    setIsInAppPip(true);
+    setIsNativePip(false);
+    setIsMinimized(true);
     setContentOnly(true);
     setHideOverlay(true);
     setShowControls(false);
-    setIsMinimized(true);
-    // On native, skip the unreliable WebView PiP and use the native bridge.
-    if (isNative) {
-      try {
-        const bridge = (window as any).AndroidPiP;
-        if (bridge && typeof bridge.enter === 'function') {
-          try { bridge.setFullscreenActive?.(true); } catch { /* ignore */ }
-          // Convert the fullscreen into a small draggable window FIRST (system
-          // PiP, visible outside the app), then push the app to the background.
-          // Entering PiP before exiting is what actually creates the small
-          // window; relying on onUserLeaveHint alone just closed the app.
-          try { bridge.enter(); (window as any).__pipEntered = true; } catch { /* ignore */ }
-          /* stay in PiP instead of backgrounding */
-          return;
-        }
-      } catch { /* ignore */ }
+    setShowDetailsPanel(false);
+    notifyNativePip(true);
+
+    // ── mini window: media ONLY (never the app shell) ──────────────────
+    const win = document.createElement('div');
+    win.id = 'minimized-video-viewer';
+    const isLandscape = (mediaAspect !== null && mediaAspect >= 1) ||
+      (!isPortraitMoment && !isStory && !actualContent?.forcePortrait);
+    win.style.cssText = [
+      'position:fixed',
+      'bottom:84px',
+      'right:16px',
+      `width:${isLandscape ? 320 : 180}px`,
+      `height:${isLandscape ? 180 : 320}px`,
+      'background:#000',
+      'border-radius:12px',
+      'box-shadow:0 10px 35px rgba(0,0,0,.65)',
+      'border:1px solid rgba(255,255,255,.12)',
+      'z-index:2147483000',
+      'overflow:hidden',
+      'cursor:move',
+      'user-select:none',
+      'touch-action:none',
+    ].join(';');
+
+    const mediaStyle = 'width:100%;height:100%;object-fit:contain;background:#000;display:block;';
+    let miniVideo: HTMLVideoElement | null = null;
+    if (isVideoType && fallbackVideoSrc) {
+      miniVideo = document.createElement('video');
+      miniVideo.src = String(fallbackVideoSrc);
+      miniVideo.muted = isMuted;
+      miniVideo.playsInline = true;
+      miniVideo.controls = false;
+      miniVideo.style.cssText = mediaStyle;
+      try { miniVideo.currentTime = currentTime; } catch { /* ignore */ }
+      if (!isPaused) miniVideo.play().catch(() => { /* ignore */ });
+      win.appendChild(miniVideo);
+    } else {
+      const poster = actualContent?.thumbnail || actualContent?.image || actualContent?.mediaUrl ||
+        actualContent?.media || (actualContent as any)?.poster;
+      if (poster) {
+        const img = document.createElement('img');
+        img.src = String(poster);
+        img.draggable = false;
+        img.style.cssText = mediaStyle;
+        win.appendChild(img);
+      } else {
+        const empty = document.createElement('div');
+        empty.style.cssText = 'width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.7);font-size:12px;';
+        empty.textContent = 'Media not available';
+        win.appendChild(empty);
+      }
     }
 
-    // 1. Prefer TRUE system-level Picture-in-Picture (persists across apps,
-    //    draggable across the whole device) — like YouTube/Netflix.
-    try {
-      if (!isNative && video && (document as any).pictureInPictureEnabled && typeof (video as any).requestPictureInPicture === 'function') {
-        (video as any).requestPictureInPicture().catch(() => { /* fall through to native/app fallback */ });
-        // If the promise resolves we are done; if it rejects we fall through.
-        return;
-      }
-    } catch { /* ignore */ }
-
-    // 2. Native Android PiP bridge (system-level, survives app background).
-    try {
-      const bridge = (window as any).AndroidPiP;
-      if (bridge && typeof bridge.enter === 'function') {
-        /* no forced backgrounding */
-        setTimeout(() => { try { bridge.enter(); (window as any).__pipEntered = true; } catch { /* ignore */ } }, 550);
-        // Keep the fullscreen viewer mounted so the PiP window shows THIS
-        // post (not the app shell/header). The user exits via the OS PiP
-        // close affordance; do not tear the viewer down here.
-        return;
-      }
-    } catch { /* ignore */ }
-
-    // 3. Fallback: in-app draggable mini window (legacy).
-    // Create a minimized picture-in-picture style window
-    const minimizedViewer = document.createElement('div');
-    minimizedViewer.id = 'minimized-video-viewer';
-    minimizedViewer.style.cssText = `
-      position: fixed;
-      bottom: 20px;
-      right: 20px;
-      width: ${((mediaAspect !== null && mediaAspect >= 1) || (!isPortraitMoment && !isStory && !actualContent?.forcePortrait)) ? 320 : 180}px;
-      height: ${((mediaAspect !== null && mediaAspect >= 1) || (!isPortraitMoment && !isStory && !actualContent?.forcePortrait)) ? 180 : 320}px;
-      background: black;
-      border-radius: 8px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-      z-index: 1000;
-      overflow: hidden;
-      cursor: move;
-      user-select: none;
-    `;
-    
-    // Add drag functionality
-    let isDragging = false;
-    let initialX;
-    let initialY;
-
-    const dragStart = (e: MouseEvent) => {
-      if (e.target === closeBtn || e.target === expandBtn) return;
-      
-      const rect = minimizedViewer.getBoundingClientRect();
-      initialX = e.clientX - rect.left;
-      initialY = e.clientY - rect.top;
-
-      if (e.target === minimizedViewer || 
-          e.target === dragHandle ||
-          minimizedViewer.contains(e.target as Node)) {
-        isDragging = true;
-        minimizedViewer.style.cursor = 'grabbing';
-      }
+    const makeButton = (label: string, right: string, onClick: () => void) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = label;
+      b.style.cssText = `position:absolute;top:6px;${right};width:26px;height:26px;background:rgba(0,0,0,.72);color:#fff;border:none;border-radius:50%;cursor:pointer;font-size:15px;line-height:1;z-index:2;display:flex;align-items:center;justify-content:center;`;
+      b.onclick = (ev) => { ev.stopPropagation(); onClick(); };
+      b.addEventListener('mousedown', (ev) => ev.stopPropagation());
+      b.addEventListener('touchstart', (ev) => ev.stopPropagation(), { passive: true });
+      return b;
     };
 
-    const dragEnd = () => {
-      isDragging = false;
-      minimizedViewer.style.cursor = 'move';
-    };
-
-    const drag = (e: MouseEvent) => {
-      if (isDragging) {
-        e.preventDefault();
-        
-        const newX = e.clientX - initialX;
-        const newY = e.clientY - initialY;
-
-        // Keep the window within viewport bounds
-        const maxX = window.innerWidth - minimizedViewer.offsetWidth;
-        const maxY = window.innerHeight - minimizedViewer.offsetHeight;
-        
-        const boundedX = Math.max(0, Math.min(newX, maxX));
-        const boundedY = Math.max(0, Math.min(newY, maxY));
-
-        minimizedViewer.style.bottom = 'auto';
-        minimizedViewer.style.right = 'auto';
-        minimizedViewer.style.left = `${boundedX}px`;
-        minimizedViewer.style.top = `${boundedY}px`;
-      }
-    };
-
-    // Add event listeners for dragging (mouse + touch so the mini window is
-    // draggable on every platform, including phones/tablets).
-    document.addEventListener('mousedown', dragStart);
-    document.addEventListener('mouseup', dragEnd);
-    document.addEventListener('mousemove', drag);
-
-    const touchStart = (e: TouchEvent) => {
-      if (e.target === closeBtn || e.target === expandBtn) return;
-      const t = e.touches && e.touches[0];
-      if (!t) return;
-      const rect = minimizedViewer.getBoundingClientRect();
-      initialX = t.clientX - rect.left;
-      initialY = t.clientY - rect.top;
-      isDragging = true;
-      minimizedViewer.style.cursor = 'grabbing';
-    };
-    const touchMove = (e: TouchEvent) => {
-      if (!isDragging) return;
-      e.preventDefault();
-      const t = e.touches && e.touches[0];
-      if (!t) return;
-      const newX = t.clientX - initialX;
-      const newY = t.clientY - initialY;
-      const maxX = window.innerWidth - minimizedViewer.offsetWidth;
-      const maxY = window.innerHeight - minimizedViewer.offsetHeight;
-      const boundedX = Math.max(0, Math.min(newX, maxX));
-      const boundedY = Math.max(0, Math.min(newY, maxY));
-      minimizedViewer.style.bottom = 'auto';
-      minimizedViewer.style.right = 'auto';
-      minimizedViewer.style.left = `${boundedX}px`;
-      minimizedViewer.style.top = `${boundedY}px`;
-    };
-    const touchEnd = () => {
-      isDragging = false;
-      minimizedViewer.style.cursor = 'move';
-    };
-    minimizedViewer.addEventListener('touchstart', touchStart, { passive: false });
-    minimizedViewer.addEventListener('touchmove', touchMove, { passive: false });
-    minimizedViewer.addEventListener('touchend', touchEnd);
-    
-    if (video && fallbackVideoSrc) {
-      // Get current video state
-      const currentTime = video.currentTime;
-      const isPaused = video.paused;
-      
-      const minimizedVideo = document.createElement('video');
-      minimizedVideo.src = fallbackVideoSrc;
-      minimizedVideo.style.cssText = `
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-      `;
-      minimizedVideo.controls = false;
-      minimizedVideo.currentTime = currentTime; // Preserve current time
-      if (!isPaused) {
-        minimizedVideo.play().catch(() => {});
-      }
-      
-      minimizedViewer.appendChild(minimizedVideo);
-    } else if (!isVideoType && (actualContent?.thumbnail || actualContent?.image || actualContent?.mediaUrl || actualContent?.media)) {
-      // For images, show the image
-      const minimizedImage = document.createElement('img');
-      minimizedImage.src = actualContent?.thumbnail || actualContent?.image || actualContent?.mediaUrl || actualContent?.media;
-      minimizedImage.style.cssText = `
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-      `;
-      minimizedViewer.appendChild(minimizedImage);
-    }
-    
-    const closeBtn = document.createElement('button');
-    closeBtn.innerHTML = '×';
-    closeBtn.style.cssText = `
-      position: absolute;
-      top: 8px;
-      right: 8px;
-      width: 24px;
-      height: 24px;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      border: none;
-      border-radius: 50%;
-      cursor: pointer;
-      font-size: 16px;
-      z-index: 1001;
-    `;
-    
-    closeBtn.onclick = () => {
-      const videoElement = minimizedViewer.querySelector('video');
-      if (videoElement) {
-        videoElement.pause();
-      }
-      // Remove drag event listeners
-      document.removeEventListener('mousedown', dragStart);
-      document.removeEventListener('mouseup', dragEnd);
-      document.removeEventListener('mousemove', drag);
-      minimizedViewer.removeEventListener('touchstart', touchStart);
-      minimizedViewer.removeEventListener('touchmove', touchMove);
-      minimizedViewer.removeEventListener('touchend', touchEnd);
-      document.body.removeChild(minimizedViewer);
+    // Close (×): exit PiP entirely and return to the feed.
+    const closeBtn = makeButton('×', 'right:6px', () => {
+      try { miniVideo?.pause(); } catch { /* ignore */ }
+      removeInAppPipWindow();
+      setIsNativePip(false);
       setIsMinimized(false);
-      try { onClose(); } catch {}
-    };
-    
-    // Add expand button
-    const expandBtn = document.createElement('button');
-    expandBtn.innerHTML = '';
-    expandBtn.style.cssText = `
-      position: absolute;
-      top: 8px;
-      right: 40px;
-      width: 24px;
-      height: 24px;
-      background: rgba(0,0,0,0.7);
-      color: white;
-      border: none;
-      border-radius: 50%;
-      cursor: pointer;
-      font-size: 14px;
-      z-index: 1001;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-    `;
-    
-    expandBtn.onclick = () => {
-      // Get current video state
-      const videoElement = minimizedViewer.querySelector('video');
-      const currentTime = videoElement ? videoElement.currentTime : 0;
-      const isPaused = videoElement ? videoElement.paused : true;
-      
-      // Remove drag event listeners
-      document.removeEventListener('mousedown', dragStart);
-      document.removeEventListener('mouseup', dragEnd);
-      document.removeEventListener('mousemove', drag);
-      minimizedViewer.removeEventListener('touchstart', touchStart);
-      minimizedViewer.removeEventListener('touchmove', touchMove);
-      minimizedViewer.removeEventListener('touchend', touchEnd);
-      
-      // Remove minimized viewer
-      document.body.removeChild(minimizedViewer);
-      
-      // Store current state to restore after re-render
-      (window as any).restoreVideoState = { currentTime, isPaused };
-      
-      // Ensure video source is preserved in temp content
-      const restoredContent = {
+      notifyNativePip(false);
+      try { onClose(); } catch { /* ignore */ }
+    });
+
+    // Expand (⤢): exit PiP and restore the full-screen viewer in place.
+    const expandBtn = makeButton('⤢', 'right:38px', () => {
+      const t = miniVideo?.currentTime || 0;
+      const paused = miniVideo ? miniVideo.paused : true;
+      try { miniVideo?.pause(); } catch { /* ignore */ }
+      (window as any).restoreVideoState = { currentTime: t, isPaused: paused };
+      const restored = {
         ...actualContent,
-        restoreTime: currentTime,
-        restorePaused: isPaused,
-        isFromMinimized: true, // Flag to indicate this is from minimized state
-        // Explicitly preserve video sources
+        restoreTime: t,
+        restorePaused: paused,
+        isFromMinimized: true,
         videoUrl: actualContent?.videoUrl || actualContent?.mediaUrl || actualContent?.media || actualContent?.src || fallbackVideoSrc,
         mediaUrl: actualContent?.mediaUrl || actualContent?.videoUrl || fallbackVideoSrc,
         media: actualContent?.media || actualContent?.videoUrl || fallbackVideoSrc,
-        src: actualContent?.src || actualContent?.videoUrl || fallbackVideoSrc
+        src: actualContent?.src || actualContent?.videoUrl || fallbackVideoSrc,
       };
-      
-      // Set temp content for restoration with proper flags
-      (window as any).tempFullscreenContent = restoredContent;
-      
-      // Restore in place (no unmount) so the Discover control set is preserved.
-      try { (window as any).restoreVideoState = { currentTime, isPaused }; } catch {}
+      (window as any).tempFullscreenContent = restored;
+      removeInAppPipWindow();
+      setIsNativePip(false);
       setIsMinimized(false);
-      try { onContentChange?.(restoredContent as any); } catch {}
+      notifyNativePip(false);
       resetDiscoverControls();
+      try { onContentChange?.(restored as any); } catch { /* ignore */ }
+    });
+
+    const dragHint = document.createElement('div');
+    dragHint.textContent = '⠿';
+    dragHint.style.cssText = 'position:absolute;top:7px;left:9px;color:rgba(255,255,255,.55);font-size:14px;z-index:2;pointer-events:none;';
+    win.appendChild(dragHint);
+    win.appendChild(expandBtn);
+    win.appendChild(closeBtn);
+    document.body.appendChild(win);
+    pipWindowRef.current = win;
+
+    // ── drag (mouse + touch) so the PiP is draggable anywhere inside the app ──
+    let dragging = false;
+    let offsetX = 0;
+    let offsetY = 0;
+    const beginDrag = (cx: number, cy: number) => {
+      const r = win.getBoundingClientRect();
+      offsetX = cx - r.left;
+      offsetY = cy - r.top;
+      dragging = true;
+      win.style.cursor = 'grabbing';
     };
-    
-    minimizedViewer.appendChild(expandBtn);
-    minimizedViewer.appendChild(closeBtn);
-    
-    // Add drag handle indicator
-    const dragHandle = document.createElement('div');
-    dragHandle.innerHTML = '⋮⋮';
-    dragHandle.style.cssText = `
-      position: absolute;
-      top: 8px;
-      left: 8px;
-      color: rgba(255,255,255,0.5);
-      font-size: 12px;
-      cursor: move;
-      z-index: 1001;
-      padding: 4px;
-      border-radius: 4px;
-      transition: color 0.2s;
-    `;
-    dragHandle.onmouseenter = () => {
-      dragHandle.style.color = 'rgba(255,255,255,0.8)';
+    const moveDrag = (cx: number, cy: number, ev?: Event) => {
+      if (!dragging) return;
+      ev?.preventDefault();
+      const maxX = Math.max(0, window.innerWidth - win.offsetWidth);
+      const maxY = Math.max(0, window.innerHeight - win.offsetHeight);
+      win.style.left = `${Math.max(0, Math.min(cx - offsetX, maxX))}px`;
+      win.style.top = `${Math.max(0, Math.min(cy - offsetY, maxY))}px`;
+      win.style.bottom = 'auto';
+      win.style.right = 'auto';
     };
-    dragHandle.onmouseleave = () => {
-      dragHandle.style.color = 'rgba(255,255,255,0.5)';
+    const endDrag = () => { dragging = false; win.style.cursor = 'move'; };
+
+    const onMouseDown = (e: MouseEvent) => {
+      if ((e.target as HTMLElement)?.closest('button')) return;
+      beginDrag(e.clientX, e.clientY);
     };
-    minimizedViewer.appendChild(dragHandle);
-    
-    document.body.appendChild(minimizedViewer);
-    
-    // Keep the FullscreenViewer mounted (hidden) so reopen is instant and the
-    // Discover control set is preserved; do not unmount.
+    const onMouseMove = (e: MouseEvent) => moveDrag(e.clientX, e.clientY, e);
+    const onTouchStart = (e: TouchEvent) => {
+      const t = e.touches && e.touches[0];
+      if (!t || (e.target as HTMLElement)?.closest('button')) return;
+      beginDrag(t.clientX, t.clientY);
+    };
+    const onTouchMove = (e: TouchEvent) => {
+      const t = e.touches && e.touches[0];
+      if (t) moveDrag(t.clientX, t.clientY, e);
+    };
+    win.addEventListener('mousedown', onMouseDown);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('mouseup', endDrag);
+    win.addEventListener('touchstart', onTouchStart, { passive: true });
+    win.addEventListener('touchmove', onTouchMove, { passive: false });
+    win.addEventListener('touchend', endDrag);
+
+    // Escape while in in-app PiP restores the full-screen viewer (exits PiP).
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && inAppPipRef.current) {
+        e.stopPropagation();
+        e.preventDefault();
+        restoreFromPip();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown, true);
+
+    pipListenersRef.current = [
+      () => win.removeEventListener('mousedown', onMouseDown),
+      () => document.removeEventListener('mousemove', onMouseMove),
+      () => document.removeEventListener('mouseup', endDrag),
+      () => win.removeEventListener('touchstart', onTouchStart),
+      () => win.removeEventListener('touchmove', onTouchMove),
+      () => win.removeEventListener('touchend', endDrag),
+      () => document.removeEventListener('keydown', onKeyDown, true),
+    ];
+
+    // The full-screen viewer stays mounted (hidden) so reopening is instant
+    // and the standard control set is preserved.
   };
 
 
