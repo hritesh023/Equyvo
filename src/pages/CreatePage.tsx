@@ -37,6 +37,7 @@ import {
   nativeRecordingToBlob,
 } from '@/lib/native-screen-recorder';
 import { LiveRelay } from '@/lib/live-relay';
+import LiveChatOverlay from '@/components/LiveChatOverlay';
 import LiveChatPanel from '@/components/LiveChatPanel';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
@@ -709,7 +710,8 @@ const CreatePage = () => {
   // Streamer-side chat, uptime, audience and delivery health. The viewer-side
   // chat is the persistent comment ledger (LiveChatPanel), so everything the
   // host sees is also what the audience sees.
-  const [liveChatOpen, setLiveChatOpen] = useState(true);
+  const [liveChatOpen, setLiveChatOpen] = useState(true); // popping comments
+  const [liveCommentsPanelOpen, setLiveCommentsPanelOpen] = useState(false); // full comments UI
   const [liveElapsed, setLiveElapsed] = useState(0);
   const [liveViewers, setLiveViewers] = useState(0);
   const [liveLatency, setLiveLatency] = useState<number | null>(null);
@@ -2951,7 +2953,8 @@ const CreatePage = () => {
     setLiveCaptureScope(scope);
     setLiveStudioMinimized(false);
     setLiveMicMuted(false);
-    setLiveChatOpen(source === 'camera');
+    setLiveChatOpen(true); // Pop-up viewer comments are on for every live.
+    setLiveCommentsPanelOpen(false);
     setLiveRelayState('connecting');
     setLiveViewers(0);
     setLiveLatency(null);
@@ -3026,6 +3029,7 @@ const CreatePage = () => {
         setLiveNativeScreen(false);
         setLiveRelayState('offline');
         setLiveChatOpen(false);
+        setLiveCommentsPanelOpen(false);
         setLiveStudioMinimized(false);
         showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
       } finally {
@@ -3224,6 +3228,7 @@ const CreatePage = () => {
       setLiveNativeScreen(false);
       setLiveRelayState('offline');
       setLiveChatOpen(false);
+      setLiveCommentsPanelOpen(false);
       setLiveStudioMinimized(false);
       try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
@@ -3287,6 +3292,7 @@ const CreatePage = () => {
       liveContentIdRef.current = '';
       liveRollbackContentRef.current = '';
       setLiveChatOpen(false);
+      setLiveCommentsPanelOpen(false);
       setLiveStudioMinimized(false);
       stopLivePreview();
       return;
@@ -3335,6 +3341,7 @@ const CreatePage = () => {
     liveRollbackContentRef.current = '';
     setLiveNativeScreen(false);
     setLiveChatOpen(false);
+    setLiveCommentsPanelOpen(false);
     setLiveStudioMinimized(false);
     stopLivePreview();
   };
@@ -4086,8 +4093,9 @@ const CreatePage = () => {
   // preview fills the screen, flip/flash/mic controls stay in the same places,
   // and the shutter becomes END LIVE. There is deliberately NO "Send to"
   // story/photo menu here — once you are live the destination is the stream.
-  // Live chat overflows on top of the preview (the same persistent ledger the
-  // audience uses). Screen live shares the studio: FLAG_SECURE (native) keeps
+  // Viewer comments pop up and drift over the preview as they arrive (the
+  // same persistent ledger the audience uses). Screen live shares the studio:
+  // FLAG_SECURE (native) keeps
   // every Equyvo control out of the saved video while leaving it visible here.
   if (isRecording && (liveSource === 'camera' || liveSource === 'screen')) {
     const isScreenLive = liveSource === 'screen';
@@ -4143,8 +4151,8 @@ const CreatePage = () => {
             <div className="pointer-events-auto ml-auto flex items-center gap-2">
               <button
                 type="button"
-                onClick={() => setLiveChatOpen((v) => !v)}
-                aria-label={liveChatOpen ? 'Hide live chat' : 'Show live chat'}
+                onClick={() => setLiveCommentsPanelOpen(true)}
+                aria-label="Open full comments"
                 className="rounded-full bg-black/60 p-2.5 backdrop-blur hover:bg-black/80"
               >
                 <MessageCircle className="h-5 w-5" />
@@ -4203,8 +4211,8 @@ const CreatePage = () => {
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={() => setLiveChatOpen((v) => !v)}
-                  title="Toggle live chat"
+                  onClick={() => setLiveCommentsPanelOpen(true)}
+                  title="Open full comments"
                   className="h-12 w-12 rounded-full bg-black/60 text-white hover:bg-black/80"
                 >
                   <MessageCircle className="h-6 w-6" />
@@ -4272,10 +4280,19 @@ const CreatePage = () => {
           </button>
         )}
 
-        {/* Streamer chat overflows over the preview, like Twitch/Kick. */}
-        {liveChatOpen && liveRoomId && !liveStudioMinimized && (
-          <div className="absolute inset-y-0 right-0 z-30 w-[min(92vw,340px)] shadow-[-16px_0_48px_rgba(0,0,0,0.5)]">
-            <LiveChatPanel contentId={liveRoomId} onClose={() => setLiveChatOpen(false)} />
+        {/* "Overflowing" chat: viewer comments pop up and drift over the live
+            video as they arrive. Tapping one (or the chat button) opens the
+            normal, full comments interface below. */}
+        {liveChatOpen && liveRoomId && (
+          <LiveChatOverlay
+            contentId={liveRoomId}
+            enabled={liveChatOpen}
+            onCommentClick={() => setLiveCommentsPanelOpen(true)}
+          />
+        )}
+        {liveCommentsPanelOpen && liveRoomId && (
+          <div className="absolute inset-y-0 right-0 z-40 w-[min(92vw,340px)] shadow-[-16px_0_48px_rgba(0,0,0,0.55)]">
+            <LiveChatPanel contentId={liveRoomId} onClose={() => setLiveCommentsPanelOpen(false)} />
           </div>
         )}
       </div>
@@ -6150,7 +6167,7 @@ const CreatePage = () => {
                   </Button>
                 </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-white/60">
-                  This is exactly what your live preview looks like. When you go live the full-screen studio gives you flip, flash (when supported), mute and overflowing live chat — but no “send to story/photo” menu, because you are already live.
+                  This is exactly what your live preview looks like. When you go live the full-screen studio gives you flip, flash (when supported), mute and viewer comments popping up over the video — but no “send to story/photo” menu, because you are already live.
                 </div>
                 <Button
                   onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('camera'); }}

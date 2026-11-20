@@ -24,6 +24,19 @@ input, textarea, [contenteditable="true"], select {
   to { transform: translateX(0); opacity: 1; }
 }
 
+/* Popping live comments over the broadcaster's video (Twitch/Kick style).
+   Each comment drifts right/up, holds briefly, then fades away. */
+@keyframes equyvo-live-comment-pop {
+  0%   { opacity: 0; transform: translate3d(-28px, 14px, 0) scale(0.92); }
+  10%  { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
+  75%  { opacity: 1; transform: translate3d(14px, -8px, 0) scale(1); }
+  100% { opacity: 0; transform: translate3d(30px, -22px, 0) scale(0.96); }
+}
+.equyvo-live-comment {
+  animation: equyvo-live-comment-pop 7.2s ease-out forwards;
+  will-change: transform, opacity;
+}
+
 /* View Transitions: adjoint sliding of outgoing + incoming pages. */
 @supports (view-transition-name: root) {
   html[data-vt-dir="forward"]::view-transition-old(root) {
