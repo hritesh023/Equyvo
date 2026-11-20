@@ -301,7 +301,7 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
             </div>
             <div className="divide-y">
               {sortedMembers.map((id) => {
-                const role = id === group.leaderId ? 'Group leader' : Array.isArray(group.coLeaders) && group.coLeaders.includes(id) ? 'Admin' : memberName(id) === 'You' ? 'You' : '';
+                const role = id === group.leaderId ? 'Group leader' : Array.isArray(group.coLeaders) && group.coLeaders.includes(id) ? 'Co-leader' : memberName(id) === 'You' ? 'You' : '';
                 return (
                   <div key={id} className="relative flex items-center gap-3 px-4 py-2.5">
                     <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left" onClick={() => onOpenContact(id, memberName(id), memberAvatar(id))}>
@@ -414,7 +414,7 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
             <div className="space-y-1">
               {([
                 { value: 'all', label: 'Everyone', detail: 'All participants can reply' },
-                { value: 'leaders', label: 'Admins only', detail: 'Only leaders and admins can reply' },
+                { value: 'leaders', label: 'Leaders only', detail: 'Only leaders and co-leaders can reply' },
                 { value: 'leader', label: 'Group leader only', detail: 'Only you can reply' },
               ] as const).map((o) => (
                 <button key={o.value} type="button" disabled={busy} onClick={async () => {
@@ -459,9 +459,9 @@ const GroupSettings: React.FC<GroupSettingsProps> = ({
             role="menu"
           >
             {Array.isArray(group.coLeaders) && group.coLeaders.includes(memberMenu) ? (
-              <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, memberMenu, 'member'), 'Demoted to participant'); }}>Dismiss as admin</button>
+              <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, memberMenu, 'member'), 'Demoted to member'); }}>Demote to member</button>
             ) : (
-              <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, memberMenu, 'coleader'), 'Promoted to admin'); }}>Make admin</button>
+              <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm hover:bg-accent" disabled={busy} onClick={async () => { setMemberMenu(null); await mutate(() => api.groupSetRole(group.id, memberMenu, 'coleader'), 'Promoted to co-leader'); }}>Make co-leader</button>
             )}
             <button type="button" role="menuitem" className="w-full px-3 py-2 text-left text-sm text-red-500 hover:bg-accent" onClick={() => { setMemberMenu(null); setConfirm({ type: 'remove', userId: memberMenu, name: memberName(memberMenu) }); }}>
               <span className="flex items-center gap-2"><UserMinus className="h-4 w-4" /> Remove from group</span>

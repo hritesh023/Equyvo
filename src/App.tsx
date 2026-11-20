@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback, lazy, Suspense } from 'react';
 import { flushSync } from 'react-dom';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useNavigate, useNavigationType, useParams } from 'react-router-dom';
+import { BrowserRouter as Router, Navigate, useLocation, useNavigate, useNavigationType, useParams, useRoutes, type RouteObject } from 'react-router-dom';
 import { ThemeProvider } from './components/theme-provider';
 import { ChatThemeProvider } from './contexts/ChatThemeContext';
 import { I18nProvider } from './lib/i18n';
@@ -68,6 +68,81 @@ const SharedPostRedirect = () => {
 
 const MAIN_TABS = ['/app/home', '/app/discover', '/app/create', '/app/moments', '/app/thoughts', '/app/profile'];
 
+/** Every route as data so useRoutes() can resolve one element while we keep
+ *  already-visited pages mounted (React Router's <Routes> unmounts the old
+ *  route, which wiped CreatePage's selected upload tab, drafts and feed
+ *  scroll position on every tab switch). */
+const ROUTES: RouteObject[] = [
+  { path: '/', element: <HomePage /> },
+  { path: '/app/home', element: <HomePage /> },
+  { path: '/app/discover', element: <DiscoverPage /> },
+  { path: '/app/create', element: <CreatePage /> },
+  { path: '/app/moments', element: <MomentsPage /> },
+  { path: '/app/thoughts', element: <ThoughtsPage /> },
+  { path: '/app/profile', element: <ProfilePage /> },
+  { path: '/app/profile/:userId', element: <ProfilePage /> },
+  { path: '/app/profile/@:username', element: <ProfilePage /> },
+  { path: '/app/settings', element: <SettingsPage /> },
+  { path: '/app/search', element: <SearchPage /> },
+  { path: '/discover', element: <DiscoverPage /> },
+  { path: '/create', element: <CreatePage /> },
+  { path: '/moments', element: <MomentsPage /> },
+  { path: '/thoughts', element: <ThoughtsPage /> },
+  { path: '/profile', element: <ProfilePage /> },
+  { path: '/profile/posts/:postId', element: <SharedPostRedirect /> },
+  { path: '/posts/:postId', element: <SharedPostRedirect /> },
+  { path: '/profile/:userId', element: <ProfilePage /> },
+  { path: '/profile/@:username', element: <ProfilePage /> },
+  { path: '/pricing', element: <PricingPage /> },
+  { path: '/features', element: <SubscriptionFeaturesPage /> },
+  { path: '/app/features', element: <SubscriptionFeaturesPage /> },
+  { path: '/app/pricing', element: <PricingPage /> },
+  { path: '/settings', element: <SettingsPage /> },
+  { path: '/search', element: <SearchPage /> },
+  { path: '*', element: <NotFound /> },
+];
+
+/** Canonical key for a route. The `/app` and legacy top-level URLs render the
+ *  same page, so they share one cached instance (and one saved scroll spot). */
+const pageCacheKey = (pathname: string): string => {
+  const p = pathname.replace(/\/+$/, '') || '/';
+  if (p === '/' || p === '/app' || p === '/app/home' || p === '/home') return 'home';
+  return p.startsWith('/app/') ? p.slice(4) : p;
+};
+
+/** Keep-alive page renderer. Visited pages stay mounted but hidden, so local
+ *  component state (selected composer tab, drafts, players, loaded feeds)
+ *  survives navigation. Inactive pages use display:none; the active wrapper
+ *  uses display:contents so layout is identical to a plain route render. */
+const CachedPageRoutes: React.FC = () => {
+  const location = useLocation();
+  const matched = useRoutes(ROUTES);
+  const key = pageCacheKey(location.pathname);
+  const isRedirect = /^\/posts\/[^/]+$/.test(location.pathname) || /^\/profile\/posts\/[^/]+$/.test(location.pathname);
+  const [cache, setCache] = useState<{ key: string; node: React.ReactNode }[]>([]);
+
+  // Register a first visit during render (idempotent) so the page mounts once
+  // with no blank frame and its state is kept from then on.
+  if (!isRedirect && !cache.some((e) => e.key === key)) {
+    setCache((prev) => (prev.some((e) => e.key === key) ? prev : [...prev, { key, node: matched }]));
+  }
+
+  return (
+    <>
+      {cache.map((entry) => (
+        <div
+          key={entry.key}
+          data-equyvo-page={entry.key}
+          style={{ display: !isRedirect && entry.key === key ? 'contents' : 'none' }}
+        >
+          {entry.node}
+        </div>
+      ))}
+      {isRedirect && matched}
+    </>
+  );
+};
+
 const AppContent = () => {
   const [user, setUser] = useState<AppUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -120,20 +195,34 @@ const AppContent = () => {
     return () => window.removeEventListener('equyvo:chat-open', handler);
   }, []);
 
-  // Scroll to top when route changes (the unibody shell scrolls inside the
-  // <main> column on phones; the window scrolls on desktop).
+  // Per-page scroll memory. Pages stay mounted now, but they all share the
+  // single <main> scroll container (or the window on desktop), so we remember
+  // where each page was and put it back when the user returns to it.
   const mainRef = useRef<HTMLElement | null>(null);
   const [navHidden, setNavHidden] = useState(false);
   const lastScrollTopRef = useRef(0);
+  const scrollMemoryRef = useRef<Record<string, { main: number; win: number }>>({});
+  const scrollPathRef = useRef(pageCacheKey(location.pathname));
+  scrollPathRef.current = pageCacheKey(location.pathname);
   const handleMainScroll = useCallback(() => {
     const el = mainRef.current;
     if (!el) return;
     const st = el.scrollTop;
+    const k = scrollPathRef.current;
+    scrollMemoryRef.current[k] = { ...(scrollMemoryRef.current[k] || { win: 0 }), main: st };
     const delta = st - lastScrollTopRef.current;
     if (st <= 0) setNavHidden(false);
     else if (delta > 6) setNavHidden(true);
     else if (delta < -6) setNavHidden(false);
     lastScrollTopRef.current = st;
+  }, []);
+  useEffect(() => {
+    const onWindowScroll = () => {
+      const k = scrollPathRef.current;
+      scrollMemoryRef.current[k] = { ...(scrollMemoryRef.current[k] || { main: 0 }), win: window.scrollY || 0 };
+    };
+    window.addEventListener('scroll', onWindowScroll, { passive: true });
+    return () => window.removeEventListener('scroll', onWindowScroll);
   }, []);
   const setMainRef = useCallback((node: HTMLElement | null) => {
     if (mainRef.current && mainRef.current !== node) {
@@ -356,8 +445,19 @@ const AppContent = () => {
   };
 
   useEffect(() => {
-    window.scrollTo(0, 0);
-    if (mainRef.current) mainRef.current.scrollTop = 0;
+    // Restore this page's last scroll offset (fresh pages start at the top).
+    const saved = scrollMemoryRef.current[pageCacheKey(location.pathname)] || { main: 0, win: 0 };
+    const restore = () => {
+      const el = mainRef.current;
+      if (el) {
+        el.scrollTop = saved.main;
+        lastScrollTopRef.current = saved.main;
+      }
+      window.scrollTo(0, saved.win);
+      setNavHidden(saved.main > 0);
+    };
+    restore();
+    const raf = window.requestAnimationFrame(restore);
     // Never leave a swipe transform behind after a route change — that is
     // what made pages stay shifted/zoomed after repeated swipes.
     const zs = document.querySelector('.equyvo-zoom-surface') as HTMLElement | null;
@@ -365,6 +465,7 @@ const AppContent = () => {
       zs.style.transform = zs.style.transform.replace(/\s*translateX\([^)]*\)/g, '').trim();
       zs.style.transition = '';
     }
+    return () => window.cancelAnimationFrame(raf);
   }, [location.pathname]);
 
   // Animate tab switches for swipe navigation (CSS fallback for browsers
@@ -533,35 +634,7 @@ const AppContent = () => {
         <ErrorBoundary>
          <div className={`equyvo-zoom-surface ${slideClass}`} data-equyvo-zoom-surface="true">
          <Suspense fallback={<RouteFallback />}>
-          <Routes>
-          <Route path="/" element={<HomePage />} />
-          <Route path="/app/home" element={<HomePage />} />
-          <Route path="/app/discover" element={<DiscoverPage />} />
-          <Route path="/app/create" element={<CreatePage />} />
-          <Route path="/app/moments" element={<MomentsPage />} />
-          <Route path="/app/thoughts" element={<ThoughtsPage />} />
-          <Route path="/app/profile" element={<ProfilePage />} />
-          <Route path="/app/profile/:userId" element={<ProfilePage />} />
-          <Route path="/app/profile/@:username" element={<ProfilePage />} />
-          <Route path="/app/settings" element={<SettingsPage />} />
-          <Route path="/app/search" element={<SearchPage />} />
-          <Route path="/discover" element={<DiscoverPage />} />
-          <Route path="/create" element={<CreatePage />} />
-          <Route path="/moments" element={<MomentsPage />} />
-          <Route path="/thoughts" element={<ThoughtsPage />} />
-          <Route path="/profile" element={<ProfilePage />} />
-          <Route path="/profile/posts/:postId" element={<SharedPostRedirect />} />
-          <Route path="/posts/:postId" element={<SharedPostRedirect />} />
-          <Route path="/profile/:userId" element={<ProfilePage />} />
-          <Route path="/profile/@:username" element={<ProfilePage />} />
-          <Route path="/pricing" element={<PricingPage />} />
-          <Route path="/features" element={<SubscriptionFeaturesPage />} />
-          <Route path="/app/features" element={<SubscriptionFeaturesPage />} />
-          <Route path="/app/pricing" element={<PricingPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-          <Route path="/search" element={<SearchPage />} />
-          <Route path="*" element={<NotFound />} />
-         </Routes>
+          <CachedPageRoutes />
           </Suspense>
          </div>
         </ErrorBoundary>

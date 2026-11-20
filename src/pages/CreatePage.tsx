@@ -335,6 +335,17 @@ const CreatePage = () => {
   const [momentContent, setMomentContent] = useState('');
   const [videoCaption, setVideoCaption] = useState('');
 
+  // The create page now stays mounted while navigating between tabs, so its
+  // one-time state initializer cannot react to a later ?tab= deep link
+  // (e.g. "Create a moment" from the Moments empty state). Follow the param
+  // while it is present; clearing the param leaves the user's chosen tab.
+  const deepLinkTab = searchParams.get('tab');
+  useEffect(() => {
+    if (!deepLinkTab) return;
+    const valid = ['story', 'text-story', 'thought', 'photo', 'video', 'live', 'moment', 'camera'];
+    if (valid.includes(deepLinkTab)) setActiveTab(deepLinkTab);
+  }, [deepLinkTab]);
+
   // ---- Content-safety gate (visible warning + pick blocked) ----------------
   // Files are screened the moment they are picked. Anything the safety check
   // flags (adult/18+, violence, exploitation, illegal or prohibited media)
