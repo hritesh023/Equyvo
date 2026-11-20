@@ -187,8 +187,8 @@ export function useVideo2xPress(
       // In rotated landscape the content's left edge sits along the top of
       // the screen, so a press near the status bar still belongs to the LEFT
       // (rewind) side. Cover the whole left region plus that top strip.
-      const inRewindZone = relX < viewport.width * 0.6 ||
-        (relY < viewport.height * 0.28 && relX < viewport.width * 0.85);
+      const inRewindZone = relX < viewport.width * 0.7 ||
+        (relY < viewport.height * 0.35 && relX < viewport.width * 0.92);
       const side: Side = sideModeRef.current === 'viewport'
         ? (inRewindZone ? 'rew' : 'fwd')
         : (st.downOffsetX < (rect.width / 2) ? 'rew' : 'fwd');

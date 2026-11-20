@@ -386,9 +386,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       if (!state.isActive && inAppPipRef.current) {
         try { (window as any).AndroidPiP?.enter?.(); } catch { /* ignore */ }
       } else if (state.isActive) {
-        // Coming back from the home screen: if no system PiP actually opened,
-        // make sure the viewer has its full control set again.
-        window.setTimeout(() => clearPipSnapshot(), 150);
+        // Back in the app: dismiss any lingering system PiP window first, then
+        // restore the full viewer. Never leave PiP and fullscreen on together.
+        try { (window as any).AndroidPiP?.exit?.(); } catch { /* ignore */ }
+        window.setTimeout(() => clearPipSnapshot(), 180);
       }
     }).then((h: any) => { handle = h; }).catch(() => { /* ignore */ });
     return () => { try { handle?.remove?.(); } catch { /* ignore */ } };
@@ -459,9 +460,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           }
         } catch { /* ignore */ }
       } else {
-        // Back in the app: ALWAYS restore overlays. A cancelled/failed PiP can
-        // leave the media-only CSS class behind, which made the viewer open
-        // with no controls until it was fully remounted.
+        // Back in the app: dismiss the system PiP window so it never coexists
+        // with the fullscreen viewer, then restore all overlays.
+        try { (window as any).AndroidPiP?.exit?.(); } catch { /* ignore */ }
+        window.setTimeout(() => clearPipSnapshot(), 180);
         clearPipSnapshot();
         if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
           systemPipActiveRef.current = false;
@@ -1358,6 +1360,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setHideOverlay(true);
     setShowControls(false);
     setShowDetailsPanel(false);
+    // Give native the exact on-screen media bounds while the app is still in
+    // front. Android uses this as the PiP source rect so the floating window
+    // shows only the content, not the surrounding action buttons.
+    try {
+      const mediaEl = document.querySelector('[data-pip-media]') as HTMLElement | null;
+      if (mediaEl) {
+        const r = mediaEl.getBoundingClientRect();
+        (window as any).AndroidPiP?.setPipSourceRect?.(
+          Math.round(r.left), Math.round(r.top), Math.round(r.right), Math.round(r.bottom)
+        );
+      }
+    } catch { /* ignore */ }
     notifyNativePip(true);
 
     // ── mini window: media ONLY (never the app shell) ──────────────────

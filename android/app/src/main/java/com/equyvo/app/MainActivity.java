@@ -1,6 +1,7 @@
 package com.equyvo.app;
 
 import android.content.Intent;
+import android.graphics.Rect;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -65,6 +66,8 @@ public class MainActivity extends BridgeActivity {
     /** Aspect of the actual upload (width/height), reported by the web layer. */
     private volatile int pipAspectWidth = 9;
     private volatile int pipAspectHeight = 16;
+    /** On-screen rect of the media, so PiP shows ONLY the media, not controls. */
+    private volatile Rect pipSourceRect = null;
     private final Handler systemPipHandler = new Handler(Looper.getMainLooper());
     private int pendingTop = 0;
     private int pendingBottom = 0;
@@ -271,24 +274,11 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Throwable ignored) {}
 
-        // Wait a VERY short time for the web layer's synchronous media-only
-        // CSS class. The prepare event is dispatched while the Activity is
-        // still active, so the JS callback runs immediately; this guarantees
-        // the PiP snapshot contains ONLY the media, never action buttons.
-        // The cap is small enough that PiP still works if JS is unresponsive.
-        final int[] waited = {0};
-        final Runnable snapshotThenEnter = new Runnable() {
-            @Override
-            public void run() {
-                waited[0] += 15;
-                if (!pipSnapshotReady && waited[0] < 120 && !isFinishing() && !isDestroyed()) {
-                    systemPipHandler.postDelayed(this, 15L);
-                    return;
-                }
-                tryEnterPip();
-            }
-        };
-        systemPipHandler.postDelayed(snapshotThenEnter, 15L);
+        // Enter IMMEDIATELY. Waiting for a WebView callback after the app is
+        // backgrounded makes Android refuse PiP (the Activity is already
+        // stopping). The media-only framing is handled by sourceRectHint
+        // below, which does not depend on JS timing.
+        tryEnterPip();
     }
 
     private void tryEnterPip() {
@@ -299,6 +289,11 @@ public class MainActivity extends BridgeActivity {
             int ph = Math.max(1, Math.min(pipAspectHeight, 239));
             PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
                     .setAspectRatio(new Rational(pw, ph));
+            // Confine the PiP snapshot to the media bounds so the floating
+            // window contains only the video/photo, never the app's controls.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && pipSourceRect != null) {
+                try { b.setSourceRectHint(pipSourceRect); } catch (Throwable ignored) {}
+            }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                 try { b.setAutoEnterEnabled(false); } catch (Throwable ignored) {}
             }
@@ -417,6 +412,19 @@ public class MainActivity extends BridgeActivity {
         @android.webkit.JavascriptInterface
         public void readyForSnapshot() {
             pipSnapshotReady = true;
+        }
+
+        /** Media bounds in CSS pixels; PiP uses them as its source rect. */
+        @android.webkit.JavascriptInterface
+        public void setPipSourceRect(int left, int top, int right, int bottom) {
+            try {
+                float density = getResources().getDisplayMetrics().density;
+                int l = Math.round(left * density);
+                int t = Math.round(top * density);
+                int r = Math.round(right * density);
+                int b = Math.round(bottom * density);
+                if (r > l && b > t) pipSourceRect = new Rect(l, t, r, b);
+            } catch (Throwable ignored) {}
         }
 
         /** Called by the web layer with the media's measured width/height. */
