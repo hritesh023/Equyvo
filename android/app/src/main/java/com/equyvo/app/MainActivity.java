@@ -46,6 +46,7 @@ public class MainActivity extends BridgeActivity {
     /** True while the web layer shows its draggable IN-APP mini player. */
     private volatile boolean inAppPipActive = false;
     private volatile boolean inPipMode = false;
+    private volatile boolean pipPromotionPending = false;
     private final Handler systemPipHandler = new Handler(Looper.getMainLooper());
     private int pendingTop = 0;
     private int pendingBottom = 0;
@@ -229,6 +230,11 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode()) {
             return;
         }
+        // onUserLeaveHint() and onStop() can both fire for a single app exit.
+        // One promotion only: otherwise the prepare event / snapshot is sent
+        // twice and enterPictureInPictureMode() may be called twice.
+        if (pipPromotionPending) return;
+        pipPromotionPending = true;
         try {
             if (bridge != null && bridge.getWebView() != null) {
                 bridge.getWebView().evaluateJavascript(
@@ -237,6 +243,7 @@ public class MainActivity extends BridgeActivity {
         } catch (Throwable ignored) {}
 
         systemPipHandler.postDelayed(() -> {
+            pipPromotionPending = false;
             try {
                 if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
                 PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
@@ -246,6 +253,20 @@ public class MainActivity extends BridgeActivity {
                 }
                 enterPictureInPictureMode(b.build());
                 inPipMode = true;
+                // If the OS refused the transition, tell the web layer to
+                // restore its controls instead of staying in content-only mode.
+                systemPipHandler.postDelayed(() -> {
+                    try {
+                        if (!isInPictureInPictureMode() && !isFinishing()) {
+                            inAppPipActive = false;
+                            inPipMode = false;
+                            if (bridge != null && bridge.getWebView() != null) {
+                                bridge.getWebView().evaluateJavascript(
+                                        "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+                            }
+                        }
+                    } catch (Throwable ignored) {}
+                }, 250L);
             } catch (Throwable ignored) {}
         }, 180L);
     }
@@ -348,6 +369,7 @@ public class MainActivity extends BridgeActivity {
         // must exit cleanly: clear all PiP state so nothing is left on screen.
         if (!isInPictureInPictureMode) {
             inAppPipActive = false;
+            pipPromotionPending = false;
             if (isFinishing()) fullscreenActive = false;
         }
     }

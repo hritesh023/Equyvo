@@ -126,6 +126,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const inAppPipRef = useRef(false);
   const pipWindowRef = useRef<HTMLDivElement | null>(null);
   const pipListenersRef = useRef<Array<() => void>>([]);
+  // The hidden full-screen <video> is muted while the in-app mini player owns
+  // the audio, otherwise both elements play sound at once (double audio).
+  // Its previous mute state is restored on every PiP exit path.
+  const pipPreviousMutedRef = useRef<boolean>(true);
+  // Tracks whether the OS actually entered system PiP after a promotion
+  // request, so a denied/failed promotion can never strand the viewer in a
+  // control-less content-only screen.
+  const systemPipActiveRef = useRef(false);
 
   /** Tell the native shell whether an in-app PiP is active. */
   const notifyNativePip = useCallback((active: boolean) => {
@@ -156,6 +164,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     pipListenersRef.current = [];
     inAppPipRef.current = false;
     setIsInAppPip(false);
+  }, []);
+
+  /** Give audio back to the full-screen <video> when PiP hands off / exits. */
+  const restoreMainVideoAudio = useCallback(() => {
+    try {
+      const v = videoRef.current;
+      if (v) v.muted = pipPreviousMutedRef.current;
+    } catch { /* ignore */ }
   }, []);
 
   // Signal fullscreen takeover so the feed banner stays hidden while video
@@ -190,6 +206,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   useEffect(() => {
     const handler = (e: any) => {
       const active = !!e?.detail?.active;
+      systemPipActiveRef.current = active;
       if (active) {
         setContentOnly(true);
         setHideOverlay(true);
@@ -202,19 +219,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(false);
         setShowControls(true);
         setShowDetailsPanel(true);
+        restoreMainVideoAudio();
         notifyNativePip(false);
       }
     };
     window.addEventListener('pipModeChanged', handler as EventListener);
     return () => window.removeEventListener('pipModeChanged', handler as EventListener);
-  }, [removeInAppPipWindow, notifyNativePip]);
+  }, [removeInAppPipWindow, notifyNativePip, restoreMainVideoAudio]);
 
   // The native shell fires this immediately before it snapshots the Activity
   // into a system PiP window. Make sure the snapshot contains ONLY the media:
   // remove the in-app mini window (it must not appear twice) and reveal the
   // full-screen viewer in content-only mode (all overlays hidden).
   useEffect(() => {
+    let failedPromotionTimer: NodeJS.Timeout | null = null;
     const prepare = () => {
+      systemPipActiveRef.current = false;
       removeInAppPipWindow();
       setIsNativePip(true);
       setIsMinimized(false);
@@ -222,10 +242,27 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       setContentOnly(true);
       setHideOverlay(true);
       setShowControls(false);
+      // The OS normally confirms with pipModeChanged(true). If that never
+      // arrives (PiP denied / unsupported), restore a usable viewer instead
+      // of leaving a bare content-only screen with no controls.
+      if (failedPromotionTimer) clearTimeout(failedPromotionTimer);
+      failedPromotionTimer = setTimeout(() => {
+        if (systemPipActiveRef.current) return;
+        setIsNativePip(false);
+        setIsMinimized(false);
+        setContentOnly(false);
+        setHideOverlay(false);
+        setShowControls(true);
+        restoreMainVideoAudio();
+        notifyNativePip(false);
+      }, 1200);
     };
     window.addEventListener('prepareForSystemPip', prepare as EventListener);
-    return () => window.removeEventListener('prepareForSystemPip', prepare as EventListener);
-  }, [removeInAppPipWindow]);
+    return () => {
+      window.removeEventListener('prepareForSystemPip', prepare as EventListener);
+      if (failedPromotionTimer) clearTimeout(failedPromotionTimer);
+    };
+  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
 
   // Web (equyvo.acronous.com): leaving the tab while the in-app PiP is active
   // promotes the <video> to the browser's real PiP window, so it keeps
@@ -241,32 +278,45 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setContentOnly(true);
         setHideOverlay(true);
         setShowControls(false);
+        restoreMainVideoAudio();
         const v = videoRef.current as any;
         try {
           if (v && (document as any).pictureInPictureEnabled &&
               typeof v.requestPictureInPicture === 'function' &&
-              !(document as any).pictureInPictureElement) {
+              !(document as any).pictureInPictureElement &&
+              !v.dataset.pipExitBound) {
+            // Bind the dismissal listener to the SAME element we promote, so
+            // dismissing the browser PiP always exits PiP everywhere.
+            v.dataset.pipExitBound = '1';
+            v.addEventListener('leavepictureinpicture', () => {
+              delete v.dataset.pipExitBound;
+              window.dispatchEvent(new CustomEvent('pipModeChanged', { detail: { active: false } }));
+            }, { once: true });
             const r = v.requestPictureInPicture();
-            if (r && typeof r.catch === 'function') r.catch(() => { /* gesture policy may block */ });
+            if (r && typeof r.catch === 'function') {
+              r.catch(() => {
+                delete v.dataset.pipExitBound;
+                // Gesture policy can block this on some browsers: restore a
+                // usable viewer rather than a control-less content-only view.
+                setIsNativePip(false);
+                setIsMinimized(false);
+                setContentOnly(false);
+                setHideOverlay(false);
+                setShowControls(true);
+                notifyNativePip(false);
+              });
+            }
           }
         } catch { /* ignore */ }
       };
-      // Let the content-only layout settle before asking the browser for PiP.
-      setTimeout(promote, 60);
+      // Try immediately (maximises the chance the browser still treats this
+      // as a user-gesture action), then once more after the layout settles.
+      promote();
+      setTimeout(() => { if (inAppPipRef.current) promote(); }, 80);
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [removeInAppPipWindow]);
-
-  // When the browser PiP window is dismissed, exit PiP everywhere.
-  useEffect(() => {
-    const onLeave = () => {
-      window.dispatchEvent(new CustomEvent('pipModeChanged', { detail: { active: false } }));
-    };
-    const v = videoRef.current;
-    v?.addEventListener('leavepictureinpicture', onLeave);
-    return () => v?.removeEventListener('leavepictureinpicture', onLeave);
-  }, []);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
 
   const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
   const [volume, setVolume] = useState(1);
@@ -308,6 +358,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // info → comments), the final press CLOSES THE VIEWER (returns to the
   // feed underneath) — the app itself is never exited from here.
   const handleBackInViewer = useCallback((): boolean => {
+    // While the in-app mini player is open, hardware/system back exits PiP and
+    // returns to the full-screen viewer — it must not close the whole viewer.
+    if (inAppPipRef.current) {
+      removeInAppPipWindow();
+      setIsNativePip(false);
+      setIsMinimized(false);
+      setContentOnly(false);
+      setHideOverlay(false);
+      setShowControls(true);
+      setShowDetailsPanel(true);
+      restoreMainVideoAudio();
+      notifyNativePip(false);
+      return true;
+    }
     try {
       if (document.fullscreenElement) { void document.exitFullscreen(); return true; }
     } catch { /* ignore */ }
@@ -316,7 +380,8 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     if (showCommentSection) { setShowCommentSection(false); return true; }
     onClose();
     return true;
-  }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose]);
+  }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose,
+      removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
   // Reopening a minimized viewer must peel the content-only state off so
   // the full control set (details bar, 2x gesture, side panel, expand/minimize)
   // is restored instead of staying in the PiP-only appearance.
@@ -1053,9 +1118,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     removeInAppPipWindow();
     setIsNativePip(false);
     setIsMinimized(false);
+    restoreMainVideoAudio();
     notifyNativePip(false);
     resetDiscoverControls();
-  }, [removeInAppPipWindow, notifyNativePip, resetDiscoverControls]);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, resetDiscoverControls]);
 
   /**
    * PiP icon handler.
@@ -1074,6 +1140,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     const video = videoRef.current;
     const currentTime = video?.currentTime || 0;
     const isPaused = video ? video.paused : true;
+    // Let the mini player own the audio while it is on screen; otherwise the
+    // hidden full-screen <video> and the mini <video> both play sound.
+    pipPreviousMutedRef.current = video ? video.muted : true;
+    if (video) { try { video.muted = true; } catch { /* ignore */ } }
 
     inAppPipRef.current = true;
     setIsInAppPip(true);
@@ -1153,6 +1223,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       removeInAppPipWindow();
       setIsNativePip(false);
       setIsMinimized(false);
+      restoreMainVideoAudio();
       notifyNativePip(false);
       try { onClose(); } catch { /* ignore */ }
     });
@@ -1177,6 +1248,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       removeInAppPipWindow();
       setIsNativePip(false);
       setIsMinimized(false);
+      restoreMainVideoAudio();
       notifyNativePip(false);
       resetDiscoverControls();
       try { onContentChange?.(restored as any); } catch { /* ignore */ }
