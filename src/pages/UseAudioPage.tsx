@@ -15,6 +15,8 @@ import {
   subscribeExternalAudio,
   type ExternalAudioTrack,
 } from '@/lib/external-audio';
+import { classifyAudio, isReusableAudio } from '@/lib/audio-guard';
+import { getStoredUser } from '@/lib/auth';
 
 function formatTime(value: number): string {
   if (!Number.isFinite(value) || value < 0) return '0:00';
@@ -38,23 +40,36 @@ const UseAudioPage: React.FC = () => {
   const [playing, setPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
+  // Rights guard: original audio from someone else's Moment is view-only.
+  const [allowed, setAllowed] = useState(() => isReusableAudio(track));
 
   const trackKey = useMemo(() => (track ? `${track.id}|${track.url}` : ''), [track]);
 
   useEffect(() => {
     const next = readExternalAudioFromSearch(searchParams.toString());
-    if (next) {
-      setTrack(next);
-      saveExternalAudio(next);
-    }
+    if (next) setTrack(next);
   }, [searchParams]);
 
-  // Only this page's player may be active while it is mounted/visible.
+  // Re-run the AI + ownership guard even for a deep link (URLs can be forged).
   useEffect(() => {
     if (!track) return;
+    let cancelled = false;
+    setAllowed(isReusableAudio(track));
+    void classifyAudio(track, getStoredUser()?.id || '').then((verdict) => {
+      if (cancelled) return;
+      setAllowed(verdict.reusable);
+      if (verdict.reusable) saveExternalAudio(track);
+    });
+    return () => { cancelled = true; };
+  }, [trackKey]);
+
+  // Only this page's player may be active while it is mounted/visible, and
+  // only licensed music is previewed.
+  useEffect(() => {
+    if (!track || !allowed) return;
     const t = window.setTimeout(() => playExternalAudio(track), 80);
     return () => { window.clearTimeout(t); stopExternalAudio(); };
-  }, [trackKey]);
+  }, [trackKey, allowed]);
 
   useEffect(() => {
     const sync = () => setPlaying(getExternalAudioState().playing);
@@ -99,7 +114,7 @@ const UseAudioPage: React.FC = () => {
   }, []);
 
   const toggle = useCallback(() => {
-    if (!track) return;
+    if (!track || !allowed) return;
     const el = getExternalAudioElement();
     if (getExternalAudioState().id === track.id && el) {
       if (getExternalAudioState().playing) pauseExternalAudio();
@@ -107,7 +122,7 @@ const UseAudioPage: React.FC = () => {
     } else {
       playExternalAudio(track);
     }
-  }, [track]);
+  }, [track, allowed]);
 
   const seek = (value: number) => {
     const el = getExternalAudioElement();
@@ -117,7 +132,7 @@ const UseAudioPage: React.FC = () => {
   };
 
   const useThisAudio = () => {
-    if (!track) return;
+    if (!track || !allowed) return;
     saveExternalAudio(track);
     stopExternalAudio();
     navigate(externalAudioDestination(track));
@@ -169,49 +184,61 @@ const UseAudioPage: React.FC = () => {
             </div>
           </div>
 
-          {/* The one and only audio preview player on this page. */}
-          <div className="w-full max-w-md space-y-3">
-            <div className="flex items-center gap-4">
-              <button
-                type="button"
-                aria-label={playing ? 'Pause audio' : 'Play audio'}
-                onClick={toggle}
-                className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-black transition hover:scale-105"
-              >
-                {playing ? <Pause className="h-6 w-6 fill-black" /> : <Play className="ml-0.5 h-6 w-6 fill-black" />}
-              </button>
-              <div className="flex-1">
-                <input
-                  type="range"
-                  min={0}
-                  max={duration || 0}
-                  step={0.1}
-                  value={Math.min(currentTime, duration || 0)}
-                  onChange={(e) => seek(Number(e.target.value))}
-                  aria-label="Audio progress"
-                  className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/25 accent-white"
-                />
-                <div className="mt-2 flex justify-between text-[11px] tabular-nums text-white/50">
-                  <span>{formatTime(currentTime)}</span>
-                  <span>{formatTime(duration)}</span>
+          {allowed ? (
+            /* The one and only audio preview player on this page. */
+            <div className="w-full max-w-md space-y-3">
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  aria-label={playing ? 'Pause audio' : 'Play audio'}
+                  onClick={toggle}
+                  className="flex h-14 w-14 shrink-0 items-center justify-center rounded-full bg-white text-black transition hover:scale-105"
+                >
+                  {playing ? <Pause className="h-6 w-6 fill-black" /> : <Play className="ml-0.5 h-6 w-6 fill-black" />}
+                </button>
+                <div className="flex-1">
+                  <input
+                    type="range"
+                    min={0}
+                    max={duration || 0}
+                    step={0.1}
+                    value={Math.min(currentTime, duration || 0)}
+                    onChange={(e) => seek(Number(e.target.value))}
+                    aria-label="Audio progress"
+                    className="h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/25 accent-white"
+                  />
+                  <div className="mt-2 flex justify-between text-[11px] tabular-nums text-white/50">
+                    <span>{formatTime(currentTime)}</span>
+                    <span>{formatTime(duration)}</span>
+                  </div>
                 </div>
+                <Repeat2 className="h-4 w-4 shrink-0 text-white/50" aria-label="Loops continuously" />
               </div>
-              <Repeat2 className="h-4 w-4 shrink-0 text-white/50" aria-label="Loops continuously" />
+              <p className="flex items-center justify-center gap-2 text-xs text-white/50">
+                <Volume2 className="h-3.5 w-3.5" /> Previewing licensed music
+              </p>
             </div>
-            <p className="flex items-center justify-center gap-2 text-xs text-white/50">
-              <Volume2 className="h-3.5 w-3.5" /> Previewing the original Moment audio
-            </p>
-          </div>
+          ) : (
+            <div className="w-full max-w-md rounded-2xl border border-amber-400/30 bg-amber-500/10 p-5 text-center">
+              <p className="text-sm font-semibold text-amber-200">Original audio — view only</p>
+              <p className="mt-2 text-xs leading-relaxed text-amber-100/70">
+                {track.guardReason || 'This is the creator’s original audio, not licensed music.'}
+                Original audio cannot be used to compose a Moment or Photo. Upload your own audio in the Create page instead.
+              </p>
+            </div>
+          )}
 
           <div className="mt-auto w-full max-w-md pt-8">
             <Button
               onClick={useThisAudio}
-              className="h-14 w-full rounded-full bg-white text-base font-bold text-black hover:bg-white/90"
+              disabled={!allowed}
+              title={allowed ? 'Use this audio' : 'Original audio cannot be reused'}
+              className="h-14 w-full rounded-full bg-white text-base font-bold text-black hover:bg-white/90 disabled:cursor-not-allowed disabled:bg-white/20 disabled:text-white/50"
             >
               <Music2 className="mr-2 h-5 w-5" /> Use this audio
             </Button>
             <p className="mt-3 text-center text-[11px] leading-snug text-white/45">
-              External audio can be added to Moments and Photos only.
+              Only licensed music or audio you uploaded can be added to Moments and Photos.
             </p>
           </div>
         </div>

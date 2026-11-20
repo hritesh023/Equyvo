@@ -3,6 +3,8 @@ import { Music2, Pause, Play, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import api from '@/lib/api';
+import { getStoredUser } from '@/lib/auth';
+import { isReusableAudio } from '@/lib/audio-guard';
 import { showError, showSuccess } from '@/utils/toast';
 import {
   getExternalAudioState,
@@ -73,6 +75,12 @@ const ExternalAudioPicker: React.FC<Props> = ({ track, onChange, compact = false
         creator: 'You',
         url: String(data.secureUrl),
         from: 'moment',
+        // The uploader owns this track and may reuse it in their own posts.
+        kind: 'music',
+        reusable: true,
+        source: 'upload',
+        sourceOwnerId: String(getStoredUser()?.id || ''),
+        verified: true,
       };
       saveExternalAudio(next);
       onChange(next);
@@ -88,6 +96,10 @@ const ExternalAudioPicker: React.FC<Props> = ({ track, onChange, compact = false
 
   const useSaved = () => {
     if (!saved) return;
+    if (!isReusableAudio(saved)) {
+      showError('That audio is original audio and cannot be reused.');
+      return;
+    }
     onChange(saved);
     setOpen(false);
     showSuccess('Saved audio attached.');
@@ -108,7 +120,7 @@ const ExternalAudioPicker: React.FC<Props> = ({ track, onChange, compact = false
         className="sr-only"
         onChange={(e) => void pickFile(e.target.files?.[0])}
       />
-      {track ? (
+      {track && isReusableAudio(track) ? (
         <div className={cardClass}>
           <div className="flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-md bg-gradient-to-br from-fuchsia-600/50 to-blue-600/50">
             {track.cover ? (
@@ -174,7 +186,7 @@ const ExternalAudioPicker: React.FC<Props> = ({ track, onChange, compact = false
             >
               <Upload className="mr-2 h-4 w-4" /> {busy ? 'Uploading audio…' : 'Upload an audio file'}
             </Button>
-            {saved && (
+            {saved && isReusableAudio(saved) && (
               <Button type="button" variant="secondary" className="w-full justify-start" onClick={useSaved}>
                 <Music2 className="mr-2 h-4 w-4" />
                 <span className="truncate">Use saved audio: {saved.name}</span>

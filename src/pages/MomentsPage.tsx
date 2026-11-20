@@ -33,6 +33,7 @@ import {
   useAudioDestination,
   type ExternalAudioTrack,
 } from '@/lib/external-audio';
+import { classifyAudio } from '@/lib/audio-guard';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -572,23 +573,40 @@ const MomentsPage = () => {
     }
   };
 
-  const openUseAudio = (moment: any) => {
+  const openUseAudio = async (moment: any) => {
     // Leave no other audio competing with the preview on the next page.
     pauseAllVideos(-1);
     stopExternalAudio();
+    const attached = moment.externalAudio;
+    const libraryMusic = attached?.kind === 'music' && attached?.reusable === true
+      && attached?.source !== 'moment';
     const track: ExternalAudioTrack = {
       id: String(moment.id),
       name: moment.song || 'Original audio',
       creator: moment.user ? `@${moment.user}` : 'Equyvo creator',
-      url: moment.videoUrl || moment.media || '',
+      url: attached?.kind === 'music' ? (attached.url || moment.videoUrl) : (moment.videoUrl || moment.media || ''),
       cover: moment.thumbnail || moment.image || '',
       from: 'moment',
+      kind: libraryMusic ? 'music' : 'original',
+      reusable: libraryMusic,
+      source: libraryMusic ? (attached?.source === 'upload' ? 'upload' : 'library') : 'moment',
+      sourceOwnerId: libraryMusic
+        ? (attached?.source === 'upload' ? String(moment.ownerId || moment.userId || '') : '')
+        : String(moment.ownerId || moment.userId || ''),
+      verified: false,
     };
+    // AI + ownership guard: original audio may be viewed but never composed.
+    const verdict = await classifyAudio(track, getStoredUser()?.id || '');
+    track.kind = verdict.kind;
+    track.reusable = verdict.reusable;
+    track.verified = verdict.reusable;
+    track.confidence = verdict.confidence;
+    track.guardReason = verdict.reason;
     if (!track.url) {
       showError('This audio is not available right now.');
       return;
     }
-    saveExternalAudio(track);
+    if (verdict.reusable) saveExternalAudio(track);
     navigate(useAudioDestination(track));
   };
 
@@ -1054,7 +1072,7 @@ const MomentsPage = () => {
               )}
               <button
                 type="button"
-                onClick={(e) => { e.stopPropagation(); openUseAudio(moment); }}
+                onClick={(e) => { e.stopPropagation(); void openUseAudio(moment); }}
                 className="flex items-center gap-2 bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-sm hover:bg-white/35 active:scale-95 transition-all"
                 title="Use this audio in your own Moment or Photo"
                 aria-label={`Use audio: ${moment.song}`}

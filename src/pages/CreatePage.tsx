@@ -10,11 +10,13 @@ import MediaCropper from '@/components/MediaCropper';
 import ExternalAudioPicker from '@/components/ExternalAudioPicker';
 import {
   attachExternalAudioToRecording,
+  clearSavedExternalAudio,
   loadSavedExternalAudio,
   readExternalAudioFromSearch,
   saveExternalAudio,
   type ExternalAudioTrack,
 } from '@/lib/external-audio';
+import { classifyAudio, isReusableAudio } from '@/lib/audio-guard';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -345,9 +347,10 @@ const CreatePage = () => {
 
   // External background audio. Shared by the "Use this audio" page, the
   // Moments/Photos composers and the camera recorder.
-  const [externalAudio, setExternalAudio] = useState<ExternalAudioTrack | null>(() => (
-    readExternalAudioFromSearch(window.location.search) || loadSavedExternalAudio()
-  ));
+  const [externalAudio, setExternalAudio] = useState<ExternalAudioTrack | null>(() => {
+    const initial = readExternalAudioFromSearch(window.location.search) || loadSavedExternalAudio();
+    return initial && isReusableAudio(initial) ? initial : null;
+  });
   const cameraAudioMixRef = useRef<{ dispose: () => void } | null>(null);
 
   // The create page now stays mounted while navigating between tabs, so its
@@ -367,9 +370,24 @@ const CreatePage = () => {
   useEffect(() => {
     const track = readExternalAudioFromSearch(searchParams.toString());
     if (!track) return;
-    setExternalAudio(track);
-    saveExternalAudio(track);
-    _showSuccess(`Audio ready: ${track.name}. Add it to a Moment or Photo.`);
+    if (!isReusableAudio(track)) {
+      setExternalAudio(null);
+      clearSavedExternalAudio();
+      showError('That audio is someone’s original audio. Only licensed music or your own uploads can be used.');
+      return;
+    }
+    // Re-verify with the AI rights guard — a URL can be hand-crafted.
+    void classifyAudio(track, getCurrentAuthor().userId).then((verdict) => {
+      if (!verdict.reusable) {
+        setExternalAudio(null);
+        clearSavedExternalAudio();
+        showError(verdict.reason || 'This audio is not licensed for reuse.');
+        return;
+      }
+      setExternalAudio(track);
+      saveExternalAudio(track);
+      _showSuccess(`Audio ready: ${track.name}. Add it to a Moment or Photo.`);
+    });
   }, [deepLinkAudio]);
   // Guard: external audio is supported ONLY by Moments and Photos (and by the
   // camera when its capture is routed to one of those two sections).
@@ -716,6 +734,7 @@ const CreatePage = () => {
   const [cameraTorchSupported, setCameraTorchSupported] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
   const [cameraRecordSecs, setCameraRecordSecs] = useState(0);
+  const [cameraMusicOnly, setCameraMusicOnly] = useState(false);
   const [cameraDest, setCameraDest] = useState<'story' | 'photo' | 'video' | 'moment' | 'thought'>('story');
   // Who can see new uploads: public (everyone), followers (followers-only).
   // Sent to the server with every post; the server enforces it for every
@@ -2099,13 +2118,17 @@ const CreatePage = () => {
       showError('Please select at least one photo');
       return;
     }
+    if (externalAudio && !isReusableAudio(externalAudio)) {
+      showError('That audio is original audio and cannot be used in a post.');
+      return;
+    }
     publishLockRef.current = true;
       cancelUploadRequestedRef.current = false;
     try {
       const photosData = {
         files: photoFiles,
         caption: photoCaption,
-        externalAudio: externalAudioAllowed('photo') ? externalAudio : null,
+        externalAudio: externalAudioAllowed('photo') && isReusableAudio(externalAudio) ? externalAudio : null,
       };
 
       switch (action) {
@@ -2183,8 +2206,8 @@ const CreatePage = () => {
               publicId: p.publicId,
               resourceType: p.resourceType,
               r2Key: p.r2Key,
-              song: externalAudioAllowed('photo') ? externalAudio?.name || 'original sound' : 'original sound',
-              externalAudio: externalAudioAllowed('photo') ? externalAudio || undefined : undefined,
+              song: externalAudioAllowed('photo') && isReusableAudio(externalAudio) ? externalAudio?.name || 'original sound' : 'original sound',
+              externalAudio: externalAudioAllowed('photo') && isReusableAudio(externalAudio) ? externalAudio || undefined : undefined,
             });
             if (err) photoPersistError = err;
           }
@@ -2488,13 +2511,17 @@ const CreatePage = () => {
       showError('Please select at least one photo or video');
       return;
     }
+    if (externalAudio && !isReusableAudio(externalAudio)) {
+      showError('That audio is original audio and cannot be used in a Moment.');
+      return;
+    }
     publishLockRef.current = true;
       cancelUploadRequestedRef.current = false;
     try {
       const momentsData = {
         files: momentFiles,
         content: momentContent,
-        externalAudio: externalAudioAllowed('moment') ? externalAudio : null,
+        externalAudio: externalAudioAllowed('moment') && isReusableAudio(externalAudio) ? externalAudio : null,
       };
 
       switch (action) {
@@ -2599,8 +2626,8 @@ const CreatePage = () => {
               publicId: m.publicId,
               resourceType: m.resourceType,
               r2Key: m.r2Key,
-              song: externalAudioAllowed('moment') ? externalAudio?.name || 'original sound' : 'original sound',
-              externalAudio: externalAudioAllowed('moment') ? externalAudio || undefined : undefined,
+              song: externalAudioAllowed('moment') && isReusableAudio(externalAudio) ? externalAudio?.name || 'original sound' : 'original sound',
+              externalAudio: externalAudioAllowed('moment') && isReusableAudio(externalAudio) ? externalAudio || undefined : undefined,
             });
             if (err) momentPersistError = err;
           }
@@ -3275,6 +3302,7 @@ const CreatePage = () => {
     setCameraReady(false);
     setIsCapturing(false);
     setCameraRecordSecs(0);
+    setCameraMusicOnly(false);
   };
 
   const startCamera = async (facing: 'environment' | 'user' = cameraFacing) => {
@@ -3428,12 +3456,14 @@ const CreatePage = () => {
       // capture, mix it into the recording stream so it is audible in the
       // clip (and monitor it to the speakers) while the user taps REC.
       let recorderStream = ms;
-      if (externalAudioAllowed('camera') && externalAudio) {
+      if (externalAudioAllowed('camera') && externalAudio && isReusableAudio(externalAudio)) {
         try {
           const mix = await attachExternalAudioToRecording(externalAudio, ms);
           cameraAudioMixRef.current = mix;
           recorderStream = mix.stream;
+          setCameraMusicOnly(true);
         } catch {
+          setCameraMusicOnly(false);
           showError('Could not mix the selected audio — recording without it.');
         }
       }
@@ -3448,6 +3478,7 @@ const CreatePage = () => {
       rec.onstop = () => {
         try { cameraAudioMixRef.current?.dispose(); } catch { /* ignore */ }
         cameraAudioMixRef.current = null;
+        setCameraMusicOnly(false);
         if (cameraTimerRef.current) { clearInterval(cameraTimerRef.current); cameraTimerRef.current = null; }
         setIsCapturing(false);
         const secs = Math.max(1, Math.round((Date.now() - cameraStartRef.current) / 1000));
@@ -3478,6 +3509,7 @@ const CreatePage = () => {
     } catch {
       try { cameraAudioMixRef.current?.dispose(); } catch { /* ignore */ }
       cameraAudioMixRef.current = null;
+      setCameraMusicOnly(false);
       showError('Video recording is not supported on this device. Try capturing a photo instead.');
     }
   };
@@ -3654,7 +3686,7 @@ const CreatePage = () => {
         case 'photos':
           setPhotoFiles(draft.content?.files || []);
           setPhotoCaption(draft.content?.caption || '');
-          setExternalAudio(draft.content?.externalAudio || null);
+          setExternalAudio(isReusableAudio(draft.content?.externalAudio) ? draft.content.externalAudio : null);
           setActiveTab('photo');
           break;
         case 'videos':
@@ -3665,7 +3697,7 @@ const CreatePage = () => {
         case 'moments':
           setMomentFiles(draft.content?.files || []);
           setMomentContent(draft.content?.content || '');
-          setExternalAudio(draft.content?.externalAudio || null);
+          setExternalAudio(isReusableAudio(draft.content?.externalAudio) ? draft.content.externalAudio : null);
           setActiveTab('moment');
           break;
         case 'live':
@@ -3724,7 +3756,7 @@ const CreatePage = () => {
       case 'photos':
         setPhotoFiles(content.files || []);
         setPhotoCaption(content.caption || '');
-        setExternalAudio(content.externalAudio || null);
+        setExternalAudio(isReusableAudio(content.externalAudio) ? content.externalAudio : null);
         await new Promise((r) => setTimeout(r, 120));
         await latestHandlersRef.current?.handlePostPhotos?.('post');
         break;
@@ -3737,7 +3769,7 @@ const CreatePage = () => {
       case 'moments':
         setMomentFiles(content.files || []);
         setMomentContent(content.content || '');
-        setExternalAudio(content.externalAudio || null);
+        setExternalAudio(isReusableAudio(content.externalAudio) ? content.externalAudio : null);
         await new Promise((r) => setTimeout(r, 120));
         await latestHandlersRef.current?.handlePostMoment?.('post');
         break;
@@ -5414,6 +5446,11 @@ const CreatePage = () => {
               <div className="absolute top-4 left-1/2 -translate-x-1/2 flex items-center gap-2 rounded-full bg-red-600/90 px-3 py-1 text-xs font-semibold text-white">
                 <span className="h-2 w-2 animate-pulse rounded-full bg-white" />
                 REC {fileVideoFormatSecs(cameraRecordSecs)}
+                {cameraMusicOnly && (
+                  <span className="ml-1 border-l border-white/40 pl-2 text-[10px] font-medium text-emerald-200">
+                    MIC OFF · MUSIC ONLY
+                  </span>
+                )}
               </div>
             )}
 

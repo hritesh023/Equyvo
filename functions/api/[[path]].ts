@@ -2881,6 +2881,43 @@ function sanitizeBody(body) {
   return sanitizeValue(body, 0) || {};
 }
 
+// ORIGINAL-AUDIO GUARD (server-side, authoritative).
+// A Moment's own soundtrack belongs to its creator. It must never be reused
+// as a soundtrack for someone else's Moment/Photo. Only explicitly licensed
+// library music, or audio the publishing account uploaded itself, is kept.
+// Everything else is stripped before persistence, even if a client forged it.
+function enforceExternalAudioRights(item, actor) {
+  const ea = item && item.externalAudio;
+  if (!ea || typeof ea !== 'object' || Array.isArray(ea)) {
+    if (item) delete item.externalAudio;
+    return;
+  }
+  const kind = String(ea.kind || '');
+  const source = String(ea.source || '');
+  const owner = String(ea.sourceOwnerId || '').toLowerCase();
+  const actorId = String((actor && actor.id) || '').toLowerCase();
+  const licensed = kind === 'music' && ea.reusable === true
+    && (source === 'library' || source === 'upload');
+  const owned = !owner || !actorId || owner === actorId;
+  if (!licensed || !owned) {
+    delete item.externalAudio;
+    item.song = 'original sound';
+    return;
+  }
+  item.externalAudio = {
+    id: String(ea.id || '').slice(0, 120),
+    name: String(ea.name || 'Original audio').slice(0, 200),
+    creator: String(ea.creator || '').slice(0, 120),
+    url: String(ea.url || '').slice(0, 5000),
+    cover: typeof ea.cover === 'string' ? String(ea.cover).slice(0, 5000) : undefined,
+    kind: 'music',
+    reusable: true,
+    source,
+    sourceOwnerId: owner || actorId,
+    verified: true,
+  };
+}
+
 // =============== Rate limiting ===============
 // Per-identity sliding-minute counters stored in KV. Paid plans get higher
 // write throughput so power users/creators are not throttled like free users.
@@ -3532,6 +3569,8 @@ async function createItem(context, kind, listKey, itemKey, cors) {
 
   const clean = sanitizeBody(body);
   delete clean.id;
+  // Strip any external audio that is not licensed music owned by the caller.
+  enforceExternalAudioRights(clean, actor);
   // Duration is checked again at publish time so callers cannot bypass the
   // plan's video-length allowance by skipping the composer UI.
   const declaredDuration = Number(clean.duration ?? clean.durationSec);

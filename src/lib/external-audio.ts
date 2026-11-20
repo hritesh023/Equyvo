@@ -21,6 +21,19 @@ export interface ExternalAudioTrack {
   cover?: string;
   /** Where the track was picked: moments feed or photo surface. */
   from?: 'moment' | 'photo';
+  // ── Rights / originality metadata (see lib/audio-guard.ts) ──────────────
+  /** `music` = reusable library track; `original` = a creator's own audio. */
+  kind?: 'music' | 'original';
+  /** Only explicitly reusable music may be used for composition. */
+  reusable?: boolean;
+  /** 'moment' (video soundtrack), 'library', or a user's own 'upload'. */
+  source?: 'moment' | 'library' | 'upload';
+  /** Owner of the source audio — cross-owner reuse is always blocked. */
+  sourceOwnerId?: string;
+  /** Set by the AI rights guard after classification. */
+  verified?: boolean;
+  confidence?: number;
+  guardReason?: string;
 }
 
 const STORAGE_KEY = 'equyvo_external_audio';
@@ -145,6 +158,13 @@ function normalizeTrack(value: any): ExternalAudioTrack | null {
     url: String(value.url),
     cover: typeof value.cover === 'string' ? value.cover : undefined,
     from: value.from === 'photo' ? 'photo' : 'moment',
+    kind: value.kind === 'music' || value.kind === 'original' ? value.kind : undefined,
+    reusable: value.reusable === true,
+    source: value.source === 'library' || value.source === 'upload' || value.source === 'moment' ? value.source : undefined,
+    sourceOwnerId: typeof value.sourceOwnerId === 'string' ? value.sourceOwnerId : undefined,
+    verified: value.verified === true,
+    confidence: typeof value.confidence === 'number' ? value.confidence : undefined,
+    guardReason: typeof value.guardReason === 'string' ? value.guardReason : undefined,
   };
 }
 
@@ -227,26 +247,41 @@ export interface RecordingAudioMix {
 }
 
 /**
- * Mix the external track (and the microphone, when available) into the
- * camera MediaStream so the music is actually audible in the recorded clip,
- * while also playing it to the speakers for the person recording.
- * Falls back to plain speaker playback when Web Audio is unavailable.
+ * Record a Moment with ONLY the external music as its soundtrack.
+ *
+ * The microphone is explicitly disabled while external audio is in use — the
+ * two must never be mixed into the clip. The music is both monitored to the
+ * speakers and routed into the MediaRecorder stream. A fallback path keeps
+ * the mic off even when Web Audio is unavailable.
  */
 export async function attachExternalAudioToRecording(
   track: ExternalAudioTrack,
   baseStream: MediaStream,
 ): Promise<RecordingAudioMix> {
   stopExternalAudio();
+
+  // MIC OFF: disabling the track is synchronous and survives the async Web
+  // Audio setup below. It is restored when recording stops.
+  const micTracks = baseStream.getAudioTracks();
+  const previousMicState = micTracks.map((t) => ({ track: t, enabled: t.enabled }));
+  micTracks.forEach((t) => { try { t.enabled = false; } catch { /* ignore */ } });
+  const restoreMic = () => previousMicState.forEach(({ track: t, enabled }) => {
+    try { t.enabled = enabled; } catch { /* ignore */ }
+  });
+  const videoOnlyStream = () => new MediaStream(baseStream.getVideoTracks());
+
   const AudioCtx = (window as any).AudioContext || (window as any).webkitAudioContext;
   if (!AudioCtx) {
     playExternalAudio(track);
-    return { stream: baseStream, dispose: stopExternalAudio };
+    return {
+      stream: videoOnlyStream(),
+      dispose: () => { restoreMic(); stopExternalAudio(); },
+    };
   }
 
   let ctx: any = null;
   let el: HTMLAudioElement | null = null;
   let source: any = null;
-  let micSource: any = null;
   let disposed = false;
 
   try {
@@ -259,15 +294,7 @@ export async function attachExternalAudioToRecording(
     el.src = track.url;
     source = ctx.createMediaElementSource(el);
     source.connect(ctx.destination); // monitor: user hears the track
-    source.connect(dest); // record: track lands in the video file
-
-    const micTracks = baseStream.getAudioTracks();
-    if (micTracks.length) {
-      try {
-        micSource = ctx.createMediaStreamSource(new MediaStream(micTracks));
-        micSource.connect(dest);
-      } catch { /* music-only recording is still valid */ }
-    }
+    source.connect(dest); // record: ONLY the music lands in the video
 
     if (ctx.state === 'suspended') await ctx.resume();
     await el.play();
@@ -275,6 +302,7 @@ export async function attachExternalAudioToRecording(
     isPlaying = true;
     emit();
 
+    // Deliberately NO microphone track in this stream.
     const mixed = new MediaStream([
       ...baseStream.getVideoTracks(),
       ...dest.stream.getAudioTracks(),
@@ -285,19 +313,22 @@ export async function attachExternalAudioToRecording(
       dispose: () => {
         if (disposed) return;
         disposed = true;
+        restoreMic();
         try { el?.pause(); } catch { /* ignore */ }
         try { source?.disconnect(); } catch { /* ignore */ }
-        try { micSource?.disconnect(); } catch { /* ignore */ }
         try { void ctx?.close(); } catch { /* ignore */ }
         if (activeId === track.id) stopExternalAudio();
       },
     };
   } catch {
+    restoreMic();
     try { el?.pause(); } catch { /* ignore */ }
     try { source?.disconnect(); } catch { /* ignore */ }
     try { void ctx?.close(); } catch { /* ignore */ }
-    // Still give the user background music even if the mix failed.
     playExternalAudio(track);
-    return { stream: baseStream, dispose: stopExternalAudio };
+    return {
+      stream: videoOnlyStream(),
+      dispose: () => { restoreMic(); stopExternalAudio(); },
+    };
   }
 }
