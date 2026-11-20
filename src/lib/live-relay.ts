@@ -79,7 +79,8 @@ export class LiveRelay {
       ws.onopen = () => {
         if (!settled) { settled = true; resolve(); }
         this.reconnectAttempt = 0;
-        if (this.role === 'viewer') this.startPing();
+        // Host and viewers both get latency + viewer-count telemetry.
+        this.startPing();
       };
       ws.onerror = () => {
         if (!settled) { settled = true; reject(new Error('Live relay connection failed')); }
@@ -103,7 +104,12 @@ export class LiveRelay {
         try { msg = JSON.parse(String(event.data)); } catch { return; }
         if (msg.type === 'ready' || msg.type === 'viewers') {
           const n = Number(msg.viewers || 0);
-          try { this.handlers.onReady?.(n); this.handlers.onViewers?.(n); } catch { /* ignore */ }
+          try {
+            // Only the initial 'ready' marks the connection healthy; later
+            // 'viewers' pushes just refresh the audience count.
+            if (msg.type === 'ready') this.handlers.onReady?.(n);
+            this.handlers.onViewers?.(n);
+          } catch { /* ignore */ }
           return;
         }
         if (msg.type === 'ended') {

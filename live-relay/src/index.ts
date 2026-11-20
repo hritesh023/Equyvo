@@ -55,15 +55,18 @@ export class LiveRoom {
     try {
       ws.send(JSON.stringify({ type: 'ready', role, viewers: this.viewerCount() }));
     } catch { /* ignore */ }
+    // Keep the host's audience counter live as viewers join and leave —
+    // sending 'ready' once at connect would leave it stuck at 0 forever.
+    this.broadcastViewers();
 
     ws.addEventListener('message', (event: MessageEvent) => {
       const data = event.data;
       const size = typeof data === 'string' ? data.length : (data instanceof ArrayBuffer ? data.byteLength : 0);
       if (!size || size > MAX_MESSAGE_BYTES) return;
 
-      // Viewer ping/pong: echoed only to that viewer so they can estimate
-      // one-way latency without relying on synchronised device clocks.
-      if (role === 'viewer' && typeof data === 'string') {
+      // Ping/pong is echoed to whichever socket sent it (host or viewer) so
+      // both sides can estimate one-way latency without clock sync.
+      if (typeof data === 'string') {
         try {
           const msg = JSON.parse(data) as { type?: string; ts?: number };
           if (msg?.type === 'ping' && Number.isFinite(msg.ts)) {
@@ -86,6 +89,8 @@ export class LiveRoom {
 
     const cleanup = () => {
       this.sessions.delete(id);
+      // Audience count changes when anyone disconnects — refresh the host.
+      this.broadcastViewers();
       // Tell viewers their stream ended when the broadcaster disconnects.
       if (role === 'broadcaster') {
         for (const session of this.sessions.values()) {
@@ -103,6 +108,15 @@ export class LiveRoom {
     let n = 0;
     for (const session of this.sessions.values()) if (session.role === 'viewer') n++;
     return n;
+  }
+
+  /** Push the current audience size to every active host. */
+  private broadcastViewers(): void {
+    const message = JSON.stringify({ type: 'viewers', viewers: this.viewerCount() });
+    for (const session of this.sessions.values()) {
+      if (session.role !== 'broadcaster' || session.ws.readyState !== WebSocket.OPEN) continue;
+      try { session.ws.send(message); } catch { /* ignore a stalled host */ }
+    }
   }
 }
 
