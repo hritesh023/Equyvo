@@ -1,5 +1,6 @@
 package com.equyvo.app;
 
+import android.content.Intent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -13,8 +14,18 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 import com.getcapacitor.BridgeActivity;
+import java.lang.reflect.Method;
 
 public class MainActivity extends BridgeActivity {
+
+    /** Active instance, used by PipLifecycleService when the task is removed. */
+    private static MainActivity activeInstance = null;
+
+    /** Called when the app is swiped away from Recent Apps while PiP is active. */
+    public static void onAppTaskRemoved() {
+        MainActivity activity = activeInstance;
+        if (activity != null) activity.exitSystemPip();
+    }
 
     /**
      * v1.1.0 edge-to-edge + insets contract (Play Console Android-15 guidance):
@@ -47,6 +58,10 @@ public class MainActivity extends BridgeActivity {
     private volatile boolean inAppPipActive = false;
     private volatile boolean inPipMode = false;
     private volatile boolean pipPromotionPending = false;
+    /** Web layer finished hiding the app UI; the snapshot is media-only. */
+    private volatile boolean pipSnapshotReady = false;
+    /** Tracks foreground state (Activity has no public isResumed()). */
+    private volatile boolean appResumed = true;
     /** Aspect of the actual upload (width/height), reported by the web layer. */
     private volatile int pipAspectWidth = 9;
     private volatile int pipAspectHeight = 16;
@@ -76,6 +91,7 @@ public class MainActivity extends BridgeActivity {
             } catch (Throwable ignored) {}
         }
         super.onCreate(savedInstanceState);
+        activeInstance = this;
 
         // Expose a system-level Picture-in-Picture trigger to the web layer.
         final Handler pipHandler = new Handler(Looper.getMainLooper());
@@ -162,8 +178,17 @@ public class MainActivity extends BridgeActivity {
     }
 
     @Override
+    public void onResume() {
+        super.onResume();
+        appResumed = true;
+    }
+
+    @Override
     public void onDestroy() {
         insetHandler.removeCallbacksAndMessages(null);
+        // Task removal / app exit must never leave a floating PiP window.
+        activeInstance = null;
+        exitSystemPip();
         super.onDestroy();
     }
 
@@ -233,11 +258,12 @@ public class MainActivity extends BridgeActivity {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O || isInPictureInPictureMode()) {
             return;
         }
-        // onUserLeaveHint() and onStop() can both fire for a single app exit.
+        // onUserLeaveHint(), onPause() and onStop() can all fire for one exit.
         // One promotion only: otherwise the prepare event / snapshot is sent
         // twice and enterPictureInPictureMode() may be called twice.
         if (pipPromotionPending) return;
         pipPromotionPending = true;
+        pipSnapshotReady = false;
         try {
             if (bridge != null && bridge.getWebView() != null) {
                 bridge.getWebView().evaluateJavascript(
@@ -245,37 +271,73 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Throwable ignored) {}
 
-        systemPipHandler.postDelayed(() -> {
-            pipPromotionPending = false;
-            try {
-                if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
-                // Use the upload's real ratio so a landscape video gets a
-                // landscape PiP window (no forced portrait crop).
-                int pw = Math.max(1, Math.min(pipAspectWidth, 240));
-                int ph = Math.max(1, Math.min(pipAspectHeight, 240));
-                PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                        .setAspectRatio(new Rational(pw, ph));
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                    try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
+        // Wait until the WEB layer confirms it has hidden every overlay and is
+        // showing ONLY the fullscreen media. Snapshotting earlier used to put
+        // the whole app UI inside the PiP window.
+        final int[] waits = {0};
+        final Runnable snapshotThenEnter = new Runnable() {
+            @Override
+            public void run() {
+                waits[0] += 40;
+                if (!pipSnapshotReady && waits[0] < 600 && !isFinishing() && !isDestroyed()) {
+                    systemPipHandler.postDelayed(this, 40L);
+                    return;
                 }
-                enterPictureInPictureMode(b.build());
-                inPipMode = true;
-                // If the OS refused the transition, tell the web layer to
-                // restore its controls instead of staying in content-only mode.
-                systemPipHandler.postDelayed(() -> {
-                    try {
-                        if (!isInPictureInPictureMode() && !isFinishing()) {
-                            inAppPipActive = false;
-                            inPipMode = false;
-                            if (bridge != null && bridge.getWebView() != null) {
-                                bridge.getWebView().evaluateJavascript(
-                                        "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+                pipPromotionPending = false;
+                try {
+                    if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
+                    // Use the upload's real ratio so a landscape video gets a
+                    // landscape PiP window (no forced portrait crop).
+                    int pw = Math.max(1, Math.min(pipAspectWidth, 240));
+                    int ph = Math.max(1, Math.min(pipAspectHeight, 240));
+                    PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                            .setAspectRatio(new Rational(pw, ph));
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
+                    }
+                    enterPictureInPictureMode(b.build());
+                    inPipMode = true;
+                    // If the OS refused the transition, restore the web UI.
+                    systemPipHandler.postDelayed(() -> {
+                        try {
+                            if (!isInPictureInPictureMode() && !isFinishing()) {
+                                inAppPipActive = false;
+                                inPipMode = false;
+                                if (bridge != null && bridge.getWebView() != null) {
+                                    bridge.getWebView().evaluateJavascript(
+                                            "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+                                }
                             }
-                        }
-                    } catch (Throwable ignored) {}
-                }, 250L);
-            } catch (Throwable ignored) {}
-        }, 180L);
+                        } catch (Throwable ignored) {}
+                    }, 250L);
+                } catch (Throwable ignored) {}
+            }
+        };
+        systemPipHandler.postDelayed(snapshotThenEnter, 120L);
+    }
+
+    /** Dismiss the system PiP window and clear every PiP flag. */
+    private void exitSystemPip() {
+        systemPipHandler.removeCallbacksAndMessages(null);
+        pipPromotionPending = false;
+        pipSnapshotReady = false;
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && isInPictureInPictureMode()) {
+                // Reflection keeps this compatible with every compile SDK level.
+                Method exit = android.app.Activity.class.getMethod("exitPictureInPicture");
+                exit.invoke(this);
+            }
+        } catch (Throwable ignored) {}
+        inAppPipActive = false;
+        inPipMode = false;
+        fullscreenActive = false;
+        try { stopService(new Intent(this, PipLifecycleService.class)); } catch (Throwable ignored) {}
+        try {
+            if (bridge != null && bridge.getWebView() != null) {
+                bridge.getWebView().evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+            }
+        } catch (Throwable ignored) {}
     }
 
     /** JS bridge for system-level Picture-in-Picture. */
@@ -314,6 +376,20 @@ public class MainActivity extends BridgeActivity {
         @android.webkit.JavascriptInterface
         public void setInAppPip(boolean active) {
             inAppPipActive = active;
+            try {
+                if (active) {
+                    // Keep an observer alive so task removal can dismiss PiP.
+                    startService(new Intent(MainActivity.this, PipLifecycleService.class));
+                } else {
+                    stopService(new Intent(MainActivity.this, PipLifecycleService.class));
+                }
+            } catch (Throwable ignored) {}
+        }
+
+        /** Web layer calls this once ONLY the fullscreen media is visible. */
+        @android.webkit.JavascriptInterface
+        public void readyForSnapshot() {
+            pipSnapshotReady = true;
         }
 
         /** Called by the web layer with the media's measured width/height. */
@@ -338,6 +414,24 @@ public class MainActivity extends BridgeActivity {
         // for PiP (the in-app mini player is active). A plain full-screen
         // viewer must simply background like any other screen.
         if (inAppPipActive) enterSystemPip();
+    }
+
+    @Override
+    public void onPause() {
+        super.onPause();
+        appResumed = false;
+        // Belt-and-braces fallback: many OEMs skip onUserLeaveHint. If the app
+        // is really backgrounded (not just briefly paused) while the in-app
+        // mini player is active, promote it to the system PiP window.
+        if (inAppPipActive && !isFinishing()) {
+            systemPipHandler.postDelayed(() -> {
+                try {
+                    if (inAppPipActive && !appResumed && !isInPictureInPictureMode() && !isFinishing()) {
+                        enterSystemPip();
+                    }
+                } catch (Throwable ignored) {}
+            }, 300L);
+        }
     }
 
     @Override

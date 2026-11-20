@@ -325,6 +325,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       setContentOnly(true);
       setHideOverlay(true);
       setShowControls(false);
+      // Tell native only AFTER React has painted the media-only frame. The
+      // Activity snapshot then contains just the video/photo, never the app
+      // shell, controls or the in-app mini window.
+      const confirmSnapshot = () => requestAnimationFrame(() => requestAnimationFrame(() => {
+        try { (window as any).AndroidPiP?.readyForSnapshot?.(); } catch { /* ignore */ }
+      }));
+      confirmSnapshot();
       // The OS normally confirms with pipModeChanged(true). If that never
       // arrives (PiP denied / unsupported), restore a usable viewer instead
       // of leaving a bare content-only screen with no controls.

@@ -29,6 +29,12 @@
 
         </activity>
 
+        <!-- Observes "swiped from Recent Apps" while PiP is active so the
+             system PiP window is dismissed with the task. No notification. -->
+        <service
+            android:name=".PipLifecycleService"
+            android:exported="false" />
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
