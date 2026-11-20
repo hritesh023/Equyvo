@@ -1271,7 +1271,19 @@ html.cap-native {
   }
   body.eq-pip-snapshot [data-fullscreen-viewer] [data-pip-media] {
     visibility: visible !important;
-    object-fit: contain !important;
+    /* The PiP window itself already uses the upload's exact aspect ratio, so
+       the Activity snapshot must be filled edge-to-edge. Using `contain` here
+       letterboxed the video once in the Activity and again in the PiP window
+       (the "double minimized" look). Cover fills the snapshot; the PiP frame
+       supplies the correct ratio, so nothing is actually cropped. */
+    position: absolute !important;
+    inset: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+    max-height: none !important;
+    object-fit: cover !important;
+    object-position: center !important;
   }
   body.eq-pip-snapshot #minimized-video-viewer {
     display: none !important;

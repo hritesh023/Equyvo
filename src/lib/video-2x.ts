@@ -234,7 +234,11 @@ export function useVideo2xPress(
       if (st.active || st.timer) return; // one gesture at a time
       if (e.pointerType === 'mouse' && e.button !== 0) return;
       const t = e.target as HTMLElement | null;
-      if (t && t.closest('button,a,input,textarea,select,[role="slider"],[data-2x-ignore]')) return;
+      // Only real controls stop the gesture. The seek bar used to be excluded
+      // too; in rotated landscape it sits over the UPPER part of the left
+      // half, creating a dead zone there. Short taps still seek normally —
+      // only a stationary >500ms hold fires the 2× gesture.
+      if (t && t.closest('button,a,input,textarea,select')) return;
       let chosen: HTMLVideoElement | null = null;
       let chosenRect: DOMRect | null = null;
       const viewportMode = sideModeRef.current === 'viewport';
@@ -288,7 +292,11 @@ export function useVideo2xPress(
     const onDocClick = (e: MouseEvent): void => {
       if (Date.now() >= st.suppressUntil) return;
       const t = e.target as HTMLElement | null;
-      if (t && t.closest('button,a,input,textarea,select,[role="slider"],[data-2x-ignore]')) return;
+      // Only real controls stop the gesture. The seek bar used to be excluded
+      // too; in rotated landscape it sits over the UPPER part of the left
+      // half, creating a dead zone there. Short taps still seek normally —
+      // only a stationary >500ms hold fires the 2× gesture.
+      if (t && t.closest('button,a,input,textarea,select')) return;
       e.stopPropagation();
       e.preventDefault();
     };

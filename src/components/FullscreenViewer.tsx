@@ -78,6 +78,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const [imageRenderKey, setImageRenderKey] = useState(0);
   const [imageFailed, setImageFailed] = useState(false);
   useEffect(() => {
+    // A broken PiP attempt can leave the body-level snapshot class behind;
+    // never let a fresh fullscreen view inherit an overlay-less appearance.
+    document.body.classList.remove('eq-pip-snapshot');
     setImageRenderKey(0);
     setImageFailed(false);
     setHideOverlay(false);
@@ -93,6 +96,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // content-only / hidden-overlay state, otherwise the second fullscreen open
   // keeps the stale "minimized" appearance.
   useEffect(() => {
+    document.body.classList.remove('eq-pip-snapshot');
     setHideOverlay(false);
     setContentOnly(false);
     setShowControls(true);
@@ -179,6 +183,22 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     pipListenersRef.current = [];
     inAppPipRef.current = false;
     setIsInAppPip(false);
+  }, []);
+
+  /**
+   * ALWAYS clear the CSS snapshot mode and the content-only appearance. The
+   * snapshot class hides every overlay with !important — if it ever survives
+   * a failed/cancelled PiP, the viewer opens with NO controls and tapping
+   * cannot bring them back (only a full remount did). This must run on every
+   * PiP-exit path and whenever the app/viewer becomes visible again.
+   */
+  const clearPipSnapshot = useCallback(() => {
+    document.body.classList.remove('eq-pip-snapshot');
+    setContentOnly(false);
+    setHideOverlay(false);
+    setShowControls(true);
+    setIsMinimized(false);
+    setIsNativePip(false);
   }, []);
 
   /** Give audio back to the full-screen <video> when PiP hands off / exits. */
@@ -294,14 +314,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(true);
         setShowControls(false);
       } else {
-        document.body.classList.remove('eq-pip-snapshot');
+        clearPipSnapshot();
         closeDocumentPip(false);
         removeInAppPipWindow();
-        setIsNativePip(false);
-        setIsMinimized(false);
-        setContentOnly(false);
-        setHideOverlay(false);
-        setShowControls(true);
         setShowDetailsPanel(true);
         restoreMainVideoAudio();
         notifyNativePip(false);
@@ -309,7 +324,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     };
     window.addEventListener('pipModeChanged', handler as EventListener);
     return () => window.removeEventListener('pipModeChanged', handler as EventListener);
-  }, [removeInAppPipWindow, notifyNativePip, restoreMainVideoAudio, closeDocumentPip]);
+  }, [removeInAppPipWindow, notifyNativePip, restoreMainVideoAudio, closeDocumentPip, clearPipSnapshot]);
 
   // The native shell fires this immediately before it snapshots the Activity
   // into a system PiP window. Make sure the snapshot contains ONLY the media:
@@ -339,21 +354,19 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       if (failedPromotionTimer) clearTimeout(failedPromotionTimer);
       failedPromotionTimer = setTimeout(() => {
         if (systemPipActiveRef.current) return;
-        setIsNativePip(false);
-        setIsMinimized(false);
-        setContentOnly(false);
-        setHideOverlay(false);
-        setShowControls(true);
+        // Critical: drop the CSS snapshot mode too, otherwise every overlay
+        // stays hidden by !important even though React shows normal controls.
+        clearPipSnapshot();
         restoreMainVideoAudio();
         notifyNativePip(false);
-      }, 1200);
+      }, 900);
     };
     window.addEventListener('prepareForSystemPip', prepare as EventListener);
     return () => {
       window.removeEventListener('prepareForSystemPip', prepare as EventListener);
       if (failedPromotionTimer) clearTimeout(failedPromotionTimer);
     };
-  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, closeDocumentPip]);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, closeDocumentPip, clearPipSnapshot]);
 
   // Native fallback: some OEMs skip Activity onUserLeaveHint/onStop. When the
   // app is backgrounded while the in-app mini player is active, ask the shell
@@ -364,10 +377,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     void CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
       if (!state.isActive && inAppPipRef.current) {
         try { (window as any).AndroidPiP?.enter?.(); } catch { /* ignore */ }
+      } else if (state.isActive) {
+        // Coming back from the home screen: if no system PiP actually opened,
+        // make sure the viewer has its full control set again.
+        window.setTimeout(() => clearPipSnapshot(), 150);
       }
     }).then((h: any) => { handle = h; }).catch(() => { /* ignore */ });
     return () => { try { handle?.remove?.(); } catch { /* ignore */ } };
-  }, []);
+  }, [clearPipSnapshot]);
 
   // Web (equyvo.acronous.com): leaving the tab while PiP is active promotes the
   // media to a real OS window (Document PiP where available, legacy video PiP
@@ -433,15 +450,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             }
           }
         } catch { /* ignore */ }
-      } else if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
-        // Back in the app: close the external window and restore the viewer.
-        systemPipActiveRef.current = false;
-        closeDocumentPip(true);
+      } else {
+        // Back in the app: ALWAYS restore overlays. A cancelled/failed PiP can
+        // leave the media-only CSS class behind, which made the viewer open
+        // with no controls until it was fully remounted.
+        clearPipSnapshot();
+        if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+          systemPipActiveRef.current = false;
+          closeDocumentPip(false);
+        }
       }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [removeInAppPipWindow, restoreMainVideoAudio, closeDocumentPip]);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, closeDocumentPip, clearPipSnapshot]);
 
   const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
   const [volume, setVolume] = useState(1);
@@ -498,13 +520,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     // While the in-app mini player is open, hardware/system back exits PiP and
     // returns to the full-screen viewer — it must not close the whole viewer.
     if (inAppPipRef.current) {
+      clearPipSnapshot();
       closeDocumentPip(false);
       removeInAppPipWindow();
-      setIsNativePip(false);
-      setIsMinimized(false);
-      setContentOnly(false);
-      setHideOverlay(false);
-      setShowControls(true);
       setShowDetailsPanel(true);
       restoreMainVideoAudio();
       notifyNativePip(false);
@@ -519,22 +537,20 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     onClose();
     return true;
   }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose,
-      removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, closeDocumentPip]);
+      removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, closeDocumentPip, clearPipSnapshot]);
   // Reopening a minimized viewer must peel the content-only state off so
   // the full control set (details bar, 2x gesture, side panel, expand/minimize)
   // is restored instead of staying in the PiP-only appearance.
   useEffect(() => {
     const handler = () => {
-      setHideOverlay(false);
-      setContentOnly(false);
-      setShowControls(true);
+      clearPipSnapshot();
       setIsExpandedLandscape(false);
       setIsSplitView(false);
       setShowDetailsPanel(true);
     };
     window.addEventListener('reopenFullscreen', handler as EventListener);
     return () => window.removeEventListener('reopenFullscreen', handler as EventListener);
-  }, []);
+  }, [clearPipSnapshot]);
 
   useBackOverlay(true, handleBackInViewer);
 
@@ -1079,6 +1095,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     videoRef,
     seekTime: 10,
     onSingleTap: () => {
+      // Recovery path: if the viewer is content-only but no system PiP is
+      // actually active, a single tap must restore the controls immediately.
+      if (contentOnly && !isNativePip && !systemPipActiveRef.current) {
+        hiddenTapPlayedRef.current = false;
+        clearPipSnapshot();
+        setShowDetailsPanel(true);
+        return;
+      }
       if (!contentOnly) {
         // 1st tap: hide overlay/controls, show only the video.
         hiddenTapPlayedRef.current = false;
@@ -1429,10 +1453,32 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       try { onContentChange?.(restored as any); } catch { /* ignore */ }
     });
 
+    // Float outside the app (⧉): deterministic system-PiP request. Background
+    // detection can be skipped by OEMs; this button calls the native bridge
+    // directly while the user is still in the app, so the OS window definitely
+    // appears. On web it reveals the already-prepared Document PiP window.
+    const floatBtn = makeButton('⧉', 'right:70px', () => {
+      try {
+        if ((window as any).AndroidPiP?.enter) {
+          (window as any).AndroidPiP.setInAppPip?.(true);
+          (window as any).AndroidPiP.enter();
+        } else if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+          docPipWindowRef.current.document.body.style.display = 'block';
+          systemPipActiveRef.current = true;
+          removeInAppPipWindow();
+          setIsNativePip(true);
+          setContentOnly(true);
+          setHideOverlay(true);
+          setShowControls(false);
+        }
+      } catch { /* ignore */ }
+    });
+
     const dragHint = document.createElement('div');
     dragHint.textContent = '⠿';
     dragHint.style.cssText = 'position:absolute;top:7px;left:9px;color:rgba(255,255,255,.55);font-size:14px;z-index:2;pointer-events:none;';
     win.appendChild(dragHint);
+    win.appendChild(floatBtn);
     win.appendChild(expandBtn);
     win.appendChild(closeBtn);
     document.body.appendChild(win);
