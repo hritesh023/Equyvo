@@ -77,6 +77,12 @@ const MomentsPage = () => {
   // preference is remembered and applied to whichever slide is active.
   const userUnmutedRef = useRef(false);
   const pageVisibleRef = useRef(true);
+  const playRetriesRef = useRef<number[]>([]);
+
+  const clearPlayRetries = () => {
+    playRetriesRef.current.forEach((timer) => window.clearTimeout(timer));
+    playRetriesRef.current = [];
+  };
 
   /**
    * Hard-stop every video except `exceptIndex`. This is the single source of
@@ -94,28 +100,53 @@ const MomentsPage = () => {
     });
   };
 
-  const playVideoAtIndex = (index: number, unmuted: boolean) => {
+  /**
+   * Start playback MUTED, then apply the user's sound preference only after
+   * play() resolves. Browsers allow autoplay only on muted media — this is
+   * exactly how Reels / TikTok / Shorts keep audio on across every swipe once
+   * the user has chosen to unmute. `userUnmutedRef` is the single preference
+   * shared by every slide, so all videos become unmuted together.
+   */
+  const playVideoAtIndex = (index: number, _unmuted: boolean) => {
     const video = videoRefs.current[index];
     if (!video || !pageVisibleRef.current) return;
     try { video.playbackRate = playbackSpeed; } catch { /* ignore */ }
-    video.muted = !unmuted;
-    const attempt = video.play();
-    if (attempt && typeof attempt.catch === 'function') {
-      // Autoplay is only allowed muted — retry silently if the preference
-      // was "unmuted" and the browser refused the first call.
-      attempt.catch(() => {
-        video.muted = true;
-        return video.play();
-      }).catch(() => { /* user can tap to play */ });
-    }
+
+    video.muted = true; // required for reliable autoplay on every scroll
+    const applySoundPreference = () => {
+      // A stale retry must never unmute a slide that is no longer active.
+      if (activeVideoIndexRef.current !== index || videoRefs.current[index] !== video || video.paused) return;
+      video.muted = !userUnmutedRef.current;
+    };
+    const attemptPlay = (attempt: number) => {
+      if (activeVideoIndexRef.current !== index || videoRefs.current[index] !== video || !pageVisibleRef.current) return;
+      let promise: Promise<void> | undefined;
+      try { promise = video.play(); } catch { /* retry below */ }
+      if (promise && typeof promise.then === 'function') {
+        promise.then(applySoundPreference).catch(() => {
+          if (attempt >= 8) return;
+          const timer = window.setTimeout(() => attemptPlay(attempt + 1), 100 + attempt * 60);
+          playRetriesRef.current.push(timer);
+        });
+      } else if (attempt < 8) {
+        const timer = window.setTimeout(() => attemptPlay(attempt + 1), 150);
+        playRetriesRef.current.push(timer);
+      }
+    };
+    attemptPlay(0);
   };
 
   const activateVideo = (index: number) => {
     if (index < 0 || index >= videoRefs.current.length) return;
     const target = videoRefs.current[index];
+    clearPlayRetries();
     // Observer emits repeated ratio changes for the same slide — don't
-    // restart it on every one.
-    if (index === activeVideoIndexRef.current && target && !target.paused) return;
+    // restart it on every one; just keep its sound in sync with the user's
+    // global mute choice.
+    if (index === activeVideoIndexRef.current && target && !target.paused) {
+      if (pageVisibleRef.current) target.muted = !userUnmutedRef.current;
+      return;
+    }
     pauseAllVideos(index);
     activeVideoIndexRef.current = index;
     setActiveVideoIndex(index);
@@ -386,6 +417,7 @@ const MomentsPage = () => {
         && document.visibilityState === 'visible';
       if (!visible && pageVisibleRef.current) {
         pageVisibleRef.current = false;
+        clearPlayRetries();
         pauseAllVideos(-1);
         pauseExternalAudio();
       } else if (visible && !pageVisibleRef.current) {
@@ -398,6 +430,8 @@ const MomentsPage = () => {
     return () => {
       window.clearInterval(timer);
       document.removeEventListener('visibilitychange', checkVisibility);
+      clearPlayRetries();
+      pauseAllVideos(-1);
     };
   }, []);
 
@@ -506,17 +540,18 @@ const MomentsPage = () => {
   const toggleMuteVideo = () => {
     setHasEngaged(true);
     setAutoUnmuted(true);
+    // Global preference: once the user unmutes, EVERY moment video plays with
+    // sound on scroll. Only the active one is ever actually playing.
     userUnmutedRef.current = !userUnmutedRef.current;
     const nextMuted = !userUnmutedRef.current;
     setIsMuted(nextMuted);
-    // Mute state must never leak to a previous slide that is still buffering.
     pauseAllVideos(activeVideoIndexRef.current);
+    // Apply to all slides at once (the paused ones inherit it when scrolled).
+    videoRefs.current.forEach((video) => { if (video) video.muted = nextMuted; });
     const currentVideo = videoRefs.current[activeVideoIndexRef.current];
     if (currentVideo) {
       currentVideo.muted = nextMuted;
-      if (userUnmutedRef.current && currentVideo.paused) {
-        void currentVideo.play().catch(() => {});
-      }
+      if (currentVideo.paused) playVideoAtIndex(activeVideoIndexRef.current, userUnmutedRef.current);
     }
   };
 
