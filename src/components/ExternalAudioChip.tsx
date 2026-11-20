@@ -25,7 +25,10 @@ const ExternalAudioChip: React.FC<Props> = ({ audio, className }) => {
   const rootRef = React.useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const sync = () => setPlaying(getExternalAudioState().playing);
+    const sync = () => {
+      const state = getExternalAudioState();
+      setPlaying(state.playing && !!track && state.id === track.id);
+    };
     sync();
     const unsubscribe = subscribeExternalAudio(sync);
     const onEvent = () => sync();
@@ -34,20 +37,22 @@ const ExternalAudioChip: React.FC<Props> = ({ audio, className }) => {
       unsubscribe();
       window.removeEventListener('equyvo:external-audio', onEvent);
     };
-  }, []);
+  }, [track?.id]);
 
   // Stop when the viewer is closed or hidden behind another cached page.
   useEffect(() => {
     const timer = window.setInterval(() => {
       const el = rootRef.current;
       const nowVisible = !el || el.getBoundingClientRect().width > 0;
-      if (!nowVisible && getExternalAudioState().playing) stopExternalAudio();
+      const state = getExternalAudioState();
+      if (!nowVisible && state.playing && state.id === track?.id) stopExternalAudio();
     }, 300);
     return () => {
       window.clearInterval(timer);
-      if (getExternalAudioState().playing) stopExternalAudio();
+      const state = getExternalAudioState();
+      if (state.playing && state.id === track?.id) stopExternalAudio();
     };
-  }, []);
+  }, [track?.id]);
 
   if (!track) return null;
 

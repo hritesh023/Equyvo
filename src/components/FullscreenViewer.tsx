@@ -1609,6 +1609,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       {actualContent.description}
                     </p>
                   )}
+                  {/* Optional external soundtrack on a Moment (tap to play). */}
+                  {isVideoType && (actualContent as any)?.externalAudio && (
+                    <div className="mt-2">
+                      <ExternalAudioChip audio={(actualContent as any).externalAudio} />
+                    </div>
+                  )}
                 </div>
 
                 {/* Tags */}

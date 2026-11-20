@@ -37,7 +37,10 @@ const ExternalAudioPicker: React.FC<Props> = ({ track, onChange, compact = false
   const saved = loadSavedExternalAudio();
 
   useEffect(() => {
-    const sync = () => setPlaying(getExternalAudioState().playing);
+    const sync = () => {
+      const state = getExternalAudioState();
+      setPlaying(state.playing && !!track && state.id === track.id);
+    };
     sync();
     const unsubscribe = subscribeExternalAudio(sync);
     const onEvent = () => sync();
@@ -46,11 +49,12 @@ const ExternalAudioPicker: React.FC<Props> = ({ track, onChange, compact = false
       unsubscribe();
       window.removeEventListener('equyvo:external-audio', onEvent);
     };
-  }, []);
+  }, [track?.id]);
 
   // A removed track must not keep playing in the background.
   useEffect(() => () => {
-    if (track) stopExternalAudio();
+    const state = getExternalAudioState();
+    if (state.playing && state.id === track?.id) stopExternalAudio();
   }, [track?.id]);
 
   const pickFile = async (file: File | undefined) => {

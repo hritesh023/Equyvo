@@ -118,22 +118,27 @@ const MomentsPage = () => {
       if (activeVideoIndexRef.current !== index || videoRefs.current[index] !== video || video.paused) return;
       video.muted = !userUnmutedRef.current;
     };
-    const attemptPlay = (attempt: number) => {
+    let retries = 0;
+    const scheduleRetry = () => {
+      if (activeVideoIndexRef.current !== index || videoRefs.current[index] !== video || !pageVisibleRef.current) return;
+      // No fixed attempt cap: keep trying for as long as this slide stays on
+      // screen, so EVERY video autoplays after a swipe, even on flaky networks.
+      const delay = Math.min(120 + retries * 80, 800);
+      retries += 1;
+      const timer = window.setTimeout(attemptPlay, delay);
+      playRetriesRef.current = [timer];
+    };
+    function attemptPlay() {
       if (activeVideoIndexRef.current !== index || videoRefs.current[index] !== video || !pageVisibleRef.current) return;
       let promise: Promise<void> | undefined;
       try { promise = video.play(); } catch { /* retry below */ }
       if (promise && typeof promise.then === 'function') {
-        promise.then(applySoundPreference).catch(() => {
-          if (attempt >= 8) return;
-          const timer = window.setTimeout(() => attemptPlay(attempt + 1), 100 + attempt * 60);
-          playRetriesRef.current.push(timer);
-        });
-      } else if (attempt < 8) {
-        const timer = window.setTimeout(() => attemptPlay(attempt + 1), 150);
-        playRetriesRef.current.push(timer);
+        promise.then(applySoundPreference).catch(scheduleRetry);
+      } else {
+        scheduleRetry();
       }
-    };
-    attemptPlay(0);
+    }
+    attemptPlay();
   };
 
   const activateVideo = (index: number) => {
