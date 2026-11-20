@@ -275,6 +275,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       pipListenersRef.current.forEach((off) => { try { off(); } catch { /* ignore */ } });
       pipListenersRef.current = [];
       inAppPipRef.current = false;
+      document.body.classList.remove('eq-pip-snapshot');
       closeDocumentPip(false);
     };
   }, [closeDocumentPip]);
@@ -293,6 +294,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(true);
         setShowControls(false);
       } else {
+        document.body.classList.remove('eq-pip-snapshot');
         closeDocumentPip(false);
         removeInAppPipWindow();
         setIsNativePip(false);
@@ -325,13 +327,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       setContentOnly(true);
       setHideOverlay(true);
       setShowControls(false);
-      // Tell native only AFTER React has painted the media-only frame. The
-      // Activity snapshot then contains just the video/photo, never the app
-      // shell, controls or the in-app mini window.
-      const confirmSnapshot = () => requestAnimationFrame(() => requestAnimationFrame(() => {
-        try { (window as any).AndroidPiP?.readyForSnapshot?.(); } catch { /* ignore */ }
-      }));
-      confirmSnapshot();
+      // Apply the media-only look SYNCHRONOUSLY with CSS (requestAnimationFrame
+      // does not run once the WebView is backgrounded). Native can then enter
+      // PiP immediately, while the Activity is still able to do so — waiting
+      // for React's async render used to make the promotion fail.
+      document.body.classList.add('eq-pip-snapshot');
+      try { (window as any).AndroidPiP?.readyForSnapshot?.(); } catch { /* ignore */ }
       // The OS normally confirms with pipModeChanged(true). If that never
       // arrives (PiP denied / unsupported), restore a usable viewer instead
       // of leaving a bare content-only screen with no controls.
@@ -375,6 +376,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     const onVisibility = () => {
       if (document.visibilityState === 'hidden') {
         if (!inAppPipRef.current) return;
+        // Deterministic Android trigger: do not rely only on Activity
+        // callbacks/OEM behaviour. The web layer knows the app was left while
+        // PiP was active, so ask the native shell to promote right now.
+        try {
+          (window as any).AndroidPiP?.setInAppPip?.(true);
+          (window as any).AndroidPiP?.enter?.();
+        } catch { /* ignore */ }
         const docPip = docPipWindowRef.current;
         if (docPip && !docPip.closed) {
           try {
@@ -1707,6 +1715,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             />
           ) : fallbackVideoSrc && !videoFailed ? (
             <video
+              data-pip-media
               ref={videoRef}
               key={videoRetryKey}
               src={videoRetryKey === 0 ? String(fallbackVideoSrc) : `${String(fallbackVideoSrc)}${String(fallbackVideoSrc).includes('?') ? '&' : '?'}streamretry=${videoRetryKey}`}
@@ -2445,6 +2454,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         >
           {imageSrc && !imageFailed ? (
           <img
+            data-pip-media
             key={`fs-image-${imageRenderKey}`}
             src={imageRenderKey ? `${imageSrc}${imageSrc.includes('?') ? '&' : '?'}fsretry=${imageRenderKey}` : imageSrc}
             alt={actualContent?.title || 'Fullscreen Image'}

@@ -1260,6 +1260,17 @@ html.cap-native {
     line-height: 1.5;
   }
 
+  /* Android PiP snapshot: applied synchronously (before the WebView is
+     backgrounded and rAF stops firing) so the system PiP window contains ONLY
+     the media from the fullscreen view, never the app shell or controls. */
+  body.eq-pip-snapshot [data-fullscreen-viewer] * {
+    visibility: hidden !important;
+  }
+  body.eq-pip-snapshot [data-fullscreen-viewer] [data-pip-media] {
+    visibility: visible !important;
+    object-fit: contain !important;
+  }
+
   .line-clamp-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;

@@ -278,9 +278,9 @@ public class MainActivity extends BridgeActivity {
         final Runnable snapshotThenEnter = new Runnable() {
             @Override
             public void run() {
-                waits[0] += 40;
-                if (!pipSnapshotReady && waits[0] < 600 && !isFinishing() && !isDestroyed()) {
-                    systemPipHandler.postDelayed(this, 40L);
+                waits[0] += 20;
+                if (!pipSnapshotReady && waits[0] < 400 && !isFinishing() && !isDestroyed()) {
+                    systemPipHandler.postDelayed(this, 20L);
                     return;
                 }
                 pipPromotionPending = false;
@@ -313,7 +313,10 @@ public class MainActivity extends BridgeActivity {
                 } catch (Throwable ignored) {}
             }
         };
-        systemPipHandler.postDelayed(snapshotThenEnter, 120L);
+        // Enter as early as possible: on modern Android an Activity that has
+        // already been stopped cannot enter PiP. The web layer confirms the
+        // media-only snapshot synchronously, so this normally takes ~20ms.
+        systemPipHandler.postDelayed(snapshotThenEnter, 30L);
     }
 
     /** Dismiss the system PiP window and clear every PiP flag. */
