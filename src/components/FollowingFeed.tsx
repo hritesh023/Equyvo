@@ -28,6 +28,7 @@ import { toCount } from '@/lib/count';
 import { canReactTo } from '@/lib/reactions';
 import ResilientImage from '@/components/ResilientImage';
 import MediaPreview from '@/components/MediaPreview';
+import ExternalAudioChip from '@/components/ExternalAudioChip';
 
 interface FollowingFeedProps {
   posts: Post[];
@@ -335,6 +336,13 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                     }
                     return null;
                   })()}
+
+                  {/* External background audio (Moments + Photos only). */}
+                  {(post as any)?.externalAudio && (
+                    <div className="mb-3">
+                      <ExternalAudioChip audio={(post as any).externalAudio} />
+                    </div>
+                  )}
                   
                   <div className="flex flex-wrap items-center gap-2 sm:flex-nowrap sm:gap-2">
                     {post.type === 'thought' ? (

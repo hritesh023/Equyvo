@@ -27,6 +27,7 @@ const ProfilePage = lazy(() => import('./pages/ProfilePage'));
 const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const SearchPage = lazy(() => import('./pages/SearchPage'));
 const MomentsPage = lazy(() => import('./pages/MomentsPage'));
+const UseAudioPage = lazy(() => import('./pages/UseAudioPage'));
 const ThoughtsPage = lazy(() => import('./pages/ThoughtsPage'));
 const PricingPage = lazy(() => import('./pages/PricingPage'));
 const SubscriptionFeaturesPage = lazy(() => import('./pages/SubscriptionFeaturesPage'));
@@ -78,6 +79,7 @@ const ROUTES: RouteObject[] = [
   { path: '/app/discover', element: <DiscoverPage /> },
   { path: '/app/create', element: <CreatePage /> },
   { path: '/app/moments', element: <MomentsPage /> },
+  { path: '/app/use-audio', element: <UseAudioPage /> },
   { path: '/app/thoughts', element: <ThoughtsPage /> },
   { path: '/app/profile', element: <ProfilePage /> },
   { path: '/app/profile/:userId', element: <ProfilePage /> },
@@ -87,6 +89,7 @@ const ROUTES: RouteObject[] = [
   { path: '/discover', element: <DiscoverPage /> },
   { path: '/create', element: <CreatePage /> },
   { path: '/moments', element: <MomentsPage /> },
+  { path: '/use-audio', element: <UseAudioPage /> },
   { path: '/thoughts', element: <ThoughtsPage /> },
   { path: '/profile', element: <ProfilePage /> },
   { path: '/profile/posts/:postId', element: <SharedPostRedirect /> },

@@ -17,6 +17,7 @@ import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts'
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
+import ExternalAudioChip from '@/components/ExternalAudioChip';
 import LiveRelayPlayer from '@/components/LiveRelayPlayer';
 import LiveChatPanel from '@/components/LiveChatPanel';
 import StreamPlayer from '@/components/StreamPlayer';
@@ -2239,6 +2240,12 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <p className="text-white/70 text-sm mt-2 line-clamp-2">
                 {actualContent.description}
               </p>
+            )}
+            {/* Photos with external background music: tap to play the track. */}
+            {(actualContent as any)?.externalAudio && (
+              <div className="mt-2">
+                <ExternalAudioChip audio={(actualContent as any).externalAudio} />
+              </div>
             )}
           </div>
 

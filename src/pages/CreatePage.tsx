@@ -7,6 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera, ScreenShare, MonitorUp } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import MediaCropper from '@/components/MediaCropper';
+import ExternalAudioPicker from '@/components/ExternalAudioPicker';
+import {
+  attachExternalAudioToRecording,
+  loadSavedExternalAudio,
+  readExternalAudioFromSearch,
+  saveExternalAudio,
+  type ExternalAudioTrack,
+} from '@/lib/external-audio';
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -335,6 +343,13 @@ const CreatePage = () => {
   const [momentContent, setMomentContent] = useState('');
   const [videoCaption, setVideoCaption] = useState('');
 
+  // External background audio. Shared by the "Use this audio" page, the
+  // Moments/Photos composers and the camera recorder.
+  const [externalAudio, setExternalAudio] = useState<ExternalAudioTrack | null>(() => (
+    readExternalAudioFromSearch(window.location.search) || loadSavedExternalAudio()
+  ));
+  const cameraAudioMixRef = useRef<{ dispose: () => void } | null>(null);
+
   // The create page now stays mounted while navigating between tabs, so its
   // one-time state initializer cannot react to a later ?tab= deep link
   // (e.g. "Create a moment" from the Moments empty state). Follow the param
@@ -345,6 +360,21 @@ const CreatePage = () => {
     const valid = ['story', 'text-story', 'thought', 'photo', 'video', 'live', 'moment', 'camera'];
     if (valid.includes(deepLinkTab)) setActiveTab(deepLinkTab);
   }, [deepLinkTab]);
+
+  // "Use this audio" deep link: /app/create?tab=moment&audio=<track>
+  // CreatePage stays mounted between routes, so this must follow the params.
+  const deepLinkAudio = searchParams.get('audio');
+  useEffect(() => {
+    const track = readExternalAudioFromSearch(searchParams.toString());
+    if (!track) return;
+    setExternalAudio(track);
+    saveExternalAudio(track);
+    _showSuccess(`Audio ready: ${track.name}. Add it to a Moment or Photo.`);
+  }, [deepLinkAudio]);
+  // Guard: external audio is supported ONLY by Moments and Photos (and by the
+  // camera when its capture is routed to one of those two sections).
+  const externalAudioAllowed = (tab: string) => tab === 'photo' || tab === 'moment'
+    || (tab === 'camera' && (cameraDest === 'photo' || cameraDest === 'moment'));
 
   // ---- Content-safety gate (visible warning + pick blocked) ----------------
   // Files are screened the moment they are picked. Anything the safety check
@@ -2074,7 +2104,8 @@ const CreatePage = () => {
     try {
       const photosData = {
         files: photoFiles,
-        caption: photoCaption
+        caption: photoCaption,
+        externalAudio: externalAudioAllowed('photo') ? externalAudio : null,
       };
 
       switch (action) {
@@ -2152,6 +2183,8 @@ const CreatePage = () => {
               publicId: p.publicId,
               resourceType: p.resourceType,
               r2Key: p.r2Key,
+              song: externalAudioAllowed('photo') ? externalAudio?.name || 'original sound' : 'original sound',
+              externalAudio: externalAudioAllowed('photo') ? externalAudio || undefined : undefined,
             });
             if (err) photoPersistError = err;
           }
@@ -2458,7 +2491,11 @@ const CreatePage = () => {
     publishLockRef.current = true;
       cancelUploadRequestedRef.current = false;
     try {
-      const momentsData = { files: momentFiles, content: momentContent };
+      const momentsData = {
+        files: momentFiles,
+        content: momentContent,
+        externalAudio: externalAudioAllowed('moment') ? externalAudio : null,
+      };
 
       switch (action) {
       case 'post':
@@ -2562,6 +2599,8 @@ const CreatePage = () => {
               publicId: m.publicId,
               resourceType: m.resourceType,
               r2Key: m.r2Key,
+              song: externalAudioAllowed('moment') ? externalAudio?.name || 'original sound' : 'original sound',
+              externalAudio: externalAudioAllowed('moment') ? externalAudio || undefined : undefined,
             });
             if (err) momentPersistError = err;
           }
@@ -3216,6 +3255,8 @@ const CreatePage = () => {
   // the same queues the picker fills, so posting flows stay identical.
 
   const stopCamera = () => {
+    try { cameraAudioMixRef.current?.dispose(); } catch { /* ignore */ }
+    cameraAudioMixRef.current = null;
     if (cameraTimerRef.current) {
       clearInterval(cameraTimerRef.current);
       cameraTimerRef.current = null;
@@ -3372,7 +3413,7 @@ const CreatePage = () => {
     }
   };
 
-  const handleCameraRecordToggle = () => {
+  const handleCameraRecordToggle = async () => {
     const ms = cameraStreamRef.current;
     if (!ms) {
       void startCamera();
@@ -3383,7 +3424,20 @@ const CreatePage = () => {
       return;
     }
     try {
-      const rec = startRecorder(ms);
+      // Instagram-style: when external audio is selected for a Moment/Photo
+      // capture, mix it into the recording stream so it is audible in the
+      // clip (and monitor it to the speakers) while the user taps REC.
+      let recorderStream = ms;
+      if (externalAudioAllowed('camera') && externalAudio) {
+        try {
+          const mix = await attachExternalAudioToRecording(externalAudio, ms);
+          cameraAudioMixRef.current = mix;
+          recorderStream = mix.stream;
+        } catch {
+          showError('Could not mix the selected audio — recording without it.');
+        }
+      }
+      const rec = startRecorder(recorderStream);
       cameraRecorderRef.current = rec;
       cameraMimeRef.current = rec.mimeType || pickRecorderMime();
       cameraChunksRef.current = [];
@@ -3392,6 +3446,8 @@ const CreatePage = () => {
         if (e.data && e.data.size > 0) cameraChunksRef.current.push(e.data);
       };
       rec.onstop = () => {
+        try { cameraAudioMixRef.current?.dispose(); } catch { /* ignore */ }
+        cameraAudioMixRef.current = null;
         if (cameraTimerRef.current) { clearInterval(cameraTimerRef.current); cameraTimerRef.current = null; }
         setIsCapturing(false);
         const secs = Math.max(1, Math.round((Date.now() - cameraStartRef.current) / 1000));
@@ -3420,6 +3476,8 @@ const CreatePage = () => {
         setCameraRecordSecs(Math.max(1, Math.round((Date.now() - cameraStartRef.current) / 1000)));
       }, 1000);
     } catch {
+      try { cameraAudioMixRef.current?.dispose(); } catch { /* ignore */ }
+      cameraAudioMixRef.current = null;
       showError('Video recording is not supported on this device. Try capturing a photo instead.');
     }
   };
@@ -3596,6 +3654,7 @@ const CreatePage = () => {
         case 'photos':
           setPhotoFiles(draft.content?.files || []);
           setPhotoCaption(draft.content?.caption || '');
+          setExternalAudio(draft.content?.externalAudio || null);
           setActiveTab('photo');
           break;
         case 'videos':
@@ -3606,6 +3665,7 @@ const CreatePage = () => {
         case 'moments':
           setMomentFiles(draft.content?.files || []);
           setMomentContent(draft.content?.content || '');
+          setExternalAudio(draft.content?.externalAudio || null);
           setActiveTab('moment');
           break;
         case 'live':
@@ -3664,6 +3724,7 @@ const CreatePage = () => {
       case 'photos':
         setPhotoFiles(content.files || []);
         setPhotoCaption(content.caption || '');
+        setExternalAudio(content.externalAudio || null);
         await new Promise((r) => setTimeout(r, 120));
         await latestHandlersRef.current?.handlePostPhotos?.('post');
         break;
@@ -3676,6 +3737,7 @@ const CreatePage = () => {
       case 'moments':
         setMomentFiles(content.files || []);
         setMomentContent(content.content || '');
+        setExternalAudio(content.externalAudio || null);
         await new Promise((r) => setTimeout(r, 120));
         await latestHandlersRef.current?.handlePostMoment?.('post');
         break;
@@ -4644,6 +4706,20 @@ const CreatePage = () => {
                 />
               </div>
 
+              {/* External background audio — Photos is one of only two
+                  post types that support it. */}
+              <div>
+                <Label className="flex items-center gap-1.5">Background music (optional)</Label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Add a track from a Moment or upload your own. It plays with this photo on Equyvo.
+                </p>
+                <ExternalAudioPicker
+                  track={externalAudio}
+                  onChange={setExternalAudio}
+                  allowed={externalAudioAllowed('photo')}
+                />
+              </div>
+
               {/* Selected photos: file name + live preview before posting */}
               {photoFiles.length > 0 && (
                 <div className="space-y-2">
@@ -5157,6 +5233,21 @@ const CreatePage = () => {
                   className="max-w-xs mx-auto"
                 />
               </div>
+
+              {/* External background audio — Moments is one of only two
+                  post types that support it. */}
+              <div>
+                <Label className="flex items-center gap-1.5">Background music (optional)</Label>
+                <p className="mb-2 text-xs text-muted-foreground">
+                  Use the audio from another Moment, or upload your own. It plays behind this moment.
+                </p>
+                <ExternalAudioPicker
+                  track={externalAudio}
+                  onChange={setExternalAudio}
+                  allowed={externalAudioAllowed('moment')}
+                />
+              </div>
+
               {momentFiles.length > 0 && (
                 <div className="space-y-2">
                   <h4 className="font-semibold">Selected Files ({momentFiles.length}):</h4>
@@ -5341,6 +5432,18 @@ const CreatePage = () => {
                   </SelectContent>
                 </Select>
               </div>
+              {externalAudioAllowed('camera') && (
+                <div className="mb-4 flex justify-center pointer-events-auto">
+                  <div className="w-full max-w-xs">
+                    <ExternalAudioPicker
+                      track={externalAudio}
+                      onChange={setExternalAudio}
+                      compact
+                      allowed
+                    />
+                  </div>
+                </div>
+              )}
               <div className="flex items-center justify-center gap-8 pb-2 pointer-events-auto">
                 <Button
                   onClick={flipCamera}
@@ -5359,7 +5462,7 @@ const CreatePage = () => {
                   <div className="h-16 w-16 rounded-full bg-white"></div>
                 </button>
                 <Button
-                  onClick={handleCameraRecordToggle}
+                  onClick={() => void handleCameraRecordToggle()}
                   disabled={!cameraReady || isUploading}
                   size="icon"
                   variant="ghost"

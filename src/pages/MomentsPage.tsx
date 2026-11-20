@@ -26,6 +26,13 @@ import ResilientVideo from '@/components/ResilientVideo';
 import api from '@/lib/api';
 import { useVideo2xPress } from '@/lib/video-2x';
 import { toCount, bumpCount } from '@/lib/count';
+import {
+  pauseExternalAudio,
+  saveExternalAudio,
+  stopExternalAudio,
+  useAudioDestination,
+  type ExternalAudioTrack,
+} from '@/lib/external-audio';
 
 const MomentsPage = () => {
   const navigate = useNavigate();
@@ -66,6 +73,54 @@ const MomentsPage = () => {
   const lastTapRef = useRef<{ time: number; index: number }>({ time: 0, index: -1 });
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [likeAnimIndex, setLikeAnimIndex] = useState<number | null>(null);
+  // Only one video in this feed may ever produce sound. The user's unmute
+  // preference is remembered and applied to whichever slide is active.
+  const userUnmutedRef = useRef(false);
+  const pageVisibleRef = useRef(true);
+
+  /**
+   * Hard-stop every video except `exceptIndex`. This is the single source of
+   * truth for "the previous moment must not keep playing" — scrolling, page
+   * changes, mute toggles and the Use-this-audio flow all call it.
+   */
+  const pauseAllVideos = (exceptIndex = -1) => {
+    videoRefs.current.forEach((video, i) => {
+      if (!video || i === exceptIndex) return;
+      try {
+        if (!video.paused) video.pause();
+        video.currentTime = 0;
+        video.muted = true;
+      } catch { /* ignore */ }
+    });
+  };
+
+  const playVideoAtIndex = (index: number, unmuted: boolean) => {
+    const video = videoRefs.current[index];
+    if (!video || !pageVisibleRef.current) return;
+    try { video.playbackRate = playbackSpeed; } catch { /* ignore */ }
+    video.muted = !unmuted;
+    const attempt = video.play();
+    if (attempt && typeof attempt.catch === 'function') {
+      // Autoplay is only allowed muted — retry silently if the preference
+      // was "unmuted" and the browser refused the first call.
+      attempt.catch(() => {
+        video.muted = true;
+        return video.play();
+      }).catch(() => { /* user can tap to play */ });
+    }
+  };
+
+  const activateVideo = (index: number) => {
+    if (index < 0 || index >= videoRefs.current.length) return;
+    const target = videoRefs.current[index];
+    // Observer emits repeated ratio changes for the same slide — don't
+    // restart it on every one.
+    if (index === activeVideoIndexRef.current && target && !target.paused) return;
+    pauseAllVideos(index);
+    activeVideoIndexRef.current = index;
+    setActiveVideoIndex(index);
+    playVideoAtIndex(index, userUnmutedRef.current);
+  };
 
   // Apply playback speed to the active video.
   useEffect(() => {
@@ -127,7 +182,8 @@ const MomentsPage = () => {
               comments: m.comments ?? 0,
               shares: m.shares ?? 0,
               views: m.views ?? 0,
-              song: m.song || 'original sound',
+              song: m.song || m.externalAudio?.name || 'original sound',
+              externalAudio: m.externalAudio || null,
               time: m.time || m.createdAt || 'just now',
               createdAt: m.createdAt,
             };
@@ -275,71 +331,74 @@ const MomentsPage = () => {
     };
   }, []);
 
-  // Intersection observer for video playback management
+  // Intersection observer: the most-visible slide becomes the ONLY playing
+  // video. Pausing every other slide here (instead of relying on `autoPlay`)
+  // is what stops the previous moment's audio when the user scrolls away.
   useEffect(() => {
-    const options = {
-      root: containerRef.current,
-      rootMargin: '0px',
-      threshold: 0.7 // Higher threshold for better detection
-    };
+    const container = containerRef.current;
+    if (!container || !moments.length) return;
 
     const observer = new IntersectionObserver((entries) => {
-      entries.forEach(entry => {
-        const index = Number(entry.target.getAttribute('data-index'));
-        const video = videoRefs.current[index];
-        
-        if (entry.isIntersecting && !isScrolling) {
-          setActiveVideoIndex(index);
-
-          // Play current video with enhanced logic
-          if (video) {
-            video.currentTime = 0;
-            video.muted = true;
-            video.play().catch(() => {});
-          }
-        } else if (!entry.isIntersecting) {
-          // Pause video when not visible
-          if (video) {
-            video.pause();
+      let best: { index: number; ratio: number } | null = null;
+      entries.forEach((entry) => {
+        const index = Number((entry.target as HTMLElement).getAttribute('data-index'));
+        if (entry.isIntersecting && entry.intersectionRatio >= 0.6) {
+          if (!best || entry.intersectionRatio > best.ratio) {
+            best = { index, ratio: entry.intersectionRatio };
           }
         }
       });
-    }, options);
+      if (best && pageVisibleRef.current) {
+        activateVideo(best.index);
+      } else {
+        // Between slides / during a fast swipe: nothing deserves audio.
+        pauseAllVideos(activeVideoIndexRef.current);
+      }
+    }, {
+      root: container,
+      rootMargin: '0px',
+      threshold: [0, 0.6, 0.85],
+    });
 
-    const slides = containerRef.current?.querySelectorAll('.moment-slide');
-    slides?.forEach(slide => observer.observe(slide));
+    const slides = container.querySelectorAll('.moment-slide');
+    slides.forEach((slide) => observer.observe(slide));
+    return () => observer.disconnect();
+  }, [moments.length]);
 
-    return () => {
-      observer.disconnect();
-      slides?.forEach(slide => observer.unobserve(slide));
-    };
-  }, [isScrolling, activeVideoIndex]);
-
-  // Auto-play first video on mount with multiple attempts
+  // Retry playback shortly after the feed mounts (metadata may not be ready
+  // when the observer first fires). Never starts a second video.
   useEffect(() => {
-    const playFirstVideo = () => {
-      const firstVideo = videoRefs.current[0];
-      if (firstVideo) {
-        // Start muted for reliable auto-play
-        firstVideo.muted = true;
-        
-        const attemptPlay = (attempts = 0) => {
-          if (attempts >= 10) {
-            return;
-          }
-          
-          firstVideo.play()
-            .catch(() => {
-              setTimeout(() => attemptPlay(attempts + 1), 100 * (attempts + 1));
-            });
-        };
-        
-        // Start attempting to play after a short delay
-        setTimeout(() => attemptPlay(), 100);
+    if (!moments.length) return;
+    const timer = window.setTimeout(() => {
+      const current = videoRefs.current[activeVideoIndexRef.current];
+      if (current?.paused) activateVideo(activeVideoIndexRef.current);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [moments.length]);
+
+  // The app keeps visited pages mounted with display:none. Detect that state
+  // and stop video audio (and any external audio) while this page is hidden.
+  useEffect(() => {
+    const checkVisibility = () => {
+      const container = containerRef.current;
+      if (!container) return;
+      const visible = container.getBoundingClientRect().width > 0
+        && document.visibilityState === 'visible';
+      if (!visible && pageVisibleRef.current) {
+        pageVisibleRef.current = false;
+        pauseAllVideos(-1);
+        pauseExternalAudio();
+      } else if (visible && !pageVisibleRef.current) {
+        pageVisibleRef.current = true;
+        activateVideo(activeVideoIndexRef.current);
       }
     };
-
-    playFirstVideo();
+    const timer = window.setInterval(checkVisibility, 250);
+    document.addEventListener('visibilitychange', checkVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener('visibilitychange', checkVisibility);
+    };
   }, []);
 
   // Keyboard navigation for desktop - always active
@@ -447,11 +506,17 @@ const MomentsPage = () => {
   const toggleMuteVideo = () => {
     setHasEngaged(true);
     setAutoUnmuted(true);
+    userUnmutedRef.current = !userUnmutedRef.current;
+    const nextMuted = !userUnmutedRef.current;
+    setIsMuted(nextMuted);
+    // Mute state must never leak to a previous slide that is still buffering.
+    pauseAllVideos(activeVideoIndexRef.current);
     const currentVideo = videoRefs.current[activeVideoIndexRef.current];
     if (currentVideo) {
-      const newMutedState = !currentVideo.muted;
-      currentVideo.muted = newMutedState;
-      setIsMuted(newMutedState);
+      currentVideo.muted = nextMuted;
+      if (userUnmutedRef.current && currentVideo.paused) {
+        void currentVideo.play().catch(() => {});
+      }
     }
   };
 
@@ -459,13 +524,32 @@ const MomentsPage = () => {
     setHasEngaged(true);
     setAutoUnmuted(true); // Prevent auto-unmute from triggering again
     const video = videoRefs.current[index];
-    if (video) {
-      if (video.paused) {
-        video.play().catch(() => {});
-      } else {
-        video.pause();
-      }
+    if (!video) return;
+    if (video.paused) {
+      activateVideo(index);
+    } else {
+      video.pause();
     }
+  };
+
+  const openUseAudio = (moment: any) => {
+    // Leave no other audio competing with the preview on the next page.
+    pauseAllVideos(-1);
+    stopExternalAudio();
+    const track: ExternalAudioTrack = {
+      id: String(moment.id),
+      name: moment.song || 'Original audio',
+      creator: moment.user ? `@${moment.user}` : 'Equyvo creator',
+      url: moment.videoUrl || moment.media || '',
+      cover: moment.thumbnail || moment.image || '',
+      from: 'moment',
+    };
+    if (!track.url) {
+      showError('This audio is not available right now.');
+      return;
+    }
+    saveExternalAudio(track);
+    navigate(useAudioDestination(track));
   };
 
   const formatTime = (seconds: number) => {
@@ -697,7 +781,12 @@ const MomentsPage = () => {
             <div className="relative h-full w-full max-w-[480px] shrink-0 overflow-hidden bg-black">
             {moment.videoUrl ? (
             <video
-              ref={el => videoRefs.current[index] = el}
+              ref={el => {
+                videoRefs.current[index] = el;
+                // Start every slide muted; only the active slide is ever
+                // unmuted by the playback controller.
+                if (el) el.muted = true;
+              }}
               src={moment.videoUrl}
               className="absolute inset-0 h-full w-full object-contain"
               style={{
@@ -706,8 +795,12 @@ const MomentsPage = () => {
               }}
               loop={!autoAdvance}
               playsInline
-              muted={isMuted}
+              // Mute is controlled imperatively per active slide only (see
+              // the ref above). A React `muted` prop would unmute every video
+              // at once — the cause of overlapping audio.
+              onPlay={() => pauseAllVideos(index)}
               onEnded={() => {
+                pauseAllVideos(index);
                 if (!autoAdvance) return;
                 const container = containerRef.current;
                 if (!container) return;
@@ -717,7 +810,6 @@ const MomentsPage = () => {
                   (slides[next] as HTMLElement).scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
               }}
-              autoPlay
               preload="metadata"
               onTimeUpdate={() => handleTimeUpdate(index)}
               onSeeked={() => handleSeeked(index)}
@@ -920,13 +1012,20 @@ const MomentsPage = () => {
                   <p className="text-white text-sm drop-shadow-md line-clamp-3">{moment.description}</p>
                 </div>
               )}
-              <div className="flex items-center gap-2 bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-sm animate-pulse cursor-pointer hover:bg-white/30 transition-colors">
-                <Music2 className="h-3 w-3" />
-                <p className="text-xs font-medium truncate max-w-[150px]">{moment.song}</p>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); openUseAudio(moment); }}
+                className="flex items-center gap-2 bg-white/20 w-fit px-3 py-1 rounded-full backdrop-blur-sm hover:bg-white/35 active:scale-95 transition-all"
+                title="Use this audio in your own Moment or Photo"
+                aria-label={`Use audio: ${moment.song}`}
+              >
+                <Music2 className="h-3 w-3 shrink-0" />
+                <span className="text-xs font-medium truncate max-w-[150px]">{moment.song}</span>
                 {!isMuted && index === activeVideoIndex && (
-                  <span className="text-xs text-green-400 ml-2 animate-pulse"> Unmuted</span>
+                  <span className="text-xs text-green-400 animate-pulse"> Unmuted</span>
                 )}
-              </div>
+                <span className="ml-1 text-[10px] font-bold text-white/80">Use this audio</span>
+              </button>
             </div>
             {duration > 0 && index === activeVideoIndex && (
               <div className="absolute bottom-2 left-4 right-4 z-30 pointer-events-auto">
