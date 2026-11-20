@@ -41,6 +41,7 @@ import LiveChatOverlay from '@/components/LiveChatOverlay';
 import LiveChatPanel from '@/components/LiveChatPanel';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy, useBackOverlay } from '@/lib/back-navigation';
+import { canShowFloatingLivePill, hideFloatingLivePill, isFloatingLivePillSupported, requestFloatingLivePillPermission, showFloatingLivePill } from '@/lib/live-pill';
 import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
@@ -839,6 +840,7 @@ const CreatePage = () => {
     liveStreamRef.current = null;
     liveRecorderRef.current = null;
     liveActiveRef.current = false;
+    hideFloatingLivePill();
   }, []);
 
   // Render whatever is actually being captured — camera or the screen/app the
@@ -3523,6 +3525,7 @@ const CreatePage = () => {
   const handleEndLive = async () => {
     if (liveEndingRef.current) return;
     liveEndingRef.current = true;
+    hideFloatingLivePill();
     try {
       await performEndLive();
     } finally {
@@ -3542,6 +3545,31 @@ const CreatePage = () => {
     return true;
   }, [liveCommentsPanelOpen]);
   useBackOverlay(liveCommentsPanelOpen, closeLiveCommentsPanel);
+
+  // ── Minimize to a system-level floating pill (Android) ──────────────────
+  const minimizeLiveStudio = () => {
+    setLiveStudioMinimized(true);
+    if (isFloatingLivePillSupported()) {
+      if (canShowFloatingLivePill()) {
+        showFloatingLivePill();
+      } else {
+        requestFloatingLivePillPermission();
+        showError('Allow Equyvo to display over other apps to use the floating live pill. The in-app pill still works.');
+      }
+    }
+  };
+
+  const expandLiveStudio = () => {
+    setLiveStudioMinimized(false);
+    hideFloatingLivePill();
+  };
+
+  // Tapping the native overlay pill brings Equyvo forward and re-expands here.
+  useEffect(() => {
+    const onExpand = () => { setLiveStudioMinimized(false); hideFloatingLivePill(); };
+    window.addEventListener('equyvo:expandLive', onExpand);
+    return () => window.removeEventListener('equyvo:expandLive', onExpand);
+  }, []);
 
   // ── In-live camera controls (same camera-capture UX as the Camera tab) ───
   const toggleLiveMic = () => {
@@ -4410,8 +4438,9 @@ const CreatePage = () => {
               </button>
               <button
                 type="button"
-                onClick={() => setLiveStudioMinimized(true)}
-                aria-label="Minimize live controls"
+                onClick={minimizeLiveStudio}
+                aria-label="Minimize to floating live pill"
+                title="Minimize to floating live pill"
                 className="rounded-full bg-black/60 p-2.5 backdrop-blur hover:bg-black/80"
               >
                 <Minimize2 className="h-5 w-5" />
@@ -4494,8 +4523,8 @@ const CreatePage = () => {
                 <Button
                   size="icon"
                   variant="ghost"
-                  onClick={() => setLiveStudioMinimized(true)}
-                  title="Minimize controls"
+                  onClick={minimizeLiveStudio}
+                  title="Minimize to floating pill"
                   className="h-12 w-12 rounded-full bg-black/60 text-white hover:bg-black/80"
                 >
                   <Minimize2 className="h-6 w-6" />
@@ -4523,7 +4552,7 @@ const CreatePage = () => {
         {liveStudioMinimized && (
           <button
             type="button"
-            onClick={() => setLiveStudioMinimized(false)}
+            onClick={expandLiveStudio}
             className="absolute bottom-[max(env(safe-area-inset-bottom),1.5rem)] right-4 z-40 inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-xs font-semibold shadow-xl"
           >
             <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" />

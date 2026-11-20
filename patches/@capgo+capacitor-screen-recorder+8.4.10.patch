@@ -1,8 +1,56 @@
+diff --git a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoRecordScreen.kt b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoRecordScreen.kt
+index 9a93c82..ea56719 100644
+--- a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoRecordScreen.kt
++++ b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoRecordScreen.kt
+@@ -3,13 +3,31 @@ package ee.forgr.plugin.screenrecorder
+ import android.app.Activity
+ import android.content.Context
+ import android.content.Intent
++import android.media.projection.MediaProjectionConfig
+ import android.media.projection.MediaProjectionManager
++import android.os.Build
+ import androidx.activity.result.ActivityResult
+ import androidx.activity.result.contract.ActivityResultContract
+ 
+-class CapgoRecordScreen : ActivityResultContract<Unit, ActivityResult>() {
+-    override fun createIntent(context: Context, input: Unit): Intent {
++/**
++ * Equyvo patch: the input is the scope chosen in our live studio — "app" or
++ * "screen". On Android 14+ the OS consent dialog is constrained accordingly
++ * instead of always defaulting to single-app capture, so the user no longer
++ * has to manually switch the system picker after choosing "Entire screen".
++ */
++class CapgoRecordScreen : ActivityResultContract<String, ActivityResult>() {
++    override fun createIntent(context: Context, input: String): Intent {
+         val pm = context.getSystemService(MediaProjectionManager::class.java)
++        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
++            val config = if (input == "screen") {
++                // Restrict the consent UI to the whole default display.
++                MediaProjectionConfig.createConfigForDefaultDisplay()
++            } else {
++                // Single-app flow: let the system present the app picker.
++                MediaProjectionConfig.createConfigForUserChoice()
++            }
++            return pm.createScreenCaptureIntent(config)
++        }
+         return pm.createScreenCaptureIntent()
+     }
+ 
 diff --git a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt
-index e1d0a0a..ca17349 100644
+index e1d0a0a..9d687c8 100644
 --- a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt
 +++ b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/CapgoScrCast.kt
-@@ -45,6 +45,12 @@ class CapgoScrCast private constructor(
+@@ -33,6 +33,9 @@ class CapgoScrCast private constructor(
+     var options: Options = Options()
+         private set
+ 
++    /** Equyvo patch: "app" or "screen" — passed into the OS consent contract. */
++    var projectionScope: String = "app"
++
+     private var fileExtension: String = "mp4"
+     private var recordingSession: Intent? = null
+     private var serviceBinder: CapgoRecorderService? = null
+@@ -45,6 +48,12 @@ class CapgoScrCast private constructor(
       * Invoked when a recording ends without {@link #stopRecording()} having been called.
       */
      var externalStopListener: ExternalStopListener? = null
@@ -15,7 +63,7 @@ index e1d0a0a..ca17349 100644
      private var receiverRegistered = false
  
      private val metrics by lazy {
-@@ -110,6 +116,8 @@ class CapgoScrCast private constructor(
+@@ -110,6 +119,8 @@ class CapgoScrCast private constructor(
                      val savedPath = cleanupSession(deleteEmptyOutput = startPending || error != null)
                      if (!startPending && sessionActive && !stopRequested) {
                          externalStopListener?.onExternalStop(savedPath, error?.message)
@@ -24,20 +72,39 @@ index e1d0a0a..ca17349 100644
                      }
                      stopRequested = false
                  }
-@@ -177,7 +185,10 @@ class CapgoScrCast private constructor(
-      private fun requiredRuntimePermissions(): List<String> = buildList {
--         add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
--         add(Manifest.permission.READ_EXTERNAL_STORAGE)
-+         // Equyvo patch: WRITE/READ_EXTERNAL_STORAGE are legacy permissions.
-+         // On Android 13+ (targetSdk 36) they are always denied, so the plugin
-+         // never launched the MediaProjection prompt and screen live was
-+         // completely broken. Recordings go to app-private storage, which
-+         // needs no storage permission. Only the mic permission is relevant.
-          if (recordAudio) {
-              add(Manifest.permission.RECORD_AUDIO)
-          }
-      }
-@@ -317,6 +325,11 @@ class CapgoScrCast private constructor(
+@@ -125,7 +136,7 @@ class CapgoScrCast private constructor(
+             return@registerForActivityResult
+         }
+         if (requiredRuntimePermissions().all { isPermissionGranted(it) }) {
+-            startProjection.launch(Unit)
++            startProjection.launch(projectionScope)
+         } else {
+             notifyStartFailed(SecurityException("Required permissions were not granted"))
+         }
+@@ -167,7 +178,7 @@ class CapgoScrCast private constructor(
+         startListener = listener
+         val missing = requiredRuntimePermissions().filterNot { isPermissionGranted(it) }
+         if (missing.isEmpty()) {
+-            startProjection.launch(Unit)
++            startProjection.launch(projectionScope)
+         } else {
+             requestRuntimePermissions.launch(missing.toTypedArray())
+         }
+@@ -175,8 +186,11 @@ class CapgoScrCast private constructor(
+     }
+ 
+     private fun requiredRuntimePermissions(): List<String> = buildList {
+-        add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+-        add(Manifest.permission.READ_EXTERNAL_STORAGE)
++        // Equyvo patch: WRITE/READ_EXTERNAL_STORAGE are legacy permissions.
++        // On Android 13+ (targetSdk 36) they are always denied, so the plugin
++        // never launched the MediaProjection prompt and screen live was
++        // completely broken. Recordings go to app-private storage, which
++        // needs no storage permission. Only the mic permission is relevant.
+         if (recordAudio) {
+             add(Manifest.permission.RECORD_AUDIO)
+         }
+@@ -317,6 +331,11 @@ class CapgoScrCast private constructor(
          fun onExternalStop(path: String?, error: String?)
      }
  
@@ -50,10 +117,22 @@ index e1d0a0a..ca17349 100644
          const val EXTRA_SESSION_GENERATION = "capgoSessionGeneration"
  
 diff --git a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java
-index 0fa5d16..3fb99f7 100644
+index 0fa5d16..8237565 100644
 --- a/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java
 +++ b/node_modules/@capgo/capacitor-screen-recorder/android/src/main/java/ee/forgr/plugin/screenrecorder/ScreenRecorderPlugin.java
-@@ -108,12 +108,29 @@ public class ScreenRecorderPlugin extends Plugin {
+@@ -55,6 +55,11 @@ public class ScreenRecorderPlugin extends Plugin {
+             final String format = call.getString("format");
+             startRecorder = recordAudio ? audioRecorder : videoRecorder;
+             final CapgoScrCast recorder = startRecorder;
++            // Equyvo patch: honour the chosen OS-level capture scope.
++            final String scope = call.getString("scope");
++            if (scope != null && (scope.equals("app") || scope.equals("screen"))) {
++                recorder.setProjectionScope(scope);
++            }
+             final Options configuredOptions = VideoFormatResolver.INSTANCE.applyTo(recorder.getOptions(), format);
+             recorder.updateOptions(configuredOptions);
+             recorder.updateVideoFormat(format);
+@@ -108,12 +113,29 @@ public class ScreenRecorderPlugin extends Plugin {
      public void stop(PluginCall call) {
          try {
              final CapgoScrCast recorder = activeRecorder != null ? activeRecorder : pendingRecorder;
