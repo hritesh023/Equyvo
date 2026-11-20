@@ -271,52 +271,55 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Throwable ignored) {}
 
-        // Wait until the WEB layer confirms it has hidden every overlay and is
-        // showing ONLY the fullscreen media. Snapshotting earlier used to put
-        // the whole app UI inside the PiP window.
-        final int[] waits = {0};
-        final Runnable snapshotThenEnter = new Runnable() {
-            @Override
-            public void run() {
-                waits[0] += 20;
-                if (!pipSnapshotReady && waits[0] < 400 && !isFinishing() && !isDestroyed()) {
-                    systemPipHandler.postDelayed(this, 20L);
-                    return;
-                }
-                pipPromotionPending = false;
-                try {
-                    if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
-                    // Use the upload's real ratio so a landscape video gets a
-                    // landscape PiP window (no forced portrait crop).
-                    int pw = Math.max(1, Math.min(pipAspectWidth, 240));
-                    int ph = Math.max(1, Math.min(pipAspectHeight, 240));
-                    PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                            .setAspectRatio(new Rational(pw, ph));
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                        try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
-                    }
-                    enterPictureInPictureMode(b.build());
-                    inPipMode = true;
-                    // If the OS refused the transition, restore the web UI.
-                    systemPipHandler.postDelayed(() -> {
-                        try {
-                            if (!isInPictureInPictureMode() && !isFinishing()) {
-                                inAppPipActive = false;
-                                inPipMode = false;
-                                if (bridge != null && bridge.getWebView() != null) {
-                                    bridge.getWebView().evaluateJavascript(
-                                            "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
-                                }
-                            }
-                        } catch (Throwable ignored) {}
-                    }, 250L);
-                } catch (Throwable ignored) {}
+        // DO NOT wait for a JS callback here. Once the app is backgrounded the
+        // WebView can pause JS entirely, so a callback-based snapshot check
+        // made enterPictureInPictureMode() fire after the Activity was already
+        // stopped — Android silently refuses it. The web layer applies the
+        // media-only CSS class synchronously in visibilitychange before it
+        // calls AndroidPiP.enter(), so enter immediately while we still can.
+        systemPipHandler.postDelayed(() -> tryEnterPip(), 20L);
+    }
+
+    private void tryEnterPip() {
+        pipPromotionPending = false;
+        if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
+        try {
+            int pw = Math.max(1, Math.min(pipAspectWidth, 239));
+            int ph = Math.max(1, Math.min(pipAspectHeight, 239));
+            PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
+                    .setAspectRatio(new Rational(pw, ph));
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                try { b.setAutoEnterEnabled(false); } catch (Throwable ignored) {}
             }
-        };
-        // Enter as early as possible: on modern Android an Activity that has
-        // already been stopped cannot enter PiP. The web layer confirms the
-        // media-only snapshot synchronously, so this normally takes ~20ms.
-        systemPipHandler.postDelayed(snapshotThenEnter, 30L);
+            enterPictureInPictureMode(b.build());
+            inPipMode = isInPictureInPictureMode();
+            if (!inPipMode) {
+                // One quick retry: some OEMs need a second call after the
+                // first layout pass. Still done before the Activity stops.
+                systemPipHandler.postDelayed(() -> {
+                    try {
+                        if (!isFinishing() && !isDestroyed() && !isInPictureInPictureMode()) {
+                            enterPictureInPictureMode(b.build());
+                            inPipMode = isInPictureInPictureMode();
+                        }
+                    } catch (Throwable ignored) {}
+                    if (!inPipMode) restoreWebAfterFailedPip();
+                }, 150L);
+            }
+        } catch (Throwable ignored) {
+            restoreWebAfterFailedPip();
+        }
+    }
+
+    private void restoreWebAfterFailedPip() {
+        try {
+            inAppPipActive = false;
+            inPipMode = false;
+            if (bridge != null && bridge.getWebView() != null) {
+                bridge.getWebView().evaluateJavascript(
+                        "window.dispatchEvent(new CustomEvent('pipModeChanged',{detail:{active:false}}));", null);
+            }
+        } catch (Throwable ignored) {}
     }
 
     /** Dismiss the system PiP window and clear every PiP flag. */

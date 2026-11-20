@@ -377,8 +377,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       if (document.visibilityState === 'hidden') {
         if (!inAppPipRef.current) return;
         // Deterministic Android trigger: do not rely only on Activity
-        // callbacks/OEM behaviour. The web layer knows the app was left while
-        // PiP was active, so ask the native shell to promote right now.
+        // callbacks/OEM behaviour. Apply the media-only CSS synchronously (JS
+        // still runs on visibilitychange, before the WebView can be paused),
+        // then ask native to enter PiP immediately.
+        document.body.classList.add('eq-pip-snapshot');
         try {
           (window as any).AndroidPiP?.setInAppPip?.(true);
           (window as any).AndroidPiP?.enter?.();

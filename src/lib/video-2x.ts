@@ -236,10 +236,16 @@ export function useVideo2xPress(
       if (t && t.closest('button,a,input,textarea,select,[role="slider"],[data-2x-ignore]')) return;
       let chosen: HTMLVideoElement | null = null;
       let chosenRect: DOMRect | null = null;
+      const viewportMode = sideModeRef.current === 'viewport';
       for (const v of getRef.current?.() || []) {
         if (!v || !v.isConnected || v.readyState === 0) continue;
         const r = v.getBoundingClientRect();
-        if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
+        // In viewport mode the media fills the whole screen; a rotated
+        // ancestor can make this rect cover only part of it. Never gate the
+        // press on that box — accept the entire screen so BOTH halves of the
+        // left/right side work, top to bottom.
+        if (!viewportMode &&
+            (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom)) continue;
         if (!chosenRect || r.width * r.height < chosenRect.width * chosenRect.height) {
           chosen = v;
           chosenRect = r;

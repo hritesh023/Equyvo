@@ -1263,12 +1263,18 @@ html.cap-native {
   /* Android PiP snapshot: applied synchronously (before the WebView is
      backgrounded and rAF stops firing) so the system PiP window contains ONLY
      the media from the fullscreen view, never the app shell or controls. */
+  body.eq-pip-snapshot [data-fullscreen-viewer] {
+    display: block !important;
+  }
   body.eq-pip-snapshot [data-fullscreen-viewer] * {
     visibility: hidden !important;
   }
   body.eq-pip-snapshot [data-fullscreen-viewer] [data-pip-media] {
     visibility: visible !important;
     object-fit: contain !important;
+  }
+  body.eq-pip-snapshot #minimized-video-viewer {
+    display: none !important;
   }
 
   .line-clamp-2 {
