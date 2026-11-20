@@ -271,12 +271,24 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Throwable ignored) {}
 
-        // Enter SYNCHRONOUSLY. Any handler delay risks Android refusing PiP
-        // because the Activity is already stopping. The web layer applies the
-        // media-only CSS synchronously on visibilitychange/prepare, and the
-        // pipModeChanged(true) event also switches it to content-only after
-        // the window appears. Retries in tryEnterPip() cover OEM quirks.
-        tryEnterPip();
+        // Wait a VERY short time for the web layer's synchronous media-only
+        // CSS class. The prepare event is dispatched while the Activity is
+        // still active, so the JS callback runs immediately; this guarantees
+        // the PiP snapshot contains ONLY the media, never action buttons.
+        // The cap is small enough that PiP still works if JS is unresponsive.
+        final int[] waited = {0};
+        final Runnable snapshotThenEnter = new Runnable() {
+            @Override
+            public void run() {
+                waited[0] += 15;
+                if (!pipSnapshotReady && waited[0] < 120 && !isFinishing() && !isDestroyed()) {
+                    systemPipHandler.postDelayed(this, 15L);
+                    return;
+                }
+                tryEnterPip();
+            }
+        };
+        systemPipHandler.postDelayed(snapshotThenEnter, 15L);
     }
 
     private void tryEnterPip() {

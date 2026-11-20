@@ -1266,10 +1266,13 @@ html.cap-native {
   body.eq-pip-snapshot [data-fullscreen-viewer] {
     display: block !important;
   }
-  body.eq-pip-snapshot [data-fullscreen-viewer] * {
+  /* Hide EVERYTHING in the Activity (not just the viewer's children) — the
+     app shell / action buttons live outside the viewer and otherwise show up
+     inside the system PiP window over the media. */
+  body.eq-pip-snapshot * {
     visibility: hidden !important;
   }
-  body.eq-pip-snapshot [data-fullscreen-viewer] [data-pip-media] {
+  body.eq-pip-snapshot [data-pip-media] {
     visibility: visible !important;
     /* The PiP window itself already uses the upload's exact aspect ratio, so
        the Activity snapshot must be filled edge-to-edge. Using `contain` here

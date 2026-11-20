@@ -192,7 +192,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
    * cannot bring them back (only a full remount did). This must run on every
    * PiP-exit path and whenever the app/viewer becomes visible again.
    */
+  const nativePipActive = useCallback((): boolean => {
+    try { return !!(window as any).AndroidPiP?.isInPip?.(); } catch { return false; }
+  }, []);
+
   const clearPipSnapshot = useCallback(() => {
+    // While the system PiP window is live, the Activity snapshot must stay
+    // media-only — clearing now makes the app's action buttons appear inside
+    // the floating window over the video.
+    try { if ((window as any).AndroidPiP?.isInPip?.()) return; } catch { /* ignore */ }
     document.body.classList.remove('eq-pip-snapshot');
     setContentOnly(false);
     setHideOverlay(false);
