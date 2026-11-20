@@ -760,6 +760,10 @@ const CreatePage = () => {
   // Guards against a system-level stop event re-entering handleEndLive while
   // the first end sequence is still uploading/finalizing.
   const liveEndingRef = useRef(false);
+  // Set when the host taps End while the studio is still starting. The async
+  // start path checks this after every await so it can never publish a phantom
+  // live session after the user already cancelled it.
+  const liveStartCancelledRef = useRef(false);
   // Camera tab: live preview stream + recorder.
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const cameraVideoRef = useRef<HTMLVideoElement | null>(null);
@@ -3115,6 +3119,7 @@ const CreatePage = () => {
       return;
     }
     publishLockRef.current = true;
+    liveStartCancelledRef.current = false;
     setLiveBusy(true);
     cancelUploadRequestedRef.current = false;
     setIsUploading(true);
@@ -3260,6 +3265,12 @@ const CreatePage = () => {
         return;
       }
 
+      if (liveStartCancelledRef.current) {
+        try { mediaStream.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+        stopLiveCapture();
+        return;
+      }
+
       if (!mediaStream.getTracks().some((t) => t.kind === 'video')) {
         throw new Error('No video was captured. Allow a camera or pick a screen/window to share.');
       }
@@ -3300,10 +3311,27 @@ const CreatePage = () => {
       recorderMimeRef.current = recorder.mimeType || pickRecorderMime();
 
       const thumb = await uploadLiveCover();
+      if (liveStartCancelledRef.current) {
+        stopLiveCapture();
+        return;
+      }
       setUploadProgress(null);
       const liveSourceValue: 'camera' | 'screen' = isScreen ? 'screen' : 'camera';
       const liveId = await commitLiveStart(liveSourceValue, thumb);
       publishedContentId = liveId;
+      if (liveStartCancelledRef.current) {
+        // The session was accepted but the host already ended it — roll it
+        // back immediately so no dead "live" card survives.
+        void api.liveStop({ contentId: liveId }).catch(() => {});
+        void api.deletePost(liveId).catch(() => {});
+        liveRollbackContentRef.current = '';
+        liveContentIdRef.current = '';
+        liveActiveRef.current = false;
+        try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
+        window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+        stopLiveCapture();
+        return;
+      }
       setLivePreparing(false); // studio is fully ready (camera + server live)
 
       // Real-time relay: viewers can watch the captured stream NOW, while the
@@ -3407,11 +3435,15 @@ const CreatePage = () => {
     // Ending during that window just tears down local capture — no phantom
     // "live" row exists yet, so there is nothing to finalize remotely.
     if (!contentId && !liveNativeScreen) {
+      // Cancel the in-flight start so it cannot publish after this teardown.
+      liveStartCancelledRef.current = true;
       liveActiveRef.current = false;
       setIsRecording(false);
       setLivePreparing(false);
       stopLiveCapture();
       releaseLiveCameras();
+      setStream(null);
+      setMediaRecorder(null);
       setLiveChatOpen(false);
       setLiveCommentsPanelOpen(false);
       setLiveStudioMinimized(false);
