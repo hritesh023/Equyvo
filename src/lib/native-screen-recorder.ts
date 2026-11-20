@@ -54,18 +54,32 @@ async function ensureListener(): Promise<void> {
   });
 }
 
-/** Starts recording AFTER the user accepts the OS screen-capture consent UI. */
-export async function startNativeScreenRecording(): Promise<void> {
+/** Which surface the broadcaster asked to record. `app` = a single app window,
+ *  `screen` = the whole device. Android shows the real choose-app/entire-screen
+ *  consent UI; the scope is forwarded to the plugin for diagnostics/logging. */
+export type ScreenCaptureScope = 'app' | 'screen';
+
+/** Starts recording AFTER the user accepts the OS screen-capture consent UI.
+ *  FLAG_SECURE is armed BEFORE the request: from the very first captured frame
+ *  every Equyvo window is invisible to MediaProjection/ReplayKit (black in the
+ *  saved video) while remaining fully visible and usable on the device. */
+export async function startNativeScreenRecording(scope: ScreenCaptureScope = 'screen'): Promise<void> {
   if (!isNativeScreenRecorderAvailable()) {
     throw new Error('Native screen capture is only available in the mobile app.');
   }
   await ensureListener();
   lastStopEvent = null;
+  // Arm the exclusion first — otherwise the studio's own UI can be captured
+  // in the first frames before the OS consent dialog is dismissed.
+  setLiveWindowSecure(true);
   try {
-    await ScreenRecorder.start({ recordAudio: true, format: 'mp4' });
-    // From here on, Equyvo's own windows must never appear in the capture —
-    // the user is free to browse the app while the stream keeps recording.
-    setLiveWindowSecure(true);
+    await ScreenRecorder.start({
+      recordAudio: true,
+      format: 'mp4',
+      // Unknown keys are ignored by the plugin but reach native logs, which
+      // makes support/debugging of app-vs-entire-screen captures possible.
+      scope,
+    } as any);
   } catch (e) {
     setLiveWindowSecure(false);
     throw e;

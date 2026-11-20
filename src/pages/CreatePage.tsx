@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { flushSync } from 'react-dom';
 
 import { useSearchParams } from 'react-router-dom';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Text, Video, Camera, Mic, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera, ScreenShare, MonitorUp } from 'lucide-react';
+import { Text, Video, Camera, Mic, MicOff, Zap, Upload, Image, FileVideo, Clock, X, Plus, Film, ImageIcon, Trash2, Calendar, Eye, Lock, Unlock, BarChart3, Users, TrendingUp, Play, Square, Brain, Loader2, Crop, AlertTriangle, ShieldCheck, SwitchCamera, ScreenShare, MonitorUp, MessageCircle, Minimize2, Maximize2, Wifi, WifiOff } from 'lucide-react';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import MediaCropper from '@/components/MediaCropper';
 import ExternalAudioPicker from '@/components/ExternalAudioPicker';
@@ -37,6 +37,7 @@ import {
   nativeRecordingToBlob,
 } from '@/lib/native-screen-recorder';
 import { LiveRelay } from '@/lib/live-relay';
+import LiveChatPanel from '@/components/LiveChatPanel';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy } from '@/lib/back-navigation';
 import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
@@ -703,6 +704,31 @@ const CreatePage = () => {
   // running, or having its replay uploaded.
   const [liveBusy, setLiveBusy] = useState(false);
   const [liveNativeScreen, setLiveNativeScreen] = useState(false);
+
+  // ── Broadcaster studio (YouTube/Twitch/Kick-grade live controls) ─────────
+  // Streamer-side chat, uptime, audience and delivery health. The viewer-side
+  // chat is the persistent comment ledger (LiveChatPanel), so everything the
+  // host sees is also what the audience sees.
+  const [liveChatOpen, setLiveChatOpen] = useState(true);
+  const [liveElapsed, setLiveElapsed] = useState(0);
+  const [liveViewers, setLiveViewers] = useState(0);
+  const [liveLatency, setLiveLatency] = useState<number | null>(null);
+  const [liveRelayState, setLiveRelayState] = useState<'connecting' | 'live' | 'reconnecting' | 'offline'>('connecting');
+  const [liveChunksSaved, setLiveChunksSaved] = useState(0);
+  const [liveMicMuted, setLiveMicMuted] = useState(false);
+  const [liveFacing, setLiveFacing] = useState<'user' | 'environment'>('user');
+  const [liveTorchSupported, setLiveTorchSupported] = useState(false);
+  const [liveTorch, setLiveTorch] = useState(false);
+  const [liveCaptureScope, setLiveCaptureScope] = useState<'app' | 'screen'>('app');
+  const [liveStudioMinimized, setLiveStudioMinimized] = useState(false);
+  // Pre-live camera mirror inside the studio, matching the Camera capture tab.
+  const [livePreviewReady, setLivePreviewReady] = useState(false);
+  const [livePreviewError, setLivePreviewError] = useState('');
+  const livePreviewStreamRef = useRef<MediaStream | null>(null);
+  const livePreviewVideoRef = useRef<HTMLVideoElement | null>(null);
+  // Track-disconnect / recorder-error cleanup calls the single-flight end
+  // through a ref, so listeners never capture a stale handleEndLive.
+  const liveEndHandlerRef = useRef<() => void>(() => {});
   const liveRollbackContentRef = useRef('');
   const liveVideoRef = useRef<HTMLVideoElement | null>(null);
   const liveContentIdRef = useRef('');
@@ -809,6 +835,80 @@ const CreatePage = () => {
     try { el.srcObject = isRecording ? (stream || null) : null; } catch { /* ignore */ }
     return () => { try { el.srcObject = null; } catch { /* ignore */ } };
   }, [isRecording, stream]);
+
+  /** Studio mirror preview — a real camera feed, not a placeholder. */
+  const stopLivePreview = useCallback(() => {
+    try { livePreviewStreamRef.current?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+    livePreviewStreamRef.current = null;
+    try { if (livePreviewVideoRef.current) livePreviewVideoRef.current.srcObject = null; } catch { /* ignore */ }
+    setLivePreviewReady(false);
+  }, []);
+
+  useEffect(() => {
+    if (!liveSourceDialogOpen || liveStudioStage !== 'camera' || isRecording) {
+      stopLivePreview();
+      return;
+    }
+    let cancelled = false;
+    setLivePreviewError('');
+    (async () => {
+      try {
+        const ms = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: { ideal: liveFacing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+          audio: false,
+        });
+        if (cancelled) {
+          ms.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        livePreviewStreamRef.current = ms;
+        const el = livePreviewVideoRef.current;
+        if (el) {
+          el.srcObject = ms;
+          try { await el.play(); } catch { /* user gesture resumes it */ }
+        }
+        const caps = (ms.getVideoTracks()[0]?.getCapabilities?.() || {}) as { torch?: boolean };
+        setLiveTorchSupported(!!caps.torch);
+        setLivePreviewReady(true);
+      } catch (e) {
+        if (cancelled) return;
+        setLivePreviewError(
+          e instanceof Error && e.name === 'NotAllowedError'
+            ? 'Camera access denied. Allow it in your device settings, then try again.'
+            : 'Camera preview could not start. You can still begin the live and allow access when asked.',
+        );
+      }
+    })();
+    return () => { cancelled = true; stopLivePreview(); };
+  }, [liveSourceDialogOpen, liveStudioStage, liveFacing, isRecording, stopLivePreview]);
+
+  // Live uptime is driven by the same clock as the replay recorder, so the
+  // badge can never disagree with the saved video duration.
+  useEffect(() => {
+    if (!isRecording) { setLiveElapsed(0); return; }
+    const tick = () => setLiveElapsed(Math.max(1, Math.round((Date.now() - (recordingStartRef.current || Date.now())) / 1000)));
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [isRecording]);
+
+  // Delivery health follows the real network state, not just the WebSocket.
+  useEffect(() => {
+    const onOffline = () => { if (liveActiveRef.current) setLiveRelayState('offline'); };
+    const onOnline = () => { if (liveActiveRef.current) setLiveRelayState('reconnecting'); };
+    window.addEventListener('offline', onOffline);
+    window.addEventListener('online', onOnline);
+    return () => {
+      window.removeEventListener('offline', onOffline);
+      window.removeEventListener('online', onOnline);
+    };
+  }, []);
+
+  // Safety net: never leave FLAG_SECURE armed if the composer unmounts while a
+  // native screen live is still running (navigation, crash recovery, reload).
+  useEffect(() => () => {
+    try { (window as any)?.EquyvoLive?.setSecure?.(false); } catch { /* ignore */ }
+  }, []);
 
   // Load everything this account ever published into management, so the
   // thumbnail/delete/privacy controls exist for all uploads on any device.
@@ -2743,6 +2843,7 @@ const CreatePage = () => {
         return;
       }
       liveChunkSeqRef.current += 1;
+      setLiveChunksSaved(liveChunkSeqRef.current);
       // Accepted chunks are persisted server-side; drop the local snapshot.
       liveChunkChunksRef.current = [];
     } catch (e) {
@@ -2837,11 +2938,25 @@ const CreatePage = () => {
     return thumb;
   };
 
-  const handleStartLive = async (source: 'camera' | 'screen' = 'camera') => {
+  const handleStartLive = async (
+    source: 'camera' | 'screen' = 'camera',
+    scope: 'app' | 'screen' = 'screen',
+  ) => {
     if (!liveTitle.trim()) {
       showError('Please enter a title for your live stream');
       return;
     }
+    // Studio state is reset per broadcast — a previous session's mute/chat/
+    // health flags must never leak into a new one.
+    setLiveCaptureScope(scope);
+    setLiveStudioMinimized(false);
+    setLiveMicMuted(false);
+    setLiveChatOpen(source === 'camera');
+    setLiveRelayState('connecting');
+    setLiveViewers(0);
+    setLiveLatency(null);
+    setLiveChunksSaved(0);
+    stopLivePreview();
     const mediaDevices = navigator.mediaDevices;
     const isScreen = source === 'screen';
     const nativeScreen = isScreen && isNativeScreenRecorderAvailable();
@@ -2874,7 +2989,7 @@ const CreatePage = () => {
       setLiveNativeScreen(true);
       try {
         try {
-          await startNativeScreenRecording();
+          await startNativeScreenRecording(scope);
         } catch (e) {
           setLiveNativeScreen(false);
           // Surface the real native error (permission denied, foreground
@@ -2890,6 +3005,7 @@ const CreatePage = () => {
         const thumb = await uploadLiveCover();
         // Native capture yields a file, not a live JS stream: no real-time relay.
         await commitLiveStart('screen', thumb, false);
+        setLiveRelayState('offline'); // "Saving only" — no frame relay for native capture.
         setIsRecording(true);
         recordingStartRef.current = Date.now();
         setIsUploading(false);
@@ -2908,6 +3024,9 @@ const CreatePage = () => {
         try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
         window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
         setLiveNativeScreen(false);
+        setLiveRelayState('offline');
+        setLiveChatOpen(false);
+        setLiveStudioMinimized(false);
         showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
       } finally {
         setIsUploading(false);
@@ -2930,12 +3049,41 @@ const CreatePage = () => {
       // announcement. There is no way to start a live session without it.
       try {
         if (isScreen) {
-          mediaStream = await (mediaDevices as any).getDisplayMedia({ video: true, audio: true });
+          mediaStream = await (mediaDevices as any).getDisplayMedia({
+            video: {
+              // Whole-device capture when the browser supports the hint; the
+              // OS picker still has final say (and may offer a single app).
+              displaySurface: scope === 'screen' ? 'monitor' : undefined,
+              frameRate: { ideal: 30, max: 30 },
+            },
+            audio: true,
+            systemAudio: 'include',
+          } as any);
+          // Web cannot use FLAG_SECURE. If the browser reports that the
+          // broadcaster selected this very tab, stop instead of publishing a
+          // video full of our own controls.
+          const surface = String((mediaStream.getVideoTracks()[0]?.getSettings?.() as any)?.displaySurface || '');
+          if (surface === 'tab' || surface === 'browser') {
+            mediaStream.getTracks().forEach((t) => t.stop());
+            mediaStream = null;
+            showError('You selected this Equyvo tab. Pick a different app/window (or Entire screen) so Equyvo controls never appear in your recording.');
+            setIsUploading(false);
+            try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
+            return;
+          }
         } else {
           mediaStream = await mediaDevices.getUserMedia({
-            video: { facingMode: 'environment' },
-            audio: true,
-          });
+            video: {
+              facingMode: { ideal: liveFacing },
+              width: { ideal: 1280 },
+              height: { ideal: 720 },
+            },
+            audio: {
+              echoCancellation: true,
+              noiseSuppression: true,
+              autoGainControl: true,
+            },
+          } as any);
         }
       } catch (error) {
         const name = error instanceof Error ? error.name : '';
@@ -2963,6 +3111,28 @@ const CreatePage = () => {
       setStream(mediaStream);
       liveStreamRef.current = mediaStream;
 
+      if (isScreen) {
+        // A user stopping from the browser's "Stop sharing" chip must end the
+        // Equyvo session too — no phantom live badge on viewer devices.
+        mediaStream.getVideoTracks().forEach((track) => {
+          track.onended = () => {
+            if (!liveActiveRef.current) return;
+            showError('Screen sharing stopped — ending your live session.');
+            liveEndHandlerRef.current();
+          };
+        });
+      } else {
+        const vt = mediaStream.getVideoTracks()[0];
+        const caps = (vt?.getCapabilities?.() || {}) as { torch?: boolean };
+        setLiveTorchSupported(!!caps.torch);
+        setLiveTorch(false);
+        vt.onended = () => {
+          if (!liveActiveRef.current) return;
+          showError('Your camera disconnected — ending your live session.');
+          liveEndHandlerRef.current();
+        };
+      }
+
       // Probe containers instead of hard-coded vp9 webm (Android WebViews).
       let recorder: MediaRecorder;
       try {
@@ -2982,10 +3152,18 @@ const CreatePage = () => {
       // recorder/progressive uploader continues to build the saved replay.
       // A relay failure never cancels the broadcast — replay still uploads.
       try {
-        const relay = await LiveRelay.connect(liveId, 'broadcaster', {});
+        const relay = await LiveRelay.connect(liveId, 'broadcaster', {
+          onReady: (viewers) => { setLiveViewers(viewers); setLiveRelayState('live'); },
+          onViewers: (viewers) => setLiveViewers(viewers),
+          onLatency: (ms) => setLiveLatency(ms),
+          onReconnecting: (attempt) => { setLiveRelayState(attempt > 3 ? 'offline' : 'reconnecting'); },
+          onEnded: () => setLiveRelayState('offline'),
+        });
         liveRelayRef.current = relay;
         await relay.startCapturing(mediaStream);
+        setLiveRelayState('live');
       } catch (e) {
+        setLiveRelayState('offline');
         console.warn('Real-time live relay unavailable:', e);
       }
 
@@ -3000,6 +3178,13 @@ const CreatePage = () => {
         const mime = (recorderMimeRef.current || 'video/webm').split(';')[0];
         const blob = new Blob(chunks, { type: mime });
         handleSaveRecording(blob, liveId);
+      };
+      // An encoder crash must end the broadcast cleanly instead of leaving a
+      // "LIVE" badge with no video being produced.
+      recorder.onerror = () => {
+        if (!liveActiveRef.current) return;
+        showError('Live recording stopped unexpectedly — ending your session and saving the replay.');
+        liveEndHandlerRef.current();
       };
 
       setMediaRecorder(recorder);
@@ -3037,6 +3222,9 @@ const CreatePage = () => {
         liveRollbackContentRef.current = '';
       }
       setLiveNativeScreen(false);
+      setLiveRelayState('offline');
+      setLiveChatOpen(false);
+      setLiveStudioMinimized(false);
       try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
       window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
       showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
@@ -3052,6 +3240,10 @@ const CreatePage = () => {
 
   const performEndLive = async () => {
     const contentId = liveContentIdRef.current;
+    // Mark inactive BEFORE stopping tracks: track.onended / recorder.onerror
+    // listeners must not interpret our own teardown as an unexpected loss.
+    liveActiveRef.current = false;
+    setLiveRelayState('offline');
     // Stop real-time delivery first; viewers see a clean "ended" state.
     try { liveRelayRef.current?.close(); } catch { /* ignore */ }
     liveRelayRef.current = null;
@@ -3094,6 +3286,9 @@ const CreatePage = () => {
       setLiveThumbnailPreview('');
       liveContentIdRef.current = '';
       liveRollbackContentRef.current = '';
+      setLiveChatOpen(false);
+      setLiveStudioMinimized(false);
+      stopLivePreview();
       return;
     }
 
@@ -3139,6 +3334,9 @@ const CreatePage = () => {
     liveContentIdRef.current = '';
     liveRollbackContentRef.current = '';
     setLiveNativeScreen(false);
+    setLiveChatOpen(false);
+    setLiveStudioMinimized(false);
+    stopLivePreview();
   };
 
   // Single-flight end: a system-level stop event and a button tap can arrive
@@ -3150,6 +3348,45 @@ const CreatePage = () => {
       await performEndLive();
     } finally {
       liveEndingRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    liveEndHandlerRef.current = () => { void handleEndLive(); };
+  }, [handleEndLive]);
+
+  // ── In-live camera controls (same camera-capture UX as the Camera tab) ───
+  const toggleLiveMic = () => {
+    const nextMuted = !liveMicMuted;
+    try {
+      liveStreamRef.current?.getAudioTracks().forEach((track) => { track.enabled = !nextMuted; });
+    } catch { /* ignore */ }
+    setLiveMicMuted(nextMuted);
+  };
+
+  const flipLiveCamera = async () => {
+    const track = liveStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    const next = liveFacing === 'user' ? 'environment' : 'user';
+    try {
+      await (track as any).applyConstraints({ facingMode: { ideal: next } });
+      setLiveFacing(next);
+      const caps = (track.getCapabilities?.() || {}) as { torch?: boolean };
+      setLiveTorchSupported(!!caps.torch);
+      setLiveTorch(false);
+    } catch {
+      showError('This device cannot switch cameras mid-live. End the live and start again to change cameras.');
+    }
+  };
+
+  const toggleLiveTorch = async () => {
+    const track = liveStreamRef.current?.getVideoTracks?.()[0];
+    if (!track) return;
+    try {
+      await (track as any).applyConstraints({ advanced: [{ torch: !liveTorch }] });
+      setLiveTorch((v) => !v);
+    } catch {
+      showError('Flash is not available on this camera.');
     }
   };
 
@@ -3844,27 +4081,203 @@ const CreatePage = () => {
     }).format(date);
   };
 
-  // ── Full-screen live presenter ──────────────────────────────────────────
-  // Screen live intentionally does NOT hide the UI: the native FLAG_SECURE
-  // bridge keeps every Equyvo window out of the captured video, so the user
-  // is free to browse any part of the app while the stream keeps recording.
-  // Camera live gets a true full-screen studio view (like the camera capture
-  // screen) with only a minimal control strip on top.
-  if (isRecording && liveSource === 'camera') {
+  // ── Full-screen LIVE studio ─────────────────────────────────────────────
+  // Camera live is the camera-capture interface reused for a broadcast: the
+  // preview fills the screen, flip/flash/mic controls stay in the same places,
+  // and the shutter becomes END LIVE. There is deliberately NO "Send to"
+  // story/photo menu here — once you are live the destination is the stream.
+  // Live chat overflows on top of the preview (the same persistent ledger the
+  // audience uses). Screen live shares the studio: FLAG_SECURE (native) keeps
+  // every Equyvo control out of the saved video while leaving it visible here.
+  if (isRecording && (liveSource === 'camera' || liveSource === 'screen')) {
+    const isScreenLive = liveSource === 'screen';
+    const liveRoomId = liveContentIdRef.current || '';
     return (
-      <div className="fixed inset-0 z-[120] flex flex-col bg-black text-white">
-        <video ref={liveVideoRef} autoPlay muted playsInline className="absolute inset-0 h-full w-full object-cover" />
-        <div className="relative z-10 flex items-center gap-3 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
-          <span className="inline-flex items-center gap-2 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold backdrop-blur">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500 animate-pulse" /> LIVE
-          </span>
-          <span className="truncate text-sm text-white/85">{liveTitle || 'Live now'}</span>
-        </div>
-        <div className="relative z-10 mt-auto flex justify-center p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))]">
-          <Button onClick={handleEndLive} className="rounded-full bg-white px-7 text-black hover:bg-white/90">
-            <Square className="h-4 w-4 mr-2" /> End Live
+      <div className="fixed inset-0 z-[120] bg-black text-white">
+        {/* Captured feed. Camera fills the screen like the Camera tab; a web
+            screen share is contained so the whole shared surface is visible. */}
+        <video
+          ref={liveVideoRef}
+          autoPlay
+          muted
+          playsInline
+          className={`absolute inset-0 h-full w-full ${isScreenLive ? 'object-contain' : 'object-cover'}`}
+          style={isScreenLive ? undefined : { transform: liveFacing === 'user' ? 'scaleX(-1)' : undefined }}
+        />
+        {!isScreenLive && !stream && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-white/70">
+            <Loader2 className="h-8 w-8 animate-spin" />
+            <p>Starting your camera…</p>
+          </div>
+        )}
+        {isScreenLive && liveNativeScreen && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/95 px-8 text-center">
+            <ScreenShare className="h-12 w-12 text-blue-400" />
+            <p className="text-lg font-semibold">Screen recording is live</p>
+            <p className="max-w-sm text-sm text-white/60">
+              {liveCaptureScope === 'app'
+                ? 'Only the app window you selected is being recorded. Equyvo is hidden from the video — open the app you want to share, your controls stay here.'
+                : 'Your entire device screen is being recorded. Equyvo controls stay visible to you but are excluded from the video.'}
+            </p>
+            <p className="text-xs text-white/40">Stop anytime from this screen or the recording notification.</p>
+          </div>
+        )}
+
+        {/* Status strip: uptime, audience, delivery health, title, chat/minimize */}
+        {!liveStudioMinimized && (
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-20 flex flex-wrap items-start gap-2 p-4 pt-[max(1rem,env(safe-area-inset-top))]">
+            <span className="pointer-events-auto inline-flex items-center gap-2 rounded-full bg-red-600 px-3 py-1.5 text-xs font-semibold shadow-lg">
+              <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" /> LIVE {fileVideoFormatSecs(liveElapsed)}
+            </span>
+            <span className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur">
+              <Users className="h-3.5 w-3.5" /> {liveViewers}
+            </span>
+            <span className="pointer-events-auto inline-flex items-center gap-1.5 rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur">
+              {liveRelayState === 'offline' ? <WifiOff className="h-3.5 w-3.5 text-red-400" /> : <Wifi className="h-3.5 w-3.5 text-emerald-400" />}
+              {liveRelayState === 'live' ? 'Streaming' : liveRelayState === 'reconnecting' ? 'Reconnecting…' : liveRelayState === 'offline' ? 'Saving only' : 'Connecting…'}
+              {liveLatency != null && <span className="text-white/60">· {liveLatency}ms</span>}
+            </span>
+            <span className="hidden max-w-[22rem] truncate rounded-full bg-black/60 px-3 py-1.5 text-xs backdrop-blur sm:inline-block">
+              {liveTitle || 'Live now'}
+            </span>
+            <div className="pointer-events-auto ml-auto flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setLiveChatOpen((v) => !v)}
+                aria-label={liveChatOpen ? 'Hide live chat' : 'Show live chat'}
+                className="rounded-full bg-black/60 p-2.5 backdrop-blur hover:bg-black/80"
+              >
+                <MessageCircle className="h-5 w-5" />
+              </button>
+              <button
+                type="button"
+                onClick={() => setLiveStudioMinimized(true)}
+                aria-label="Minimize live controls"
+                className="rounded-full bg-black/60 p-2.5 backdrop-blur hover:bg-black/80"
+              >
+                <Minimize2 className="h-5 w-5" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Camera flash sits where the Camera tab's torch control sits. */}
+        {!isScreenLive && liveTorchSupported && !liveStudioMinimized && (
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => void toggleLiveTorch()}
+            title={liveTorch ? 'Flash on' : 'Flash off'}
+            className={`absolute right-4 top-[calc(env(safe-area-inset-top,0px)+4.75rem)] z-20 h-11 w-11 rounded-full ${
+              liveTorch ? 'bg-amber-400/30 text-amber-300' : 'bg-black/60 text-white hover:bg-black/80'
+            }`}
+          >
+            <Zap className="h-5 w-5" />
           </Button>
-        </div>
+        )}
+
+        {/* Bottom control strip mirrors the Camera tab: flip on the left,
+            the big shutter (now END LIVE) in the middle, mic on the right. */}
+        {!liveStudioMinimized && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-black/95 via-black/45 to-transparent px-4 pb-[max(env(safe-area-inset-bottom),1.5rem)] pt-12">
+            {isScreenLive && (
+              <div className="pointer-events-auto mx-auto mb-5 flex max-w-lg flex-col items-center gap-1 text-center">
+                <span className="inline-flex items-center gap-2 rounded-full bg-blue-500/20 px-3 py-1 text-[11px] font-medium text-blue-200 ring-1 ring-blue-400/40">
+                  <ShieldCheck className="h-3.5 w-3.5" /> Equyvo is hidden from your recording
+                </span>
+                <p className="text-[11px] text-white/55">
+                  {liveCaptureScope === 'app'
+                    ? 'Only the selected app is recorded.'
+                    : 'Your whole device screen is recorded.'}{' '}
+                  These controls stay visible to you.
+                </p>
+              </div>
+            )}
+            {!isScreenLive && liveChunksSaved > 0 && (
+              <p className="pointer-events-auto mb-3 text-center text-[11px] text-emerald-300/80">
+                Replay secured · {liveChunksSaved} segment{liveChunksSaved === 1 ? '' : 's'} uploaded
+              </p>
+            )}
+            <div className="pointer-events-auto flex items-center justify-center gap-8">
+              {isScreenLive ? (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setLiveChatOpen((v) => !v)}
+                  title="Toggle live chat"
+                  className="h-12 w-12 rounded-full bg-black/60 text-white hover:bg-black/80"
+                >
+                  <MessageCircle className="h-6 w-6" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => void flipLiveCamera()}
+                  title="Flip camera"
+                  className="h-12 w-12 rounded-full bg-black/60 text-white hover:bg-black/80"
+                >
+                  <SwitchCamera className="h-6 w-6" />
+                </Button>
+              )}
+              <button
+                type="button"
+                onClick={() => void handleEndLive()}
+                aria-label="End live"
+                title="End live and save replay"
+                className="relative flex h-20 w-20 items-center justify-center rounded-full border-4 border-white shadow-2xl transition active:scale-95"
+              >
+                <span className="flex h-16 w-16 items-center justify-center rounded-full bg-red-600">
+                  <Square className="h-6 w-6 text-white" fill="white" />
+                </span>
+              </button>
+              {isScreenLive ? (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => setLiveStudioMinimized(true)}
+                  title="Minimize controls"
+                  className="h-12 w-12 rounded-full bg-black/60 text-white hover:bg-black/80"
+                >
+                  <Minimize2 className="h-6 w-6" />
+                </Button>
+              ) : (
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={toggleLiveMic}
+                  title={liveMicMuted ? 'Unmute microphone' : 'Mute microphone'}
+                  className={`h-12 w-12 rounded-full ${
+                    liveMicMuted ? 'bg-red-600/80 text-white' : 'bg-black/60 text-white hover:bg-black/80'
+                  }`}
+                >
+                  {liveMicMuted ? <MicOff className="h-6 w-6" /> : <Mic className="h-6 w-6" />}
+                </Button>
+              )}
+            </div>
+            <p className="pointer-events-auto mt-3 text-center text-[11px] text-white/55">
+              Tap the red button to end the live and save the replay
+            </p>
+          </div>
+        )}
+
+        {liveStudioMinimized && (
+          <button
+            type="button"
+            onClick={() => setLiveStudioMinimized(false)}
+            className="absolute bottom-[max(env(safe-area-inset-bottom),1.5rem)] right-4 z-40 inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-xs font-semibold shadow-xl"
+          >
+            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" />
+            LIVE {fileVideoFormatSecs(liveElapsed)} <Maximize2 className="h-4 w-4" />
+          </button>
+        )}
+
+        {/* Streamer chat overflows over the preview, like Twitch/Kick. */}
+        {liveChatOpen && liveRoomId && !liveStudioMinimized && (
+          <div className="absolute inset-y-0 right-0 z-30 w-[min(92vw,340px)] shadow-[-16px_0_48px_rgba(0,0,0,0.5)]">
+            <LiveChatPanel contentId={liveRoomId} onClose={() => setLiveChatOpen(false)} />
+          </div>
+        )}
       </div>
     );
   }
@@ -5684,7 +6097,7 @@ const CreatePage = () => {
                   </span>
                   <span className="text-xl font-semibold">Screen recording</span>
                   <span className="max-w-xs text-sm text-white/55">
-                    Share one app window. Equyvo stays out of the video while you control the live stream.
+                    Record one app window or your entire device. Equyvo stays out of the video while you control the live stream.
                   </span>
                 </button>
               </div>
@@ -5692,12 +6105,52 @@ const CreatePage = () => {
 
             {liveStudioStage === 'camera' && (
               <div className="mx-auto w-full max-w-3xl space-y-5">
-                <div className="flex aspect-video w-full flex-col items-center justify-center gap-3 rounded-3xl border border-white/10 bg-black">
-                  <Camera className="h-12 w-12 text-white/30" />
-                  <p className="text-sm text-white/50">Your camera preview fills the screen once the stream starts</p>
+                <div className="relative aspect-video w-full overflow-hidden rounded-3xl border border-white/10 bg-black">
+                  <video
+                    ref={livePreviewVideoRef}
+                    autoPlay
+                    muted
+                    playsInline
+                    className="absolute inset-0 h-full w-full object-cover"
+                    style={{ transform: liveFacing === 'user' ? 'scaleX(-1)' : undefined }}
+                  />
+                  {!livePreviewReady && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-sm text-white/60">
+                      {livePreviewError ? (
+                        <>
+                          <AlertTriangle className="h-7 w-7" />
+                          <p className="max-w-xs px-6 text-center">{livePreviewError}</p>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            onClick={() => setLiveFacing((v) => (v === 'user' ? 'environment' : 'user'))}
+                          >
+                            Try again
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <Loader2 className="h-7 w-7 animate-spin" />
+                          <p>Starting camera preview…</p>
+                        </>
+                      )}
+                    </div>
+                  )}
+                  <span className="absolute left-3 top-3 rounded-full bg-black/60 px-3 py-1 text-xs text-white/80 backdrop-blur">
+                    {liveFacing === 'user' ? 'Front camera' : 'Back camera'}
+                  </span>
+                  <Button
+                    size="icon"
+                    variant="ghost"
+                    onClick={() => setLiveFacing((v) => (v === 'user' ? 'environment' : 'user'))}
+                    title="Flip camera"
+                    className="absolute bottom-3 right-3 h-11 w-11 rounded-full bg-black/60 text-white hover:bg-black/80"
+                  >
+                    <SwitchCamera className="h-5 w-5" />
+                  </Button>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-white/60">
-                  Equyvo will ask for camera and microphone access. A full-screen live view with a single “End Live” control appears when you start.
+                <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-white/60">
+                  This is exactly what your live preview looks like. When you go live the full-screen studio gives you flip, flash (when supported), mute and overflowing live chat — but no “send to story/photo” menu, because you are already live.
                 </div>
                 <Button
                   onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('camera'); }}
@@ -5713,23 +6166,59 @@ const CreatePage = () => {
 
             {liveStudioStage === 'screen' && (
               <div className="mx-auto w-full max-w-3xl space-y-5">
-                <div className="flex flex-col items-start gap-3 rounded-3xl border border-blue-400/40 bg-blue-500/10 p-6">
+                <div className="flex flex-col items-start gap-2 rounded-3xl border border-blue-400/30 bg-blue-500/5 p-6">
                   <span className="flex h-14 w-14 items-center justify-center rounded-full bg-blue-500/20">
                     <ScreenShare className="h-7 w-7 text-blue-300" />
                   </span>
-                  <span className="text-xl font-semibold">Record an app window</span>
+                  <span className="text-xl font-semibold">Choose what to record</span>
                   <span className="text-sm leading-relaxed text-white/60">
-                    Only the app you select is recorded — Equyvo itself is excluded by Android, so you can open any part of the app while live and it will never appear in your video.
+                    Your Equyvo controls stay clearly visible on your device, but they are excluded from the recorded video — viewers never see this studio UI.
                   </span>
                 </div>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={() => setLiveCaptureScope('app')}
+                    className={`flex min-h-[170px] flex-col items-start gap-3 rounded-2xl border p-5 text-left transition ${
+                      liveCaptureScope === 'app'
+                        ? 'border-blue-400 bg-blue-500/15 ring-2 ring-blue-400/30'
+                        : 'border-white/10 bg-white/5 hover:border-blue-400/50'
+                    }`}
+                  >
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/15">
+                      <Camera className="h-6 w-6 text-blue-300" />
+                    </span>
+                    <span className="text-base font-semibold">One app window</span>
+                    <span className="text-xs leading-relaxed text-white/55">
+                      Record only the app you pick in the system picker. Best for games, tutorials or streaming another app — Equyvo never enters the video.
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLiveCaptureScope('screen')}
+                    className={`flex min-h-[170px] flex-col items-start gap-3 rounded-2xl border p-5 text-left transition ${
+                      liveCaptureScope === 'screen'
+                        ? 'border-blue-400 bg-blue-500/15 ring-2 ring-blue-400/30'
+                        : 'border-white/10 bg-white/5 hover:border-blue-400/50'
+                    }`}
+                  >
+                    <span className="flex h-12 w-12 items-center justify-center rounded-full bg-blue-500/15">
+                      <MonitorUp className="h-6 w-6 text-blue-300" />
+                    </span>
+                    <span className="text-base font-semibold">Entire device screen</span>
+                    <span className="text-xs leading-relaxed text-white/55">
+                      Record the whole screen. Equyvo stays visible to you but is transparent in your saved recording.
+                    </span>
+                  </button>
+                </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-white/60">
-                  Android will ask you to confirm screen capture. Choose <span className="font-semibold text-white">a single app</span> (not “Entire screen”) — that is what keeps Equyvo out of the recording. Stop from the recording notification or “Stop sharing” in the status bar.
+                  On Android/iOS the OS consent dialog appears next — pick a single app or “Entire screen” there to match your choice. On desktop web, select any tab/window other than this Equyvo tab so our controls never enter the video. Stop anytime from the red button or the system recording notification.
                 </div>
                 <Button
-                  onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('screen'); }}
+                  onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('screen', liveCaptureScope); }}
                   className="h-14 w-full rounded-2xl bg-blue-500 text-base font-semibold hover:bg-blue-600"
                 >
-                  <ScreenShare className="h-5 w-5 mr-2" /> Choose app &amp; start live
+                  <ScreenShare className="h-5 w-5 mr-2" /> Start screen live
                 </Button>
                 <Button variant="ghost" onClick={() => setLiveStudioStage('choose')} className="w-full text-white/60">
                   Back
