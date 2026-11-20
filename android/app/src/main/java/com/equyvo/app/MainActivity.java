@@ -47,6 +47,9 @@ public class MainActivity extends BridgeActivity {
     private volatile boolean inAppPipActive = false;
     private volatile boolean inPipMode = false;
     private volatile boolean pipPromotionPending = false;
+    /** Aspect of the actual upload (width/height), reported by the web layer. */
+    private volatile int pipAspectWidth = 9;
+    private volatile int pipAspectHeight = 16;
     private final Handler systemPipHandler = new Handler(Looper.getMainLooper());
     private int pendingTop = 0;
     private int pendingBottom = 0;
@@ -246,8 +249,12 @@ public class MainActivity extends BridgeActivity {
             pipPromotionPending = false;
             try {
                 if (isFinishing() || isDestroyed() || isInPictureInPictureMode()) return;
+                // Use the upload's real ratio so a landscape video gets a
+                // landscape PiP window (no forced portrait crop).
+                int pw = Math.max(1, Math.min(pipAspectWidth, 240));
+                int ph = Math.max(1, Math.min(pipAspectHeight, 240));
                 PictureInPictureParams.Builder b = new PictureInPictureParams.Builder()
-                        .setAspectRatio(new Rational(9, 16));
+                        .setAspectRatio(new Rational(pw, ph));
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     try { b.setAutoEnterEnabled(true); } catch (Throwable ignored) {}
                 }
@@ -307,6 +314,15 @@ public class MainActivity extends BridgeActivity {
         @android.webkit.JavascriptInterface
         public void setInAppPip(boolean active) {
             inAppPipActive = active;
+        }
+
+        /** Called by the web layer with the media's measured width/height. */
+        @android.webkit.JavascriptInterface
+        public void setPipAspect(int width, int height) {
+            if (width > 0 && height > 0) {
+                pipAspectWidth = width;
+                pipAspectHeight = height;
+            }
         }
 
         @android.webkit.JavascriptInterface

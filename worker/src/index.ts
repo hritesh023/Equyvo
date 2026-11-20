@@ -920,13 +920,14 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       const contentId = String(clean.contentId || clean.liveContentId || clean.id || '').slice(0, 64);
       const source = String(clean.source || 'camera').toLowerCase() === 'screen' ? 'screen' : 'camera';
       const title = String(clean.title || '').trim().slice(0, 160);
+      const description = String(clean.description || '').slice(0, 5000);
       const thumbnail = String(clean.thumbnail || '').slice(0, 1000);
       if (starting) {
         if (!contentId) return respondError('Missing stream id.', 400);
         try {
           await writeLiveSession(contentId, {
             id: contentId, ownerId: (actor as any).id, source,
-            relay: clean.relay !== false, title, thumbnail,
+            relay: clean.relay !== false, title, description, thumbnail,
             status: 'live', startedAt: new Date().toISOString(), endedAt: null,
             duration: 0, chunks: [], chunkBytes: 0, mediaUrl: '',
           });

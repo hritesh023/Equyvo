@@ -1,6 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { X, ThumbsUp, MessageCircle, Share2, Users, Clock, Calendar, Minimize2, Play, Pause, Volume2, VolumeX, Maximize2, Columns, Eye, Image, RotateCcw, PictureInPicture2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { Capacitor } from '@capacitor/core';
+import { App as CapApp } from '@capacitor/app';
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +19,7 @@ import { useVideoKeyboardShortcuts } from '@/hooks/use-video-keyboard-shortcuts'
 import { useMediaSession } from '@/hooks/use-media-session';
 import { useVideoGestures } from '@/hooks/use-video-gestures';
 import VideoSeekBar from '@/components/VideoSeekBar';
+import ExpandableDescription from '@/components/ExpandableDescription';
 import ExternalAudioChip from '@/components/ExternalAudioChip';
 import LiveRelayPlayer from '@/components/LiveRelayPlayer';
 import LiveChatPanel from '@/components/LiveChatPanel';
@@ -82,6 +85,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     setShowControls(true);
     setShowLiveChat(false);
     setMediaAspect(null);
+    mediaAspectRef.current = null;
     setIsExpandedLandscape(false);
   }, [actualContent?.id]);
 
@@ -126,6 +130,15 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const inAppPipRef = useRef(false);
   const pipWindowRef = useRef<HTMLDivElement | null>(null);
   const pipListenersRef = useRef<Array<() => void>>([]);
+  // Browser Document PiP (Chrome/Edge). Created from the PiP button's user
+  // gesture, kept hidden while the app is in front, and revealed when the
+  // page/tab is left. The OS owns the window, so it can be dragged anywhere
+  // outside the app — the web equivalent of Android's system PiP.
+  const docPipWindowRef = useRef<any>(null);
+  const docPipCleanupRef = useRef<Array<() => void>>([]);
+  // Real media ratio (w/h) reported by the file; handed to the native shell
+  // so the system PiP window is the same shape as the upload.
+  const mediaAspectRef = useRef<number | null>(null);
   // The hidden full-screen <video> is muted while the in-app mini player owns
   // the audio, otherwise both elements play sound at once (double audio).
   // Its previous mute state is restored on every PiP exit path.
@@ -140,6 +153,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     try {
       const bridge = (window as any).AndroidPiP;
       bridge?.setInAppPip?.(active);
+      // Keep the native window in the upload's real aspect ratio.
+      if (active && mediaAspectRef.current) {
+        const a = mediaAspectRef.current;
+        bridge?.setPipAspect?.(a >= 1 ? Math.round(a * 100) : 100, a >= 1 ? 100 : Math.round(100 / a));
+      }
       // Keep fullscreenActive in sync so the shell only auto-promotes to a
       // system PiP window on app-background when the user actually asked for
       // PiP (not merely because a full-screen viewer happens to be open).
@@ -174,6 +192,71 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     } catch { /* ignore */ }
   }, []);
 
+  /** Close the browser's Document PiP window (if one was created). */
+  const closeDocumentPip = useCallback((notify = false) => {
+    const w = docPipWindowRef.current;
+    docPipCleanupRef.current.forEach((off) => { try { off(); } catch { /* ignore */ } });
+    docPipCleanupRef.current = [];
+    docPipWindowRef.current = null;
+    try { if (w && !w.closed) w.close(); } catch { /* ignore */ }
+    if (notify) {
+      window.dispatchEvent(new CustomEvent('pipModeChanged', { detail: { active: false } }));
+    }
+  }, []);
+
+  /**
+   * Create an OS-owned Document PiP window from the PiP button's user gesture.
+   * It stays hidden while the app is in front (the in-app mini player is used
+   * there) and is revealed on tab/window hide, so the media keeps floating as
+   * a draggable window outside the browser even after the app is left.
+   * Browsers without Document PiP fall back to auto/legacy video PiP below.
+   */
+  const setupDocumentPip = useCallback((opts: {
+    videoUrl?: string | null; poster?: string | null; currentTime: number;
+    muted: boolean; landscape: boolean;
+  }) => {
+    const dpip = (document as any).documentPictureInPicture;
+    if (!dpip || typeof dpip.requestWindow !== 'function' || docPipWindowRef.current) return;
+    const width = opts.landscape ? 360 : 240;
+    const height = opts.landscape ? 202 : 400;
+    try {
+      const result = dpip.requestWindow({ width, height });
+      if (!result || typeof result.then !== 'function') return;
+      result.then((w: any) => {
+        if (!w || w.closed || !w.document) return;
+        docPipWindowRef.current = w;
+        const doc = w.document;
+        doc.body.style.cssText = 'margin:0;background:#000;display:none;overflow:hidden;';
+        const style = doc.createElement('style');
+        style.textContent = 'html,body{width:100%;height:100%;margin:0;background:#000;overflow:hidden;}video,img{width:100%;height:100%;object-fit:contain;display:block;background:#000;}';
+        doc.head.appendChild(style);
+        let media: HTMLMediaElement | HTMLImageElement | null = null;
+        if (opts.videoUrl) {
+          const video = doc.createElement('video');
+          video.src = String(opts.videoUrl);
+          video.muted = opts.muted;
+          video.playsInline = true;
+          video.controls = true;
+          video.autoplay = true;
+          video.preload = 'auto';
+          video.addEventListener('loadedmetadata', () => {
+            try { video.currentTime = opts.currentTime || 0; } catch { /* ignore */ }
+          }, { once: true });
+          video.play().catch(() => { /* autoplay policy */ });
+          media = video;
+        } else if (opts.poster) {
+          const img = doc.createElement('img');
+          img.src = String(opts.poster);
+          media = img;
+        }
+        if (media) doc.body.appendChild(media);
+        const onPageHide = () => closeDocumentPip(true);
+        w.addEventListener('pagehide', onPageHide);
+        docPipCleanupRef.current = [() => { try { w.removeEventListener('pagehide', onPageHide); } catch { /* ignore */ } }];
+      }).catch(() => { /* denied: the in-app mini player stays available */ });
+    } catch { /* unsupported: keep the in-app mini player */ }
+  }, [closeDocumentPip]);
+
   // Signal fullscreen takeover so the feed banner stays hidden while video
   // plays (no overlays, no interruptions).
   useEffect(() => {
@@ -195,8 +278,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       pipListenersRef.current.forEach((off) => { try { off(); } catch { /* ignore */ } });
       pipListenersRef.current = [];
       inAppPipRef.current = false;
+      closeDocumentPip(false);
     };
-  }, []);
+  }, [closeDocumentPip]);
 
   // When the OS enters PiP, hide all overlays so the mini window shows only
   // content. When the OS PiP exits (expand button, close button, or dragging
@@ -212,6 +296,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         setHideOverlay(true);
         setShowControls(false);
       } else {
+        closeDocumentPip(false);
         removeInAppPipWindow();
         setIsNativePip(false);
         setIsMinimized(false);
@@ -225,7 +310,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     };
     window.addEventListener('pipModeChanged', handler as EventListener);
     return () => window.removeEventListener('pipModeChanged', handler as EventListener);
-  }, [removeInAppPipWindow, notifyNativePip, restoreMainVideoAudio]);
+  }, [removeInAppPipWindow, notifyNativePip, restoreMainVideoAudio, closeDocumentPip]);
 
   // The native shell fires this immediately before it snapshots the Activity
   // into a system PiP window. Make sure the snapshot contains ONLY the media:
@@ -264,59 +349,84 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     };
   }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
 
-  // Web (equyvo.acronous.com): leaving the tab while the in-app PiP is active
-  // promotes the <video> to the browser's real PiP window, so it keeps
-  // floating above other windows — the web equivalent of the native path.
+  // Native fallback: some OEMs skip Activity onUserLeaveHint/onStop. When the
+  // app is backgrounded while the in-app mini player is active, ask the shell
+  // to promote it to a real, draggable system PiP window.
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform()) return;
+    let handle: { remove?: () => void } | undefined;
+    void CapApp.addListener('appStateChange', (state: { isActive: boolean }) => {
+      if (!state.isActive && inAppPipRef.current) {
+        try { (window as any).AndroidPiP?.enter?.(); } catch { /* ignore */ }
+      }
+    }).then((h: any) => { handle = h; }).catch(() => { /* ignore */ });
+    return () => { try { handle?.remove?.(); } catch { /* ignore */ } };
+  }, []);
+
+  // Web (equyvo.acronous.com): leaving the tab while PiP is active promotes the
+  // media to a real OS window (Document PiP where available, legacy video PiP
+  // otherwise) so it keeps floating above other windows outside the app.
   useEffect(() => {
     const onVisibility = () => {
-      if (document.visibilityState !== 'hidden' || !inAppPipRef.current) return;
-      const promote = () => {
+      if (document.visibilityState === 'hidden') {
         if (!inAppPipRef.current) return;
-        removeInAppPipWindow();
-        setIsNativePip(true);
-        setIsMinimized(false);
-        setContentOnly(true);
-        setHideOverlay(true);
-        setShowControls(false);
-        restoreMainVideoAudio();
+        const docPip = docPipWindowRef.current;
+        if (docPip && !docPip.closed) {
+          try {
+            docPip.document.body.style.display = 'block';
+            const media: any = docPip.document.querySelector('video');
+            if (media && typeof media.play === 'function') media.play().catch(() => { /* ignore */ });
+          } catch { /* ignore */ }
+          systemPipActiveRef.current = true;
+          removeInAppPipWindow();
+          setIsNativePip(true);
+          setIsMinimized(false);
+          setContentOnly(true);
+          setHideOverlay(true);
+          setShowControls(false);
+          return;
+        }
         const v = videoRef.current as any;
         try {
           if (v && (document as any).pictureInPictureEnabled &&
               typeof v.requestPictureInPicture === 'function' &&
               !(document as any).pictureInPictureElement &&
               !v.dataset.pipExitBound) {
-            // Bind the dismissal listener to the SAME element we promote, so
-            // dismissing the browser PiP always exits PiP everywhere.
             v.dataset.pipExitBound = '1';
-            v.addEventListener('leavepictureinpicture', () => {
+            const onExit = () => {
               delete v.dataset.pipExitBound;
               window.dispatchEvent(new CustomEvent('pipModeChanged', { detail: { active: false } }));
-            }, { once: true });
+            };
+            v.addEventListener('leavepictureinpicture', onExit, { once: true });
             const r = v.requestPictureInPicture();
-            if (r && typeof r.catch === 'function') {
-              r.catch(() => {
-                delete v.dataset.pipExitBound;
-                // Gesture policy can block this on some browsers: restore a
-                // usable viewer rather than a control-less content-only view.
-                setIsNativePip(false);
+            if (r && typeof r.then === 'function') {
+              r.then(() => {
+                systemPipActiveRef.current = true;
+                removeInAppPipWindow();
+                setIsNativePip(true);
                 setIsMinimized(false);
-                setContentOnly(false);
-                setHideOverlay(false);
-                setShowControls(true);
-                notifyNativePip(false);
+                setContentOnly(true);
+                setHideOverlay(true);
+                setShowControls(false);
+                restoreMainVideoAudio();
+              }).catch(() => {
+                // Blocked by autoplay/gesture policy: keep the in-app mini
+                // player (never tear it down before PiP actually succeeds).
+                delete v.dataset.pipExitBound;
+                try { v.removeEventListener('leavepictureinpicture', onExit); } catch { /* ignore */ }
               });
             }
           }
         } catch { /* ignore */ }
-      };
-      // Try immediately (maximises the chance the browser still treats this
-      // as a user-gesture action), then once more after the layout settles.
-      promote();
-      setTimeout(() => { if (inAppPipRef.current) promote(); }, 80);
+      } else if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
+        // Back in the app: close the external window and restore the viewer.
+        systemPipActiveRef.current = false;
+        closeDocumentPip(true);
+      }
     };
     document.addEventListener('visibilitychange', onVisibility);
     return () => document.removeEventListener('visibilitychange', onVisibility);
-  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, closeDocumentPip]);
 
   const [isMuted, setIsMuted] = useState(true); // Start muted so autoplay works; user can unmute
   const [volume, setVolume] = useState(1);
@@ -608,17 +718,34 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     };
   };
   
-  // Get video container style for portrait moments, stories, and mobile 16:9
+  // Get video container style. NEVER crop: every branch uses object-fit:contain
+  // so a landscape upload stays landscape (letterboxed) in a portrait viewer,
+  // and a portrait upload stays portrait in a landscape viewer. `mediaAspect`
+  // is the real width/height reported by the file and is used for the PiP
+  // window aspect so the original ratio is kept everywhere.
   const getVideoContainerStyle = (): React.CSSProperties => {
-    
-    // Mobile moments and stories should always be portrait (9:16)
+    // Rotated/expanded landscape viewer: the parent is rotated 90deg, so the
+    // video must fill the ROTATED box (100%/100%), not a hard-coded 100vw/vh.
+    if (isExpandedLandscape) {
+      return {
+        position: 'absolute' as const,
+        inset: 0,
+        width: '100%',
+        height: '100%',
+        objectFit: 'contain' as const,
+        backgroundColor: 'black'
+      };
+    }
+
+    // Mobile moments and stories keep a portrait frame, but the media inside
+    // is contained — a landscape video is letterboxed, never cropped.
     if (isMobileDevice && (isPortraitMoment || isStory)) {
       return {
         width: '100vw',
         height: '177.78vw', // 9:16 ratio (16/9 = 1.7778)
         maxHeight: '100vh',
         maxWidth: '56.25vh', // 9/16 = 0.5625
-        objectFit: 'cover',
+        objectFit: 'contain',
         position: 'relative',
         backgroundColor: 'black'
       };
@@ -641,13 +768,13 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       };
     }
     
-    // Desktop moments and stories keep portrait mode (9:16)
+    // Desktop moments and stories keep a portrait frame, again with contain.
     if (isPortraitMoment || isStory) {
       return {
         height: '100vh',
         maxWidth: '100vw',
-        aspectRatio: '9/16',
-        objectFit: 'cover',
+        aspectRatio: mediaAspect && mediaAspect >= 1 ? undefined : '9/16',
+        objectFit: 'contain',
         backgroundColor: 'black'
       };
     }
@@ -1327,6 +1454,19 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       () => document.removeEventListener('keydown', onKeyDown, true),
     ];
 
+    // Prepare the OS-level window from THIS user gesture (browsers require
+    // activation for Document PiP). It stays hidden while the app is in front;
+    // on app/tab exit it becomes a draggable floating window outside the app.
+    const pipPoster = actualContent?.thumbnail || actualContent?.image ||
+      actualContent?.mediaUrl || actualContent?.media || (actualContent as any)?.poster;
+    setupDocumentPip({
+      videoUrl: isVideoType ? fallbackVideoSrc : null,
+      poster: typeof pipPoster === 'string' ? pipPoster : null,
+      currentTime,
+      muted: isMuted,
+      landscape: isLandscape,
+    });
+
     // The full-screen viewer stays mounted (hidden) so reopening is instant
     // and the standard control set is preserved.
   };
@@ -1422,7 +1562,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <MessageCircle className="h-5 w-5" />
             </Button>
           )}
-          {!isOriginalPortrait && !(isPortraitMoment || isStory) && Math.min(window.innerWidth, window.innerHeight) < 1024 && (
+          {/* Expand-to-landscape is available for EVERY regular fullscreen item,
+              portrait included — that is exactly what it is for. It is hidden
+              only in the Moments / Story fullscreen views, which keep their own
+              presentation. */}
+          {!(isPortraitMoment || isStory) && (
             <Button
               variant="ghost"
               size="icon"
@@ -1430,6 +1574,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 e.stopPropagation();
                 e.preventDefault();
                 setIsExpandedLandscape(prev => !prev);
+                onExpand?.();
               }}
               className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
               title={isExpandedLandscape ? 'Collapse to portrait' : 'Expand to landscape'}
@@ -1437,7 +1582,9 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <Maximize2 className="h-5 w-5" />
             </Button>
           )}
-          {!(window.innerWidth > window.innerHeight) && !isExpandedLandscape && (
+          {/* PiP must be reachable in every fullscreen orientation, including
+              expanded landscape. The in-app mini player is draggable inside the
+              app and is promoted to a system window when the app is left. */}
           <Button
             variant="ghost"
             size="icon"
@@ -1447,7 +1594,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           >
             <PictureInPicture2 className="h-5 w-5" />
           </Button>
-          )}
           <Button
             variant="ghost"
             size="icon"
@@ -1542,7 +1688,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               ref={videoRef}
               key={videoRetryKey}
               src={videoRetryKey === 0 ? String(fallbackVideoSrc) : `${String(fallbackVideoSrc)}${String(fallbackVideoSrc).includes('?') ? '&' : '?'}streamretry=${videoRetryKey}`}
-              className={`${isPortraitMoment || isStory ? 'max-w-full max-h-screen object-cover mx-auto' : 'absolute inset-0 w-full h-full'}`}
+              className="absolute inset-0 w-full h-full object-contain mx-auto"
               style={getVideoContainerStyle()}
               autoPlay
               playsInline
@@ -1574,7 +1720,24 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               }}
               onEnded={() => { if (effectiveLive) setLiveEnded(true); }}
               onSeeked={(e) => { setCurrentTime(e.currentTarget.currentTime); }}
-              onLoadedMetadata={(e) => { setDuration(e.currentTarget.duration); const v = e.currentTarget; if (v.videoWidth && v.videoHeight) setMediaAspect(v.videoWidth / v.videoHeight); }}
+              onLoadedMetadata={(e) => {
+                const v = e.currentTarget;
+                setDuration(v.duration);
+                // Let the browser auto-promote this video on tab switch where
+                // supported (the in-app mini player remains the primary UI).
+                try { (v as any).autoPictureInPicture = true; } catch { /* ignore */ }
+                if (v.videoWidth && v.videoHeight) {
+                  const aspect = v.videoWidth / v.videoHeight;
+                  setMediaAspect(aspect);
+                  mediaAspectRef.current = aspect;
+                  try {
+                    (window as any).AndroidPiP?.setPipAspect?.(
+                      aspect >= 1 ? Math.round(aspect * 100) : 100,
+                      aspect >= 1 ? 100 : Math.round(100 / aspect),
+                    );
+                  } catch { /* ignore */ }
+                }
+              }}
             />
           ) : isLiveStream && effectiveLive && (actualContent as any)?.relay === false ? (
             // Native screen capture has no live stream to relay. Be honest
@@ -1695,11 +1858,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                       </span>
                     )}
                   </div>
-                  {actualContent.description && (
-                    <p className="text-white/70 text-sm mt-2 line-clamp-2">
-                      {actualContent.description}
-                    </p>
-                  )}
+                  <ExpandableDescription
+                    text={actualContent.description}
+                    className="mt-2 text-white/70 text-sm"
+                  />
                   {/* Optional external soundtrack on a Moment (tap to play). */}
                   {isVideoType && (actualContent as any)?.externalAudio && (
                     <div className="mt-2">
@@ -1712,7 +1874,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                  {contentTags.length > 0 && (
                    <div className="flex flex-wrap gap-1 mb-3">
                      {contentTags.slice(0, 6).map((tag: string, index: number) => (
-                      <Badge key={index} variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20 cursor-pointer" onClick={() => navigate(`/app/search?q=${encodeURIComponent(String(tag).replace(/^#/, ''))}`)}>
+                      <Badge key={index} variant="outline" className="text-xs bg-white/10 text-white/80 border-white/20 cursor-pointer" onClick={() => navigate(`/app/discover?tag=${encodeURIComponent(String(tag).replace(/^#/, '').toLowerCase())}`)}>
                         #{tag}
                       </Badge>
                     ))}
@@ -1965,11 +2127,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 </span>
               )}
             </div>
-            {actualContent.description && (
-              <p className="text-white/70 text-sm mt-2 line-clamp-2">
-                {actualContent.description}
-              </p>
-            )}
+            <ExpandableDescription
+              text={actualContent.description}
+              className="mt-2 text-white/70 text-sm"
+            />
           </div>
 
           {/* Action Buttons */}
@@ -2087,9 +2248,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               )}
             </div>
             {actualContent.description && (
-              <p className="text-white/70 text-sm mt-2 line-clamp-2">
-                {actualContent.description}
-              </p>
+              <ExpandableDescription
+                text={actualContent.description}
+                className="mt-2 text-white/70 text-sm"
+              />
            )}
           </div>
 
@@ -2238,9 +2400,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             ) : (
               <p className="text-center text-sm text-white/60">No playable audio was attached.</p>
             )}
-            {actualContent.description && (
-              <p className="mt-4 line-clamp-3 text-sm text-white/70">{String(actualContent.description)}</p>
-            )}
+            <ExpandableDescription
+              text={actualContent.description}
+              className="mt-4 text-sm text-white/70"
+            />
           </div>
         </div>
       )}
@@ -2279,7 +2442,11 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
             onLoad={(e) => {
               const target = e.target as HTMLImageElement;
               target.style.imageRendering = 'auto';
-              if (target.naturalWidth && target.naturalHeight) setMediaAspect(target.naturalWidth / target.naturalHeight);
+              if (target.naturalWidth && target.naturalHeight) {
+                const aspect = target.naturalWidth / target.naturalHeight;
+                setMediaAspect(aspect);
+                mediaAspectRef.current = aspect;
+              }
             }}
           />
           ) : (
@@ -2333,11 +2500,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
                 </span>
               )}
             </div>
-            {actualContent.description && (
-              <p className="text-white/70 text-sm mt-2 line-clamp-2">
-                {actualContent.description}
-              </p>
-            )}
+            <ExpandableDescription
+              text={actualContent.description}
+              className="mt-2 text-white/70 text-sm"
+            />
             {/* Photos with external background music: tap to play the track. */}
             {(actualContent as any)?.externalAudio && (
               <div className="mt-2">
@@ -2437,7 +2603,11 @@ void toggleFullscreen();
               const target = e.target as HTMLImageElement;
               // Enhance image quality for HD displays
               target.style.imageRendering = 'auto';
-              if (target.naturalWidth && target.naturalHeight) setMediaAspect(target.naturalWidth / target.naturalHeight);
+              if (target.naturalWidth && target.naturalHeight) {
+                const aspect = target.naturalWidth / target.naturalHeight;
+                setMediaAspect(aspect);
+                mediaAspectRef.current = aspect;
+              }
             }}
           />
           ) : (

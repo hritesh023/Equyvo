@@ -1562,10 +1562,17 @@ const CreatePage = () => {
 // STRICT type routing: each type is written to exactly ONE collection so a
 // photo can never leak into Moments and a moment never leaks into Thoughts.
   async function persistContent(content: Record<string, unknown>) {
-    // Extract #hashtags from the caption/content so they are indexed for
+    // One canonical text value: a dedicated description always wins over a
+    // caption/title, but legacy callers that only send `content` still work.
+    const caption = String(content.content || content.caption || '');
+    const description = String(content.description ?? (caption || content.title || ''));
+    const title = String(content.title || caption || '').slice(0, 160);
+    content.description = description;
+    if (!content.title && title) content.title = title;
+    // Extract #hashtags from the whole text so they are indexed for
     // search and discoverability, not just left inline in the text.
     if (!Array.isArray(content.tags)) {
-      const text = String(content.content || content.caption || content.title || content.description || '');
+      const text = `${caption} ${description}`;
       const tags = Array.from(new Set((text.match(/#[\w]+/g) || []).map((t) => t.slice(1).toLowerCase())));
       if (tags.length) content.tags = tags;
     }
@@ -1631,8 +1638,12 @@ const CreatePage = () => {
       const mediaStr = typeof content.media === 'string' ? (content.media as string) : '';
       const { error: indexError } = await api.indexContent({
         id: content.id as string,
-        title: ((content.content as string)?.slice(0, 60) || (content.title as string)?.slice(0, 60) || type) as string,
-        description: (content.content as string)?.slice(0, 120) || '',
+        title: (String(content.title || caption || type)).slice(0, 160),
+        // Keep the FULL description — truncating here destroyed what the user
+        // typed (and dropped live descriptions entirely). The UI truncates for
+        // display with a "..." expand button; storage never does.
+        description: description || caption,
+        content: caption || description,
         type: (type === 'text-story' ? 'story' : type === 'photo' ? 'photo' : type === 'video' ? 'video' : type) as any,
         creator: postData.user,
         creatorAvatar: (content.avatar as string) || '',
@@ -1644,7 +1655,6 @@ const CreatePage = () => {
         tags: (content.tags as string[]) || [],
         visibility: (postData as Record<string, unknown>).visibility as string,
         publishedAt: new Date().toISOString(),
-        content: (content.content as string) || '',
       });
       if (indexError) {
         persistError = persistError || indexError;
@@ -1727,7 +1737,11 @@ const CreatePage = () => {
         user: postData.user,
         avatar: (content.avatar as string) || (postData.avatar as string) || '',
         time: 'just now',
-        content: (content.content as string) || '',
+        content: caption || description,
+        // Keep the real description on the local row too, otherwise Profile
+        // falls back to a truncated caption and fullscreen loses the text.
+        title,
+        description,
         image: fullImage || fullMedia,
         // Always a string in the local cache: a raw `media` array/object here
         // used to poison ProfilePage's <img src> after publishing a thought.
@@ -2480,6 +2494,8 @@ const CreatePage = () => {
               id: p.id,
               type: p.mediaType === 'video' ? 'video' : 'photo',
               content: p.caption,
+              title: p.caption || '',
+              description: p.caption || '',
               image: p.mediaType === 'video' ? '' : secureUrl,
               media: secureUrl,
               thumbnail: p.thumbnail || secureUrl,
@@ -2655,7 +2671,7 @@ const CreatePage = () => {
             const v = newUploadedVideos[i];
             if (!v.videoUrl) continue;
             const err = await persistContent({
-              id: v.id, type: 'video', content: v.title, image: '', media: v.videoUrl, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', duration: videoSuccesses[i]?.durationSec, publicId: v.publicId, resourceType: v.resourceType, r2Key: v.r2Key,
+              id: v.id, type: 'video', content: v.title, title: v.title, description: v.title, image: '', media: v.videoUrl, thumbnail: v.thumbnail, videoUrl: v.videoUrl, mediaType: 'video', duration: videoSuccesses[i]?.durationSec, publicId: v.publicId, resourceType: v.resourceType, r2Key: v.r2Key,
             });
             if (err) videoPersistError = err;
           }
@@ -3079,6 +3095,7 @@ const CreatePage = () => {
     const { error: presenceErr } = await api.liveStart({
       contentId: liveId,
       title: liveTitle || 'Live now',
+      description: liveDescription || '',
       thumbnail: thumb.url || '',
       source: sourceValue,
       relay: relayAvailable,
@@ -3797,6 +3814,8 @@ const CreatePage = () => {
       id: newUploadedVideo.id,
       type: 'video',
       content: newUploadedVideo.title,
+      title: liveTitle || newUploadedVideo.title,
+      description: liveDescription || newUploadedVideo.title,
       image: '',
       media: liveUploadResult.secureUrl,
       thumbnail: liveThumbnail,

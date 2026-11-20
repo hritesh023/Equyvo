@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,8 +13,13 @@ import {
   MessageCircle,
   Share2,
   Play,
+  Pause,
+  Volume2,
+  VolumeX,
   Image as ImageIcon
 } from 'lucide-react';
+import VideoSeekBar from './VideoSeekBar';
+import ExpandableDescription from './ExpandableDescription';
 import { cn } from '@/lib/utils';
 import { showSuccess, showError } from '@/utils/toast';
 import { shareItem } from '@/utils/share';
@@ -39,7 +44,38 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
   className = ''
 }) => {
   const [isFullscreen, setIsFullscreen] = useState(false);
+  // Same control set as the fullscreen media player: play/pause, mute, seek
+  // bar with preview and time. Native <video controls> are intentionally off
+  // so the player looks identical everywhere (except Moments/Story).
+  const splitVideoRef = useRef<HTMLVideoElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [isMuted, setIsMuted] = useState(true);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
   const navigate = useNavigate();
+
+  const togglePlay = () => {
+    const v = splitVideoRef.current;
+    if (!v) return;
+    if (v.paused) { void v.play().catch(() => {}); } else { v.pause(); }
+  };
+  const toggleMute = () => {
+    const v = splitVideoRef.current;
+    const next = !isMuted;
+    if (v) v.muted = next;
+    setIsMuted(next);
+  };
+  const formatTime = (seconds: number) => {
+    const s = Math.max(0, Math.floor(seconds || 0));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    setIsPlaying(false);
+    setIsMuted(true);
+    setCurrentTime(0);
+    setDuration(0);
+  }, [selectedItem?.id]);
 
   const handleShare = async () => {
     if (!selectedItem) return;
@@ -144,11 +180,19 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                     >
                       {selectedItem.videoUrl ? (
                       <video
+                        ref={splitVideoRef}
                         src={selectedItem.videoUrl}
                         className="w-full h-full object-contain"
-                        controls={true}
+                        controls={false}
+                        playsInline
+                        autoPlay
+                        muted={isMuted}
                         poster={selectedItem.thumbnail}
                         preload="metadata"
+                        onPlay={() => setIsPlaying(true)}
+                        onPause={() => setIsPlaying(false)}
+                        onTimeUpdate={(e) => setCurrentTime(e.currentTarget.currentTime)}
+                        onLoadedMetadata={(e) => setDuration(e.currentTarget.duration)}
                         onError={(e) => {
                           const v = e.currentTarget;
                           const attempts = Number(v.dataset.splitRetry || '0');
@@ -160,16 +204,54 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                         }}
                       />
                       ) : null}
+                      {/* Canonical player controls — identical to the
+                          fullscreen player (except Moments / Story). */}
+                      {selectedItem.videoUrl && (
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent px-3 pb-2 pt-6 text-white" onClick={(e) => e.stopPropagation()}>
+                          <VideoSeekBar
+                            videoRef={splitVideoRef as React.RefObject<HTMLVideoElement>}
+                            currentTime={currentTime}
+                            duration={duration || 0}
+                            onSeek={(time: number) => {
+                              const v = splitVideoRef.current;
+                              if (v) v.currentTime = time;
+                              setCurrentTime(time);
+                            }}
+                          />
+                          <div className="mt-1 flex items-center gap-3">
+                            <button type="button" onClick={togglePlay} aria-label={isPlaying ? 'Pause' : 'Play'} className="rounded-full p-1.5 hover:bg-white/15">
+                              {isPlaying ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5" />}
+                            </button>
+                            <button type="button" onClick={() => {
+                              const v = splitVideoRef.current;
+                              if (v) v.currentTime = Math.max(0, v.currentTime - 5);
+                            }} aria-label="Rewind 5 seconds" className="rounded-full p-1.5 hover:bg-white/15">
+                              <span className="text-xs font-semibold">−5</span>
+                            </button>
+                            <button type="button" onClick={() => {
+                              const v = splitVideoRef.current;
+                              if (v) v.currentTime = Math.min(v.duration || Infinity, v.currentTime + 5);
+                            }} aria-label="Forward 5 seconds" className="rounded-full p-1.5 hover:bg-white/15">
+                              <span className="text-xs font-semibold">+5</span>
+                            </button>
+                            <button type="button" onClick={toggleMute} aria-label={isMuted ? 'Unmute' : 'Mute'} className="rounded-full p-1.5 hover:bg-white/15">
+                              {isMuted ? <VolumeX className="h-5 w-5" /> : <Volume2 className="h-5 w-5" />}
+                            </button>
+                            <span className="text-xs tabular-nums">{formatTime(currentTime)} / {formatTime(duration)}</span>
+                          </div>
+                        </div>
+                      )}
                       {/* Play button overlay */}
-                      <div className="absolute inset-0 bg-black/20 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                      <div className="absolute inset-0 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity pointer-events-none">
                         <div className="bg-white/90 rounded-full p-4 shadow-lg">
                           <Maximize2 className="h-6 w-6 text-black" />
                         </div>
                       </div>
-                      {/* Click to play fullscreen hint */}
-                      <div className="absolute bottom-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
-                        Click for fullscreen
-                      </div>
+                      {!selectedItem.videoUrl && (
+                        <div className="absolute bottom-2 left-2 bg-black/70 text-white text-xs px-2 py-1 rounded">
+                          Click for fullscreen
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="relative">
@@ -198,7 +280,7 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                 <div className="space-y-4">
                   <div>
                     <h3 className="font-semibold mb-2">Description</h3>
-                    <p className="text-muted-foreground">{selectedItem.description}</p>
+                    <ExpandableDescription text={selectedItem.description} className="text-muted-foreground" />
                   </div>
 
                   <div>
@@ -206,7 +288,7 @@ const SplitScreenView: React.FC<SplitScreenViewProps> = ({
                     <div className="flex items-center gap-2 flex-wrap">
                       <Badge variant="secondary">{selectedItem.category}</Badge>
                       {selectedItem.tags.map((tag) => (
-                        <Badge key={tag} variant="outline" className="text-xs cursor-pointer" onClick={() => navigate(`/app/search?q=${encodeURIComponent(String(tag).replace(/^#/, ''))}`)}>
+                        <Badge key={tag} variant="outline" className="text-xs cursor-pointer" onClick={() => navigate(`/app/discover?tag=${encodeURIComponent(String(tag).replace(/^#/, '').toLowerCase())}`)}>
                           #{tag}
                         </Badge>
                       ))}

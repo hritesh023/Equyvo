@@ -309,7 +309,11 @@ export function resolveMediaFields(item: MediaSource): NormalizedMediaFields {
   const imageItem = items.find((m) => m.type !== 'video' && m.type !== 'audio');
 
   const explicitVideo = firstMediaUrl(safe.videoUrl) || firstMediaUrl(safe.video_url) || firstMediaUrl(safe.video);
-  const videoUrl = videoItem?.url || (explicitVideo && isVideoUrl(explicitVideo) ? explicitVideo : '');
+  // Explicit video fields are authoritative even when the URL has no file
+  // extension (R2 range-proxy / signed Cloudinary links). Guessing 'image'
+  // from a missing extension used to drop profile videos from fullscreen.
+  const videoUrl = videoItem?.url ||
+    (explicitVideo && mediaKindOfUrl(explicitVideo, 'video') === 'video' ? explicitVideo : '');
   const explicitAudio = firstMediaUrl(safe.audioUrl) || firstMediaUrl(safe.audio_url) || firstMediaUrl(safe.audio);
   const audioUrl = audioItem?.url || (explicitAudio && mediaKindOfUrl(explicitAudio, 'audio') === 'audio' ? explicitAudio : '');
 

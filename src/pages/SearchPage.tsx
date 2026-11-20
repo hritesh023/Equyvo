@@ -14,6 +14,7 @@ import SplitScreenView from '@/components/SplitScreenView';
 import CommentSection from '@/components/CommentSection';
 import StandardPostMenu from '@/components/StandardPostMenu';
 import FullscreenViewer from '@/components/FullscreenViewer';
+import ExpandableDescription from '@/components/ExpandableDescription';
 import FollowButton from '@/components/FollowButton';
 import ReportModal from '@/components/ReportModal';
 import { cn } from '@/lib/utils';
@@ -610,9 +611,7 @@ const SearchPage: React.FC = () => {
                         <h3 className="font-semibold mb-2 line-clamp-2 group-hover:text-primary transition-colors">
                           {result.title}
                         </h3>
-                        <p className="text-sm text-muted-foreground mb-3 line-clamp-2">
-                          {result.description}
-                        </p>
+                        <ExpandableDescription text={result.description} className="mb-3 text-sm text-muted-foreground" />
                         <div className="flex items-center justify-between text-xs text-muted-foreground">
                           <div className="flex items-center gap-2">
                             <span>{result.creator}</span>
@@ -635,9 +634,9 @@ const SearchPage: React.FC = () => {
                               className="text-xs cursor-pointer hover:bg-primary/10 hover:border-primary/50 hover:text-primary transition-all duration-200"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                // Show tag bar and open content in fullscreen
-                                handleTagBarClick(tag);
-                                handleOpenFullscreen(result, getFullscreenType(result.type));
+                                // Hashtag buttons always lead to Discover so
+                                // every item with that tag can be browsed.
+                                navigate(`/app/discover?tag=${encodeURIComponent(String(tag).replace(/^#/, '').toLowerCase())}`);
                               }}
                             >
                               #{tag}
@@ -683,9 +682,7 @@ const SearchPage: React.FC = () => {
                         <h3 className="font-semibold mb-1 line-clamp-1 group-hover:text-primary transition-colors">
                           {result.title}
                         </h3>
-                        <p className="text-sm text-muted-foreground mb-2 line-clamp-2">
-                          {result.description}
-                        </p>
+                        <ExpandableDescription text={result.description} className="mb-2 text-sm text-muted-foreground" />
                         <div className="flex items-center gap-2 mb-2">
                           <Badge variant="secondary" className="text-xs">
                             {result.category}
@@ -697,9 +694,9 @@ const SearchPage: React.FC = () => {
                               className="text-xs cursor-pointer hover:bg-primary/10 hover:border-primary/50 hover:text-primary transition-all duration-200"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                // Show tag bar and open content in fullscreen
-                                handleTagBarClick(tag);
-                                handleOpenFullscreen(result, getFullscreenType(result.type));
+                                // Hashtag buttons always lead to Discover so
+                                // every item with that tag can be browsed.
+                                navigate(`/app/discover?tag=${encodeURIComponent(String(tag).replace(/^#/, '').toLowerCase())}`);
                               }}
                             >
                               #{tag}

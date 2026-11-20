@@ -1116,7 +1116,7 @@ html.cap-native {
 
   /* Improved media containers */
   .media-container {
-    @apply relative w-full h-full object-cover rounded-lg;
+    @apply relative w-full h-full object-contain rounded-lg;
   }
 
   .media-overlay {
@@ -1252,6 +1252,14 @@ html.cap-native {
   }
 
   /* Line clamp utilities with better readability */
+  .line-clamp-1 {
+    display: -webkit-box;
+    -webkit-line-clamp: 1;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    line-height: 1.5;
+  }
+
   .line-clamp-2 {
     display: -webkit-box;
     -webkit-line-clamp: 2;
@@ -1655,7 +1663,7 @@ html.cap-native {
   }
 
   .video-element {
-    @apply w-full h-full object-cover;
+    @apply w-full h-full object-contain;
   }
 
   /* Mobile video player optimizations */

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { showSuccess, showError } from '@/utils/toast';
 import FullscreenViewer from '@/components/FullscreenViewer';
+import ExpandableDescription from '@/components/ExpandableDescription';
 import FullscreenBrowse from '@/components/FullscreenBrowse';
 import CommentSection from '@/components/CommentSection';
 import SearchSuggest from '@/components/SearchSuggest';
@@ -19,7 +20,7 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import InAppShareSheet from '@/components/InAppShareSheet';
 import ReportModal from '@/components/ReportModal';
 import SaveButton from '@/components/SaveButton';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { navigateToProfile, isPlaceholderId, ownerIdOf } from '@/utils/profile-navigation';
 import { avatarOf, avatarInitials } from '@/utils/avatar';
 import { shareItem } from '@/utils/share';
@@ -168,11 +169,22 @@ const DiscoverPage = () => {
   const [sortBy, setSortBy] = useState<'relevance' | 'trending' | 'newest' | 'popular'>('relevance');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
-  const [activeHashtag, setActiveHashtag] = useState<string>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [activeHashtag, setActiveHashtag] = useState<string>(() => {
+    const tag = searchParams.get('tag') || searchParams.get('hashtag') || '';
+    return tag ? `#${tag.replace(/^#/, '')}` : '';
+  });
   const [timeFilter, setTimeFilter] = useState<'today' | 'week' | 'month' | 'all'>('all');
   const [contentTypeFilter, setContentTypeFilter] = useState<string>('all');
-  
+
   const navigate = useNavigate();
+
+  // Deep links from clickable hashtags anywhere in the app:
+  // /app/discover?tag=<tag> shows every item carrying that hashtag.
+  useEffect(() => {
+    const tag = searchParams.get('tag') || searchParams.get('hashtag') || '';
+    setActiveHashtag(tag ? `#${tag.replace(/^#/, '')}` : '');
+  }, [searchParams]);
 
   const handleSearch = useCallback((query: string) => {
     showSuccess(`Searching for "${query}"...`);
@@ -639,9 +651,23 @@ avatar: m.avatar || m.user?.avatar || '',
   const handleTagClick = (tag: string) => {
     const t = String(tag || '').trim();
     setActiveHashtag(t);
-    showSuccess(`Showing content for ${t}`);
+    const clean = t.replace(/^#/, '');
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.set('tag', clean);
+      return next;
+    });
+    showSuccess(`Showing content for #${clean}`);
   };
-  const clearHashtag = () => setActiveHashtag('');
+  const clearHashtag = () => {
+    setActiveHashtag('');
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev);
+      next.delete('tag');
+      next.delete('hashtag');
+      return next;
+    });
+  };
 
   const handleSortChange = (value: 'relevance' | 'trending' | 'newest' | 'popular') => {
     setSortBy(value);
@@ -1414,9 +1440,10 @@ avatar: m.avatar || m.user?.avatar || '',
                     <span>•</span>
                     <span>{Math.floor((new Date().getTime() - new Date(item.timestamp).getTime()) / (1000 * 60 * 60))} hours ago</span>
                   </div>
-                  <p className="text-xs text-muted-foreground line-clamp-2 pt-2">
-                    {item.content || item.title}
-                  </p>
+                  <ExpandableDescription
+                    text={(item as any).description || item.content || item.title || ''}
+                    className="pt-2 text-xs text-muted-foreground"
+                  />
                 </div>
                 {/* Always-visible actions: like / comment / share / save */}
                 <div className="mt-2 flex items-center gap-1" onClick={(e) => e.stopPropagation()}>

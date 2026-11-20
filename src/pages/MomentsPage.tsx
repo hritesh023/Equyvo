@@ -11,6 +11,7 @@ import StandardPostMenu from '@/components/StandardPostMenu';
 import { showSuccess } from '@/utils/toast';
 import SaveButton from '@/components/SaveButton';
 import CommentSection from '@/components/CommentSection';
+import ExpandableDescription from '@/components/ExpandableDescription';
 import { navigateToProfile, ownerIdOf } from '@/utils/profile-navigation';
 import { shareItem } from '@/utils/share';
 import InAppShareSheet, { ShareSheetPayload } from '@/components/InAppShareSheet';
@@ -1060,9 +1061,10 @@ const MomentsPage = () => {
                 <h3 className="font-bold text-lg drop-shadow-md cursor-pointer hover:underline">@{moment.user}</h3>
               </div>
               <div className="mb-3">
-                <p className="text-sm drop-shadow-md line-clamp-2 leading-snug">
-                  {moment.description}
-                </p>
+                <ExpandableDescription
+                  text={(moment as any).description || (moment as any).content || ''}
+                  className="text-sm drop-shadow-md leading-snug"
+                />
               </div>
               <div className="flex items-center gap-2 text-white/80 text-xs mb-2 drop-shadow-md">
                 <Eye className="h-3 w-3" /> {toCount(moment.views)} views

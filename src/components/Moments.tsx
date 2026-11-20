@@ -617,7 +617,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                           src={moment.thumbnail || moment.image || moment.fallbackImage || ''}
                           alt="Moment thumbnail"
                           loading="lazy"
-                          className="w-full h-full object-cover bg-black"
+                          className="w-full h-full object-contain bg-black"
                             onError={() => {
                             // Real media only: a broken thumbnail shows the
                             // neutral loading state, never a fake/bot image.
@@ -655,10 +655,10 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         <video
                           ref={(el) => { if (el) videoRefs.current[moment.id] = el; }}
                           src={moment.videoUrl || moment.media}
-                          className="absolute inset-0 w-full h-full object-cover"
+                          className="absolute inset-0 w-full h-full object-contain"
                           style={{
                             aspectRatio: '9/16',
-                            objectFit: 'cover'
+                            objectFit: 'contain'
                           }}
                           muted={isMuted}
                           loop
@@ -749,7 +749,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                         src={moment.thumbnail || moment.media}
                         alt="Moment"
                         loading="lazy"
-                        className="w-full h-full object-cover bg-black"
+                        className="w-full h-full object-contain bg-black"
                         onClick={(e) => {
                           e.stopPropagation();
                           handleVideoClick(moment);
@@ -939,7 +939,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       src={moment.thumbnail || moment.image || moment.fallbackImage || ''}
                       alt="Moment thumbnail"
                       loading="lazy"
-                      className="w-full h-full object-cover bg-black"
+                      className="w-full h-full object-contain bg-black"
                       onError={() => {
                         // Real media only: a broken thumbnail shows the
                         // neutral loading state, never a fake/bot image.
@@ -977,7 +977,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                     <video
                       ref={(el) => { if (el) videoRefs.current[moment.id] = el; }}
                       src={moment.videoUrl || moment.media}
-                      className="absolute inset-0 w-full h-full object-cover transition-opacity duration-300"
+                      className="absolute inset-0 w-full h-full object-contain transition-opacity duration-300"
                       muted={isMuted}
                       loop
                       playsInline
@@ -1141,7 +1141,7 @@ const Moments: React.FC<MomentsProps> = ({ moments, onFullscreen, onComment, onL
                       src={moment.thumbnail || moment.image || moment.media || ''}
                       alt="Moment"
                       loading="lazy"
-                      className="w-full h-full object-cover bg-black"
+                      className="w-full h-full object-contain bg-black"
                       onError={() => {
                         // Real media only: never substitute a stock photo.
                         handleThumbnailError(moment.id);

@@ -7,6 +7,7 @@ import { Repeat, Maximize, Users, Eye, MessageCircle } from 'lucide-react';
 import FollowButton from './FollowButton';
 import CommentSection from './CommentSection';
 import FullscreenViewer from './FullscreenViewer';
+import ExpandableDescription from './ExpandableDescription';
 import SaveButton from './SaveButton';
 import LikeButton from './LikeButton';
 import VotingButtons from './VotingButtons';
@@ -185,7 +186,7 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
       time: post.time,
       published: post.time,
       duration: post.duration,
-      description: post.content,
+      description: (post as any).description || post.content || '',
       creatorId: ownerIdOf(post) || post.user,
       // Only real values: never invent verified/subscriber counts.
       verified: (post as any).verified === true,
@@ -277,9 +278,9 @@ const FollowingFeed: React.FC<FollowingFeedProps> = ({
                 </CardHeader>
                 
                 <CardContent className="p-0">
-                  <p className="mb-4 cursor-pointer hover:text-primary transition-colors" onClick={() => handleContentClick(post)}>
-                    {post.content}
-                  </p>
+                  <div className="mb-4 cursor-pointer hover:text-primary transition-colors" onClick={() => handleContentClick(post)}>
+                    <ExpandableDescription text={(post as any).description || post.content || ''} />
+                  </div>
                   
                   {(() => {
                     const resolved = resolveMediaFields(post);

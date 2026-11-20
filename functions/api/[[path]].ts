@@ -3756,10 +3756,13 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     const text = String(item.content || item.title || item.description || '').slice(0, 500);
     const idxJson = await kv.get(KEYS.CONTENT_INDEX);
     const idx = idxJson ? JSON.parse(idxJson) : [];
+    // The dedicated description is authoritative. Deriving it from `content`
+    // used to erase what the uploader wrote (especially on live broadcasts).
+    const fullDescription = String(item.description || item.content || '');
     const entry = {
       id,
       title: String(item.title || text.slice(0, 100) || kind),
-      description: text.slice(0, 300),
+      description: fullDescription.slice(0, 5000),
       type: kind === 'posts' ? 'post' : kind.replace(/s$/, ''),
       authorId: actor.id,
       visibility: item.visibility || 'public',
@@ -8270,6 +8273,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
           // viewers see a "replay pending" state instead of an empty player.
           relay: clean.relay !== false,
           title: liveTitle,
+          description: String(clean.description || '').slice(0, 5000),
           thumbnail: liveThumbnail,
           status: 'live',
           startedAt: nowIso,

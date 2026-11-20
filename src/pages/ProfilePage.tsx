@@ -33,6 +33,7 @@ import EditProfileModal from '@/components/EditProfileModal';
 import EditPostModal from '@/components/EditPostModal';
 import CommentSection from '@/components/CommentSection';
 import FullscreenViewer from '@/components/FullscreenViewer';
+import ExpandableDescription from '@/components/ExpandableDescription';
 import MediaPreview from '@/components/MediaPreview';
 import VotingButtons from '@/components/VotingButtons';
 import StandardPostMenu from '@/components/StandardPostMenu';
@@ -1456,16 +1457,30 @@ const ProfilePage = () => {
     const media = resolveMediaFields(post as unknown as Record<string, unknown>);
     const isMoment = post.type === 'moment' || post.mediaType === 'moment';
     const isStory = post.type === 'story' || String(post.mediaType || '').toLowerCase() === 'story';
-    
+    // Profile rows historically keep the playable URL in several fields. Use
+    // the SAME fallback chain as Home/Discover so fullscreen never receives an
+    // empty video URL (or, worse, a poster image inside a <video src>).
+    const explicitVideo =
+      media.videoUrl ||
+      (post as any).videoUrl ||
+      (post as any).video ||
+      (post as any).mediaUrl ||
+      '';
+    const playableVideo =
+      explicitVideo ||
+      (((post as any).mediaType === 'video' || post.type === 'video') ? ((post as any).media || (post as any).src || '') : '');
+    const isVideo = Boolean(playableVideo);
+
     // Enhanced content structure for fullscreen viewer with complete metadata
     const mediaContent = {
       ...post,
-      type: isMoment ? 'moment' : (media.videoUrl ? 'moment' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
-      contentType: isMoment ? 'moment' : (media.videoUrl ? 'video' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
-      videoUrl: media.videoUrl,
-      media: media.media || post.image,
+      type: isMoment ? 'moment' : (isVideo ? 'moment' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
+      contentType: isMoment ? 'moment' : (isVideo ? 'video' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
+      videoUrl: playableVideo || undefined,
+      mediaUrl: playableVideo || (post as any).mediaUrl || undefined,
+      media: playableVideo || media.media || post.image,
       thumbnail: media.thumbnail || post.image,
-      mediaType: media.videoUrl ? 'video' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'),
+      mediaType: isVideo ? 'video' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'),
       creator: post.user || 'Unknown',
       content: post.content || '',
       likes: post.likes || 0,
@@ -1474,7 +1489,8 @@ const ProfilePage = () => {
       time: post.time || '',
       published: post.time || '',
       duration: post.duration,
-      description: post.content || '',
+      title: (post as any).title || '',
+      description: (post as any).description || post.content || '',
       creatorId: post.user || 'unknown',
       // Only real values: never invent verified/subscriber counts.
       verified: (post as any).verified === true,
@@ -1821,7 +1837,9 @@ const ProfilePage = () => {
                     />
                   </CardHeader>
                   <CardContent className="p-0">
-                    <p className="mb-3 md:mb-4 text-sm md:text-base">{post.content}</p>
+                    <div className="mb-3 md:mb-4 text-sm md:text-base">
+                      <ExpandableDescription text={(post as any).description || post.content || ''} />
+                    </div>
 
                     {(post.media || post.image || post.thumbnail) && (
                       post.mediaType === 'video' || post.type === 'video' ? (
@@ -2280,7 +2298,9 @@ const ProfilePage = () => {
                   )}
                 </CardHeader>
                 <CardContent className="p-0">
-                  <p className="mb-4">{post.content}</p>
+                  <div className="mb-4">
+                    <ExpandableDescription text={(post as any).description || post.content || ''} />
+                  </div>
                   {post.media && (
                     <div className="mb-4">
                       {post.mediaType === 'video' ? (
