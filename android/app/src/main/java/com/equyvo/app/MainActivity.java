@@ -4,16 +4,8 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
-import android.content.Intent;
-import android.graphics.Color;
-import android.graphics.PixelFormat;
-import android.net.Uri;
-import android.provider.Settings;
-import android.view.Gravity;
-import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
-import android.widget.TextView;
 import android.app.PictureInPictureParams;
 import android.util.Rational;
 import androidx.activity.EdgeToEdge;
@@ -55,9 +47,6 @@ public class MainActivity extends BridgeActivity {
     private int pendingTop = 0;
     private int pendingBottom = 0;
     private int pendingRetry = 0;
-    // System-level LIVE pill shown while a screen broadcast is minimized.
-    private View livePillView = null;
-    private WindowManager livePillWindowManager = null;
     private final Handler insetHandler = new Handler(Looper.getMainLooper());
     private final Runnable forwardInsetsRunnable = new Runnable() {
         @Override
@@ -91,7 +80,6 @@ public class MainActivity extends BridgeActivity {
                         bridge.getWebView().addJavascriptInterface(new PiPBridge(), "AndroidPiP");
                         bridge.getWebView().addJavascriptInterface(new NavBridge(), "AndroidNav");
                         bridge.getWebView().addJavascriptInterface(new LiveBridge(), "EquyvoLive");
-                        bridge.getWebView().addJavascriptInterface(new LivePillBridge(), "EquyvoLivePill");
                     } else {
                         pipHandler.postDelayed(this, 200L);
                     }
@@ -169,7 +157,6 @@ public class MainActivity extends BridgeActivity {
     @Override
     public void onDestroy() {
         insetHandler.removeCallbacksAndMessages(null);
-        removePill();
         super.onDestroy();
     }
 
@@ -224,123 +211,6 @@ public class MainActivity extends BridgeActivity {
                 } catch (Throwable ignored) {}
             });
         }
-    }
-
-    /**
-     * Floating LIVE pill that lives OUTSIDE Equyvo (Android TYPE_APPLICATION_OVERLAY).
-     * Tapping it brings the app forward and re-expands the live studio. The
-     * overlay window carries FLAG_SECURE, so it stays hidden from the screen
-     * recording just like the main Equyvo window — visible to the broadcaster,
-     * invisible in their saved video.
-     */
-    public class LivePillBridge {
-        @android.webkit.JavascriptInterface
-        public boolean canDraw() {
-            try { return Settings.canDrawOverlays(MainActivity.this); }
-            catch (Throwable ignored) { return false; }
-        }
-
-        @android.webkit.JavascriptInterface
-        public void requestPermission() {
-            runOnUiThread(() -> {
-                try {
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName()));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(intent);
-                } catch (Throwable ignored) {}
-            });
-        }
-
-        @android.webkit.JavascriptInterface
-        public void show() {
-            runOnUiThread(() -> {
-                try {
-                    if (!Settings.canDrawOverlays(MainActivity.this)) return;
-                    removePill();
-                    WindowManager wm = (WindowManager) getSystemService(WINDOW_SERVICE);
-                    if (wm == null) return;
-                    int overlayType = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-                            ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                            : WindowManager.LayoutParams.TYPE_PHONE;
-                    final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
-                            WindowManager.LayoutParams.WRAP_CONTENT,
-                            WindowManager.LayoutParams.WRAP_CONTENT,
-                            overlayType,
-                            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-                                    | WindowManager.LayoutParams.FLAG_SECURE
-                                    | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
-                            PixelFormat.TRANSLUCENT);
-                    params.gravity = Gravity.TOP | Gravity.START;
-                    params.x = 24;
-                    params.y = Math.max(120, getResources().getDisplayMetrics().heightPixels / 4);
-
-                    final TextView pill = new TextView(MainActivity.this);
-                    pill.setText("● LIVE  ⤢");
-                    pill.setTextColor(Color.WHITE);
-                    pill.setBackgroundColor(Color.parseColor("#D32F2F"));
-                    pill.setTextSize(14f);
-                    pill.setPadding(28, 18, 28, 18);
-                    pill.setShadowLayer(8f, 0f, 2f, Color.BLACK);
-                    pill.setOnClickListener(v -> expandLiveStudio());
-                    // Drag the pill so it never blocks what is being recorded.
-                    pill.setOnTouchListener((v, event) -> {
-                        switch (event.getAction()) {
-                            case MotionEvent.ACTION_DOWN:
-                                pill.setTag(new int[]{(int) event.getRawX(), (int) event.getRawY(), params.x, params.y});
-                                return true;
-                            case MotionEvent.ACTION_MOVE:
-                                int[] start = (int[]) pill.getTag();
-                                if (start != null) {
-                                    params.x = start[2] + (int) (event.getRawX() - start[0]);
-                                    params.y = start[3] + (int) (event.getRawY() - start[1]);
-                                    try { wm.updateViewLayout(pill, params); } catch (Throwable ignored) {}
-                                }
-                                return true;
-                            case MotionEvent.ACTION_UP:
-                                pill.setTag(null);
-                                return true;
-                            default:
-                                return false;
-                        }
-                    });
-                    wm.addView(pill, params);
-                    livePillView = pill;
-                    livePillWindowManager = wm;
-                } catch (Throwable ignored) {}
-            });
-        }
-
-        @android.webkit.JavascriptInterface
-        public void hide() {
-            runOnUiThread(() -> removePill());
-        }
-    }
-
-    private void removePill() {
-        try {
-            if (livePillView != null && livePillWindowManager != null) {
-                livePillWindowManager.removeView(livePillView);
-            }
-        } catch (Throwable ignored) {}
-        livePillView = null;
-        livePillWindowManager = null;
-    }
-
-    private void expandLiveStudio() {
-        runOnUiThread(() -> {
-            try {
-                Intent intent = new Intent(MainActivity.this, MainActivity.class);
-                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP
-                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                startActivity(intent);
-                removePill();
-                if (bridge != null && bridge.getWebView() != null) {
-                    bridge.getWebView().evaluateJavascript(
-                            "window.dispatchEvent(new CustomEvent('equyvo:expandLive'))", null);
-                }
-            } catch (Throwable ignored) {}
-        });
     }
 
     /** JS bridge for system-level Picture-in-Picture. */

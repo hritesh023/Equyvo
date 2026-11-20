@@ -43,7 +43,6 @@ import LiveChatOverlay from '@/components/LiveChatOverlay';
 import LiveChatPanel from '@/components/LiveChatPanel';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
 import { setAppBusy, useBackOverlay } from '@/lib/back-navigation';
-import { canShowFloatingLivePill, hideFloatingLivePill, isFloatingLivePillSupported, requestFloatingLivePillPermission, showFloatingLivePill } from '@/lib/live-pill';
 import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
@@ -846,7 +845,6 @@ const CreatePage = () => {
     liveStreamRef.current = null;
     liveRecorderRef.current = null;
     liveActiveRef.current = false;
-    hideFloatingLivePill();
   }, []);
 
   // Render whatever is actually being captured — camera or the screen/app the
@@ -856,7 +854,7 @@ const CreatePage = () => {
     if (!el) return;
     try { el.srcObject = isRecording ? (stream || null) : null; } catch { /* ignore */ }
     return () => { try { el.srcObject = null; } catch { /* ignore */ } };
-  }, [isRecording, stream]);
+  }, [isRecording, stream, liveStudioMinimized]);
 
   /** Studio mirror preview — a real camera feed, not a placeholder. */
   const stopLivePreview = useCallback(() => {
@@ -3613,7 +3611,6 @@ const CreatePage = () => {
   const handleEndLive = async () => {
     if (liveEndingRef.current) return;
     liveEndingRef.current = true;
-    hideFloatingLivePill();
     try {
       await performEndLive();
     } finally {
@@ -3634,30 +3631,12 @@ const CreatePage = () => {
   }, [liveCommentsPanelOpen]);
   useBackOverlay(liveCommentsPanelOpen, closeLiveCommentsPanel);
 
-  // ── Minimize to a system-level floating pill (Android) ──────────────────
-  const minimizeLiveStudio = () => {
-    setLiveStudioMinimized(true);
-    if (isFloatingLivePillSupported()) {
-      if (canShowFloatingLivePill()) {
-        showFloatingLivePill();
-      } else {
-        requestFloatingLivePillPermission();
-        showError('Allow Equyvo to display over other apps to use the floating live pill. The in-app pill still works.');
-      }
-    }
-  };
-
-  const expandLiveStudio = () => {
-    setLiveStudioMinimized(false);
-    hideFloatingLivePill();
-  };
-
-  // Tapping the native overlay pill brings Equyvo forward and re-expands here.
-  useEffect(() => {
-    const onExpand = () => { setLiveStudioMinimized(false); hideFloatingLivePill(); };
-    window.addEventListener('equyvo:expandLive', onExpand);
-    return () => window.removeEventListener('equyvo:expandLive', onExpand);
-  }, []);
+  // ── Minimize to the single in-app floating pill ─────────────────────────
+  // Only one pill exists now: when the studio is minimized the whole studio
+  // collapses into a fixed, floating LIVE button. The old second (system
+  // overlay) pill was removed — no "display over other apps" permission needed.
+  const minimizeLiveStudio = () => setLiveStudioMinimized(true);
+  const expandLiveStudio = () => setLiveStudioMinimized(false);
 
   // ── In-live camera controls (same camera-capture UX as the Camera tab) ───
   const toggleLiveMic = () => {
@@ -4437,7 +4416,7 @@ const CreatePage = () => {
   // same persistent ledger the audience uses). Screen live shares the studio:
   // FLAG_SECURE (native) keeps
   // every Equyvo control out of the saved video while leaving it visible here.
-  if (isRecording && (liveSource === 'camera' || liveSource === 'screen')) {
+  if (isRecording && (liveSource === 'camera' || liveSource === 'screen') && !liveStudioMinimized) {
     const isScreenLive = liveSource === 'screen';
     const liveRoomId = liveContentIdRef.current || '';
     return (
@@ -4646,17 +4625,6 @@ const CreatePage = () => {
               Tap the red button to end the live and save the replay
             </p>
           </div>
-        )}
-
-        {liveStudioMinimized && (
-          <button
-            type="button"
-            onClick={expandLiveStudio}
-            className="absolute bottom-[max(env(safe-area-inset-bottom),1.5rem)] right-4 z-40 inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-xs font-semibold shadow-xl"
-          >
-            <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" />
-            LIVE {fileVideoFormatSecs(liveElapsed)} <Maximize2 className="h-4 w-4" />
-          </button>
         )}
 
         {/* "Overflowing" chat: viewer comments pop up and drift over the live
@@ -6766,6 +6734,22 @@ const CreatePage = () => {
           <span>Safety check running…</span>
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
         </div>
+      )}
+
+      {/* The ONE live pill. When the studio is minimized it floats above the
+          whole app (fixed + safe-area inset), so the user can keep using
+          Equyvo while the broadcast continues. Tap to re-open the studio. */}
+      {isRecording && (liveSource === 'camera' || liveSource === 'screen') && liveStudioMinimized && (
+        <button
+          type="button"
+          onClick={expandLiveStudio}
+          aria-label="Expand live studio"
+          title="Expand live studio"
+          className="fixed bottom-[max(env(safe-area-inset-bottom),1.25rem)] right-4 z-[9999] inline-flex items-center gap-2 rounded-full bg-red-600 px-4 py-2.5 text-xs font-semibold text-white shadow-2xl ring-2 ring-white/25 active:scale-95"
+        >
+          <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-white" />
+          LIVE {fileVideoFormatSecs(liveElapsed)} <Maximize2 className="h-4 w-4" />
+        </button>
       )}
     </div>
   );

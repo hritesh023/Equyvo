@@ -66,10 +66,6 @@
          and the "go live from screen" feature crashes on modern devices. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- Floating LIVE pill shown while a minimized screen broadcast runs over
-         other apps. The overlay window is FLAG_SECURE, so it never appears in
-         the screen recording. -->
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
     <!-- Camera capture + going live: the WebView's getUserMedia({ video })
          prompts via Capacitor's WebChromeClient only when this permission is
