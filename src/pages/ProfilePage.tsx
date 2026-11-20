@@ -1189,6 +1189,38 @@ const ProfilePage = () => {
     } catch {}
   };
 
+  /** Live cards are not ordinary posts: ending the server presence and
+   *  clearing the owning profile's live flags is what actually makes a stuck
+   *  test broadcast disappear everywhere (not just from this list). */
+  const handleDeleteLive = async (item: Post) => {
+    const id = String(item.id || '');
+    const contentId = String((item as any).liveContentId || id || '');
+    const wasActive = (item as any).isLive === true || (item as any).live === true;
+    if (!id) return;
+    if (wasActive && contentId) {
+      try { await api.liveStop({ contentId }); } catch { /* best-effort */ }
+      try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
+      window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+      setUserProfile(prev => ({
+        ...prev,
+        isLive: false,
+        liveContentId: '',
+        liveTitle: '',
+        liveAt: '',
+      } as typeof prev));
+    }
+    try {
+      await deleteContent({ postId: id, contentType: 'live' });
+    } catch { /* deleteContent already reported the error */ }
+    setLiveNowItems(prev => prev.filter((l: any) =>
+      String(l.contentId || l.liveContentId || l.id || '') !== contentId,
+    ));
+    setUserProfile(prev => ({
+      ...prev,
+      posts: prev.posts.filter(p => String(p.id) !== id),
+    }));
+  };
+
   // Delete all user data
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
@@ -2142,7 +2174,24 @@ const ProfilePage = () => {
                         <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-bold uppercase text-white ${active ? 'bg-red-600' : 'bg-muted-foreground'}`}>
                           {active ? 'Live' : 'Replay'}
                         </span>
-                        <p className="truncate text-sm font-medium">{String(live.title || item.content || 'Live stream')}</p>
+                        <p className="min-w-0 flex-1 truncate text-sm font-medium">{String(live.title || item.content || 'Live stream')}</p>
+                        {/* Live items need the SAME 3-dot management menu as every
+                            other profile item — otherwise a stuck test live can
+                            never be removed from this tab. */}
+                        <div onClick={(e) => e.stopPropagation()} className="shrink-0">
+                          <StandardPostMenu
+                            postId={String(item.id)}
+                            postUserId={String(live.user || live.creator || '')}
+                            postOwnerId={String(live.creatorId || (live as any).userId || (live as any).ownerId || live.user || '')}
+                            currentUserId={myAccountId()}
+                            contentType="live"
+                            isProfilePage={true}
+                            onReport={handleReport}
+                            onDelete={() => handleDeleteLive(item)}
+                            onShare={handleMenuShare}
+                            onCopyLink={handleCopyLink}
+                          />
+                        </div>
                       </div>
                       {toCount(item.views) > 0 && (
                         <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">

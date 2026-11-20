@@ -40,7 +40,7 @@ import { LiveRelay } from '@/lib/live-relay';
 import LiveChatOverlay from '@/components/LiveChatOverlay';
 import LiveChatPanel from '@/components/LiveChatPanel';
 import { inferMimeType, isImageFile, isVideoFile, isAudioFile, isMediaFile } from '@/lib/mime';
-import { setAppBusy } from '@/lib/back-navigation';
+import { setAppBusy, useBackOverlay } from '@/lib/back-navigation';
 import { setUploadState, getUploadState, subscribeUpload } from '@/lib/upload-store';import api, { type UploadProgress, type UploadResult } from '@/lib/api';
 import { checkAuthStatus } from '@/lib/auth';
 import { loadScheduled, saveScheduled, loadDrafts, saveDrafts } from '@/lib/scheduled-store';import { currentAuthor, pickDisplayName } from '@/lib/identity';
@@ -723,6 +723,18 @@ const CreatePage = () => {
   const [liveTorch, setLiveTorch] = useState(false);
   const [liveCaptureScope, setLiveCaptureScope] = useState<'app' | 'screen'>('app');
   const [liveStudioMinimized, setLiveStudioMinimized] = useState(false);
+  // Multi-camera vlog mode: main camera fills the screen, the other camera is
+  // a tap-to-swap picture-in-picture window.
+  const [liveDualCamera, setLiveDualCamera] = useState(false);
+  const [liveMainFacing, setLiveMainFacing] = useState<'user' | 'environment'>('user');
+  const [livePipFacing, setLivePipFacing] = useState<'user' | 'environment' | null>(null);
+  const [livePreparing, setLivePreparing] = useState(false);
+  const liveCameraStreamsRef = useRef<Record<'user' | 'environment', MediaStream | null>>({ user: null, environment: null });
+  const liveCameraVideosRef = useRef<Record<'user' | 'environment', HTMLVideoElement | null>>({ user: null, environment: null });
+  const liveAudioStreamRef = useRef<MediaStream | null>(null);
+  const liveCompositeRafRef = useRef<number | null>(null);
+  const liveMainFacingRef = useRef<'user' | 'environment'>('user');
+  const livePipFacingRef = useRef<'user' | 'environment' | null>(null);
   // Pre-live camera mirror inside the studio, matching the Camera capture tab.
   const [livePreviewReady, setLivePreviewReady] = useState(false);
   const [livePreviewError, setLivePreviewError] = useState('');
@@ -844,6 +856,124 @@ const CreatePage = () => {
     livePreviewStreamRef.current = null;
     try { if (livePreviewVideoRef.current) livePreviewVideoRef.current.srcObject = null; } catch { /* ignore */ }
     setLivePreviewReady(false);
+  }, []);
+
+  /** Stop raw camera streams + the composition loop (privacy indicator off). */
+  const releaseLiveCameras = useCallback(() => {
+    if (liveCompositeRafRef.current != null) {
+      try { cancelAnimationFrame(liveCompositeRafRef.current); } catch { /* ignore */ }
+      liveCompositeRafRef.current = null;
+    }
+    (['user', 'environment'] as const).forEach((facing) => {
+      try { liveCameraStreamsRef.current[facing]?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      liveCameraStreamsRef.current[facing] = null;
+      try {
+        const el = liveCameraVideosRef.current[facing];
+        if (el) el.srcObject = null;
+      } catch { /* ignore */ }
+      liveCameraVideosRef.current[facing] = null;
+    });
+    liveAudioStreamRef.current = null;
+    setLivePipFacing(null);
+  }, []);
+
+  /** Open (or reuse) a camera stream. Only the first stream carries audio. */
+  const ensureLiveCamera = useCallback(async (
+    facing: 'user' | 'environment',
+    withAudio: boolean,
+  ): Promise<MediaStream> => {
+    const existing = liveCameraStreamsRef.current[facing];
+    if (existing) return existing;
+    const ms = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: facing }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: withAudio
+        ? { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+        : false,
+    } as any);
+    liveCameraStreamsRef.current[facing] = ms;
+    const el = document.createElement('video');
+    el.srcObject = ms;
+    el.muted = true;
+    el.playsInline = true;
+    el.autoplay = true;
+    try { await el.play(); } catch { /* frame loop retries */ }
+    liveCameraVideosRef.current[facing] = el;
+    return ms;
+  }, []);
+
+  /** Composite the chosen cameras into ONE stream so the recorder and the
+   *  real-time relay stay stable while the host flips or swaps the PiP view. */
+  const buildLiveCompositeStream = useCallback((): MediaStream => {
+    const canvas = document.createElement('canvas');
+    const ratio = Math.max(0.5, Math.min(2.2, window.innerHeight / Math.max(1, window.innerWidth)));
+    canvas.width = 720;
+    canvas.height = Math.round(720 * ratio);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('This device cannot compose live camera views.');
+    if (typeof canvas.captureStream !== 'function') {
+      throw new Error('This browser cannot record a composed live camera view. Update your app/browser and try again.');
+    }
+
+    const drawCover = (
+      video: HTMLVideoElement, x: number, y: number, w: number, h: number, mirror: boolean,
+    ) => {
+      const vw = video.videoWidth || 1;
+      const vh = video.videoHeight || 1;
+      const scale = Math.max(w / vw, h / vh);
+      const sw = Math.min(vw, w / scale);
+      const sh = Math.min(vh, h / scale);
+      const sx = (vw - sw) / 2;
+      const sy = (vh - sh) / 2;
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(x, y, w, h);
+      ctx.clip();
+      if (mirror) {
+        // Front camera mirrors only its own tile — the PiP stays unmirrored.
+        ctx.translate(2 * x + w, y);
+        ctx.scale(-1, 1);
+      }
+      ctx.drawImage(video, sx, sy, sw, sh, x, y, w, h);
+      ctx.restore();
+    };
+
+    const draw = () => {
+      const W = canvas.width;
+      const H = canvas.height;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      const main = liveCameraVideosRef.current[liveMainFacingRef.current];
+      if (main && main.videoWidth) {
+        drawCover(main, 0, 0, W, H, liveMainFacingRef.current === 'user');
+      }
+      const pipFacing = livePipFacingRef.current;
+      const pip = pipFacing ? liveCameraVideosRef.current[pipFacing] : null;
+      if (pipFacing && pip && pip.videoWidth) {
+        // Keep this rectangle in sync with the tap-to-swap overlay in the UI:
+        // right 3%, top 30%, width 30%, height 22% of the preview.
+        const pw = Math.round(W * 0.30);
+        const ph = Math.round(H * 0.22);
+        const px = W - pw - Math.round(W * 0.03);
+        const py = Math.round(H * 0.30);
+        ctx.save();
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') ctx.roundRect(px, py, pw, ph, 16);
+        else ctx.rect(px, py, pw, ph);
+        ctx.clip();
+        drawCover(pip, px, py, pw, ph, pipFacing === 'user');
+        ctx.restore();
+        ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+        ctx.lineWidth = Math.max(2, Math.round(W * 0.005));
+        ctx.strokeRect(px, py, pw, ph);
+      }
+      liveCompositeRafRef.current = requestAnimationFrame(draw);
+    };
+    draw();
+
+    const composed = canvas.captureStream(30);
+    const audio = liveAudioStreamRef.current?.getAudioTracks()[0];
+    if (audio) composed.addTrack(audio);
+    return composed;
   }, []);
 
   useEffect(() => {
@@ -2804,6 +2934,7 @@ const CreatePage = () => {
     liveChunkTimerRef.current = null;
     try { liveRelayRef.current?.close(); } catch { /* ignore */ }
     liveRelayRef.current = null;
+    releaseLiveCameras();
   };
 
   // Progressive ("simultaneous") upload while the session is live. Every
@@ -2986,6 +3117,17 @@ const CreatePage = () => {
     cancelUploadRequestedRef.current = false;
     setIsUploading(true);
 
+    // Show the camera studio INSTANTLY. Permission prompts, camera opening,
+    // cover upload and the server announcement all continue behind it, so the
+    // broadcaster never waits on the old composer screen.
+    if (!isScreen) {
+      setLiveSource('camera');
+      setIsRecording(true);
+      setLivePreparing(true);
+    } else {
+      setLivePreparing(false);
+    }
+
     // NATIVE SCREEN PATH — Android MediaProjection / iOS ReplayKit. The OS
     // consent dialog is shown first; denial ends the attempt with no upload.
     if (nativeScreen) {
@@ -3076,18 +3218,25 @@ const CreatePage = () => {
             return;
           }
         } else {
-          mediaStream = await mediaDevices.getUserMedia({
-            video: {
-              facingMode: { ideal: liveFacing },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-            audio: {
-              echoCancellation: true,
-              noiseSuppression: true,
-              autoGainControl: true,
-            },
-          } as any);
+          // Open the requested camera first, then (optionally) the second one.
+          // Both feed a single canvas stream so flipping/swapping never has to
+          // rebuild the recorder or the real-time relay.
+          const main = await ensureLiveCamera(liveFacing, true);
+          liveAudioStreamRef.current = main;
+          liveMainFacingRef.current = liveFacing;
+          setLiveMainFacing(liveFacing);
+          if (liveDualCamera) {
+            const other: 'user' | 'environment' = liveFacing === 'user' ? 'environment' : 'user';
+            try {
+              await ensureLiveCamera(other, false);
+              livePipFacingRef.current = other;
+              setLivePipFacing(other);
+            } catch {
+              showError('A second camera is not available here — continuing with one camera.');
+              setLiveDualCamera(false);
+            }
+          }
+          mediaStream = buildLiveCompositeStream();
         }
       } catch (error) {
         const name = error instanceof Error ? error.name : '';
@@ -3126,11 +3275,13 @@ const CreatePage = () => {
           };
         });
       } else {
-        const vt = mediaStream.getVideoTracks()[0];
-        const caps = (vt?.getCapabilities?.() || {}) as { torch?: boolean };
+        // Flash capability belongs to the RAW camera track, not the canvas
+        // track we hand to the recorder/relay.
+        const rawTrack = liveCameraStreamsRef.current[liveMainFacingRef.current]?.getVideoTracks()[0];
+        const caps = (rawTrack?.getCapabilities?.() || {}) as { torch?: boolean };
         setLiveTorchSupported(!!caps.torch);
         setLiveTorch(false);
-        vt.onended = () => {
+        rawTrack.onended = () => {
           if (!liveActiveRef.current) return;
           showError('Your camera disconnected — ending your live session.');
           liveEndHandlerRef.current();
@@ -3151,6 +3302,7 @@ const CreatePage = () => {
       const liveSourceValue: 'camera' | 'screen' = isScreen ? 'screen' : 'camera';
       const liveId = await commitLiveStart(liveSourceValue, thumb);
       publishedContentId = liveId;
+      setLivePreparing(false); // studio is fully ready (camera + server live)
 
       // Real-time relay: viewers can watch the captured stream NOW, while the
       // recorder/progressive uploader continues to build the saved replay.
@@ -3213,6 +3365,9 @@ const CreatePage = () => {
     } catch (err) {
       // Roll back EVERYTHING so the UI never shows a fake live session.
       stopLiveCapture();
+      releaseLiveCameras();
+      setIsRecording(false); // studio was opened optimistically for camera
+      setLivePreparing(false);
       liveActiveRef.current = false;
       if (liveContentIdRef.current) {
         void api.liveStop({ contentId: liveContentIdRef.current }).catch(() => {});
@@ -3235,6 +3390,7 @@ const CreatePage = () => {
       showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setIsUploading(false);
+      setLivePreparing(false);
       setUploadProgress(null);
       try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
       uploadedKeysForCancelRef.current = [];
@@ -3245,6 +3401,20 @@ const CreatePage = () => {
 
   const performEndLive = async () => {
     const contentId = liveContentIdRef.current;
+    // The camera studio can be opened before the server accepts the session.
+    // Ending during that window just tears down local capture — no phantom
+    // "live" row exists yet, so there is nothing to finalize remotely.
+    if (!contentId && !liveNativeScreen) {
+      liveActiveRef.current = false;
+      setIsRecording(false);
+      setLivePreparing(false);
+      stopLiveCapture();
+      releaseLiveCameras();
+      setLiveChatOpen(false);
+      setLiveCommentsPanelOpen(false);
+      setLiveStudioMinimized(false);
+      return;
+    }
     // Mark inactive BEFORE stopping tracks: track.onended / recorder.onerror
     // listeners must not interpret our own teardown as an unexpected loss.
     liveActiveRef.current = false;
@@ -3343,7 +3513,9 @@ const CreatePage = () => {
     setLiveChatOpen(false);
     setLiveCommentsPanelOpen(false);
     setLiveStudioMinimized(false);
+    setLivePreparing(false);
     stopLivePreview();
+    releaseLiveCameras();
   };
 
   // Single-flight end: a system-level stop event and a button tap can arrive
@@ -3362,6 +3534,15 @@ const CreatePage = () => {
     liveEndHandlerRef.current = () => { void handleEndLive(); };
   }, [handleEndLive]);
 
+  // Hardware/gesture back closes the open live chat panel FIRST — it must
+  // never silently navigate away from (or end) an active broadcast.
+  const closeLiveCommentsPanel = React.useCallback(() => {
+    if (!liveCommentsPanelOpen) return false;
+    setLiveCommentsPanelOpen(false);
+    return true;
+  }, [liveCommentsPanelOpen]);
+  useBackOverlay(liveCommentsPanelOpen, closeLiveCommentsPanel);
+
   // ── In-live camera controls (same camera-capture UX as the Camera tab) ───
   const toggleLiveMic = () => {
     const nextMuted = !liveMicMuted;
@@ -3372,22 +3553,65 @@ const CreatePage = () => {
   };
 
   const flipLiveCamera = async () => {
-    const track = liveStreamRef.current?.getVideoTracks?.()[0];
-    if (!track) return;
-    const next = liveFacing === 'user' ? 'environment' : 'user';
+    const current = liveMainFacingRef.current;
+    const next: 'user' | 'environment' = current === 'user' ? 'environment' : 'user';
     try {
-      await (track as any).applyConstraints({ facingMode: { ideal: next } });
+      // Reuse the second camera when dual mode is on; otherwise open it now.
+      // Because the recorder/relay see the stable canvas stream, the switch is
+      // instant and never interrupts the broadcast.
+      if (!liveCameraStreamsRef.current[next]) await ensureLiveCamera(next, false);
+      if (livePipFacingRef.current === next) {
+        livePipFacingRef.current = current;
+        setLivePipFacing(current);
+      }
+      liveMainFacingRef.current = next;
+      setLiveMainFacing(next);
       setLiveFacing(next);
-      const caps = (track.getCapabilities?.() || {}) as { torch?: boolean };
+      const caps = (liveCameraStreamsRef.current[next]?.getVideoTracks()[0]?.getCapabilities?.() || {}) as { torch?: boolean };
       setLiveTorchSupported(!!caps.torch);
       setLiveTorch(false);
     } catch {
-      showError('This device cannot switch cameras mid-live. End the live and start again to change cameras.');
+      showError('This device cannot open the other camera right now. Try again or use both-camera mode.');
     }
   };
 
+  const toggleLiveDualCamera = async () => {
+    if (livePipFacingRef.current) {
+      const pip = livePipFacingRef.current;
+      livePipFacingRef.current = null;
+      setLivePipFacing(null);
+      setLiveDualCamera(false);
+      try { liveCameraStreamsRef.current[pip]?.getTracks().forEach((t) => t.stop()); } catch { /* ignore */ }
+      liveCameraStreamsRef.current[pip] = null;
+      liveCameraVideosRef.current[pip] = null;
+      return;
+    }
+    const main = liveMainFacingRef.current;
+    const other: 'user' | 'environment' = main === 'user' ? 'environment' : 'user';
+    try {
+      await ensureLiveCamera(other, false);
+      livePipFacingRef.current = other;
+      setLivePipFacing(other);
+      setLiveDualCamera(true);
+    } catch {
+      showError('This device cannot run both cameras at once — continuing with one camera.');
+    }
+  };
+
+  const swapLivePipCamera = () => {
+    const main = liveMainFacingRef.current;
+    const pip = livePipFacingRef.current;
+    if (!pip) return;
+    liveMainFacingRef.current = pip;
+    livePipFacingRef.current = main;
+    setLiveMainFacing(pip);
+    setLivePipFacing(main);
+    setLiveFacing(pip);
+  };
+
   const toggleLiveTorch = async () => {
-    const track = liveStreamRef.current?.getVideoTracks?.()[0];
+    const facing = liveMainFacingRef.current;
+    const track = liveCameraStreamsRef.current[facing]?.getVideoTracks()[0];
     if (!track) return;
     try {
       await (track as any).applyConstraints({ advanced: [{ torch: !liveTorch }] });
@@ -4110,13 +4334,27 @@ const CreatePage = () => {
           muted
           playsInline
           className={`absolute inset-0 h-full w-full ${isScreenLive ? 'object-contain' : 'object-cover'}`}
-          style={isScreenLive ? undefined : { transform: liveFacing === 'user' ? 'scaleX(-1)' : undefined }}
         />
-        {!isScreenLive && !stream && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-sm text-white/70">
+        {!isScreenLive && livePreparing && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 text-sm text-white/80">
             <Loader2 className="h-8 w-8 animate-spin" />
-            <p>Starting your camera…</p>
+            <p>Starting your camera… your studio is ready.</p>
+            <p className="max-w-xs text-center text-xs text-white/50">Allow camera and microphone access if your device asks.</p>
           </div>
+        )}
+        {/* Tap-to-swap hit area matches the PiP rectangle drawn into the canvas
+            (right 3%, top 30%, 30% wide, 22% tall). */}
+        {!isScreenLive && liveDualCamera && livePipFacing && !livePreparing && (
+          <button
+            type="button"
+            onClick={swapLivePipCamera}
+            title="Swap the front and back camera views"
+            className="absolute right-[3%] top-[30%] z-[26] h-[22%] w-[30%] rounded-2xl border-2 border-white/70 shadow-lg active:scale-95"
+          >
+            <span className="absolute bottom-1 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/70 px-2 py-0.5 text-[10px] font-semibold text-white backdrop-blur">
+              Tap to swap
+            </span>
+          </button>
         )}
         {isScreenLive && liveNativeScreen && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/95 px-8 text-center">
@@ -4149,6 +4387,19 @@ const CreatePage = () => {
               {liveTitle || 'Live now'}
             </span>
             <div className="pointer-events-auto ml-auto flex items-center gap-2">
+              {!isScreenLive && (
+                <button
+                  type="button"
+                  onClick={() => void toggleLiveDualCamera()}
+                  title={liveDualCamera ? 'Turn off the second camera' : 'Show both cameras (vlog view)'}
+                  className={`inline-flex items-center gap-1 rounded-full px-3 py-2 text-xs font-semibold backdrop-blur ${
+                    liveDualCamera ? 'bg-blue-500 text-white' : 'bg-black/60 text-white/90 hover:bg-black/80'
+                  }`}
+                >
+                  <Camera className="h-4 w-4" />
+                  <span className="hidden sm:inline">Dual cam</span>
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setLiveCommentsPanelOpen(true)}
@@ -4292,7 +4543,11 @@ const CreatePage = () => {
         )}
         {liveCommentsPanelOpen && liveRoomId && (
           <div className="absolute inset-y-0 right-0 z-40 w-[min(92vw,340px)] shadow-[-16px_0_48px_rgba(0,0,0,0.55)]">
-            <LiveChatPanel contentId={liveRoomId} onClose={() => setLiveCommentsPanelOpen(false)} />
+            <LiveChatPanel
+              contentId={liveRoomId}
+              onClose={() => setLiveCommentsPanelOpen(false)}
+              onEndLive={() => void handleEndLive()}
+            />
           </div>
         )}
       </div>
@@ -6166,8 +6421,30 @@ const CreatePage = () => {
                     <SwitchCamera className="h-5 w-5" />
                   </Button>
                 </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setLiveDualCamera(false)}
+                    className={`rounded-2xl border p-3 text-left text-sm transition ${
+                      !liveDualCamera ? 'border-red-400 bg-red-500/15 ring-2 ring-red-400/30' : 'border-white/10 bg-white/5'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 font-semibold text-white"><Camera className="h-4 w-4" /> One camera</span>
+                    <span className="mt-1 block text-xs text-white/55">Full-screen front or back camera.</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLiveDualCamera(true)}
+                    className={`rounded-2xl border p-3 text-left text-sm transition ${
+                      liveDualCamera ? 'border-blue-400 bg-blue-500/15 ring-2 ring-blue-400/30' : 'border-white/10 bg-white/5'
+                    }`}
+                  >
+                    <span className="flex items-center gap-2 font-semibold text-white"><SwitchCamera className="h-4 w-4" /> Both cameras</span>
+                    <span className="mt-1 block text-xs text-white/55">Vlog view: other camera in a tap-to-swap PiP.</span>
+                  </button>
+                </div>
                 <div className="rounded-2xl border border-white/10 bg-white/5 p-4 text-sm leading-relaxed text-white/60">
-                  This is exactly what your live preview looks like. When you go live the full-screen studio gives you flip, flash (when supported), mute and viewer comments popping up over the video — but no “send to story/photo” menu, because you are already live.
+                  The full-screen studio opens the instant you tap start. You can flip between front/back during the live, turn both cameras on or off, and tap the small PiP view to swap which camera is full-screen. Viewer comments pop up over the video — there is no “send to story/photo” menu because you are already live.
                 </div>
                 <Button
                   onClick={() => { setLiveSourceDialogOpen(false); void handleStartLive('camera'); }}

@@ -8,6 +8,8 @@ import api from '@/lib/api';
 interface LiveChatPanelProps {
   contentId: string;
   onClose: () => void;
+  /** Host-only: keeps End Live reachable while the panel covers the screen. */
+  onEndLive?: () => void;
 }
 
 interface ChatItem {
@@ -20,7 +22,7 @@ interface ChatItem {
 
 /** Live chat side panel for a broadcast. Reuses the persistent per-content
  *  comment ledger so messages survive reloads and are visible to every viewer. */
-const LiveChatPanel: React.FC<LiveChatPanelProps> = ({ contentId, onClose }) => {
+const LiveChatPanel: React.FC<LiveChatPanelProps> = ({ contentId, onClose, onEndLive }) => {
   const [messages, setMessages] = useState<ChatItem[]>([]);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
@@ -65,13 +67,33 @@ const LiveChatPanel: React.FC<LiveChatPanelProps> = ({ contentId, onClose }) => 
       className="absolute right-0 top-0 z-40 flex h-full w-[min(92vw,340px)] flex-col border-l border-white/10 bg-black/85 backdrop-blur-md"
       onClick={(e) => e.stopPropagation()}
     >
-      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2.5">
+      {/* Header is pushed BELOW the device status/notification bar. Previously
+          the close control sat at the very top where every mobile/tablet status
+          bar swallows taps, trapping people inside the panel while live. */}
+      <div className="flex items-center justify-between border-b border-white/10 px-3 pb-2.5 pt-[calc(env(safe-area-inset-top,0px)+0.875rem)]">
         <div className="flex items-center gap-2 text-sm font-semibold text-white">
           <MessageCircle className="h-4 w-4 text-red-400" /> Live chat
         </div>
-        <button type="button" onClick={onClose} className="rounded-full p-1 text-white/70 hover:bg-white/10" aria-label="Close chat">
-          <X className="h-4 w-4" />
-        </button>
+        <div className="flex items-center gap-1.5">
+          {onEndLive && (
+            <button
+              type="button"
+              onClick={onEndLive}
+              className="rounded-full bg-red-600 px-3 py-1.5 text-[11px] font-bold text-white shadow-lg hover:bg-red-700"
+              aria-label="End live"
+            >
+              End Live
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full p-2 text-white/80 hover:bg-white/10 hover:text-white"
+            aria-label="Close chat"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        </div>
       </div>
 
       <div ref={listRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
