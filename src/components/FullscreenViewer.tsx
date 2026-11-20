@@ -634,6 +634,23 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // zone threw a ReferenceError on every render, so the ErrorBoundary
   // replaced the whole fullscreen viewer with "This section couldn't load".
   useEffect(() => { setLiveEnded(false); }, [fallbackVideoSrc]);
+
+  // Explicit autoplay kick. `autoPlay` alone is unreliable when the element is
+  // remounted after a retry or opened from Profile, where the muted state can
+  // change around mount. Re-assert play whenever the source actually changes.
+  useEffect(() => {
+    if (!fallbackVideoSrc || !isVideoType) return;
+    const attempt = () => {
+      const v = videoRef.current;
+      if (!v) return;
+      const p = v.play();
+      if (p && typeof (p as Promise<void>).catch === 'function') (p as Promise<void>).catch(() => { /* autoplay policy */ });
+    };
+    attempt();
+    const t = window.setTimeout(attempt, 300);
+    return () => window.clearTimeout(t);
+  }, [fallbackVideoSrc, videoRetryKey, isVideoType]);
+
   const effectiveLive = isLiveStream && !liveEnded;
   const contentTags = Array.isArray((actualContent as any)?.tags)
     ? ((actualContent as any).tags as unknown[]).map((tag) => String(tag)).filter(Boolean)

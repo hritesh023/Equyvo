@@ -1477,6 +1477,11 @@ const ProfilePage = () => {
       type: isMoment ? 'moment' : (isVideo ? 'moment' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
       contentType: isMoment ? 'moment' : (isVideo ? 'video' : (String(post.type).toLowerCase() === 'live' || post.isLive || post.live ? 'live' : (String(post.type).toLowerCase() === 'audio' || post.mediaType === 'audio' || post.audioUrl ? 'audio' : 'image'))),
       videoUrl: playableVideo || undefined,
+      // Populate EVERY alias the fullscreen viewer's source chain understands.
+      // Legacy profile rows store the playable URL under different keys and a
+      // missing alias used to make fullscreen show "Video not available".
+      video: playableVideo || undefined,
+      src: playableVideo || undefined,
       mediaUrl: playableVideo || (post as any).mediaUrl || undefined,
       media: playableVideo || media.media || post.image,
       thumbnail: media.thumbnail || post.image,

@@ -271,13 +271,12 @@ public class MainActivity extends BridgeActivity {
             }
         } catch (Throwable ignored) {}
 
-        // DO NOT wait for a JS callback here. Once the app is backgrounded the
-        // WebView can pause JS entirely, so a callback-based snapshot check
-        // made enterPictureInPictureMode() fire after the Activity was already
-        // stopped — Android silently refuses it. The web layer applies the
-        // media-only CSS class synchronously in visibilitychange before it
-        // calls AndroidPiP.enter(), so enter immediately while we still can.
-        systemPipHandler.postDelayed(() -> tryEnterPip(), 20L);
+        // Enter SYNCHRONOUSLY. Any handler delay risks Android refusing PiP
+        // because the Activity is already stopping. The web layer applies the
+        // media-only CSS synchronously on visibilitychange/prepare, and the
+        // pipModeChanged(true) event also switches it to content-only after
+        // the window appears. Retries in tryEnterPip() cover OEM quirks.
+        tryEnterPip();
     }
 
     private void tryEnterPip() {
@@ -303,7 +302,17 @@ public class MainActivity extends BridgeActivity {
                             inPipMode = isInPictureInPictureMode();
                         }
                     } catch (Throwable ignored) {}
-                    if (!inPipMode) restoreWebAfterFailedPip();
+                    if (!inPipMode) {
+                        systemPipHandler.postDelayed(() -> {
+                            try {
+                                if (!isFinishing() && !isDestroyed() && !isInPictureInPictureMode()) {
+                                    enterPictureInPictureMode(b.build());
+                                    inPipMode = isInPictureInPictureMode();
+                                }
+                            } catch (Throwable ignored) {}
+                            if (!inPipMode) restoreWebAfterFailedPip();
+                        }, 450L);
+                    }
                 }, 150L);
             }
         } catch (Throwable ignored) {
@@ -429,14 +438,8 @@ public class MainActivity extends BridgeActivity {
         // Belt-and-braces fallback: many OEMs skip onUserLeaveHint. If the app
         // is really backgrounded (not just briefly paused) while the in-app
         // mini player is active, promote it to the system PiP window.
-        if (inAppPipActive && !isFinishing()) {
-            systemPipHandler.postDelayed(() -> {
-                try {
-                    if (inAppPipActive && !appResumed && !isInPictureInPictureMode() && !isFinishing()) {
-                        enterSystemPip();
-                    }
-                } catch (Throwable ignored) {}
-            }, 300L);
+        if (inAppPipActive && !isFinishing() && !isInPictureInPictureMode()) {
+            enterSystemPip();
         }
     }
 
