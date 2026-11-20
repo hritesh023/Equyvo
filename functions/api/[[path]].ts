@@ -75,6 +75,10 @@ const KEYS = {
   USAGE: (userId) => 'usage:' + userId,
   PLAN_CACHE: (userId) => 'plan:' + userId,
   HASH: (sha256) => 'mediahash:' + sha256,
+  // Global exact-file registry: one entry per byte fingerprint, regardless of
+  // content type, caption or uploader. This is what stops an identical file
+  // from being published twice anywhere in Equyvo (own or someone else's).
+  CONTENT_HASH: (sha256) => 'contenthash:' + sha256,
   CREATOR: (userId) => 'creator:' + userId,
   // Maps Cloudinary publicId -> { bytes, r2Key } so deletes can purge R2 and
   // refund quotas even though content items only carry publicId/resourceType.
@@ -3561,6 +3565,34 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     }
   } catch { /* dedupe is best-effort */ }
 
+  // ── EXACT-FILE UNIQUENESS (global, across all users AND content types) ──
+  // A "moment", "video" or "photo" with a DIFFERENT file is perfectly fine —
+  // only the same bytes (copy/paste) are rejected. The fingerprint is a
+  // SHA-256 of the file's byte windows computed on the device, so a caption,
+  // title, tags or content-type edit can never defeat it.
+  let contentHash = '';
+  try {
+    const raw = String(body.contentHash || body.sha256 || '').toLowerCase().trim();
+    if (/^(?:[a-f0-9]{16,64}|fnv-[a-f0-9]{8})$/.test(raw)) contentHash = raw.slice(0, 64);
+  } catch { /* ignore */ }
+  if (contentHash) {
+    try {
+      const dupRaw = await kv.get(KEYS.CONTENT_HASH(contentHash));
+      if (dupRaw) {
+        const dup = JSON.parse(dupRaw);
+        const mine = String(dup.ownerId || '') === String(actor.id);
+        return json({
+          error: mine
+            ? 'You already uploaded this exact file to Equyvo. Delete the original before posting it again.'
+            : 'This exact file is already uploaded on Equyvo by another account. Duplicate files are not allowed — upload a different file.',
+          code: mine ? 'DUPLICATE_CONTENT_OWN' : 'DUPLICATE_CONTENT',
+          duplicate: true,
+          data: { id: dup.id || '' },
+        }, 409, cors);
+      }
+    } catch { /* uniqueness check is best-effort; publish still proceeds */ }
+  }
+
   let id = generateId();
   if (typeof body.id === 'string' && /^[a-zA-Z0-9_-]{1,64}$/.test(body.id)) {
     const existing = await kv.get(itemKey(body.id));
@@ -3638,6 +3670,7 @@ async function createItem(context, kind, listKey, itemKey, cors) {
     user: displayName,
     creator: displayName,
     visibility,
+    ...(contentHash ? { contentHash } : {}),
   };
   // Prefer the profile avatar over a stale/missing client copy.
   if ((!item.avatar || typeof item.avatar !== 'string') && authorProfile && authorProfile.avatar) {
@@ -3676,6 +3709,15 @@ async function createItem(context, kind, listKey, itemKey, cors) {
   }
 
   await kv.put(itemKey(id), JSON.stringify(item));
+  // Claim this exact file forever (until its owner deletes it). Deliberately
+  // NO expirationTtl: the content itself must expire before its uniqueness.
+  if (contentHash) {
+    try {
+      await kv.put(KEYS.CONTENT_HASH(contentHash), JSON.stringify({
+        id, ownerId: actor.id, kind, title: String(item.content || item.title || ''), at: now,
+      }));
+    } catch { /* best-effort */ }
+  }
   try {
     const apiBase = (env.EQUYVO_API_BASE || env.BRAIN_URL || env.BRAIN_BASE_URL || '').replace(/\/+$/, '');
     const svcToken = env.EQUYVO_SERVICE_TOKEN;
@@ -3821,6 +3863,18 @@ async function deleteItem(context, listKey, itemKey, id, cors) {
     if (_resolvedBytes > 0) await subtractUsage(env, ownerId, _resolvedBytes);
   } catch { /* ignore */ }
   await kv.delete(itemKey(id));
+  // Free the exact-file claim so the owner (or anyone else) may upload that
+  // file again only after the original has truly been deleted everywhere.
+  try {
+    const hash = String((parsed as any)?.contentHash || '');
+    if (hash) {
+      const claimRaw = await kv.get(KEYS.CONTENT_HASH(hash));
+      if (claimRaw) {
+        const claim = JSON.parse(claimRaw);
+        if (String(claim?.id || '') === String(id)) await kv.delete(KEYS.CONTENT_HASH(hash));
+      }
+    }
+  } catch { /* best-effort */ }
 
   const listJson = await kv.get(listKey);
   if (listJson) {
@@ -4731,6 +4785,34 @@ export const onRequest = async (context) => {
       }
       if (mine) return json({ data: { ...base, available: true, reason: 'CURRENT' }, error: null }, 200, cors);
       return json({ data: { ...base, available: true, reason: '' }, error: null }, 200, cors);
+    }
+
+    // EXACT-FILE DUPLICATE CHECK (authenticated, pre-upload). The picker calls
+    // this the instant a file is chosen so the user sees a warning BEFORE any
+    // bytes are uploaded. Only a byte-identical file is a duplicate — same
+    // content type, caption, title or filename with different bytes is fine.
+    if (path === '/api/content-duplicate' && method === 'GET') {
+      const actor = await getActor(request, env);
+      const denied = actorResponse(actor, env, cors);
+      if (denied) return denied;
+      const raw = String(url.searchParams.get('hash') || '').toLowerCase().trim();
+      if (!/^(?:[a-f0-9]{16,64}|fnv-[a-f0-9]{8})$/.test(raw)) {
+        return json({ data: { duplicate: false, owner: '', title: '' }, error: null }, 200, cors);
+      }
+      const hash = raw.slice(0, 64);
+      let duplicate = false;
+      let owner: 'self' | 'other' | '' = '';
+      let title = '';
+      try {
+        const claimRaw = await env.EQUYVO_KV.get(KEYS.CONTENT_HASH(hash));
+        if (claimRaw) {
+          const claim = JSON.parse(claimRaw);
+          duplicate = true;
+          owner = String(claim.ownerId || '') === String(actor.id) ? 'self' : 'other';
+          title = String(claim.title || '').slice(0, 120);
+        }
+      } catch { /* fail open: publish-time check still enforces */ }
+      return json({ data: { duplicate, owner, title }, error: null }, 200, cors);
     }
 
     // CONTENT-SCREEN (authenticated, pre-upload): the Create page calls this
@@ -6624,6 +6706,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         deduped: false,
         planId: livePlan,
         chunked: true,
+        hash: fullHash,
       };
       try {
         await env.EQUYVO_KV.put(KEYS.HASH('mp:' + fullHash), JSON.stringify(payloadOut), { expirationTtl: 60 * 60 * 24 * 90 });
@@ -6760,7 +6843,9 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         const existing = await kv.get(KEYS.HASH(hash));
         if (existing) {
           const hit = JSON.parse(existing);
-          return json({ data: { ...hit, deduped: true, planId }, error: null }, 200, cors);
+          // Return the fingerprint too: the composer stamps it on the post so
+          // publish-time dedup can catch a second post made from this file.
+          return json({ data: { ...hit, hash, deduped: true, planId }, error: null }, 200, cors);
         }
       } catch { /* dedupe best-effort; continue to upload */ }
 
@@ -6874,6 +6959,7 @@ const adultish = /nudity|porn|xxx|sexual\s*act|explicit\s*sexual|erotica|hentai|
         r2Key,
         store: r2Key && result ? 'r2+cloudinary' : r2Key ? 'r2' : 'cloudinary',
         planId,
+        hash,
       };
       try {
         if (hash) await kv.put(KEYS.HASH(hash), JSON.stringify(payload), { expirationTtl: 60 * 60 * 24 * 90 });

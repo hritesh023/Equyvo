@@ -10,6 +10,7 @@ import api from './api';
 import { fetchMoments, fetchPosts, fetchStories } from './data';
 import { getThoughts } from './thoughts';
 import { isVideoUrl, resolveMediaFields } from './media';
+import { isBlockedContent } from '@/utils/deleted-ids';
 
 export type FeedContentType =
   | 'post'
@@ -58,19 +59,18 @@ export interface UnifiedItem {
 // unions (not "everything dumped everywhere").
 
 const SURFACE_ALLOWLIST: Record<string, Set<string>> = {
-  // Vertical short-video feed: moments only.
+  // Vertical short-video feed: moments ONLY.
   moments: new Set(['moment']),
   // Text-first feed: thoughts only.
   thoughts: new Set(['thought']),
   // Story rail: stories only.
   stories: new Set(['story', 'text-story']),
-  // Personalised home feed: everything EXCEPT ephemeral stories/live.
-  // (stories live in the rail; live has its own banner.)
-  foryou: new Set(['post', 'photo', 'video', 'moment', 'thought']),
-  // Same as ForYou but restricted to followed creators.
-  following: new Set(['post', 'photo', 'video', 'moment', 'thought']),
-  // Explore: durable media (no ephemeral stories).
-  discover: new Set(['post', 'photo', 'video', 'moment', 'thought', 'live']),
+  // Home / Following / Discover are ordinary content surfaces. Moments have
+  // their own dedicated rail + page, so they must never appear here as normal
+  // video cards (the old allowlists leaked moments into these feeds).
+  foryou: new Set(['post', 'photo', 'video', 'thought']),
+  following: new Set(['post', 'photo', 'video', 'thought']),
+  discover: new Set(['post', 'photo', 'video', 'thought', 'live']),
 };
 
 export function allowedForSurface(type: string | undefined, surface: keyof typeof SURFACE_ALLOWLIST): boolean {
@@ -201,8 +201,10 @@ export function withoutHidden<T extends { id?: string }>(items: T[]): T[] {
   } catch {
     return items;
   }
-  if (!hidden.size) return items;
-  return items.filter((i) => !hidden.has(String((i as { id?: string }).id)));
+  // Deleted content is global (all pages), hiding is per-viewer. Drop both.
+  return items.filter(
+    (i) => !hidden.has(String((i as { id?: string }).id)) && !isBlockedContent(i),
+  );
 }
 
 // ── Follow graph (local, instant, cross-tab) ───────────────────────────────

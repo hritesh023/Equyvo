@@ -111,7 +111,7 @@ Bump `versionCode` (+1, integer) and `versionName` in
 `android/app/build.gradle` every release: Play never accepts a reused
 versionCode. The new code must be higher than the highest code already
 uploaded to **any** track (internal/closed/open/production), not just the
- track you are updating. Current: `versionCode 207` / `1.3.81`.
+ track you are updating. Current: `versionCode 208` / `1.3.82`.
 
 Release signing values (store file, alias, passwords) live in the
 git-ignored `android/local.properties` and are read by `app/build.gradle`;

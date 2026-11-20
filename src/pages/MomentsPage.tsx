@@ -17,7 +17,7 @@ import InAppShareSheet, { ShareSheetPayload } from '@/components/InAppShareSheet
 import { useMediaSession } from '@/hooks/use-media-session';
 import { fetchMoments } from '@/lib/data';
 import { allowedForSurface, creatorOf, hideFromMyView, imageUrlOf, isVideoItem, videoUrlOf, withoutHidden } from '@/lib/feed-store';
-import { deleteContent } from '@/utils/delete';
+import { deleteContent, isBlockedContent } from '@/utils/delete';
 import { getStoredUser } from '@/lib/auth';
 import { showError } from '@/utils/toast';
 import ReportModal from '@/components/ReportModal';
@@ -199,7 +199,7 @@ const MomentsPage = () => {
         setIsLoadingMoments(true);
         const items = await fetchMoments(30).catch(() => []);
         const mapped = (items as any[])
-          .filter((m: any) => allowedForSurface(String((m as any).type || 'moment'), 'moments') && isVideoItem(m))
+          .filter((m: any) => allowedForSurface(String((m as any).type || 'moment'), 'moments') && isVideoItem(m) && !isBlockedContent(m))
           .map((m: any) => {
             const vid = videoUrlOf(m);
             const img = imageUrlOf(m) || m.thumbnail || '';
@@ -243,12 +243,14 @@ const MomentsPage = () => {
     window.addEventListener('momentCreated', refresh);
     window.addEventListener('feedRefresh', refresh);
     window.addEventListener('profileUpdated', refresh);
+    window.addEventListener('userPostDeleted', refresh);
     return () => {
       cancelled = true;
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('profileUpdated', refresh);
+      window.removeEventListener('userPostDeleted', refresh);
     };
   }, []);
 

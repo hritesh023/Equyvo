@@ -4,7 +4,7 @@ import { Trash2, Eye, EyeOff, Loader2, Clock, Users, ThumbsUp } from 'lucide-rea
 import api from '@/lib/api';
 import { formatWatchTime } from '@/lib/media';
 import { showSuccess, showError } from '@/utils/toast';
-import { isBlockedContent } from '@/utils/delete';
+import { deleteContent, isBlockedContent } from '@/utils/delete';
 
 interface Props { userId: string; isSelf: boolean; }
 
@@ -28,18 +28,26 @@ const ContentManagementTab: React.FC<Props> = ({ userId, isSelf }) => {
     finally { setLoading(false); }
   };
 
-  useEffect(() => { if (userId) load(); }, [userId]);
+  useEffect(() => {
+    if (userId) load();
+    // A delete confirmed anywhere in the app must vanish here too.
+    const refresh = () => setItems((prev) => prev.filter((x) => !isBlockedContent(x)));
+    window.addEventListener('userPostDeleted', refresh);
+    return () => window.removeEventListener('userPostDeleted', refresh);
+  }, [userId]);
 
   const remove = async (item: any) => {
     if (!window.confirm('Delete this content permanently? This cannot be undone.')) return;
     try {
-      if (item._kind === 'thought') await api.deleteThought(item.id);
-      else if (item._kind === 'story') await api.deleteStory(item.id);
-      else if (item._kind === 'moment') await api.deleteMoment(item.id);
-      else await api.deletePost(item.id);
-      setItems((prev) => prev.filter((x) => x.id !== item.id));
-      showSuccess('Content deleted');
-    } catch { showError('Delete failed'); }
+      // Route through the shared helper so the id is tombstoned locally and
+      // every other page is notified — a direct api.deleteX() left stale
+      // copies on Home / Moments / Thoughts / Search.
+      await deleteContent({
+        postId: item.id,
+        contentType: item._kind || 'post',
+        onDeleteComplete: () => setItems((prev) => prev.filter((x) => x.id !== item.id)),
+      });
+    } catch { /* deleteContent already explained the failure */ }
   };
 
   const toggleVisibility = async (item: any) => {

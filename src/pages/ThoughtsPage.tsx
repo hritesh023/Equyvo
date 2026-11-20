@@ -337,6 +337,7 @@ const ThoughtsPage = memo(() => {
     window.addEventListener('thoughtCreated', refresh);
     window.addEventListener('feedRefresh', refresh);
     window.addEventListener('profileUpdated', refresh);
+    window.addEventListener('userPostDeleted', refresh);
 
     // Handle initial loading delay to prevent flash
     const timer = setTimeout(() => {
@@ -349,6 +350,7 @@ const ThoughtsPage = memo(() => {
       window.removeEventListener('thoughtCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('profileUpdated', refresh);
+      window.removeEventListener('userPostDeleted', refresh);
     };
   }, [fetchThoughts]);
 

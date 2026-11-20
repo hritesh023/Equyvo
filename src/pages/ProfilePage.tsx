@@ -550,19 +550,20 @@ const ProfilePage = () => {
         ];
                 // Server is authoritative across devices: reacted copies live in the
         // reacted lane, everything else is a normal post.
-        const serverReacted = serverItems.filter((p: any) => isReactedCopy(p)).map((p: any) => ({ ...p, isReacted: true } as Post));
+        const visibleServerItems = serverItems.filter((p: any) => !isBlockedContent(p));
+        const serverReacted = visibleServerItems.filter((p: any) => isReactedCopy(p)).map((p: any) => ({ ...p, isReacted: true } as Post));
         setUserReactedPosts(prev => {
           const merged = new Map<string, Post>();
           prev.forEach(p => merged.set(String((p as any).originalPostId || p.id), p));
           serverReacted.forEach(p => merged.set(String((p as any).originalPostId || p.id), p));
           return Array.from(merged.values());
         });
-        setUserProfile(prev => ({ ...prev, posts: serverItems.filter((p: any) => !isReactedCopy(p)) }));
+        setUserProfile(prev => ({ ...prev, posts: visibleServerItems.filter((p: any) => !isReactedCopy(p)) }));
       }).catch(() => {});
       // Legacy fallback: posts-only endpoint.
       api.getUserPosts(currentUser.id).then(({ data, error }) => {
         if (cancelled || error || !Array.isArray(data)) return;
-        const legacyReacted = (data as Post[]).filter(p => isReactedCopy(p)).map(p => ({ ...p, isReacted: true } as Post));
+        const legacyReacted = (data as Post[]).filter(p => isReactedCopy(p) && !isBlockedContent(p)).map(p => ({ ...p, isReacted: true } as Post));
         if (legacyReacted.length) {
           setUserReactedPosts(prev => {
             const merged = new Map<string, Post>();
@@ -571,7 +572,7 @@ const ProfilePage = () => {
             return Array.from(merged.values());
           });
         }
-        setUserProfile(prev => ({ ...prev, posts: (data as Post[]).filter(p => !isReactedCopy(p)) }));
+        setUserProfile(prev => ({ ...prev, posts: (data as Post[]).filter(p => !isReactedCopy(p) && !isBlockedContent(p)) }));
       }).catch(() => {});
     }
 
@@ -795,10 +796,14 @@ const ProfilePage = () => {
         return dateB - dateA; // Most recent first
       });
 
-      setAllSavedContent(allContent as Post[]);
+      // Deleted content must disappear from Saved too — otherwise a removed
+      // post lingers on this one page forever.
+      setAllSavedContent((allContent as Post[]).filter((p: any) => !isBlockedContent(p)));
     };
 
     gatherAllSavedContent();
+    window.addEventListener('userPostDeleted', gatherAllSavedContent);
+    return () => window.removeEventListener('userPostDeleted', gatherAllSavedContent);
   }, [savedPosts, userProfile.posts, watchHistory]);
 
   // Initialize post likes and retweets

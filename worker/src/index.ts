@@ -1384,6 +1384,29 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
       }, error: null });
     }
 
+    // Exact-file duplicate check (pre-upload warning). Only identical bytes
+    // count; same content type/caption with a different file is allowed.
+    if (path === '/api/content-duplicate' && method === 'GET') {
+      const { actor, error } = await requireActor();
+      if (error) return error;
+      const raw = String(new URL(request.url).searchParams.get('hash') || '').toLowerCase().trim();
+      let duplicate = false;
+      let owner: 'self' | 'other' | '' = '';
+      let title = '';
+      if (/^(?:[a-f0-9]{16,64}|fnv-[a-f0-9]{8})$/.test(raw)) {
+        try {
+          const claimRaw = await env.EQUYVO_KV.get(KEYS.CONTENT_HASH(raw.slice(0, 64)));
+          if (claimRaw) {
+            const claim = JSON.parse(claimRaw);
+            duplicate = true;
+            owner = String(claim.ownerId || '') === String(actor.id) ? 'self' : 'other';
+            title = String(claim.title || '').slice(0, 120);
+          }
+        } catch { /* fail open */ }
+      }
+      return respond({ data: { duplicate, owner, title }, error: null });
+    }
+
     // R2 upload: primary warehouse, Cloudinary selective for variants.
     // secureUrl is always the best delivery URL (R2 when available).
     if (path === '/api/upload' && method === 'POST') {
@@ -1421,7 +1444,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         bytes = new Uint8Array(await (file as any).arrayBuffer());
         hash = await sha256Hex(bytes.buffer as ArrayBuffer);
         const hit = await env.EQUYVO_KV.get(KEYS.HASH(hash));
-        if (hit) return respond({ data: { ...JSON.parse(hit), deduped: true, planId }, error: null });
+        if (hit) return respond({ data: { ...JSON.parse(hit), hash, deduped: true, planId }, error: null });
       } catch { /* best-effort */ }
 
       const cloudName = env.CLOUDINARY_CLOUD_NAME;
@@ -1476,6 +1499,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
         width: result?.width, height: result?.height,
         createdAt: result?.created_at || new Date().toISOString(), duration: result?.duration,
         variants, r2Key, store: r2Key && result ? 'r2+cloudinary' : r2Key ? 'r2' : 'cloudinary', planId,
+        hash,
       };
       try {
         if (hash) await env.EQUYVO_KV.put(KEYS.HASH(hash), JSON.stringify(payload), { expirationTtl: 60 * 60 * 24 * 90 });
@@ -1922,6 +1946,7 @@ async function handleRequest(request: Request, env: Env, ctx?: { waitUntil(p: Pr
          store: 'r2',
          planId,
          chunked: true,
+         hash,
        };
        try { await env.EQUYVO_KV.put(KEYS.HASH('mp:' + hash), JSON.stringify(resObj), { expirationTtl: 60 * 60 * 24 * 90 }); } catch {}
        try { await env.EQUYVO_KV.put(KEYS.MEDIA('mp:' + hash), JSON.stringify({ bytes: totalBytes, r2Key: session.r2Key }), { expirationTtl: 60 * 60 * 24 * 365 }); } catch {}

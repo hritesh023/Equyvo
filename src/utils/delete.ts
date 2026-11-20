@@ -1,5 +1,13 @@
 import { showSuccess, showError } from '@/utils/toast';
 import api from '@/lib/api';
+import { markDeletedLocally } from './deleted-ids';
+
+export {
+  isDeletedContent,
+  isBlockedContent,
+  markDeletedLocally,
+  BLOCKED_POST_PHRASES,
+} from './deleted-ids';
 
 export type DeletableContentType = 'post' | 'photo' | 'video' | 'thought' | 'moment' | 'story' | 'text-story' | 'comment' | 'live';
 
@@ -36,14 +44,9 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
 
   const finishLocalDelete = () => {
     // Persist the deleted id so a stale cached/server response can never
-    // resurrect a post the user already removed.
-    try {
-      const key = 'equyvo_deleted_ids';
-      const raw = localStorage.getItem(key);
-      const set = new Set<string>(raw ? JSON.parse(raw) : []);
-      set.add(String(postId));
-      localStorage.setItem(key, JSON.stringify([...set].slice(-500)));
-    } catch { /* ignore */ }
+    // resurrect a post the user already removed. Every page listens for the
+    // broadcast event from markDeletedLocally and drops the item instantly.
+    markDeletedLocally(postId, String(contentType));
     // Also scrub the post from any locally cached profile/feed lists.
     try {
       const up = localStorage.getItem('userProfile');
@@ -112,42 +115,6 @@ export const deleteContent = async (options: DeleteContentOptions): Promise<void
   showSuccess(`${label.charAt(0).toUpperCase() + label.slice(1)} deleted`);
 
   finishLocalDelete();
-};
-
-// Hardcoded titles/phrases of posts that must never render (e.g. stale
-// server-side rows the owner cannot delete from the client).
-const BLOCKED_POST_PHRASES = ['parakram game'];
-
-/** Returns true when an id was removed by the user (persisted locally). */
-export const isDeletedContent = (id: unknown): boolean => {
-  try {
-    const raw = localStorage.getItem('equyvo_deleted_ids');
-    if (!raw) return false;
-    const set = new Set<string>(JSON.parse(raw));
-    return set.has(String(id));
-  } catch {
-    return false;
-  }
-};
-
-/** Returns true for content that must be hidden (deleted or blocked). */
-export const isBlockedContent = (item: any): boolean => {
-  try {
-    if (!item) return false;
-    const id = String(item.id ?? item._id ?? '');
-    // Persisted deleted ids.
-    if (isDeletedContent(id)) return true;
-    // Persisted blocked ids/titles.
-    const raw = localStorage.getItem('equyvo_blocked_posts');
-    const blocked: string[] = raw ? JSON.parse(raw) : [];
-    const title = String(item.title || item.content || '').toLowerCase();
-    if (blocked.some((b) => String(b).toLowerCase() === id || String(b).toLowerCase() === title)) return true;
-    // Hardcoded phrases.
-    if (BLOCKED_POST_PHRASES.some((p) => title.includes(p.toLowerCase()))) return true;
-    return false;
-  } catch {
-    return false;
-  }
 };
 
 export const confirmDelete = (contentType: string = 'post'): boolean => {

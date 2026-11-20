@@ -28,6 +28,8 @@ import { compressImage } from '@/lib/utils';
 import { markHasRealContent } from '@/lib/data';
 import { broadcastPostCreated, captureVideoPoster } from '@/lib/feed-store';
 import { deleteContent } from '@/utils/delete';
+import { markDeletedLocally } from '@/utils/deleted-ids';
+import { computeContentFingerprint, checkContentDuplicate, contentHashOf, rememberFileFingerprint, isDuplicateError } from '@/lib/content-fingerprint';
 
 import { screenMedia, type ScreenResult } from '@/lib/moderation';
 import {
@@ -1575,6 +1577,10 @@ const CreatePage = () => {
     const authorName = pickDisplayName(author.username, author.userId, content.user, content.creator);
     const postData = {
       ...content,
+      // The SHA-256 byte fingerprint from when the file was picked. The server
+      // enforces the exact-file uniqueness rule at publish time too (defence
+      // in depth), so a failed pre-check can never create a second copy.
+      contentHash: contentHashOf(content) || (content as any).contentHash || undefined,
       userId: author.userId || undefined,
       user: authorName,
       creator: pickDisplayName(content.creator, authorName),
@@ -1603,8 +1609,18 @@ const CreatePage = () => {
         const { error } = await api.createPost(postData);
         if (error) persistError = error;
       }
-      if (!persistError) markHasRealContent();
-      else console.error('Failed to persist to API:', persistError);
+      if (!persistError) {
+        markHasRealContent();
+      } else {
+        console.error('Failed to persist to API:', persistError);
+        if (isDuplicateError(persistError)) {
+          // The file slipped past the picker check (e.g. offline). The server
+          // refused it; make sure the optimistic local copy is tombstoned so
+          // it vanishes from every feed instead of showing a phantom duplicate.
+          markDeletedLocally(content.id, type);
+          showError('This exact file is already on Equyvo. Post a different file instead.');
+        }
+      }
     } catch (err) {
       persistError = err instanceof Error ? err.message : 'persist failed';
       console.error('Failed to persist to API:', err);
@@ -1703,7 +1719,12 @@ const CreatePage = () => {
       const fullImage = imageStr || (!isVideo ? (mediaStr || thumbStr) : '') || '';
       const fullThumb = thumbStr || fullImage || '';
       const fullMedia = isVideo ? (videoUrlStr || mediaStr) : (fullImage || mediaStr);
-      profile.posts = [{
+      const newHash = String((postData as any).contentHash || '');
+      // Never store the same upload twice: same id, or the same exact file.
+      profile.posts = (profile.posts || []).filter((p: any) =>
+        String(p?.id) !== String(content.id) && !(newHash && String(p?.contentHash || '') === newHash),
+      );
+      profile.posts.unshift({
         id: content.id,
         user: postData.user,
         avatar: (content.avatar as string) || (postData.avatar as string) || '',
@@ -1724,7 +1745,8 @@ const CreatePage = () => {
         shares: 0,
         type,
         createdAt: new Date().toISOString(),
-      }, ...(profile.posts || [])];
+        contentHash: newHash || undefined,
+      });
       localStorage.setItem('userProfile', JSON.stringify(profile));
     } catch (err) { console.error('Failed to update localStorage profile:', err); }
     // Invalidate search cache so new content appears immediately on EVERY
@@ -1744,10 +1766,35 @@ const CreatePage = () => {
     setSafetyChecking(true);
     setAppBusy(true);
     try {
-      const results = await Promise.all(safeFiles.map(async (f) => ({
-        f,
-        r: await screenMedia(f, { kind: type }),
-      })));
+      const results = await Promise.all(safeFiles.map(async (f) => {
+        // Fingerprint the actual BYTES, never the caption/type/name. Two
+        // different videos in the same category are fine; the exact same file
+        // (copy/paste) is rejected for every user, including the original
+        // uploader, until they delete their first copy.
+        const [screen, fingerprint] = await Promise.all([
+          screenMedia(f, { kind: type }),
+          computeContentFingerprint(f),
+        ]);
+        let r = screen;
+        if (r.verdict === 'allow') {
+          const dup = await checkContentDuplicate(fingerprint);
+          if (dup.duplicate) {
+            r = {
+              verdict: 'block',
+              category: 'spam',
+              checked: true,
+              message: dup.owner === 'self'
+                ? 'You already uploaded this exact file to Equyvo. Delete the original before posting it again.'
+                : 'This exact file is already uploaded on Equyvo by another account. Duplicate files are not allowed.',
+            };
+          } else {
+            // Carry this byte fingerprint through to the upload so the post
+            // is published with the SAME hash the pre-check used.
+            rememberFileFingerprint(f, fingerprint);
+          }
+        }
+        return { f, r };
+      }));
       const flagged = results.filter((x) => x.r.verdict !== 'allow');
       if (flagged.length > 0) {
         setSafetyWarn(flagged.map((x) => ({
@@ -3124,16 +3171,15 @@ const CreatePage = () => {
     cancelUploadRequestedRef.current = false;
     setIsUploading(true);
 
-    // Show the camera studio INSTANTLY. Permission prompts, camera opening,
-    // cover upload and the server announcement all continue behind it, so the
-    // broadcaster never waits on the old composer screen.
-    if (!isScreen) {
-      setLiveSource('camera');
-      setIsRecording(true);
-      setLivePreparing(true);
-    } else {
-      setLivePreparing(false);
-    }
+    // Show the FULL-SCREEN studio INSTANTLY for BOTH sources. The OS/browser
+    // consent picker, native plugin init, cover upload, server announcement
+    // and relay handshake all continue BEHIND this screen. Previously only
+    // camera set `isRecording` here; screen live waited for every one of those
+    // awaits before the studio mounted, which made its interface feel slow.
+    setLiveSource(isScreen ? 'screen' : 'camera');
+    setLiveNativeScreen(nativeScreen);
+    setIsRecording(true);
+    setLivePreparing(true);
 
     // NATIVE SCREEN PATH — Android MediaProjection / iOS ReplayKit. The OS
     // consent dialog is shown first; denial ends the attempt with no upload.
@@ -3143,6 +3189,9 @@ const CreatePage = () => {
         try {
           await startNativeScreenRecording(scope);
         } catch (e) {
+          // The studio was opened optimistically — close it when consent fails.
+          setIsRecording(false);
+          setLivePreparing(false);
           setLiveNativeScreen(false);
           // Surface the real native error (permission denied, foreground
           // service refused, encoder unavailable) instead of a generic guess.
@@ -3158,6 +3207,7 @@ const CreatePage = () => {
         // Native capture yields a file, not a live JS stream: no real-time relay.
         await commitLiveStart('screen', thumb, false);
         setLiveRelayState('offline'); // "Saving only" — no frame relay for native capture.
+        setLivePreparing(false); // studio is live; consent + publish finished
         setIsRecording(true);
         recordingStartRef.current = Date.now();
         setIsUploading(false);
@@ -3175,6 +3225,7 @@ const CreatePage = () => {
         }
         try { localStorage.removeItem('equyvo_active_live'); } catch { /* ignore */ }
         window.dispatchEvent(new CustomEvent('userWentOffline', { detail: {} }));
+        setIsRecording(false);
         setLiveNativeScreen(false);
         setLiveRelayState('offline');
         setLiveChatOpen(false);
@@ -3183,6 +3234,7 @@ const CreatePage = () => {
         showError('Could not go live: ' + (err instanceof Error ? err.message : 'Unknown error'));
       } finally {
         setIsUploading(false);
+        setLivePreparing(false);
         setUploadProgress(null);
         try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
         uploadedKeysForCancelRef.current = [];
@@ -3220,6 +3272,8 @@ const CreatePage = () => {
             mediaStream.getTracks().forEach((t) => t.stop());
             mediaStream = null;
             showError('You selected this Equyvo tab. Pick a different app/window (or Entire screen) so Equyvo controls never appear in your recording.');
+            setIsRecording(false);
+            setLivePreparing(false);
             setIsUploading(false);
             try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
             return;
@@ -3260,6 +3314,8 @@ const CreatePage = () => {
         } else {
           showError('Failed to access camera/microphone. Please check your device permissions.');
         }
+        setIsRecording(false); // close the optimistically-opened studio
+        setLivePreparing(false);
         setIsUploading(false);
         try { setUploadState({ isUploading: false, progress: null }); } catch { /* ignore */ }
         return;
@@ -4395,11 +4451,22 @@ const CreatePage = () => {
           playsInline
           className={`absolute inset-0 h-full w-full ${isScreenLive ? 'object-contain' : 'object-cover'}`}
         />
-        {!isScreenLive && livePreparing && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/70 text-sm text-white/80">
+        {livePreparing && (
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-black/80 text-sm text-white/80">
             <Loader2 className="h-8 w-8 animate-spin" />
-            <p>Starting your camera… your studio is ready.</p>
-            <p className="max-w-xs text-center text-xs text-white/50">Allow camera and microphone access if your device asks.</p>
+            {isScreenLive ? (
+              <>
+                <p>Getting your screen studio ready…</p>
+                <p className="max-w-xs text-center text-xs text-white/50">
+                  Choose the app or screen in the system prompt that appears. The studio is already open — you are live the moment you allow it.
+                </p>
+              </>
+            ) : (
+              <>
+                <p>Starting your camera… your studio is ready.</p>
+                <p className="max-w-xs text-center text-xs text-white/50">Allow camera and microphone access if your device asks.</p>
+              </>
+            )}
           </div>
         )}
         {/* Tap-to-swap hit area matches the PiP rectangle drawn into the canvas
@@ -6662,7 +6729,7 @@ const CreatePage = () => {
               Some content needs attention
             </DialogTitle>
             <DialogDescription>
-              Our safety check held back {(safetyWarn?.length || 0) > 1 ? `${safetyWarn?.length} files` : 'this file'} before upload. Any clean files you selected can still be posted.
+              Our safety and duplicate check held back {(safetyWarn?.length || 0) > 1 ? `${safetyWarn?.length} files` : 'this file'} before upload. Other files of the same type with different content are still allowed; only exact copies of a file are blocked. Any clean files you selected can still be posted.
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-3">

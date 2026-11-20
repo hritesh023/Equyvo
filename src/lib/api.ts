@@ -4,6 +4,14 @@
 
 import { normalizeContentItem, normalizeContentList } from './media';
 import { inferMimeType, detectMimeFromBytes, isAllowedMime } from './mime';
+import { isBlockedContent, withoutDeleted } from '@/utils/deleted-ids';
+import { rememberContentHash, fingerprintOfFile } from './content-hash-registry';
+
+/** Every content list is normalised AND purged of locally-deleted items here,
+ * so a stale server row can never resurrect on a different page. */
+function cleanList<T = any>(items: unknown): T[] {
+  return withoutDeleted(normalizeContentList<T>(items));
+}
 
 import { API_BASE } from './api-base';
 const USER_KEY = 'equyvo_cognito_user';
@@ -176,7 +184,12 @@ async function request<T = any>(
         const bodyError =
           typeof json.error === 'string' && json.error ? json.error : null;
         if (!bodyError) warnLocalApiOnce(path, res.status);
-        return { error: bodyError || `Request failed with status ${res.status}` } as T;
+        // Preserve machine-readable codes (e.g. DUPLICATE_CONTENT) so callers
+        // can explain a rejection instead of showing a generic network error.
+        return {
+          error: bodyError || `Request failed with status ${res.status}`,
+          ...(typeof json.code === 'string' ? { code: json.code } : {}),
+        } as T;
       }
       return json as T;
     } catch (err: any) {
@@ -231,6 +244,8 @@ export interface UploadResult {
   createdAt: string;
   duration?: number;
   chunked?: boolean;
+  /** Full-file SHA-256 from the server; used for exact-duplicate detection. */
+  hash?: string;
 }
 
 /** Server rejects with a quota code or message on any cap breach. */
@@ -423,13 +438,15 @@ export const api = {
   // render-safe image/video fields, even from an older server deployment.
   getPosts: async (limit = 50) => {
     const res = await request<{ data: any[]; error: null; meta?: unknown }>(`/posts?limit=${limit}`);
-    return { ...res, data: normalizeContentList<any>(res.data) };
+    return { ...res, data: cleanList<any>(res.data) };
   },
 
   // One content item (post / thought / story / moment) by id — used by
   // shared links so /posts/:id never dead-ends on a 404 or the feed top.
   getContentItem: async (id: string) => {
     const res = await request<{ data: any; error: null }>(`/content/${encodeURIComponent(id)}`);
+    // A deleted item must never open via a shared/deep link either.
+    if (isBlockedContent(res.data)) return { ...res, data: null } as any;
     return { ...res, data: normalizeContentItem<any>(res.data) };
   },
 
@@ -439,10 +456,19 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
+  // Exact-byte duplicate check, called the moment a file is picked. Only a
+  // genuinely identical file (same SHA-256 fingerprint) is reported — never a
+  // merely similar caption, title or video.
+  checkContentDuplicate: (hash: string) =>
+    request<{
+      data: { duplicate: boolean; owner: 'self' | 'other' | ''; title?: string };
+      error: null;
+    }>(`/content-duplicate?hash=${encodeURIComponent(hash)}`),
+
   // Thoughts
   getThoughts: async (limit = 20, offset = 0) => {
     const res = await request<{ data: any[]; error: null }>(`/thoughts?limit=${limit}&offset=${offset}`);
-    return { ...res, data: normalizeContentList<any>(res.data) };
+    return { ...res, data: cleanList<any>(res.data) };
   },
 
   // Thoughts — trending topics. Server-side engagement-weighted algorithm
@@ -461,7 +487,7 @@ export const api = {
   // Stories
   getStories: async (limit = 20) => {
     const res = await request<{ data: any[]; error: null }>(`/stories?limit=${limit}`);
-    return { ...res, data: normalizeContentList<any>(res.data) };
+    return { ...res, data: cleanList<any>(res.data) };
   },
 
   createStory: (data: any) =>
@@ -490,7 +516,7 @@ export const api = {
   // Moments
   getMoments: async (limit = 20) => {
     const res = await request<{ data: any[]; error: null }>(`/moments?limit=${limit}`);
-    return { ...res, data: normalizeContentList<any>(res.data) };
+    return { ...res, data: cleanList<any>(res.data) };
   },
 
   createMoment: (data: any) =>
@@ -794,6 +820,19 @@ export const api = {
     meta?: { duration?: number },
   ) => {
     uploadCancelled = false;
+    const remember = (res: { data?: UploadResult; error?: string } | undefined) => {
+      try {
+        const d = res?.data;
+        // Prefer the exact byte fingerprint computed at file-pick time so the
+        // pre-upload warning and the publish-time uniqueness check use the
+        // SAME key. Fall back to the server's full-file SHA-256.
+        const fp = fingerprintOfFile(file) || d?.hash || '';
+        if (fp) {
+          rememberContentHash([d?.secureUrl, d?.originalUrl, d?.r2Key, d?.publicId], fp);
+        }
+      } catch { /* fingerprinting is best-effort */ }
+      return res;
+    };
     const step = (loaded: number, totalCount: number, phase: UploadPhase) => {
       try { onProgress?.({ loaded: Math.min(loaded, Math.max(totalCount, 1)), total: Math.max(totalCount, 1), phase }); } catch { /* observer errors never break uploads */ }
     };
@@ -887,10 +926,10 @@ export const api = {
           resolve({ error: e instanceof Error ? e.message : 'Network error' });
         }
       });
-      return res;
+      return remember(res);
     }
     try {
-      return await uploadChunked(payload, folder, meta, (loaded, phase) => step(loaded, total, phase));
+      return remember(await uploadChunked(payload, folder, meta, (loaded, phase) => step(loaded, total, phase)));
     } finally {
       currentUploadId = null;
       currentUploadXHR = null;
@@ -922,7 +961,7 @@ export const api = {
   // Get user's own posts
   getUserPosts: async (userId: string, limit = 50) => {
     const res = await request<{ data: any[]; error: null }>(`/users/${userId}/posts?limit=${limit}`);
-    return { ...res, data: normalizeContentList<any>(res.data) };
+    return { ...res, data: cleanList<any>(res.data) };
   },
 
   // Every collection for one account (posts + thoughts + stories + moments),
@@ -937,10 +976,10 @@ export const api = {
       ...res,
       data: {
         ...res.data,
-        posts: normalizeContentList<any>(res.data.posts),
-        thoughts: normalizeContentList<any>(res.data.thoughts),
-        stories: normalizeContentList<any>(res.data.stories),
-        moments: normalizeContentList<any>(res.data.moments),
+        posts: cleanList<any>(res.data.posts),
+        thoughts: cleanList<any>(res.data.thoughts),
+        stories: cleanList<any>(res.data.stories),
+        moments: cleanList<any>(res.data.moments),
       },
     };
   },

@@ -18,6 +18,8 @@ const KEYS = {
   USAGE: (userId: string) => `usage:${userId}`,
   PLAN_CACHE: (userId: string) => `plan:${userId}`,
   HASH: (sha256: string) => `mediahash:${sha256}`,
+  // Global exact-file uniqueness registry (mirrors Pages Functions).
+  CONTENT_HASH: (sha256: string) => `contenthash:${sha256}`,
   CREATOR: (userId: string) => `creator:${userId}`,
   MEDIA: (publicId: string) => `media:${publicId}`,
   // AI interest graph (backend-only; no frontend changes required).
@@ -842,7 +844,49 @@ export async function getUserPosts(env: Env, userId: string): Promise<Post[]> {
   return filterSeed(posts.filter(p => p.userId === userId || (p as any).user_id === userId), hasReal);
 }
 
+// ── Exact-file uniqueness (mirrors the production Pages Function) ──────────
+// Different files of the SAME type/caption are always allowed. Only an
+// identical byte fingerprint is a duplicate, for every user alike.
+function validContentHash(value: unknown): string {
+  try {
+    const raw = String(value || '').toLowerCase().trim();
+    return /^(?:[a-f0-9]{16,64}|fnv-[a-f0-9]{8})$/.test(raw) ? raw.slice(0, 64) : '';
+  } catch { return ''; }
+}
+
+async function existingByHash<T>(env: Env, hash: string): Promise<T | null> {
+  if (!hash) return null;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.CONTENT_HASH(hash));
+    if (!raw) return null;
+    const claim = JSON.parse(raw);
+    const keyOf = claim.kind === 'thought' ? KEYS.THOUGHT
+      : claim.kind === 'story' ? KEYS.STORY
+      : claim.kind === 'moment' ? KEYS.MOMENT
+      : KEYS.POST;
+    const itemRaw = await env.EQUYVO_KV.get(keyOf(String(claim.id)));
+    return itemRaw ? JSON.parse(itemRaw) as T : null;
+  } catch { return null; }
+}
+
+async function claimContentHash(env: Env, hash: string, id: string, kind: string, ownerId: string): Promise<void> {
+  if (!hash) return;
+  try {
+    await env.EQUYVO_KV.put(KEYS.CONTENT_HASH(hash), JSON.stringify({ id, kind, ownerId, at: new Date().toISOString() }));
+  } catch { /* best-effort */ }
+}
+
+async function releaseContentHash(env: Env, hash: string, id: string): Promise<void> {
+  if (!hash) return;
+  try {
+    const raw = await env.EQUYVO_KV.get(KEYS.CONTENT_HASH(hash));
+    if (raw && JSON.parse(raw)?.id === id) await env.EQUYVO_KV.delete(KEYS.CONTENT_HASH(hash));
+  } catch { /* best-effort */ }
+}
+
 export async function createPost(env: Env, post: Omit<Post, 'id' | 'time' | 'createdAt'>): Promise<Post> {
+  const dup = await existingByHash<Post>(env, validContentHash((post as any).contentHash));
+  if (dup) return dup;
   const id = (post as any).id || await getNextId(env);
   const now = new Date().toISOString();
   const newPost: Post = {
@@ -852,6 +896,7 @@ export async function createPost(env: Env, post: Omit<Post, 'id' | 'time' | 'cre
     createdAt: now,
   };
   await env.EQUYVO_KV.put(KEYS.POST(id), JSON.stringify(newPost));
+  await claimContentHash(env, validContentHash((newPost as any).contentHash), id, 'post', String((newPost as any).userId || ''));
   
   // Prepend to list
   const listJson = await env.EQUYVO_KV.get(KEYS.POSTS);
@@ -917,6 +962,8 @@ export async function getThoughts(env: Env, limit = 20, offset = 0): Promise<Tho
 }
 
 export async function createThought(env: Env, thought: Omit<Thought, 'id' | 'created_at' | 'updated_at'>): Promise<Thought> {
+  const dup = await existingByHash<Thought>(env, validContentHash((thought as any).contentHash));
+  if (dup) return dup;
   const id = (thought as any).id || await getNextId(env);
   const now = new Date().toISOString();
   const newThought: Thought = {
@@ -926,6 +973,7 @@ export async function createThought(env: Env, thought: Omit<Thought, 'id' | 'cre
     updated_at: now,
   };
   await env.EQUYVO_KV.put(KEYS.THOUGHT(id), JSON.stringify(newThought));
+  await claimContentHash(env, validContentHash((newThought as any).contentHash), id, 'thought', String((newThought as any).userId || (newThought as any).user_id || ''));
 
   const listJson = await env.EQUYVO_KV.get(KEYS.THOUGHTS);
   const ids: string[] = listJson ? JSON.parse(listJson) : [];
@@ -986,6 +1034,8 @@ export async function getStories(env: Env, limit = 20): Promise<Story[]> {
 }
 
 export async function createStory(env: Env, story: Omit<Story, 'id'>): Promise<Story> {
+  const dup = await existingByHash<Story>(env, validContentHash((story as any).contentHash));
+  if (dup) return dup;
   const id = (story as any).id || await getNextId(env);
   const now = new Date().toISOString();
   const newStory: Story = {
@@ -994,6 +1044,7 @@ export async function createStory(env: Env, story: Omit<Story, 'id'>): Promise<S
     createdAt: now,
   };
   await env.EQUYVO_KV.put(KEYS.STORY(id), JSON.stringify(newStory));
+  await claimContentHash(env, validContentHash((newStory as any).contentHash), id, 'story', String((newStory as any).userId || ''));
 
   const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
   const ids: string[] = listJson ? JSON.parse(listJson) : [];
@@ -1056,6 +1107,8 @@ export async function getMoments(env: Env, limit = 20): Promise<Moment[]> {
 }
 
 export async function createMoment(env: Env, moment: Omit<Moment, 'id'>): Promise<Moment> {
+  const dup = await existingByHash<Moment>(env, validContentHash((moment as any).contentHash));
+  if (dup) return dup;
   const id = (moment as any).id || await getNextId(env);
   const now = new Date().toISOString();
   const newMoment: Moment = {
@@ -1064,6 +1117,7 @@ export async function createMoment(env: Env, moment: Omit<Moment, 'id'>): Promis
     createdAt: now,
   };
   await env.EQUYVO_KV.put(KEYS.MOMENT(id), JSON.stringify(newMoment));
+  await claimContentHash(env, validContentHash((newMoment as any).contentHash), id, 'moment', String((newMoment as any).userId || ''));
 
   const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);
   const ids: string[] = listJson ? JSON.parse(listJson) : [];
@@ -1751,6 +1805,7 @@ export async function deletePost(env: Env, postId: string): Promise<boolean> {
     const parsed = JSON.parse(existing);
     await refundStoredMedia(env, String(parsed.userId || parsed.user_id || ''), parsed);
     await purgeStoredMedia(env, parsed);
+    await releaseContentHash(env, String(parsed.contentHash || ''), postId);
   }
   // Remove from KV
   await env.EQUYVO_KV.delete(KEYS.POST(postId));
@@ -1775,6 +1830,7 @@ export async function deleteThought(env: Env, thoughtId: string): Promise<boolea
     const parsed = JSON.parse(existing);
     await refundStoredMedia(env, String(parsed.user_id || parsed.userId || ''), parsed);
     await purgeStoredMedia(env, parsed);
+    await releaseContentHash(env, String(parsed.contentHash || ''), thoughtId);
   }
   await env.EQUYVO_KV.delete(KEYS.THOUGHT(thoughtId));
   const listJson = await env.EQUYVO_KV.get(KEYS.THOUGHTS);
@@ -1796,6 +1852,7 @@ export async function deleteStory(env: Env, storyId: string): Promise<boolean> {
     const parsed = JSON.parse(existing);
     await refundStoredMedia(env, String(parsed.userId || parsed.user_id || ''), parsed);
     await purgeStoredMedia(env, parsed);
+    await releaseContentHash(env, String(parsed.contentHash || ''), storyId);
   }
   await env.EQUYVO_KV.delete(KEYS.STORY(storyId));
   const listJson = await env.EQUYVO_KV.get(KEYS.STORIES);
@@ -1817,6 +1874,7 @@ export async function deleteMoment(env: Env, momentId: string): Promise<boolean>
     const parsed = JSON.parse(existing);
     await refundStoredMedia(env, String(parsed.userId || parsed.user_id || ''), parsed);
     await purgeStoredMedia(env, parsed);
+    await releaseContentHash(env, String(parsed.contentHash || ''), momentId);
   }
   await env.EQUYVO_KV.delete(KEYS.MOMENT(momentId));
   const listJson = await env.EQUYVO_KV.get(KEYS.MOMENTS);

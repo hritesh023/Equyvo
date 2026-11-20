@@ -229,6 +229,14 @@ const HomePage = () => {
         }));
         const merged = [...(posts as any[]), ...momentPosts, ...thoughts]
           .filter((p: any) => allowedForSurface(String(p.type || 'post'), 'foryou'))
+          // Moments live ONLY in the Moments rail/page — never as a normal
+          // video card in For You / Following, even if a legacy row is tagged
+          // as a post but carries a moment media type.
+          .filter((p: any) =>
+            String(p.mediaType || '').toLowerCase() !== 'moment' &&
+            p.isMoment !== true &&
+            !(p as any).forcePortrait,
+          )
           .filter((post: any) => !deletedPostIds.current.has(post.id))
           .filter((post: any) => !isBlockedContent(post))
           .sort((a: any, b: any) => {
@@ -298,7 +306,8 @@ const HomePage = () => {
       try {
         setIsLoadingStories(true);
         const stories = await fetchStories();
-        setStories(stories);
+        // A confirmed delete is global: never let a stale story row reappear.
+        setStories((stories as any[]).filter((s: any) => !isBlockedContent(s)) as Story[]);
       } catch {
         setStories([]);
       } finally {
@@ -311,10 +320,12 @@ const HomePage = () => {
     window.addEventListener('userPostCreated', refresh);
     window.addEventListener('storyUploaded', refresh);
     window.addEventListener('profileUpdated', refresh);
+    window.addEventListener('userPostDeleted', refresh);
     return () => {
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('storyUploaded', refresh);
       window.removeEventListener('profileUpdated', refresh);
+      window.removeEventListener('userPostDeleted', refresh);
     };
   }, []);
 
@@ -346,7 +357,9 @@ const HomePage = () => {
         // never enter this rail — they belong to the photo feed.
         setMoments(
           (items as any[]).filter((m: any) =>
-            allowedForSurface(String((m as any).type || 'moment'), 'moments') && isVideoItem(m as any),
+            allowedForSurface(String((m as any).type || 'moment'), 'moments') &&
+            isVideoItem(m as any) &&
+            !isBlockedContent(m),
           ),
         );
       } catch {
@@ -362,11 +375,13 @@ const HomePage = () => {
     window.addEventListener('momentCreated', refresh);
     window.addEventListener('feedRefresh', refresh);
     window.addEventListener('profileUpdated', refresh);
+    window.addEventListener('userPostDeleted', refresh);
     return () => {
       window.removeEventListener('userPostCreated', refresh);
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('profileUpdated', refresh);
+      window.removeEventListener('userPostDeleted', refresh);
     };
   }, []);
 
@@ -795,7 +810,7 @@ const HomePage = () => {
       try {
       const res = await api.getContentItem(wanted);
       const raw = (res as { data?: any } | null)?.data;
-      if (raw) {
+      if (raw && !isBlockedContent(raw)) {
         // Normalize the stored row to the same display shape the feed uses,
         // so an older/shared item opens with real media and author identity.
         const fields = resolveMediaFields(raw);
