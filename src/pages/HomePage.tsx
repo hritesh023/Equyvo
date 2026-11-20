@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { ThumbsUp, MessageCircle, Share2, Plus, Play, MoreHorizontal, Bookmark, X, Sparkles, Users } from 'lucide-react';
+import { ThumbsUp, MessageCircle, Share2, Plus, MoreHorizontal, Bookmark, X, Sparkles, Users } from 'lucide-react';
 import { ScrollArea, ScrollBar } from "@/components/ui/scroll-area";
 import ChatSidebar from '@/components/ChatSidebar';
 import StoryViewer from '@/components/StoryViewer';
@@ -100,7 +100,6 @@ const HomePage = () => {
   }, []);
   const [reportModalOpen, setReportModalOpen] = useState<string | null>(null);
   const [userAvatar, setUserAvatar] = useState<string>('');
-  const [liveNotification, setLiveNotification] = useState<{ title: string; user: string; thumbnail: string; contentId?: string; userId?: string; mediaUrl?: string; source?: string; relay?: boolean } | null>(null);
   useEffect(() => {
     const syncFromStorage = () => {
       try {
@@ -368,73 +367,6 @@ const HomePage = () => {
       window.removeEventListener('momentCreated', refresh);
       window.removeEventListener('feedRefresh', refresh);
       window.removeEventListener('profileUpdated', refresh);
-    };
-  }, []);
-
-  // Live discovery: poll the server (every account sees who is live), not just
-  // this tab's localStorage. Same-tab events still update instantly.
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setInterval> | null = null;
-
-    const applyLive = (list: any[]) => {
-      if (cancelled) return;
-      let meId = '';
-      try { meId = String(getStoredUser()?.id || '').toLowerCase(); } catch { /* ignore */ }
-      const others = (list || []).filter((x) => x && x.id && String(x.id).toLowerCase() !== meId);
-      const top = others[0];
-      if (top) {
-        setLiveNotification({
-          title: String(top.title || top.liveTitle || 'Live now'),
-          user: String(top.name || top.username || 'Someone'),
-          thumbnail: String(top.thumbnail || top.avatar || ''),
-          contentId: String(top.contentId || top.liveContentId || ''),
-          userId: String(top.id || ''),
-          mediaUrl: String(top.mediaUrl || ''),
-          source: String(top.source || 'camera'),
-          relay: top.relay !== false,
-        });
-      } else if (!localStorage.getItem('equyvo_active_live')) {
-        setLiveNotification(null);
-      }
-    };
-
-    const load = async () => {
-      try {
-        const { data, error } = await api.liveNow();
-        if (!error && data) applyLive(Array.isArray(data.live) ? data.live : []);
-      } catch { /* offline: keep the current banner */ }
-    };
-
-    const activeLive = localStorage.getItem('equyvo_active_live');
-    if (activeLive) {
-      try {
-        const liveData = JSON.parse(activeLive);
-        setLiveNotification({ title: liveData.title, user: liveData.user, thumbnail: liveData.thumbnail || '', contentId: liveData.id, userId: liveData.userId, mediaUrl: liveData.mediaUrl || '', source: liveData.source || 'camera' });
-      } catch { /* ignore */ }
-    }
-
-    const handleUserWentLive = (e: Event) => {
-      const detail = (e as CustomEvent).detail || {};
-      setLiveNotification({ title: detail.title, user: detail.user || detail.creator, thumbnail: detail.thumbnail || '', contentId: detail.id, userId: detail.userId, mediaUrl: detail.mediaUrl || '', source: detail.source || 'camera' });
-      void load();
-    };
-    const handleUserWentOffline = () => {
-      setLiveNotification(null);
-      void load();
-    };
-
-    void load();
-    timer = setInterval(load, 20000);
-    window.addEventListener('userWentLive', handleUserWentLive);
-    window.addEventListener('userWentOffline', handleUserWentOffline);
-    window.addEventListener('followChanged', load as EventListener);
-    return () => {
-      cancelled = true;
-      if (timer) clearInterval(timer);
-      window.removeEventListener('userWentLive', handleUserWentLive);
-      window.removeEventListener('userWentOffline', handleUserWentOffline);
-      window.removeEventListener('followChanged', load as EventListener);
     };
   }, []);
 
@@ -903,94 +835,6 @@ const HomePage = () => {
     setReportModalOpen(postId);
   };
 
-  // Watch a live broadcast discovered through the server banner. The event
-  // previously had no listener anywhere, so "Watch" did nothing. Resolve the
-  // announced content id and open the viewer; when the stream has no playable
-  // media yet (or was deleted) fall back to the Discover live rail instead of
-  // dead-ending.
-  const handleWatchLive = async () => {
-    const live = liveNotification;
-    if (!live) return;
-    const contentId = String(live.contentId || '').trim();
-    if (contentId) {
-      try {
-        // The recorded live session is server-side truth: source, progressive
-        // chunks and the final replay URL. Render it directly when available.
-        const [res, sessionRes] = await Promise.all([
-          api.getContentItem(contentId),
-          api.liveSession(contentId),
-        ]);
-        const raw = (res as { data?: any } | null)?.data;
-        const session = (sessionRes as any)?.data?.session;
-        const sessionUrl = String(session?.mediaUrl || live.mediaUrl || '').trim();
-        if (sessionUrl) {
-          setFullscreenContent({
-            ...(raw || {}),
-            id: contentId,
-            user: raw?.user?.username || (typeof raw?.user === 'string' ? raw.user : '') || live.user,
-            avatar: raw?.user?.avatar_url || raw?.avatar || '',
-            content: raw?.content || session?.title || live.title || 'Live now',
-            image: '',
-            thumbnail: session?.thumbnail || live.thumbnail || '',
-            media: sessionUrl,
-            mediaUrl: sessionUrl,
-            videoUrl: sessionUrl,
-            mediaType: 'video',
-            type: 'live',
-            isLive: session?.status === 'live',
-            source: session?.source || live.source || 'camera',
-          } as FullscreenContent);
-          setFullscreenType('live');
-          return;
-        }
-        if (raw) {
-          const fields = resolveMediaFields(raw);
-          const videoUrl = fields.videoUrl;
-          const image = fields.image;
-          if (videoUrl || image) {
-            setFullscreenContent({
-              ...raw,
-              user: raw.user?.username || (typeof raw.user === 'string' ? raw.user : '') || live.user,
-              avatar: raw.user?.avatar_url || raw.avatar || '',
-              content: raw.content || raw.title || live.title || 'Live now',
-              image,
-              thumbnail: fields.thumbnail,
-              media: fields.media,
-              videoUrl,
-              mediaType: fields.videoUrl ? 'video' : 'image',
-              type: 'live',
-              isLive: true,
-            } as FullscreenContent);
-            setFullscreenType('live');
-            return;
-          }
-        }
-      } catch { /* fall through to live relay */ }
-      // No stored replay yet: the stream is still in progress. Open the
-      // fullscreen viewer with the session id so it joins the live relay.
-      if (contentId) {
-        setFullscreenContent({
-          id: contentId,
-          contentId,
-          type: 'live',
-          contentType: 'live',
-          isLive: true,
-          live: true,
-          title: live.title,
-          content: live.title,
-          user: live.user,
-          thumbnail: live.thumbnail,
-          image: live.thumbnail,
-          source: live.source || 'camera',
-          relay: live.relay !== false,
-        } as FullscreenContent);
-        setFullscreenType('live');
-        return;
-      }
-    }
-    navigate('/app/discover?tab=live');
-  };
-
   const handleDeletePost = (postId: string) => {
     deletedPostIds.current.add(postId);
     setEnhancedPosts(prev => prev.filter(post => post.id !== postId));
@@ -1069,29 +913,6 @@ const HomePage = () => {
     <div className="flex flex-col lg:flex-row gap-4 lg:gap-6 relative w-full">
       {/* Main Content Feed */}
       <div className="flex-1 space-y-4 lg:space-y-8 w-full lg:max-w-2xl lg:mx-0 px-4 sm:px-6 lg:px-0">
-
-        {/* Live Notification Banner */}
-        {liveNotification && (
-          <div className="bg-red-600 rounded-xl p-4 flex items-center gap-3 shadow-lg">
-            <div className="w-3 h-3 bg-white rounded-full animate-pulse flex-shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-white font-semibold text-sm truncate">
-                {liveNotification.user} is live!
-              </p>
-              <p className="text-white/80 text-xs truncate">
-                {liveNotification.title}
-              </p>
-            </div>
-            <Button
-              size="sm"
-              variant="secondary"
-              className="flex-shrink-0"
-              onClick={() => { void handleWatchLive(); }}
-            >
-              <Play className="h-3 w-3 mr-1" /> Watch
-            </Button>
-          </div>
-        )}
 
         {/* Story Panel (Facebook Style but Unique) */}
         <div className="relative">
