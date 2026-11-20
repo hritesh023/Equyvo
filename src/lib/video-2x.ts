@@ -47,16 +47,35 @@ interface HoldState {
   suppressUntil: number;
 }
 
+export interface UseVideo2xPressOptions {
+  speed?: number;
+  holdMs?: number;
+  /**
+   * 'element' (default) splits the video's own box — right half = forward.
+   * 'viewport' splits the screen — right half = forward, left half = rewind.
+   * Use 'viewport' for fullscreen players whose ancestors are rotated (the
+   * video's getBoundingClientRect() is then an axis-aligned box that no longer
+   * matches the user's left/right).
+   */
+  sideMode?: 'element' | 'viewport';
+  /** Degrees to rotate the ▶▶/◀◀ pill so it matches a rotated UI. */
+  overlayRotation?: number;
+}
+
 export function useVideo2xPress(
   getVideos: () => Array<HTMLVideoElement | null | undefined>,
-  opts: { speed?: number; holdMs?: number } = {},
+  opts: UseVideo2xPressOptions = {},
 ): void {
   const getRef = useRef(getVideos);
   getRef.current = getVideos;
   const speedRef = useRef(opts.speed ?? DEFAULT_SPEED);
   const holdRef = useRef(opts.holdMs ?? HOLD_MS);
+  const sideModeRef = useRef(opts.sideMode ?? 'element');
+  const rotationRef = useRef(opts.overlayRotation ?? 0);
   speedRef.current = opts.speed ?? DEFAULT_SPEED;
   holdRef.current = opts.holdMs ?? HOLD_MS;
+  sideModeRef.current = opts.sideMode ?? 'element';
+  rotationRef.current = opts.overlayRotation ?? 0;
 
   useEffect(() => {
     const attached = new Set<HTMLVideoElement>();
@@ -78,7 +97,11 @@ export function useVideo2xPress(
         'background:rgba(0,0,0,.72)', 'color:#fff',
         'font-weight:800', 'font-size:15px', 'line-height:1',
         'letter-spacing:.04em', 'opacity:0', 'transition:opacity .15s',
-        'transform:translate(-50%,-50%)',
+        'writing-mode:horizontal-tb',
+        // Match the viewer's rotation: in expanded landscape the whole UI is
+        // turned 90°, so the pill must be turned with it to still read
+        // horizontally from the landscape viewpoint.
+        `transform:translate(-50%,-50%) rotate(${rotationRef.current}deg)`,
         'box-shadow:0 8px 30px rgba(0,0,0,.35)',
         'backdrop-filter:blur(4px)', '-webkit-backdrop-filter:blur(4px)',
         '-webkit-user-select:none', 'user-select:none',
@@ -149,7 +172,14 @@ export function useVideo2xPress(
       if (rect.width < 40) { disarm(); return; }
       const finiteDur = isFinite(v.duration);
       const live = !finiteDur;
-      const side: Side = st.downOffsetX < (rect.width / 2) ? 'rew' : 'fwd';
+      // Decide the side from where the finger actually went down. In a
+      // fullscreen player the video's rect can be transformed/offset (rotated
+      // landscape), so comparing downOffsetX to that rect can classify BOTH
+      // halves as 'fwd'. Viewport mode uses the real screen position: left
+      // half = rewind, right half = forward — exactly what the user pressed.
+      const side: Side = sideModeRef.current === 'viewport'
+        ? (st.downX < window.innerWidth / 2 ? 'rew' : 'fwd')
+        : (st.downOffsetX < (rect.width / 2) ? 'rew' : 'fwd');
       if (side === 'rew' && live) { disarm(); return; } // nothing left of live
       st.active = side;
       st.wasPaused = v.paused;

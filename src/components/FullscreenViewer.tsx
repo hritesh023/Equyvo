@@ -116,9 +116,6 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   const actualType = (rawContent?.type as string) || type;
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Hold-to-2× scrub: long-press right = fast-forward at 2× the speed,
-  // long-press left = rewind at 2× (long videos, moments & live streams).
-  useVideo2xPress(() => [videoRef.current]);
   const [isPlaying, setIsPlaying] = useState(true);
 
   // ── In-app Picture-in-Picture state ────────────────────────────────────
@@ -451,6 +448,18 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
   // Expanded landscape mode: converts a portrait fullscreen into landscape on
   // mobile/tablet interfaces so 16:9 media can fill the screen.
   const [isExpandedLandscape, setIsExpandedLandscape] = useState(false);
+
+  // Hold-to-2× scrub: long-press right = fast-forward at 2× the speed,
+  // long-press left = rewind at 2× (long videos, moments & live streams).
+  // 'viewport' side detection ignores transformed video rects (expanded
+  // landscape rotates the whole viewer), and the overlay is rotated with the
+  // landscape UI so the ▶▶/◀◀ pill reads horizontally in that view.
+  // Declared AFTER isExpandedLandscape so the rotation value is available.
+  useVideo2xPress(() => [videoRef.current], {
+    sideMode: 'viewport',
+    overlayRotation: isExpandedLandscape ? 90 : 0,
+  });
+
   const [isMinimized, setIsMinimized] = useState(false);
   const [isNativePip, setIsNativePip] = useState(false);
   const hiddenTapPlayedRef = useRef(false);
@@ -1570,26 +1579,24 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
               <MessageCircle className="h-5 w-5" />
             </Button>
           )}
-          {/* Expand-to-landscape is available for EVERY regular fullscreen item,
-              portrait included — that is exactly what it is for. It is hidden
-              only in the Moments / Story fullscreen views, which keep their own
-              presentation. */}
-          {!(isPortraitMoment || isStory) && (
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={(e) => {
-                e.stopPropagation();
-                e.preventDefault();
-                setIsExpandedLandscape(prev => !prev);
-                onExpand?.();
-              }}
-              className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
-              title={isExpandedLandscape ? 'Collapse to portrait' : 'Expand to landscape'}
-            >
-              <Maximize2 className="h-5 w-5" />
-            </Button>
-          )}
+          {/* Expand-to-landscape is ALWAYS available in fullscreen, including
+              the home feed's portrait posts (which are commonly typed as
+              moments). Never gate it on isPortraitMoment/isStory — that is the
+              exact content this control exists to expand. */}
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={(e) => {
+              e.stopPropagation();
+              e.preventDefault();
+              setIsExpandedLandscape(prev => !prev);
+              onExpand?.();
+            }}
+            className="text-white hover:bg-white/20 bg-white/10 backdrop-blur-sm rounded-full p-2 shadow-lg"
+            title={isExpandedLandscape ? 'Collapse to portrait' : 'Expand to landscape'}
+          >
+            <Maximize2 className="h-5 w-5" />
+          </Button>
           {/* PiP must be reachable in every fullscreen orientation, including
               expanded landscape. The in-app mini player is draggable inside the
               app and is promoted to a system window when the app is left. */}
