@@ -178,8 +178,12 @@ export function useVideo2xPress(
       // halves as 'fwd'. Viewport mode uses the real screen position: left
       // half = rewind, right half = forward — exactly what the user pressed.
       const viewport = document.documentElement.getBoundingClientRect();
+      // A 90°-rotated fullscreen viewer shifts what feels like "left" several
+      // dozen pixels toward the centre. A strict 50% split left the upper part
+      // of the left side being classified as forward. Give the rewind zone a
+      // little extra width so the WHOLE left side — top and bottom — rewinds.
       const side: Side = sideModeRef.current === 'viewport'
-        ? (st.downX - viewport.left < viewport.width / 2 ? 'rew' : 'fwd')
+        ? (st.downX - viewport.left < viewport.width * 0.6 ? 'rew' : 'fwd')
         : (st.downOffsetX < (rect.width / 2) ? 'rew' : 'fwd');
       if (side === 'rew' && live) { disarm(); return; } // nothing left of live
       st.active = side;

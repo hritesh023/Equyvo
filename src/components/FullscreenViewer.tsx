@@ -1453,32 +1453,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       try { onContentChange?.(restored as any); } catch { /* ignore */ }
     });
 
-    // Float outside the app (⧉): deterministic system-PiP request. Background
-    // detection can be skipped by OEMs; this button calls the native bridge
-    // directly while the user is still in the app, so the OS window definitely
-    // appears. On web it reveals the already-prepared Document PiP window.
-    const floatBtn = makeButton('⧉', 'right:70px', () => {
-      try {
-        if ((window as any).AndroidPiP?.enter) {
-          (window as any).AndroidPiP.setInAppPip?.(true);
-          (window as any).AndroidPiP.enter();
-        } else if (docPipWindowRef.current && !docPipWindowRef.current.closed) {
-          docPipWindowRef.current.document.body.style.display = 'block';
-          systemPipActiveRef.current = true;
-          removeInAppPipWindow();
-          setIsNativePip(true);
-          setContentOnly(true);
-          setHideOverlay(true);
-          setShowControls(false);
-        }
-      } catch { /* ignore */ }
-    });
-
     const dragHint = document.createElement('div');
     dragHint.textContent = '⠿';
     dragHint.style.cssText = 'position:absolute;top:7px;left:9px;color:rgba(255,255,255,.55);font-size:14px;z-index:2;pointer-events:none;';
     win.appendChild(dragHint);
-    win.appendChild(floatBtn);
     win.appendChild(expandBtn);
     win.appendChild(closeBtn);
     document.body.appendChild(win);
