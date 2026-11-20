@@ -201,6 +201,7 @@ const VideoSeekBar: React.FC<VideoSeekBarProps> = ({
         )}
         <div
           ref={barRef}
+          data-2x-ignore
           role="slider"
           aria-label="Seek"
           aria-valuemin={0}

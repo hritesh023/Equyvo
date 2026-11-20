@@ -192,18 +192,37 @@ export function useVideo2xPress(
     };
 
     // ── pointer handlers ──
+    // Listen in the CAPTURE phase at document level instead of only on each
+    // <video>. In expanded landscape the whole viewer is rotated 90°, so the
+    // control bars sit over what is visually the left/right half of the
+    // screen. Those transparent overlays would otherwise swallow the press
+    // before it ever reaches the video (right-side 2× never engaged). Here we
+    // find the video geometrically under the pointer and ignore only real
+    // controls, so a hold anywhere over the media works in every orientation.
     const onDown = (e: PointerEvent): void => {
       if (st.active || st.timer) return; // one gesture at a time
       if (e.pointerType === 'mouse' && e.button !== 0) return;
-      const v = e.currentTarget as HTMLVideoElement | null;
-      if (!v || v.readyState === 0) return;
       const t = e.target as HTMLElement | null;
-      if (t && t !== v && t.closest('button,input,[data-2x-ignore]')) return;
-      st.video = v;
+      if (t && t.closest('button,a,input,textarea,select,[role="slider"],[data-2x-ignore]')) return;
+      let chosen: HTMLVideoElement | null = null;
+      let chosenRect: DOMRect | null = null;
+      for (const v of getRef.current?.() || []) {
+        if (!v || !v.isConnected || v.readyState === 0) continue;
+        const r = v.getBoundingClientRect();
+        if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
+        if (!chosenRect || r.width * r.height < chosenRect.width * chosenRect.height) {
+          chosen = v;
+          chosenRect = r;
+        }
+      }
+      if (!chosen || !chosenRect) return;
+      st.video = chosen;
       st.pointerId = e.pointerId;
       st.downX = e.clientX;
       st.downY = e.clientY;
-      st.downOffsetX = e.clientX - (e.currentTarget as HTMLElement).getBoundingClientRect().left;
+      // Side is measured against the video's on-screen box, so it stays
+      // correct when that box is produced by a rotated/transformed ancestor.
+      st.downOffsetX = e.clientX - chosenRect.left;
       window.addEventListener('pointermove', onMove, { passive: true });
       window.addEventListener('pointerup', onUp, { passive: true });
       window.addEventListener('pointercancel', onUp, { passive: true });
@@ -226,6 +245,16 @@ export function useVideo2xPress(
         e.preventDefault();
       }
     };
+    // The click synthesised after a hold may land on an overlay (rotated
+    // landscape) rather than on the video itself, so suppress it at document
+    // level too — but never swallow clicks on real controls.
+    const onDocClick = (e: MouseEvent): void => {
+      if (Date.now() >= st.suppressUntil) return;
+      const t = e.target as HTMLElement | null;
+      if (t && t.closest('button,a,input,textarea,select,[role="slider"],[data-2x-ignore]')) return;
+      e.stopPropagation();
+      e.preventDefault();
+    };
     const onContext = (e: Event): void => {
       if (st.active || st.timer) { e.preventDefault(); }
     };
@@ -234,13 +263,11 @@ export function useVideo2xPress(
     const attach = (v: HTMLVideoElement): void => {
       if (attached.has(v)) return;
       attached.add(v);
-      v.addEventListener('pointerdown', onDown);
       v.addEventListener('click', onClick);
       v.addEventListener('contextmenu', onContext);
     };
     const detach = (v: HTMLVideoElement): void => {
       if (!attached.delete(v)) return;
-      v.removeEventListener('pointerdown', onDown);
       v.removeEventListener('click', onClick);
       v.removeEventListener('contextmenu', onContext);
       if (st.video === v) { st.video = null; }
@@ -255,8 +282,12 @@ export function useVideo2xPress(
     };
     sync();
     const iv = window.setInterval(sync, 250);
+    document.addEventListener('pointerdown', onDown, true);
+    document.addEventListener('click', onDocClick, true);
 
     return () => {
+      document.removeEventListener('pointerdown', onDown, true);
+      document.removeEventListener('click', onDocClick, true);
       window.clearInterval(iv);
       disarm();
       for (const v of Array.from(attached)) detach(v);

@@ -320,6 +320,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     let failedPromotionTimer: NodeJS.Timeout | null = null;
     const prepare = () => {
       systemPipActiveRef.current = false;
+      closeDocumentPip(false);
       removeInAppPipWindow();
       setIsNativePip(true);
       setIsMinimized(false);
@@ -347,7 +348,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       window.removeEventListener('prepareForSystemPip', prepare as EventListener);
       if (failedPromotionTimer) clearTimeout(failedPromotionTimer);
     };
-  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, closeDocumentPip]);
 
   // Native fallback: some OEMs skip Activity onUserLeaveHint/onStop. When the
   // app is backgrounded while the in-app mini player is active, ask the shell
@@ -471,6 +472,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     // While the in-app mini player is open, hardware/system back exits PiP and
     // returns to the full-screen viewer — it must not close the whole viewer.
     if (inAppPipRef.current) {
+      closeDocumentPip(false);
       removeInAppPipWindow();
       setIsNativePip(false);
       setIsMinimized(false);
@@ -491,7 +493,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     onClose();
     return true;
   }, [showDetailsPanel, showImageOverlay, showCommentSection, onClose,
-      removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip]);
+      removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, closeDocumentPip]);
   // Reopening a minimized viewer must peel the content-only state off so
   // the full control set (details bar, 2x gesture, side panel, expand/minimize)
   // is restored instead of staying in the PiP-only appearance.
@@ -1242,13 +1244,14 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
 
   // Exit the in-app PiP and return to the normal full-screen viewer.
   const restoreFromPip = useCallback(() => {
+    closeDocumentPip(false);
     removeInAppPipWindow();
     setIsNativePip(false);
     setIsMinimized(false);
     restoreMainVideoAudio();
     notifyNativePip(false);
     resetDiscoverControls();
-  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, resetDiscoverControls]);
+  }, [removeInAppPipWindow, restoreMainVideoAudio, notifyNativePip, resetDiscoverControls, closeDocumentPip]);
 
   /**
    * PiP icon handler.
@@ -1347,6 +1350,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
     // Close (×): exit PiP entirely and return to the feed.
     const closeBtn = makeButton('×', 'right:6px', () => {
       try { miniVideo?.pause(); } catch { /* ignore */ }
+      closeDocumentPip(false);
       removeInAppPipWindow();
       setIsNativePip(false);
       setIsMinimized(false);
@@ -1372,6 +1376,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
         src: actualContent?.src || actualContent?.videoUrl || fallbackVideoSrc,
       };
       (window as any).tempFullscreenContent = restored;
+      closeDocumentPip(false);
       removeInAppPipWindow();
       setIsNativePip(false);
       setIsMinimized(false);
@@ -1537,7 +1542,10 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
       <div
         className={`fixed top-0 left-0 right-0 z-50 bg-gradient-to-b from-black/90 via-black/70 to-transparent p-4 ${isSplitView ? 'w-1/2' : ''} top-controls-bar transition-all duration-500 eq-fullscreen-top-safe ${contentOnly ? 'opacity-0 pointer-events-none -translate-y-full' : 'opacity-100 translate-y-0'}`}
         style={{
-          pointerEvents: contentOnly ? 'none' : 'auto'
+          // The bar is rotated into the right half of the screen in expanded
+          // landscape. Only the buttons themselves may capture pointers — the
+          // empty bar area must let long-presses reach the video underneath.
+          pointerEvents: 'none'
         }}
         onMouseEnter={() => {
           if (isVideoType) {
@@ -1550,7 +1558,7 @@ const FullscreenViewer: React.FC<FullscreenViewerProps> = ({
           }
         }}
       >
-        <div className="flex justify-end gap-2">
+        <div className="flex justify-end gap-2 pointer-events-auto">
           {isLiveStream && effectiveLive && (
             <Button
               variant="ghost"
